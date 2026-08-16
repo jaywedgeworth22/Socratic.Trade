@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Approved (rev 3 — review 2026-08-16, 0 open issues) |
 | Date | 2026-08-16 |
 | Author | Grok (design only; no product-code change) |
 | Branch | `grok/prod-error-triage-48h` |
@@ -11,106 +11,129 @@
 
 ## Overview
 
-Green and Red do not read filings.  They read a **bounded dossier**: structured SQLite cards plus a handful of retrieved chunks, already capped at 8 for deep names (top-3 scan + held) and 1 for scout names (`src/lib/strategy.ts`), then truncated again by the shared evidence budget (24,000 filing characters / 6,000 tokens).  The current ingest path nevertheless upserts **every 10-K/10-Q/8-K/transcript chunk** into Pinecone, then mirrors the same text into `document_chunks_fts`.  A single large filing is ~175 chunks / ~2,698 estimated write units.  That is what burns the trial and what will not fit the post-trial 60k WU/day snap.
+Green and Red do not read filings.  They read a **bounded dossier**: structured SQLite cards plus a handful of retrieved chunks, already capped at 8 for deep names (top-3 scan + held) and 1 for scout names (`src/lib/strategy.ts`), then truncated again by the shared evidence budget (24,000 filing characters / 6,000 tokens).  Cards (facts / Form 4 / 13F / ARK) are concatenated into the same `ragContext` string today, so they share that 24k family budget.
 
-The proposed store is a **three-layer corpus** that matches how proposers actually consume data:
+The current **10-K / 10-Q / transcript** ingest path upserts **every body chunk** into Pinecone, then mirrors FTS **only after** `storeDocument` reports `documentComplete`.  8-K full-body upserts are a separate flag and default **off**; the default 8-K write is the extractive `8k-brief`.  A live worker filing was **933 chunks / 279s FTS**.  A fuse-skip receipt on this branch was 175 items / 2,698 estimated WUs — that is a mid-size document, not “a large 10-K.”  Managed commits charge **~2×** (`applyPineconeWriteBudget` when `isManagedCommit`).  Planning WU is ~8 pending / ~16 delivered per record.
 
-1. **Canonical document store** (already exists): raw HTML/text on the local volume (`data/sec-artifacts/…`), `sec_artifacts` + `ingested_accessions` + `earningscalls_transcripts` receipts, and full chunk text in `document_chunks_fts`.
-2. **Operational retrieval index** (change the write set): Pinecone keeps compact `document-summary` / `earnings-summary` / `8k-brief` vectors plus a **bounded high-signal slice** (MD&A, Item 1A, Item 2.02, prepared remarks), not every boilerplate page.
-3. **Prompt assembly** (small change): prefer the SQLite abstract, then 2–4 high-signal chunks, still ordered by `orderChunksForProposer`.  App-owned performance, fills, activity, and experience-memory stay **full records** in SQLite (and the existing compact episodic vectors).
+The binding post-trial constraint is **Pinecone storage**, not the 60k WU/day write snap.  Free/Starter holds ~**2 GB ≈ 250k records ≈ ~350 full filings** (`docs/rollouts/2026-08-09-pinecone-trial-throughput-and-monthly-pace.md`).  Already-spent trial credit (~$62 ≈ 15.5M WU at $4/M) is on the order of **a million two-phase records** — already above a 250k free index.  “Stop new waste, prune later if storage is fine” and “live on free-tier after Aug 30” cannot both be true unless prune is a **calendar** step or the owner stays on **paid storage**.
 
-No ingest-path LLM summarizer.  Extractive highlights (`DOCUMENT_HIGHLIGHT_MODEL = extractive-highlights-v2` in `src/lib/rag/document-summarizer.ts`) already write both `document_abstracts` and the compact Pinecone doc types.  That is sufficient unless a later gold-set proves otherwise, and any generative upgrade must be separately budgeted.
+The proposed store is still three layers, but the writer must **split** before anyone stops upserting bodies:
+
+1. **Local-complete** (new seam): artifact HTML + full `document_chunks_fts` + `document_abstracts` persist **without** `storeDocument(full body)`.  `ingested_accessions` means this.
+2. **Vector-index** (separate, small commits): Pinecone holds `document-summary` / `earnings-summary` / `8k-brief` plus a **capped high-signal section set**, each as its own complete `storeDocument`.  Never truncate a full-body commit.
+3. **Prompt assembly**: SQLite abstracts first (1,200-char scout stub), then retrieved **section** vectors, then a **post-hit hydrate** from local FTS/artifacts on the money path.  Fills / activity / experience-memory stay full and purge-exempt.
+
+No ingest-path LLM.  Extractive highlights (`DOCUMENT_HIGHLIGHT_MODEL = extractive-highlights-v2`) stay the highlight engine.
+
+**Do not flip `RAG_PINECONE_WRITE_CLASS` off `full-body` until PR A (split writer + re-embed guard) and PR B (money-path hydrate) are both on `main`.**  Sequence is **A → B → Infisical flip**, then the 2026-08-30 write snap.  PR A lands inert (`full-body` default).  Flipping after A alone thins Green/Red (abstracts + 12 section vectors, no local parent/1A hydrate).  Stopping the body funnel before A makes new names go dark: today’s writer will not ledger, will not write the abstract, and will not create FTS-joinable occurrences.
 
 ## Background & Motivation
 
-### How proposers actually use the corpus
+### How proposers actually retrieve (code, not intent)
 
 ```mermaid
 flowchart LR
-  subgraph ingest [Ingest today]
-    EDGAR[EDGAR / ROIC / FMP]
-    StoreDoc["storeDocument()"]
-    PC[(Pinecone full body)]
+  subgraph ingest [Ingest today — one funnel]
+    EDGAR[EDGAR / ROIC]
+    StoreDoc["storeDocument(full body)"]
+    PC[(Pinecone body + abstract)]
+    OCC[chunk_occurrences]
     FTS[(document_chunks_fts)]
     ABS[(document_abstracts)]
     ART[sec-artifacts volume]
     EDGAR --> StoreDoc
     StoreDoc --> PC
-    StoreDoc --> FTS
+    StoreDoc --> OCC
+    StoreDoc -->|"only after documentComplete"| FTS
+    StoreDoc -->|"only after documentComplete"| ABS
     StoreDoc --> ART
-    StoreDoc --> ABS
   end
-  subgraph decide [Green / Red run]
-    Deep["deep: 8 chunks<br/>top-3 + held"]
-    Scout["scout: 1 chunk<br/>other scan names"]
-    Cards[SQLite cards:<br/>facts / Form 4 / 13F / ARK]
-    Budget["evidence budget<br/>24k filing chars"]
+  subgraph decide [Green / Red / Chat]
+    RCD["retrieveContextDetailed<br/>Pinecone cosine first"]
+    LEX["corpus-wide FTS add-on<br/>INNER JOIN occurrences"]
+    Deep["deep: 8"]
+    Scout["scout: 1"]
+    Cards[SQLite cards]
+    Budget["24k filings family<br/>includes cards"]
     Prompt[retrievedFinancialContext]
+    RCD --> LEX
+    LEX --> Deep
+    LEX --> Scout
+    Cards --> Budget
     Deep --> Budget
     Scout --> Budget
-    Cards --> Prompt
     Budget --> Prompt
   end
-  PC --> Deep
-  PC --> Scout
-  ABS -.->|"already retrieved as document-summary"| Deep
+  PC --> RCD
+  OCC --> LEX
+  FTS --> LEX
 ```
 
-Verified in this worktree (do not treat older design docs as current):
+Verified in this worktree:
 
-- `src/lib/strategy.ts` (~1365–1418): `deepSymbols = topCandidates.slice(0, 3) ∪ heldSymbols` retrieve **8** chunks; every other scan candidate retrieves **1**.  Query is `deterministicFilingsRetrievalQuery` from `src/lib/rag/information-routing.ts`.
-- `src/lib/rag/proposer-format.ts`: `orderChunksForProposer` puts `document-summary` / `earnings-summary` / `*-brief` first.
-- `src/lib/strategy.ts` (~5179–5187): variable-length prose shares one budget.  Filings family is **24,000 characters / 6,000 tokens**.  Global cap is 48,000 / 12,000.  Excess is omitted with a receipt, not silently stuffed.
-- Red Team receives the **same** `retrievedFinancialContext` (comment at `strategy.ts:5621–5622`).  There is no second filings retrieve for the critic.
-- Chat Coach uses `kb_search` → `retrieveContextDetailed` (`src/lib/chat/orchestrator.ts`).  There is **no** accession-body tool today.
-- Structured facts never go through embeddings: `formatCompanyFactsEvidenceCard`, `formatInsiderTransactionsEvidenceCard`, `formatThirteenFEvidenceCard`, `formatArkEvidenceCard` are SQLite cards injected next to the RAG block.
+- `src/lib/strategy.ts` (~1365–1418): `deepSymbols = topCandidates.slice(0, 3) ∪ heldSymbols` retrieve **8** chunks; every other scan candidate retrieves **1**.  Query is `deterministicFilingsRetrievalQuery` = “Significant financial events, SEC filings, and macro catalysts for $SYM”.
+- Strategy and Coach call **`retrieveContextDetailed` only**.  They do **not** call `retrieveFusedContext` (`search-fusion.ts` is eval/tests).
+- `retrieveContextDetailed` returns `[]` **before any FTS** if Pinecone or the embed key is missing (`vector-db.ts` ~6466–6473, status `lookup_failed`).
+- `HYBRID_RETRIEVAL` (BM25 over the dense pool) defaults **off**.  `RAG_CORPUS_WIDE_LEXICAL` defaults **on** (`envFlagOn(..., true)` at `vector-db.ts:885`) despite a nearby comment that still says default-off.  Treat the **executable default** as production.
+- Corpus-wide lexical is an **INNER JOIN** of `document_chunks_fts` to `chunk_occurrences` with `receipt_state` committed and `o.source IN ('sec-edgar','sec-8k')` (`corpus-wide-lexical.ts` ~302–322).  Occurrences are written inside the managed `storeDocument` commit, not by `insertDocumentChunkFts`.  FTS rows without a committed occurrence are **unjoinable orphans**.  Abstracts (`source=document-summarizer`) and every transcript producer are **excluded** from that join.
+- `ingestFiling` / the worker / ROIC / EarningsCalls run FTS mirror, `insertIngestedAccession`, and `generateAndStoreDocumentAbstract` only after `documentComplete === true` and `indexed === attempted`.  You cannot `storeDocument` a 400-chunk 10-K and keep 12 vectors — completeness aborts.
+- `orderChunksForProposer` puts `document-summary` / `earnings-summary` / `*-brief` first.
+- Filings family budget: **24,000 characters / 6,000 tokens**.  Global 48,000 / 12,000.  Structured cards ride in the same `ragContext` hose.
+- Red Team receives the **same** `retrievedFinancialContext`.  No second retrieve.
+- Parent expansion defaults **on** (`RAG_PARENT_CONTEXT_EXPANSION`, `vector-db.ts:535`) and reads `parent_text` from **vector metadata**, not FTS.
+- Chat `kb_search` is the same retrieve.  There is **no** accession-body tool and **no** console/iOS filing sheet.
 
 ### What ingest already writes
 
-| Layer | Where | Who writes it |
-| --- | --- | --- |
-| Full 10-K/10-Q body chunks | Pinecone **and** `document_chunks_fts` | `ingestFiling` in `src/lib/web-sources/sec-filings.ts` |
-| Extractive highlights | Pinecone `document-summary` **and** `document_abstracts` | `generateAndStoreDocumentAbstract` after ingest; `maybeRefreshSecFilingAbstract` upgrades old model rows without re-fetching EDGAR |
-| Raw HTML | `data/sec-artifacts/{cik}/{accession}/…` + `sec_artifacts` | `writeLocalArtifact` / `insertSecArtifact` |
-| 8-K body + `8k-brief` | Pinecone + FTS + abstracts | `src/lib/web-sources/sec8k.ts` |
-| ROIC / EarningsCalls transcripts + `earnings-summary` | Pinecone + abstracts | `roic-transcripts.ts`, `earningscalls-transcripts.ts` |
-| FMP transcripts | Pinecone full body only | `fmp-transcripts.ts` — **no abstract writer** (gap) |
-| Experience / lessons | Pinecone `socratic-decision` / `coach-note` / `lesson` | `experience-memory.ts` (already compact state vectors) |
-| Fills / activity / performance | SQLite only | `db-fills.ts`, `db-execution.ts`, `performance.ts` |
+| Layer | Where | Who writes it | Notes |
+| --- | --- | --- | --- |
+| Full 10-K/10-Q body chunks | Pinecone **and then** `document_chunks_fts` | `ingestFiling`, `sec-ingest-worker` | FTS only after Pinecone complete |
+| Extractive highlights | Pinecone `document-summary` **and** `document_abstracts` | after the body commit; `maybeRefreshSecFilingAbstract` upgrades old model rows | Behind the same funnel |
+| Raw HTML | `data/sec-artifacts/{cik}/{accession}/…` + `sec_artifacts` | `writeLocalArtifact` / `insertSecArtifact` | Durable without Pinecone |
+| Worker intermediates | `chunks.json`, `sections.json`, `storeResult.json` | `sec-ingest-worker.ts` | Best local body for on-demand |
+| 8-K brief | Pinecone `8k-brief` + abstracts | default path (`WEB_SOURCE_SEC8K_FULL_BODY` defaults **off**) | Not a full-body write today |
+| 8-K full body | Pinecone + FTS | only when that flag is on | Signal policy applies only then |
+| ROIC / EarningsCalls transcripts + `earnings-summary` | Pinecone only (no body FTS) | after full-transcript `documentComplete` | **No lexical safety net** |
+| FMP transcripts | Pinecone full body only | `fmp-transcripts.ts` | No abstract writer; not the live budget |
+| Experience / lessons | Pinecone `socratic-decision` / `coach-note` / `lesson` | `storeContexts`, private, `matchAllSymbols` (no FTS) | Do-not-touch class |
+| Fills / activity / performance | SQLite only | `db-fills.ts`, `db-execution.ts` | Never summarize |
 
-Highlights are **deterministic**.  `tradeHighlightChunksFromText` scores paragraphs with keyword/numeric/section priors, diversity-caps Jaccard 0.55, and emits at most 8 × 1,800 characters.  `DOCUMENT_HIGHLIGHT_MODEL` is bumped when the algorithm changes so old abstracts rewrite once.
+Highlights are **deterministic**.  `tradeHighlightChunksFromText` scores paragraphs with keyword/numeric/section priors, diversity-caps Jaccard 0.55, and emits at most 8 × 1,800 characters.  `source_chunk_ids` today are synthetic `hl:1A:0` ids, **not** FTS `content_hash` values — they cannot hydrate.  `DOCUMENT_HIGHLIGHT_MODEL` is bumped when the algorithm changes so old abstracts rewrite once.  Abstracts must also regenerate when artifact `sha256` changes (amendments under the same accession).
 
 ### Why the current write set is wrong for the remaining trial and the free-tier snap
 
-- Pinecone trial: ~$238 of $300 left as of 2026-08-16, ends `2026-08-30T00:00:00.000Z` (`PINECONE_CURRENT_TRIAL_ENDS_AT`).  List price used for pacing is **$4 / 1M WU**.  Remaining credit ≈ **59.5M WU**; `$45` reserve ≈ 11.25M WU.
-- App fuse during trial: **2.5M WU / rolling 24h**.  After snap: **60k WU/day**, **20k texts/day**, monthly pace **1.6M WU** (`src/lib/pinecone-trial-window.ts`).
-- Live receipt on this branch: one skipped batch was **175 items / 2,698 estimated WUs** — one large filing hitting an already-spent fuse (`docs/rollouts/2026-08-16-prod-error-triage-48h.md`).
-- WU estimate (`estimatePineconeRecordWriteUnits` in `vector-db.ts`): `ceil((id + metadata + 1024×4 + 512) / 1024)`.  Metadata carries chunk text / parent context up to the 40,896-byte soft cap, so real cost is ~**15 WU/chunk**, not the legacy 5 WU/record.
-- Hybrid retrieval already queries `document_chunks_fts` (`search-fusion.ts`, `corpus-wide-lexical.ts`).  Dropping full-body vectors from Pinecone does **not** drop lexical recall of those bodies.
-- `information-routing.ts` still *asks* for `["10-k","10-q","8-k","document-summary"]` and `["earnings-transcript","earnings-summary"]`.  That declaration is why full bodies keep winning slots that the 24k-char budget then truncates.
+- Pinecone trial: ~$238 of $300 left as of 2026-08-16, ends `2026-08-30T00:00:00.000Z`.  List price used for pacing is **$4 / 1M WU**.  Remaining credit ≈ **59.5M WU**; `$45` reserve ≈ 11.25M WU.  Already spent ≈ **$62 ≈ 15.5M WU**.
+- Configured Infisical fuse: **2.5M WU / rolling 24h**.  In full-steam phase `assessPineconeTrialWindow` sets `effectiveDailyWriteUnits = max(configured, paced)` — remaining ~59.5M / ~14 days ≈ **4.25M/day effective** while above the reserve.  Do **not** raise the Infisical env above 2.5M; the pacer already lifts the effective cap.
+- After snap: **60k WU/day**, **20k texts/day**, monthly pace **1.6M WU**.
+- **Storage (binding):** free/Starter ~2 GB / ~250k records.  A latest-1k full-body pass at 150–200 chunks is ~150–200k records (borderline).  Fat 10-Ks at 500–1,000 children are **500k–1M records** and will not fit.  Already-written trial vectors may already exceed 250k.
+- Hybrid retrieval does **not** make FTS a backstop for bodies that were never committed to Pinecone.  Do not cite `search-fusion.ts` as live.
+- `information-routing.ts` still *asks* for full `10-k`/`10-q`/`earnings-transcript` types.  That is why body pages still compete for the 8 slots the 24k budget then truncates.
+- `corpus-reembed.ts` `reembedSecFilings` walks **every** `document_chunks_fts` `sec-edgar` row and `storeDocument`s it unless a live full-document commit exists in the current embed space.  An embed-model flip or `scripts/reindex-all.ts` after a highlight+signal cut is a silent undo and a free-tier WU bomb.
 
-The 2026-07-12 1,000-issuer plan (`docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`) already said “do not turn every filing byte into a vector.”  The trial activation then did exactly that, because the write path has no “highlight-only” mode.  This design is the missing write policy, not a new vendor.
+The 2026-07-12 1,000-issuer plan already said “do not turn every filing byte into a vector.”  The trial then did, because the write path has no split.  This design is the missing **writer split + keep-set**, not a new vendor.
 
 ## Goals & Non-Goals
 
 ### Goals
 
-- Give Green/Red a **complete highlight** for every filing/transcript type they are allowed to see, plus enough high-signal narrative to cite a section.
-- Cover **latest** 10-K + latest 10-Q + latest 8-K + latest transcript for as many in-universe names as possible before spending WUs on history.
-- Deepen history (extra quarters, prior 10-K, extra transcripts) for **held / watchlist / technical-watchlist** names (`rankHighInterestSymbols`).
-- Keep Pinecone inside the **post-trial 60k WU/day** envelope for incremental ingest (new 8-Ks and new calls), not just for a one-time backfill.
-- Preserve a named accession so a reviewer or a later proposer follow-up can load the **full body on demand** from disk/SQLite/EDGAR.
-- Leave app-owned performance, fills, activity, and experience-memory **full** (or at least fully available; a summary may exist beside them, never instead of them).
+- Give Green/Red a **complete highlight** for every filing/transcript type they are allowed to see, plus enough high-signal **section vectors** that dense cosine can still surface a risk/guidance sentence the extractive scorer skipped.
+- Cover **latest** 10-K + latest 10-Q + latest 8-K brief + latest transcript for as many in-universe names as possible before spending WUs or **storage** on history.
+- Deepen history for **held / watchlist / technical-watchlist** names (`rankHighInterestSymbols`) as highlights + sections, not as extra full bodies.
+- Size the **kept Pinecone corpus** to the plan we will actually pay for after 2026-08-30 (see Key Decision 1).  Incremental writes must fit 60k WU/day.
+- Preserve a named accession so Chat, a console/iOS sheet, or a later hydrate step can load the **full body on demand** from disk/SQLite/EDGAR.
+- Leave app-owned performance, fills, activity, and experience-memory **full** and **purge-exempt**.
 
 ### Non-Goals
 
-- No new vector vendor, no pgvector migration, no R2-as-primary document store in this design.  R2 remains the weekly SQLite cold snapshot.
+- No new vector vendor, no pgvector, no R2-as-primary document store.  R2 remains the weekly SQLite cold snapshot.
 - No ingest-path generative LLM.  Do not put LLM runtime keys in Infisical to “summarize 10-Ks.”
-- No change to Green/Red evidence parity.  They keep sharing one dossier.
+- No change to Green/Red evidence parity.
 - No PWA work.
-- No claim that extractive highlights are as good as a human MD&A brief.  They are the cost-bounded default; a later eval can reopen that.
-- No mass delete of existing Pinecone full-body vectors on day one.  Stop *new* waste first; prune later if WU or storage pressure requires it.
-- No paternalistic “protect the owner from a real-money trade because the abstract is short.”  Missing coverage is a **receipt**, not a block.
+- No claim that extractive highlights are as good as a human MD&A brief.
+- **No mass delete on day one, and no “prune later if we feel like it.”**  Existing full-body vectors stay until local FTS counts match and hydration is proven.  Then a **receipt-gated** prune, sized to the keep-set, is calendar-critical **if** we snap to free storage.  If that prune cannot land safely, **stay on paid storage** rather than evict blindly.
+- **No Pass C full-body leftover.**  Spending remaining trial credit on bodies we have decided not to keep is a storage hangover.
+- No paternalistic trade block on a short abstract.  Missing coverage is a **receipt**.
+- No embed-model flip in this window.
 
 ## Proposed Design
 
@@ -120,29 +143,32 @@ The 2026-07-12 1,000-issuer plan (`docs/reviews/2026-07-12-sec-rag-1000-stock-ba
 flowchart TB
   subgraph producers [Producers]
     SEC[sec-filings / sec8k / worker]
-    TX[roic / fmp / earningscalls]
+    TX[roic / earningscalls]
     MEM[experience-memory / socratic-memory]
     FACTS[sec-facts / Form 4 / 13F / ARK]
   end
 
-  subgraph canonical [Canonical local store]
-    ART[data/sec-artifacts + sec_artifacts]
-    FTS[document_chunks_fts]
+  subgraph local [Local-complete — no Pinecone required]
+    ART[data/sec-artifacts + chunks.json]
+    FTS[document_chunks_fts full body]
     ABS[document_abstracts]
-    LEDGER[ingested_accessions / sec_filings]
+    LEDGER["ingested_accessions = local-complete"]
     SQL[(fills / activity / facts)]
   end
 
   subgraph pinecone [Pinecone operational index]
     SUM[document-summary / earnings-summary / 8k-brief]
-    SIG[high-signal slices only]
+    SIG[N section docs — each a complete storeDocument]
     EPI[socratic-decision / coach-note / lesson]
   end
 
   subgraph consume [Consumers]
+    RCD[retrieveContextDetailed — Pinecone first]
+    HYD[hydrateAccession after hit]
     DOSSIER[assembleProposerDossier]
     GREEN[Green + Red]
-    CHAT[kb_search + new get_filing_body]
+    CHAT[kb_search + get_filing_body]
+    UI[console / iOS filing sheet]
   end
 
   SEC --> ART
@@ -151,7 +177,6 @@ flowchart TB
   SEC --> LEDGER
   SEC --> SUM
   SEC --> SIG
-  TX --> FTS
   TX --> ABS
   TX --> SUM
   TX --> SIG
@@ -159,89 +184,148 @@ flowchart TB
   MEM --> SQL
   FACTS --> SQL
   ABS --> DOSSIER
-  SUM --> DOSSIER
-  SIG --> DOSSIER
-  FTS --> DOSSIER
+  RCD --> HYD
+  SUM --> RCD
+  SIG --> RCD
+  FTS --> HYD
+  ART --> HYD
+  HYD --> DOSSIER
   SQL --> DOSSIER
   EPI --> GREEN
   DOSSIER --> GREEN
-  FTS --> CHAT
-  ART --> CHAT
-  SUM --> CHAT
+  RCD --> CHAT
+  HYD --> CHAT
+  ART --> UI
 ```
 
-### Layer 1 — Canonical documents (source of truth)
+Live retrieve stays **Pinecone cosine first**.  Corpus-wide FTS is an add-on that cannot run without a live index/embed and cannot see FTS rows without committed occurrences.  After the cut, Green/Red/Chat **semantically** see abstracts + the capped section set.  Footnote recovery is **hydrate-from-pointer** (content_hash / itemCode / accession → local FTS / `chunks.json` / artifact), not “FTS as an equal sibling.”  Do not enable a local-only FTS join on the catalyst OR-query — that query compiles to `"Significant" OR "financial" OR "events" OR …` and would flood the 8-slot pool with boilerplate.
 
-Reuse what is already on disk and in SQLite.  Do not add a vendor.
+### Gate: do not stop full-body upserts until this checklist is green
+
+All of these are **code**, not intent.
+
+1. **Split writer.**  Local artifact + full FTS + abstract persist without `storeDocument(full body)`.  Abstract is no longer behind body `documentComplete`.
+2. **New vector identity.**  `storeDocument` of abstract + N **section** docs, each small enough to complete.  Never truncate a full-body commit.
+3. **Ledger split.**  `ingested_accessions` = local-complete.  Highlight/section commits live in `vector_ingest_commits` only.  Audit carries `pinecone_write_class` + `pinecone_vector_count`.
+4. **Hydration on the money path (local-only).**  Strategy expands a highlight/section hit from `chunks.json` / local artifact / FTS.  **No EDGAR.**  Miss = receipt, fail-open.  Parent text comes from local parse, not Pinecone metadata.
+5. **FTS search contract.**  Do **not** add local-only occurrences for the catalyst query.  Accept highlights+sections as the dense set.  Keep `RAG_CORPUS_WIDE_LEXICAL` on only for rows that still have Pinecone occurrences (legacy full bodies + new section docs).
+6. **`corpus-reembed` updated in the same change.**  Default SEC pass re-embeds abstracts + selected section hashes only.  A highlight+signal accession is coverage for the whole filing; leftover FTS rows are **not** uploaded.
+7. **Transcript exception.**  Latest call for high-interest names still has either full vectors **or** a real transcript FTS mirror.  Summary-only is not enough (ROIC/EarningsCalls do not write body FTS today).
+8. **Experience-memory / fills / coaching** excluded from any purge (`DOC_TYPE_SOURCE_TAG` / legacy-purge exclusions in `corpus-reembed.ts`).
+9. **Eval on `retrieveContextDetailed`**, same query, same 8/1 limits, same 6k filings budget, held+top-3 vs scout.  Do not promote from `retrieveFusedContext`.
+10. **Abstract freshness.**  Regen on artifact `sha256` change and on amendment.  Reserve a deep Item 1A slot when a 10-K abstract is present.
+11. **Existing full-body vectors stay** until FTS counts match `chunk_count` / `chunks.json` and hydration is proven.  Then receipt-gated prune sized to the keep-set.
+12. **No embed-model flip** in this window.
+
+If item 1 is false, stopping body upserts is an outage.  If item 4 is false, Green/Red get thinner than today with no way to recover a missed sentence.  If item 6 is false, the next re-embed undoes the cost win.
+
+### Layer 1 — Local-complete (source of truth)
+
+Reuse what is already on disk and in SQLite.  The **change** is that this layer must commit **before** and **without** a full-body Pinecone upsert.
 
 | Asset | Store | Identity |
 | --- | --- | --- |
-| Raw filing HTML | `data/sec-artifacts/{paddedCik}/{accession}/{seq}-{doc}` via `readLocalArtifact` / `writeLocalArtifact` | CIK + accession + sequence + document name |
-| Artifact receipt | `sec_artifacts` (`accession, sequence, document_name, sha256, byte_count, raw_uri, parser_version`) | Same |
-| Full chunk text | `document_chunks_fts` (FTS5: `content_hash, symbol, source, accession, text`) | content_hash + symbol + source + accession |
-| Ingest ledger | `ingested_accessions (accession, doc_type)` and `sec_filings` | accession + form |
+| Raw filing HTML | `data/sec-artifacts/{paddedCik}/{accession}/{seq}-{doc}` | CIK + bare SEC accession + sequence + document name |
+| Worker body | `chunks.json` / `sections.json` next to the artifact | Same |
+| Artifact receipt | `sec_artifacts` | Same |
+| Full chunk text | `document_chunks_fts` | content_hash + symbol + source + **bare SEC accession** (pinned; see below) |
+| Local ledger | `ingested_accessions (accession, doc_type)` = **local-complete** | bare SEC accession + form |
 | Transcript cache | `earningscalls_transcripts.content` (immutable once non-null) | symbol + fiscal year/quarter |
-| Compact highlight | `document_abstracts` (`headline`, `summary_text`, `source_chunk_ids`, `model_used`) | `accession_or_event_id` + `source_type` |
+| Compact highlight | `document_abstracts` | `accession_or_event_id` (bare SEC accession) + `source_type` |
 | Structured cards | existing company-facts / insider / 13F / ARK tables | CIK / ticker |
 | Fills, activity, lots | existing execution/fill tables | proposal / fill id |
 
-On-demand body resolution order (new helper, no new store):
+`chunk_count` on `ingested_accessions` becomes **FTS row count** (planned local chunks).  Pinecone cardinality is **not** this column.  Ship in the same producer PR:
 
-1. `readLocalArtifact` / `earningscalls_transcripts.content` / FTS join on accession.
-2. If missing, `fetchFilingHtml` from the `sec_artifacts.raw_uri` or EDGAR directory, then write the artifact so the next call is local.
-3. Return text + accession + form + filedAt.  Never invent numbers.
+- `pinecone_write_class TEXT` (`full-body` \| `highlight+signal` \| `highlight-only`)
+- `pinecone_vector_count INTEGER` (what `storeDocument` actually completed)
 
-This is allowed by the owner constraint: retrieval names the accession, then a follow-up may fetch the body.
+`documentComplete` on a section/abstract commit means “12 of 12 signal chunks,” not “do not retry this 10-K.”  De-dup / retry of the **body** keys off local-complete.  De-dup of the **index** keys off `vector_ingest_commits` for the abstract/section document keys.
 
-### Layer 2 — Pinecone write policy (the actual change)
+#### FTS accession pin (`persistLocalComplete`)
 
-Introduce an explicit **Pinecone write class** on each producer.  Default after the trial snap is `highlight+signal`.  During the remaining trial, latest-only coverage of highlights is the first spend; full-body upserts are optional and **ranked last**.
+After the split there is no body `doc_id`.  Live ingest today writes FTS `accession = document.doc_id` (`${ticker}:${accession}:${form}`).  Lexical recall INNER JOINs FTS to `chunk_occurrences` on `content_hash + symbol + source + accession` (with GLOB around the bare SEC accession).  If local FTS and the section commit disagree on that key, even the 12 signal chunks are unjoinable.
+
+**Pin:**
+
+- Body FTS rows write `accession =` the **bare** SEC accession (`0001045810-26-000123`).
+- Section `storeDocument` `document_key` / occurrence `accession` must **contain** that bare accession so the existing GLOB hits: `o.accession = fts.accession` OR `o.accession GLOB (fts.accession || ':*')` OR `o.accession GLOB ('*:' || fts.accession || ':*')`.  Example: `${bare}:section:1A` or `${ticker}:${bare}:${form}:1A`.
+- Signal chunks use the **same** `content_hash` as the corresponding FTS body row (hash of chunk text).  `insertDocumentChunkFts` is idempotent per `(hash, symbol, source, accession)`; a second identity is a second row and is fine if named.
+
+PR A test: persist local-complete + section commit → `searchCorpusWideLexicalCandidates` returns the section occurrence, not zero.
+
+#### Two resolvers (do not share EDGAR)
+
+Normalize either a bare SEC accession or a managed key first (strip `ticker:` / trailing `:form` / worker `:seq:doc`).  Keep the dashed EDGAR accession.
+
+**`hydrateAccession` (strategy money path) — local-only:**
+
+1. Worker `chunks.json` / `sections.json`.
+2. `readLocalArtifact` via CIK from the CIK map or `sec_filings` / `sec_artifacts`.
+3. FTS `WHERE accession = ? OR accession GLOB …`.
+
+Miss = coverage/hydrate receipt.  **No `fetchFilingHtml`.  No `sec_artifacts.raw_uri` network.  No throw.**  Per-run budget: fail-open after **150 ms wall** or **8 accessions**, whichever first.  Strategy lock must not wait on sec.gov.  Chat `kb_search` uses this same local hydrate when it rides `retrieveContextDetailed`.
+
+**`resolveFilingBody` (Coach `get_filing_body` + console/iOS sheet) — may network:**
+
+Same local steps, then `sec_artifacts.raw_uri` / `fetchFilingHtml` + write-through.  Cap **20,000 characters after section extract**, never after dumping 2–10 MB HTML.  Tests cover both identities.
+
+`formatChunkWithProvenance` must print the **bare** SEC accession.  Today it prints no accession at all (`vector-db.ts` ~5923–5936).  Until the sheet exists, “reviewer on-demand” is not a mitigation for dropping vectors.
+
+### Layer 2 — Pinecone write policy
 
 ```ts
-/** What storeDocument is allowed to upsert for a market document. */
 export type PineconeWriteClass =
-  | "full-body"          // today's behavior (trial leftover / explicit override)
-  | "highlight-only"     // document-summary / earnings-summary / 8k-brief only
-  | "highlight+signal";  // highlight plus a bounded high-signal slice
+  | "full-body"          // today's funnel — stay here until the checklist is green
+  | "highlight+signal";  // abstract + N section docs, each a complete storeDocument
 
-export const PINECONE_SIGNAL_SECTIONS: Record<string, string[]> = {
-  "10-k": ["1A", "7", "7A", "8"],          // Risk Factors, MD&A, Market Risk, Financials
-  "10-q": ["2", "1A", "3"],                // MD&A, Risk Factors, Legal
-  "8-k": ["2.02", "5.02", "1.01", "8.01"],
-  "earnings-transcript": ["prepared", "qa"]
+/** Match against parsed itemCode, not raw chunk.section. */
+export const PINECONE_SIGNAL_ITEM_CODES: Record<string, string[]> = {
+  "10-k": ["1A", "7", "7A"],             // Risk Factors, MD&A, Market Risk.  Item 8 = FTS/hydrate only
+  "10-q": ["2", "1A", "3"],              // 10-Q Item 2 = MD&A (NOT 10-K Item 2 Properties)
+  "8-k": ["2.02", "5.02", "1.01", "8.01"], // only when WEB_SOURCE_SEC8K_FULL_BODY is on
+  "earnings-transcript": ["management"] // plus first N qa/analyst turns — see matcher
 };
 ```
 
-**What stays in Pinecone forever**
+#### `selectSignalChunks` matcher (implement this, not `section === "7"`)
 
-- `document-summary`, `earnings-summary`, `8k-brief` (one logical document, typically 1–3 vectors).
-- High-signal child chunks whose `section` / `itemCode` matches the table above, capped (proposed: **12 chunks or 20k characters of source text**, whichever first).  These are the chunks retrieval actually needs when the abstract is not enough.
-- `socratic-decision`, `coach-note`, `lesson`, and any other experience-memory / owner-coaching vector.  These are already compact state sketches (`experience-memory.ts`), not 10-K pages.  Do not highlight-replace them.
-- Fundamentals cards (`doc_type: "fundamentals"`) stay as today — they are one short vector.
+`chunkDocument` sets `section = \`${itemCode}. ${itemTitle}\`` (`chunk.ts` ~315), e.g. `"7. Management's Discussion…"`.  A strict `"7"` filter selects nothing.
 
-**What leaves the Pinecone *write* path (new documents)**
+1. Prefer the originating `sections[].itemCode` if the producer still has it.
+2. Else parse `chunk.section` by splitting on the first `". "`.  Case-fold.  Strip a leading `Item `.
+3. **Form-aware:** apply the `10-k` list only to 10-K chunks, the `10-q` list only to 10-Q chunks.
+4. 8-K: prefix-match (`2.02`, `5.02`, …) on the parsed code.  Only relevant when the full-body flag is on; the default 8-K write is already the brief.
+5. **Transcripts (ROIC):** `roleOfSpeaker` stamps `management` / `analyst` / `operator` / `qa` / `transcript`.  There is **no** `"prepared"` itemCode.  Signal = every `management` turn + the first **N=8** `qa`/`analyst` turns, capped at 12 chunks / 20k source chars.  Do **not** look for `splitEarningsTranscript`’s `"prepared"` slug on ROIC chunks.
+6. Default **Item 8 (financial statements) to FTS/hydrate only**.  Tables blow the 40,896-byte metadata soft cap and are a poor dense neighbor.  A later gold-set can add Item 8 lead paragraphs.
+7. Fixture tests in the first producer PR must run `selectSignalChunks` on **real** `chunkDocument` output from a 10-K fixture and a ROIC `speakerSections` fixture.
 
-- The remaining 10-K/10-Q body (exhibits boilerplate, signatures, certifications, repetitive XBRL prose).
-- Full earnings-call Q&A after the prepared-remarks + first-pass Q&A signal cap.
-- Historical 10-K bodies for names that already have a latest-year highlight.
+#### What stays in Pinecone
 
-Those pages remain in FTS + artifacts.  Hybrid retrieval (`routeRetrievalIntent` → FTS5) still finds “Item 8 goodwill impairment $412 million” by exact phrase.
+- `document-summary`, `earnings-summary`, `8k-brief` (own `doc_id`, typically 1–3 vectors).  Persist real `content_hash` / itemCode / bare accession on the abstract so hydrate is a lookup.
+- High-signal **section documents** (separate `storeDocument` per section or one small multi-section doc that still completes).  Cap **12 chunks or 20k characters** of source text.
+- **Latest full transcript** for `rankHighInterestSymbols` until a transcript FTS mirror exists.  History beyond latest stays local (ROIC already latest-then-deepen).
+- `socratic-decision`, `coach-note`, `lesson`.  Compact state sketches.  **Do-not-touch.**
+- Fundamentals cards.  One short vector.
 
-**What we do not put in Pinecone at all** (already true, keep it)
+#### What new documents stop writing to Pinecone (only after the checklist)
 
-- Company facts, Form 4, 13F, ARK: SQLite cards.
-- The fill tape, order blotter, and activity feed: SQLite.  A closed-lot *experience vector* may exist in addition, never as a substitute for the fill row.
+- Remaining 10-K/10-Q body (exhibits, signatures, certifications, Item 8 tables).
+- 8-K full-body pages outside 2.02/5.02/1.01/8.01, and only if that flag is on.
+- Transcript history beyond latest, and latest full calls for **non**-high-interest names once `earnings-summary` + management + Q&A-tops exist.
 
-### Layer 3 — Dossier assembly (how Green/Red see it)
+Those pages remain in FTS + artifacts **for hydrate and the filing sheet**.  They are **not** Green/Red lexical recall unless a pointer hydrates them.
 
-Replace “retrieve 8/1 chunks of whatever `filing_narrative` names” with a **summary-first assembler** that still uses `retrieveContextDetailed` for the signal slice.
+### Layer 3 — Dossier assembly
+
+Green/Red remain on `retrieveContextDetailed`.  That path is Pinecone cosine first.  The assembler adds SQLite abstracts and a **post-hit hydrate**.  It does not pretend FTS is a parallel retriever.
 
 ```ts
 export interface ProposerDossier {
   symbol: string;
   depth: "deep" | "scout";
   abstracts: Array<{ accession: string; sourceType: string; headline: string; summaryText: string }>;
-  chunks: RetrievedChunk[];          // already orderChunksForProposer'd
+  chunks: RetrievedChunk[];
   factsCard: string;
   insiderCard: string;
   coverage: { want: string[]; have: string[]; missing: string[] };
@@ -252,83 +336,100 @@ export async function assembleProposerDossier(symbol: string, depth: "deep" | "s
 
 Assembly rules:
 
-1. Load up to **N latest abstracts** from `getDocumentAbstractsForTicker` (proposed: deep = 4 types × latest 1; scout = latest 1 of any type).  These do **not** cost a Pinecone write and do not require the abstract to also be a retrieved vector.
-2. Run the existing dense+hybrid retrieve with `docType` narrowed to `document-summary`, `earnings-summary`, `8k-brief`, plus the high-signal native types.  Keep `orderChunksForProposer`.
-3. Deep remaining slots (8 − abstracts_already_inlined) fill from retrieved signal chunks, **deduped** against abstract `source_chunk_ids` so the model does not see the same MD&A paragraph twice.
-4. Scout stays 1 unit: prefer the newest abstract; if none, one retrieved chunk.
-5. Structured cards unchanged.
-6. Emit a coverage receipt (`have` / `missing` latest 10-K, 10-Q, 8-K, transcript).  Advisory only.
+1. Load latest abstracts from `getDocumentAbstractsForTicker`.  Deep = latest 1 per type (10-K, 10-Q, 8-K, transcript).  Scout = **one** newest abstract, truncated to **1,200 characters** (Key Decision 6).
+2. Inlined SQLite abstracts **consume slots** and **suppress** retrieved compact doc_types (`document-summary` / `earnings-summary` / `8k-brief`) with the same `accession_or_event_id`.  Remaining slots are **native section chunks only**.  `source_chunk_ids` are not used for this dedupe (they are synthetic `hl:…` ids today).
+3. Run `retrieveContextDetailed` with `docType` narrowed to compact types + native section-bearing types.  Keep `orderChunksForProposer`.
+4. **Hydrate** each winning hit via **`hydrateAccession` only** (local `chunks.json` / artifact / FTS).  If metadata has `content_hash` / itemCode / accession, pull parent/sibling text from that local load.  Do **not** call `resolveFilingBody`.  Do **not** hit EDGAR under the strategy lock.  Miss or budget trip = receipt, keep the retrieved section text.
+5. Deep: reserve **one slot** for Item 1A / risk-factor when a 10-K abstract is present, even if cosine ranked it out of the first 7.
+6. Scout stays 1 slot: the stub abstract, else one retrieved compact/section chunk.
+7. Structured cards unchanged, but they **count against the 24k filings family**.  Plan N abstracts + cards + signal together.
+8. Emit a coverage receipt.  Advisory only.
 
-Update `strategyInformationRouting` so `filing_narrative` defaults to `["document-summary","8-k","10-k","10-q"]` with summaries first in the filter list, and `earnings_transcript_narrative` to `["earnings-summary","earnings-transcript"]`.  The assembler, not the filter order, is the real gate.
+Update `strategyInformationRouting` so `filing_narrative` lists summaries first.  The assembler, not the filter order, is the real gate.
 
-Chat / human reviewer follow-up: add `get_filing_body({ accession, symbol })` next to `kb_search`.  It calls the Layer-1 resolver and returns a **bounded** body (proposed: 20k characters + section index), not a 10 MB HTML dump into the Coach context window.
+Eval: `scripts/eval/rag-production-eval.ts` via `retrieveContextDetailedWithStatus`.  Same 8/1 limits, same catalyst query, same 6k filings budget.  Do not promote from the fusion harness.
 
 ### Coverage policy (what we ingest, in what order)
 
-Already half-built:
+Already coded — do not invert it:
 
-- `rankDemandFirstSymbols` / `rankHighInterestSymbols` (`demand-first-symbols.ts`).
-- `sortBreadthFirst` (`sec-filings.ts`): newest 10-K, newest 10-Q, second 10-Q, … leftover history last.
-- ROIC two-pass: `phase: "latest"` then deepen held/watchlist (`roic-transcripts.ts`).
-- SEC seeder baseline: latest 10-K + latest 4 10-Qs (`SEC_INGEST_BASELINE_CORPUS_REVISION`).
+- `rankDemandFirstSymbols` / `rankHighInterestSymbols`.
+- `sortBreadthFirst` already skips Level 2–5 for the tail unless `deepenTickers` contains the symbol (`sec-filings.ts` ~1194–1214).
+- ROIC two-pass: `phase: "latest"` then deepen held/watchlist.
+- SEC seeder baseline: latest 10-K + latest 4 10-Qs.
+- 8-K full body default off.
+- FMP is not the live transcript budget.  Do not wait for it.
 
-Make the **same two-pass contract** universal and WU-aware:
-
-| Pass | Who | Documents | Pinecone class |
+| Pass | Who | Documents | Pinecone class (after checklist) |
 | --- | --- | --- | --- |
-| A. Latest-only | Entire 1,000-issuer manifest + policy universe | latest 10-K, latest 10-Q, latest material 8-K, latest transcript | `highlight+signal` |
-| B. Deepen | `rankHighInterestSymbols` only | extra 10-Qs, prior 10-K, extra transcripts (ROIC Individual 20 quarters already capped) | `highlight+signal` |
-| C. Trial leftover only | whatever WU remains above the $45 reserve after A+B | optional `full-body` for held names | `full-body` |
+| A. Latest-only | 1,000-issuer manifest + policy universe | latest 10-K, latest 10-Q, latest 8-K **brief**, latest transcript | `highlight+signal` (plus latest full call for high-interest until transcript FTS exists) |
+| B. Deepen | `rankHighInterestSymbols` only | extra 10-Qs, prior 10-K **highlights**, extra transcripts | `highlight+signal` |
+| ~~C. Trial leftover full-body~~ | — | — | **Deleted.**  Do not spend remaining credit on bodies we will not keep. |
 
-Pass C is how we “use the trial” without painting ourselves into a free-tier hole.  After 2026-08-30, Pass C is off.
+Pass A becomes cheap once the split writer lands.  Finish Pass A breadth (highlights + sections) before the 30th.  Do not finish a fat latest-1k full-body pass “because the credit is there.”
 
 ### Quantified budgets
 
-Assumptions (pinned to code, not marketing):
+Assumptions:
 
-- 1,000-issuer frozen manifest (`universe-manifest.ts` default `expectedIssuerCount`).
-- High-interest set ≈ 30–150 names (holdings + watchlists + technical watchlist).  Use **150** as the planning ceiling.
-- 10-K ≈ 175 chunks / 2,698 WU (live receipt).  10-Q ≈ 80 chunks / ~1,200 WU.  8-K ≈ 20 / ~300.  Transcript ≈ 40 / ~600.
-- Highlight document ≈ 8 × 1,800 chars + headline ≈ 15 kB → typically **1–3 vectors / 15–50 WU**.
-- High-signal slice ≈ 8–12 chunks / ~150 WU.
-- Combined `highlight+signal` ≈ **180 WU per document**, **~720 WU per name** for four latest documents.
-- Prompt: 4 chars/token (`evidence-budget.ts` default).  One maxed highlight = 14,400 chars ≈ 3,600 tokens.  Typical filled highlight after diversity is closer to 6–10k chars ≈ 1,500–2,500 tokens.
+- 1,000-issuer frozen manifest.
+- High-interest ceiling **150**.
+- 10-K chunk count: **planning 150–200**; **live worker ~900+** (`FTS_MIRROR_INCIDENT_CHUNKS = 933`).  The 175 / 2,698 figure is a fuse-skip receipt, not “a large 10-K.”
+- WU/record: ~8 pending; **~16 delivered** with two-phase managed commit.
+- Highlight document ≈ 1–3 vectors / 15–50 WU delivered.
+- Section slice ≈ 8–12 chunks × ~16 WU ≈ **130–190 WU delivered** per document.
+- Combined `highlight+signal` ≈ **~200 WU delivered per document**, **~800 WU per name** for four latest documents.
+- Prompt: 4 chars/token.  Scout stub = 1,200 chars ≈ 300 tokens.
 
 #### Write units
 
-| Scenario | WU | Trial 2.5M/day | Free 60k/day |
+| Scenario | Delivered WU (use 16/record for bodies) | Trial effective ~4.25M/day | Free 60k/day |
 | --- | --- | --- | --- |
-| 1,000 names × latest 10-K **full body** | 2.7M | ~1.1 days | **45 days** (and that is only 10-Ks) |
-| 1,000 names × latest four docs **full body** | ~4.8M | ~2 days | **80 days** |
-| 1,000 names × latest four docs **highlight+signal** | ~720k | <1 day | **12 days** |
-| 1,000 names × latest four docs **highlight-only** | ~80–200k | <1 day | **2–4 days** |
-| Deepen 150 names × ~8 extra docs highlight+signal | ~216k | <1 day | **4 days** |
-| Incremental day (≈30 new 8-Ks + 20 new calls, highlight+signal) | ~9k | noise | **fits easily** (15% of daily fuse) |
-| Historical every 10-K body for 1,000 names × 5 years | ~13.5M | 5.4 days | **225 days** — this is the trap |
+| 1,000 × latest 10-K **full body** @ 200 chunks | ~3.2M | <1 day | **53 days** |
+| 1,000 × latest 10-K **full body** @ 900 chunks | ~14.4M | ~3.4 days | **240 days** |
+| 1,000 × latest four docs **full body** @ 200 avg | ~6–8M | ~2 days | **100+ days** |
+| 1,000 × latest four docs **highlight+signal** | ~800k | <1 day | **14 days** |
+| Deepen 150 names × ~8 extra docs highlight+signal | ~240k | <1 day | **4 days** |
+| Incremental day (≈30 new 8-K briefs + 20 new calls) | ~6–10k | noise | **fits** (~15% of 60k) |
 
-Remaining trial credit above the $45 reserve is ~$193 ≈ **48M WU**.  That is enough to full-body the universe several times.  The binding constraint is **not** “can the trial finish latest-only full bodies?”  It can.  The binding constraint is **what we are stuck hosting and refreshing after Aug 30**.  Every full-body 10-K we write now is a vector we cannot afford to re-embed or to keep expanding.
+Highlight+signal WU is capped and still holds.  Full-body planning at 175 chunks was a **lower bound**; that **strengthens** the case against full-body, it does not weaken it.
+
+Show both trial columns: configured Infisical **2.5M** vs effective paced **~4.25M** while above the $45 reserve.
+
+#### Storage (the binding post-trial number)
+
+| Corpus | Records (order of magnitude) | Fits free ~250k / ~2 GB? |
+| --- | --- | --- |
+| Already written this trial (~$62 / 15.5M WU / ~16 WU per delivered record) | **~0.5–1.0M** | **No** |
+| Latest-1k full 10-Ks @ 200 chunks | ~200k | Borderline (leaves no room for 10-Q/transcripts/experience) |
+| Latest-1k full 10-Ks @ 900 chunks | ~900k | **No** |
+| Keep-set: 1,000 × 4 docs × ~15 vectors (abstract + sections) | **~60k** | **Yes** |
+| Plus experience-memory / lessons / fundamentals | tens of k | Yes, if we prune bodies |
+| Plus latest full transcript for 150 high-interest names @ ~30 chunks | ~4.5k | Yes |
+
+**Decision (Key Decision 1):** Intent after 2026-08-30 is the **free-tier keep-set (~60–80k records)**.  That makes a receipt-gated prune **calendar-critical**, not optional.  Existing bodies stay until hydration is proven.  If prune cannot land safely by the snap, **stay on paid storage** (Starter/Standard) and only snap the **write** fuse — do not evict an unproven index.  Operator must pick that fallback explicitly; the default plan is free keep-set + prune.
+
+Measure live record count / GB from `/api/admin/rag-coverage` and the Pinecone console before the prune PR.  Do not guess the current index size in code.
 
 #### Prompt tokens (one strategy run)
 
-| Dossier shape | Deep name (chars / tokens) | Scout name | 3 deep + 20 scout |
+| Dossier shape | Deep name | Scout name | 3 deep + 20 scout + cards |
 | --- | --- | --- | --- |
-| Today, 8 raw body chunks @ 1,800 | 14.4k / 3.6k | 1.8k / 0.45k | **79k chars** — **already over** the 24k filings family budget, so most scout/deep text is omitted |
-| Today, summaries-first (already merged on this branch) | still 8 slots; summaries occupy the first | 1 slot | better, but a 10-K page can still fill remaining deep slots |
-| Proposed: 1–4 abstracts + ≤4 signal chunks deep; 1 abstract scout | ~12–16k / 3–4k deep, but **shared** abstracts are shorter in practice (~8k / 2k) | ~6–10k / 1.5–2.5k if we inline a full abstract, or we cap scout at 2.5k | **fits the 24k family budget** if scout abstracts are truncated to ~800–1,200 chars |
+| Today, 8 raw body chunks @ 1,800 | 14.4k / 3.6k | 1.8k / 0.45k | **79k+ chars** — over the 24k family; scouts/cards dropped |
+| Proposed: ≤4 abstracts + ≤4 section chunks deep; **1,200-char stub** scout | ~12–16k typical ~8k | 1.2k | **fits 24k** if cards stay compact |
 
-The 24k-char filings budget is the real proposer interface.  Designing Pinecone around “the LLM might want the whole 10-K” is paying WUs for text the evidence budget will drop.
+A full 8-highlight abstract is ~6–10k chars.  Twenty of those starve the three deep names.  That is why the scout stub is a Key Decision, not an open question.
 
 #### SQLite / disk
 
 | Store | Latest-only 1,000 names | Notes |
 | --- | --- | --- |
-| `document_chunks_fts` full text | ~1.0–1.5 GB | 175 × ~2 KB × 1,000 10-Ks ≈ 350 MB, plus 10-Q/8-K/transcripts |
-| `document_abstracts` | ~50–80 MB | 14 KB × 4 types × 1,000 |
-| Raw HTML artifacts | **2–10 GB** | already written by `writeLocalArtifact`; 160 GB NVMe box, `/` ~45% used as of 2026-08-11 |
-| Experience / fills | unchanged | not duplicated into Pinecone as filings |
-| Current R2 weekly snapshot | 4.67 GB (`app-2026-08-16.db`) | FTS + artifacts growth is the term to watch; artifacts are **files**, not SQLite, unless we later choose to inline them |
+| `document_chunks_fts` full text | ~1–3 GB | 900 × ~2 KB × 1,000 10-Ks ≈ 1.8 GB at the fat end |
+| `document_abstracts` | ~50–80 MB | |
+| Raw HTML + `chunks.json` | **2–10 GB** | already written; 160 GB NVMe box |
+| Current R2 weekly snapshot | 4.67 GB | artifacts are files, not SQLite, unless inlined later |
 
-FTS already holds the body.  Stopping Pinecone full-body writes does **not** grow SQLite.  It stops a second, more expensive copy.
+Stopping Pinecone full-body writes does **not** grow SQLite.  Local-complete still writes FTS; that is CPU/disk, not WU.
 
 ### Sequence: one deep name on a strategy run
 
@@ -338,256 +439,298 @@ sequenceDiagram
   participant A as assembleProposerDossier
   participant DB as SQLite abstracts + cards
   participant V as retrieveContextDetailed
-  participant FTS as document_chunks_fts
   participant PC as Pinecone
+  participant H as hydrateAccession
+  participant Local as chunks.json / artifact / FTS
   participant G as Green / Red
 
   S->>A: symbol, depth=deep
   A->>DB: latest abstracts + facts/13F/Form4/ARK
-  A->>V: query + docTypes highlight+signal
-  V->>PC: dense top-K
-  V->>FTS: hybrid BM25
-  V-->>A: ordered chunks
-  A-->>S: dossier + coverage receipt
-  S->>G: retrievedFinancialContext (≤24k chars)
-  Note over G: Follow-up (chat / future tool): get_filing_body(accession)
+  A->>V: catalyst query, compact+section docTypes
+  V->>PC: dense cosine first
+  Note over V: FTS add-on only if index+embed live<br/>and the row has a committed occurrence
+  V-->>A: ordered section / summary hits
+  A->>H: winning pointers local-only
+  H->>Local: content_hash / itemCode / bare accession
+  Note over H: no EDGAR — miss is a receipt
+  H-->>A: parent / 1A slot / bounded sibling text
+  A-->>S: dossier + coverage (≤24k family incl. cards)
+  S->>G: retrievedFinancialContext
 ```
+
+FTS is **not** drawn as an equal sibling of Pinecone on the money path.
 
 ## API / Interface Changes
 
-No public HTTP API for trading users.  Additive internals + one Coach tool + admin receipts.
-
-### New / changed functions (proposed homes)
+No public HTTP API for trading users.  Additive internals + Coach tool + console/iOS sheet + admin receipts.
 
 | Function | File | Change |
 | --- | --- | --- |
-| `pineconeWriteClass()` | new `src/lib/rag/pinecone-write-class.ts` | reads `RAG_PINECONE_WRITE_CLASS` (`full-body` \| `highlight+signal` \| `highlight-only`), default `full-body` during trial calendar, `highlight+signal` after snap |
-| `selectSignalChunks(chunks, formHint)` | same | filters `chunkDocument` output before `storeDocument` when class ≠ `full-body` |
-| `assembleProposerDossier` | new `src/lib/rag/proposer-dossier.ts` | SQLite abstracts + retrieve |
-| `resolveFilingBody(accession)` | `src/lib/web-sources/sec-filings.ts` | local artifact → FTS → EDGAR |
-| `get_filing_body` | `src/lib/chat/tools.ts` | Coach tool, read-only, 20k char cap |
-| `strategyInformationRouting` | `information-routing.ts` | document type lists put summaries first (comment already claims this) |
-| Admin `/api/admin/rag-coverage` | existing route | add `store: "pinecone" \| "fts" \| "abstract"` counts and trial-window already present |
+| `pineconeWriteClass()` | new `src/lib/rag/pinecone-write-class.ts` | reads `RAG_PINECONE_WRITE_CLASS`.  Default **`full-body` until producers honor the knob**.  Not calendar-aware by itself |
+| `selectSignalChunks(chunks, formHint)` | same | matcher above; tests on real `chunkDocument` / ROIC fixtures |
+| `persistLocalComplete(...)` | `sec-filings.ts` / worker | artifact + full FTS (bare accession) + abstract **without** body `storeDocument` |
+| `assembleProposerDossier` | new `src/lib/rag/proposer-dossier.ts` | abstracts + retrieve + local hydrate |
+| `hydrateAccession` | `sec-filings.ts` | **local-only** dual-identity lookup; 150 ms / 8-accession fail-open; never EDGAR |
+| `resolveFilingBody` | `sec-filings.ts` | local then optional EDGAR write-through; Coach / sheet only |
+| `get_filing_body` | `src/lib/chat/tools.ts` | Coach tool, read-only; may call `resolveFilingBody` |
+| Filing sheet | `app/console/**` + `ios/SocraticTrade/**` | open local artifact / extracted sections by accession |
+| `strategyInformationRouting` | `information-routing.ts` | summaries first in the type list |
+| `reembedSecFilings` | `corpus-reembed.ts` | honor write class; highlight+signal commit covers the accession |
+| Admin `/api/admin/rag-coverage` | existing | `store: pinecone \| fts \| abstract`, record count / GB, write class |
 
-`storeDocument` itself does **not** grow a second code path for embeddings.  Producers slice the `ChunkInput` they pass in.  That keeps the managed-commit ledger, WU fuse, and `documentComplete` proof unchanged.
-
-### Prompt contract
-
-`retrievedFinancialContext` stays the field name.  Each dossier header should name accessions so a later tool call can resolve them:
-
-```
-### RAG Dossier for NVDA
-[document-summary · NVDA · 2026-05-28 · acc 0001045810-26-000123]
-...extractive highlights...
-[10-K · Item 7 MD&A · NVDA · 2026-05-28 · rel 0.81]
-...signal chunk...
-```
-
-`formatChunkWithProvenance` already prints doc_type / section / symbol / date / rel.  Add accession when `metadata.accession` is present (small, independently mergeable).
+`storeDocument` does **not** grow a “keep 12 of 400” mode.  Producers pass a **small** `ChunkInput`.  Completeness stays honest.
 
 ## Data Model Changes
 
-**No new vendor tables.**  One optional additive column if we want coverage queries without parsing Pinecone:
+In the **same PR as the producer split** (not later):
 
 ```sql
--- optional, PR-sized, only if admin coverage cannot derive this from ingested_accessions.chunk_count
 ALTER TABLE ingested_accessions ADD COLUMN pinecone_write_class TEXT NOT NULL DEFAULT 'full-body';
+ALTER TABLE ingested_accessions ADD COLUMN pinecone_vector_count INTEGER NOT NULL DEFAULT 0;
 ```
 
-Prefer **not** shipping that in the first PR.  `document_abstracts.model_used`, `ingested_accessions.chunk_count`, and FTS row counts already distinguish “body mirrored” from “highlight exists.”
+Meaning after the split:
 
-`document_abstracts.source_type` stays `"10k-delta" | "10q-delta" | "earnings-summary" | "8k-brief"`.  FMP transcripts should start writing `earnings-summary` like ROIC/EarningsCalls.
+| Field | Means |
+| --- | --- |
+| row exists | **local-complete** (artifact + planned FTS rows + abstract when extractive text ≥ 80 chars) |
+| `chunk_count` | FTS / planned local chunks |
+| `pinecone_write_class` | what we intended to index |
+| `pinecone_vector_count` | what Pinecone actually completed |
+| `vector_ingest_commits` for `abstract:…` / section keys | index-complete for that small doc |
 
-No migration of existing Pinecone ids.  Old full-body vectors remain retrievable until an explicit prune PR.
+Also persist real `content_hash` values in `document_abstracts.source_chunk_ids` (or a sibling JSON) going forward so hydrate is not guessing from `hl:1A:0`.
+
+No new vendor tables.  No migration of existing Pinecone ids until the prune PR.
 
 ## Alternatives Considered
 
 ### A. Keep embedding every body (status quo)
 
-- **Pros:** Dense ANN can theoretically surface an obscure footnote; no producer changes; trial dollars get spent.
-- **Cons:** 4.8M WU for latest-only four-doc coverage; 80 free-tier days to rebuild; 8-chunk deep pass + 24k budget already drop most of those vectors on the floor; this is the path that tripped the 2.5M fuse while $238 remained.
-- **Verdict:** Acceptable only as Pass C (trial leftover on held names).  Not the steady state.
+- **Pros:** Dense ANN can surface an obscure footnote; no producer changes.
+- **Cons:** Storage hangover (~0.5–1M records already, fat 10-Ks at 900+ chunks); 60k/day cannot rebuild; 8-chunk + 24k budget drop most body text; this tripped the 2.5M configured fuse while $238 remained.
+- **Verdict:** Acceptable only as the **pre-checklist** default.  Not the keep-set.  Not a leftover Pass C.
 
 ### B. LLM-summarize every document on ingest
 
-- **Pros:** Possibly better prose than extractive highlights; can emit structured guidance/drivers/risks into the unused `guidance_json` / `drivers_json` / `risks_json` columns.
-- **Cons:** Blocks volume (one LLM call per filing); costs OpenRouter tokens on the ingest path; requires an LLM runtime key the owner just banned from Infisical; ungrounded numbers become “facts” (explicitly rejected in `docs/design/earnings-rag.md`).
-- **Verdict:** Rejected unless a gold-set shows extractive highlights miss catalysts **and** the call is bounded (e.g. 8-K Item 2.02 only, daily cap).  Even then the LLM output is a **child** of the extractive abstract, never the only store.
+- **Pros:** Possibly better prose; could fill unused `guidance_json` columns.
+- **Cons:** Blocks volume; OpenRouter on the ingest path; LLM keys banned from Infisical; ungrounded numbers (rejected in `docs/design/earnings-rag.md`).
+- **Verdict:** Rejected unless a gold-set shows extractive highlights miss catalysts **and** the call is bounded.
 
-### C. Pinecone-only highlights, no FTS body
+### C. Pinecone-only highlights, no local body / no hydrate
 
-- **Pros:** Smaller disk.
-- **Cons:** Loses exact-phrase recall the hybrid stack already depends on; on-demand fetch would always hit EDGAR; contradicts “prefer existing tables.”
-- **Verdict:** Rejected.
+- **Pros:** Smaller disk; simplest retrieve.
+- **Cons:** Loses the one sentence the scorer skipped; Red cannot dissent on an unseen clause; Chat “what does the 10-K say about the revolver?” fails; no reviewer sheet mitigation.
+- **Verdict:** Rejected.  Local body + hydrate is the recovery path.
 
-### D. Move the vector index to SQLite/sqlite-vec
+### D. Local-only FTS occurrences so lexical recall works without Pinecone
 
-- **Pros:** Zero Pinecone WU after migration.
-- **Cons:** New operational surface on the 16 GB Hetzner box; no managed ANN; full re-embed; fights the existing trial/fuse/receipt machinery.
-- **Verdict:** Out of scope.  Revisit only if free-tier WU cannot hold incremental `highlight+signal` (~9k/day).  That bar is not close.
+- **Pros:** Would make “FTS is the body” true for retrieve.
+- **Cons:** The live strategy query is a boilerplate magnet once OR-quoted.  Injecting those hits into the 8-slot pool **crowds out** the abstract.  Also requires a new receipt type and a change to `filterMatchesForCommittedReceipts`.
+- **Verdict:** Rejected for v1.  Hydrate-from-pointer instead.  Revisit only with a **section-shaped** query.
 
-### E. Proposed: local canon + operational Pinecone (`highlight+signal`)
+### E. Move the vector index to sqlite-vec
 
-- **Pros:** Matches the 8/1 dossier and the 24k budget; FTS keeps lexical recall; trial leftover can still full-body held names; free-tier incremental ingest fits; no new vendor; extractive path already shipped.
-- **Cons:** Dense recall of non-signal sections weakens; must keep artifact/FTS durability honest; FMP abstract gap must close or those names look empty to the assembler.
+- **Pros:** Zero Pinecone WU/storage after migration.
+- **Cons:** New ops on the 16 GB box; full re-embed; fights existing receipts.
+- **Verdict:** Out of scope.
+
+### F. Proposed: split writer + highlight+signal Pinecone + money-path hydrate
+
+- **Pros:** Matches 8/1 + 24k; keep-set fits free ~60k records; incremental ~9k WU/day; no new vendor; extractive path already shipped; does not darken new names.
+- **Cons:** Requires a real writer split and hydrate before the knob flip; Chat still weaker than full-body ANN on low-keyword notes unless someone hydrates a term FTS can MATCH.
 - **Verdict:** This design.
 
 ## Security & Privacy Considerations
 
-- Filings and transcripts are **shared, app-funded** (`userId='local'` → `scope:'shared'`).  That does not change.  Do not copy private experience-memory into the shared highlight path.
-- Experience-memory and coach notes stay on the existing tenant/scope filters.  A highlight rewrite must never re-scope a private lesson to `shared`.
-- `get_filing_body` is read-only and session-auth like `kb_search`.  It returns public EDGAR/transcript text, still prompt-injection-untrusted (`containPromptText` source `"rag"`).
-- FMP transcript rights (`FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED`) still gate **display and retrieval** of FMP-derived text.  An extractive abstract of an FMP body is still FMP-derived and must carry the same rights claim (`fmpDerivedProvenance` already exists on the strategy path).
-- On-demand EDGAR fetch uses the existing `secUserAgent` + polite limiter.  Do not open a parallel unthrottled fetch from the Coach tool.
+- Filings and transcripts are **shared, app-funded** (`userId='local'` → `scope:'shared'`).  Unchanged.
+- Experience-memory and coach notes stay on existing tenant/scope filters.  A highlight rewrite must never re-scope a private lesson to `shared`.  Purge/re-embed must list them as do-not-touch.
+- `get_filing_body` and the filing sheet are session-auth, read-only, still `containPromptText` source `"rag"`.
+- FMP-derived abstracts stay FMP-derived (`fmpDerivedProvenance`).
+- On-demand EDGAR fetch uses `secUserAgent` + the polite limiter.  No parallel unthrottled Coach fetch.
 - No new secrets.  No Infisical LLM keys.
 
 ## Observability
 
-Emit or extend (all advisory):
-
 | Signal | Where | Why |
 | --- | --- | --- |
-| `pinecone_write_class` on `sec_filing_ingest` / `roic_transcript_ingested` audits | existing `audit(...)` payloads | prove a document did not silently full-body after snap |
-| WU per `doc_type` on `/api/admin/rag-coverage` | route already has `trialWindow` | catch “we are embedding 10-K bodies again” |
-| Abstract coverage: tickers missing `document_abstracts` for latest 10-K/10-Q/transcript | same route | Pass A completeness |
-| FTS-vs-Pinecone chunk count per accession | admin only | detect “highlight in SQLite, nothing retrievable” |
-| Dossier `coverage.missing` on `rag_retrieval_status` | strategy already persists typed status rows | Green/Red honesty |
-| Daily incremental WU vs 60k | existing fuse + Sentry 6h dedup | already works; do not raise the fuse |
+| `pinecone_write_class` + `pinecone_vector_count` on ingest audits | `sec_filing_ingest` / `roic_transcript_ingested` | prove a document did not silently full-body |
+| Pinecone record count / GB vs 250k / 2 GB | `/api/admin/rag-coverage` | storage, not just WU |
+| Abstract coverage: tickers missing latest 10-K/10-Q/transcript abstract | same | Pass A |
+| FTS row count vs `chunk_count` vs `pinecone_vector_count` | same | “locally complete, 12 vectors, 175 FTS” |
+| Dossier `coverage.missing` | `rag_retrieval_status` | Green/Red honesty |
+| Hydrate receipts (attached / missed parent / missing artifact) | strategy audit | prove item 4 of the checklist |
+| Daily incremental WU vs 60k **and** effective trial ~4.25M | existing fuse | already works |
+| Re-embed skipped-because-highlight+signal counts | `corpus-reembed` audit | catch a silent undo |
 
-Do not page on “abstract shorter than 80 chars” as a trading halt.  That is a skip (`summary_too_short`) and a coverage hole.
+Do not page on `summary_too_short`.  Do not halt trading on a coverage hole.
 
 ## Rollout Plan
 
-Split by **calendar**, not by hope.
+Today is 2026-08-16.  Trial ends 2026-08-30 (~14 days).  Calendar beats independently-mergeable sprawl.
 
-### During the remaining trial (now → 2026-08-30, full-steam until ~$45)
+### Critical path (must reach `main` before anyone flips the knob)
 
-1. Do **not** raise `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` above 2.5M.
-2. Finish **Pass A** (latest highlight+signal for the 1,000-name universe + policy universe) before any historical 10-K body.
-3. Close the FMP abstract gap so every transcript producer writes `earnings-summary`.
-4. Prefer `sortBreadthFirst` / ROIC `phase: "latest"` / demand-first rank.  Already on this branch for filings+ROIC.
-5. Spend leftover trial WU above the reserve on **Pass B** (held/watchlist history as highlight+signal), then optional **Pass C** full-body for currently held names only.
-6. Keep retrieval unchanged until the assembler PR lands.  Summaries-first ordering is already in `orderChunksForProposer`.
+Sequence is **A → B → Infisical flip**.  PR A is inert.  Do not flip after A alone.
 
-### After the free-tier snap (2026-08-30, automatic in `pinecone-trial-window.ts`)
+**PR A — Split writer + honor highlight+signal + re-embed guard.**  One mergeable unit (the old PR 1+4+re-embed).
 
-1. Effective caps: 60k WU/day, 20k texts/day, 1.6M WU/month if `PINECONE_MONTHLY_WU_BUDGET` is unset.
-2. Default write class becomes `highlight+signal`.  `full-body` requires an explicit env override.
-3. Incremental producers (8-K, new 10-Q, new call) must preflight `hasPineconeWriteBudget` (already wired on this branch).
-4. Do not start a corpus-wide re-embed.  Old full-body vectors remain until a later prune PR.
-5. Deepen history only for `rankHighInterestSymbols`, and only as highlights.
+- `persistLocalComplete` (artifact + full FTS on the **bare** SEC accession + abstract) **before** any body/section `storeDocument`.
+- `selectSignalChunks` + `pineconeWriteClass()`.  Default remains **`full-body`** (inert) until an operator sets the env after B.
+- When `RAG_PINECONE_WRITE_CLASS=highlight+signal`, producers `storeDocument` only abstract + section docs whose `document_key` **contains** the bare accession.  Local-complete still runs.
+- `corpus-reembed` treats a highlight+signal commit as accession coverage; leftover FTS rows are not uploaded.  Test: a highlight+signal accession does not re-upsert 175/933 body chunks.  Test: local-complete + section commit is visible to `searchCorpusWideLexicalCandidates`.
+- Ledger columns + audit fields in **this** PR.
+- Transcript exception: high-interest latest call still full-body (or land a transcript FTS mirror in the same PR).
+- **Verify:** sec-filings + worker + roic + corpus-reembed tests as listed below.
+
+**PR B — Money-path hydrate + dossier assembler (flip gate).**
+
+- `assembleProposerDossier`, 1,200-char scout stub, abstract/slot suppression, reserved 1A, **local-only** `hydrateAccession` (no EDGAR).
+- Flag `RAG_PROPOSER_DOSSIER` default on after tests; `off` restores the raw 8/1 loop.
+- Eval on `retrieveContextDetailed`.
+
+**Operator flip (dated rollout step, not a code PR):** after **PR A and PR B** are on `main` and checklist items **1–4 and 6–8** are green, set `RAG_PINECONE_WRITE_CLASS=highlight+signal` in Infisical.  Do that before or with the 2026-08-30 write snap.  Do **not** make `pineconeWriteClass()` silently flip on Aug 30 while producers still ignore it (that would lie in admin coverage).  Do **not** flip after A if B has not landed.
+
+### Same window, not on the flip critical path
+
+**PR C — Coach `get_filing_body` + dual-identity resolver + accession in provenance + console/iOS sheet.**
+
+- Resolver tests for bare vs managed keys.
+- Website desktop + phone widths.  No `/mobile`.
+
+**PR D — FMP abstract writer** (old PR 2).  Keep the work; **not** the second merge.  ROIC/EarningsCalls already write `earnings-summary`.  Gate “transcript coverage” on those sources first.  Bounded local backfill of old FMP rows is still worth doing so the assembler is not empty on leftover FMP accessions.
+
+### Calendar storage (after hydrate is proven, before or at snap)
+
+**PR E — Receipt-gated prune inventory, then a follow-up delete.**
+
+- Inventory-only first (dry-run).  Delete Pinecone records whose `doc_type` is `10-k`/`10-q`/`earnings-transcript` **and** whose section is outside the signal table **and** whose accession is local-complete with a current abstract.
+- Never delete experience-memory / lesson / coach-note / fundamentals.
+- Never delete FTS rows or artifacts.
+- Size the remaining index to **≪ 250k** if the owner confirms free-tier storage.  If not confirmed, skip delete and stay paid.
+
+### During the remaining trial (now → 2026-08-30)
+
+1. Do **not** raise the Infisical `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` above 2.5M.  Effective paced ~4.25M is already above that.
+2. Land PR A (inert `full-body`).  Land PR B (local hydrate).  **Then** flip the env.  Finish Pass A as **highlight+signal**, not as full bodies.
+3. Do not start a fat latest-1k full-body pass.  Do not flip the embed model.  Do not invert latest-then-deepen.
+4. Hold the $45 reserve.
+
+### After the free-tier snap
+
+1. Write fuse 60k / 20k texts / 1.6M monthly if env monthly is 0.  `maybeAdvisePineconeTrialRollback` already snaps **write** knobs.
+2. Storage does **not** snap itself.  Either PR E has reduced the index to the keep-set, or we are still on paid storage by explicit fallback.
+3. Incremental producers preflight `hasPineconeWriteBudget` (already on this branch).
+4. Deepen history only for `rankHighInterestSymbols`, highlights+sections only.
 
 ### Rollback
 
-- Set `RAG_PINECONE_WRITE_CLASS=full-body` (or delete the env) to restore today’s upsert set.  FTS and artifacts are unchanged either way.
-- Assembler behind a default-on flag `RAG_PROPOSER_DOSSIER=off` restores the raw 8/1 `retrieveContextDetailed` loop.
-- Trial calendar off: `PINECONE_TRIAL_ENDS_AT=off` (already documented).  Does not restore full-body writes if the write-class default has snapped.
+- `RAG_PINECONE_WRITE_CLASS=full-body` (or unset) restores today’s upsert set.  Local-complete is additive and can stay.
+- `RAG_PROPOSER_DOSSIER=off` restores the raw 8/1 loop.
+- `PINECONE_TRIAL_ENDS_AT=off` disables the write snap.  It does not restore deleted vectors.
 
 ## Key Decisions
 
-1. **Canonical store is local SQLite + the sec-artifacts volume.**  Pinecone is an operational index, not the document archive.  Full 10-K/10-Q/transcript text already lives in `document_chunks_fts` and `data/sec-artifacts/`.  We stop pretending a third copy in Pinecone is required for Green/Red.
-2. **No ingest-path LLM.**  `extractive-highlights-v2` is the highlight engine.  A generative brief is out of scope until a gold-set shows the extractive path misses trade-relevant facts **and** the extra spend is capped.
-3. **Every filing/transcript type gets a compact highlight.**  10-K → `10k-delta` / `document-summary`.  10-Q → `10q-delta`.  8-K → `8k-brief`.  Transcripts → `earnings-summary`.  FMP is the missing writer and must be closed.  App-owned fills, activity, performance, and experience-memory are the explicit exception: full records stay in SQLite; episodic vectors stay full state sketches.
-4. **Pinecone write class defaults to `highlight+signal` after the trial.**  Highlight plus MD&A / Item 1A / Item 2.02 / prepared-remarks (capped).  Not highlight-only (dense recall of the catalyst section still matters) and not full-body (WU math).
-5. **Proposer dossier is SQLite-abstract-first, then a few retrieved signal chunks.**  Deep = 8 slots, scout = 1 slot, filings family = 24k chars.  `orderChunksForProposer` stays.  Green and Red keep evidence parity.
-6. **Coverage is latest-only universe, then deepen high-interest names.**  Same shape ROIC already uses.  Historical full-body 10-K embedding is how you burn a trial and then cannot refresh.
-7. **On-demand body fetch is a named-accession follow-up, not a prompt default.**  Local artifact, then FTS, then polite EDGAR.  Coach tool `get_filing_body`.  Optional later Green/Red tool if a run needs a cited accession.
-8. **Prefer existing tables over a new store.**  `document_chunks_fts`, `document_abstracts`, `sec_artifacts`, `ingested_accessions`, `earningscalls_transcripts`.  Optional `pinecone_write_class` column only if coverage queries need it.
-9. **Trial dollars buy coverage breadth, not a second copy of Item 15 exhibits.**  Full-steam until ~$45 remains (`PINECONE_TRIAL_RESERVE_USD`).  After snap, 60k WU/day is enough for incremental highlights (~9k/day) plus a slow deepen.
-10. **Missing corpus is a receipt, never a trade block.**  Harden correctness of *what was shown*, not obedience.
+1. **Post-trial binding constraint is Pinecone storage (~2 GB / ~250k records), not 60k WU/day.**  Intent is a free-tier **keep-set** (~60–80k records: abstracts + N sections + experience-memory + latest high-interest transcripts).  Receipt-gated prune is calendar-critical for that intent.  If prune cannot land safely, stay on **paid storage** and only snap the write fuse.  Do not evict blindly.
+2. **Split the ingest writer before changing what Pinecone holds.**  Local-complete (artifact + full FTS + abstract) must not require `storeDocument(full body)`.  Vector-index is a different, small, complete commit.  Until that seam exists, keep writing what we write today.
+3. **After the cut, Green/Red/Chat semantically see abstracts + the capped section set only.**  FTS is a local canon and a hydrate source, not live lexical recall of non-occurrence rows.  Do not cite `search-fusion.ts`.  Do not add a local-only FTS join on the catalyst query.
+4. **Money-path hydrate is required before the knob flip, and it is local-only.**  Strategy expands winning pointers from `chunks.json` / artifact / FTS.  **No EDGAR under the strategy lock.**  Miss or budget trip = receipt.  Parent text comes from local parse.  Reserve a deep Item 1A slot.  Coach / console / iOS may call `resolveFilingBody` (EDGAR allowed).  Sequence is **A → B → Infisical flip**.
+5. **No ingest-path LLM.**  `extractive-highlights-v2` stays.  Regen abstracts on artifact `sha256` change, not only `model_used`.  Persist real `content_hash` on highlights.
+6. **Scout is a 1,200-character abstract stub (one slot).**  Not a full 8-highlight dump.  Structured cards share the 24k filings family; plan them together.  Deep = 8 slots after inlined abstracts suppress duplicate compact vectors; remaining slots are section chunks only.
+7. **Signal matcher is form-aware and parses `itemCode` from `"{code}. {title}"`.**  Transcripts use ROIC `management` + first N `qa`/`analyst` turns, never a `"prepared"` section that ROIC does not write.  Item 8 defaults to FTS/hydrate only.  8-K full-body signal codes apply only when `WEB_SOURCE_SEC8K_FULL_BODY` is on; the default 8-K write is already `8k-brief`.
+8. **Transcripts are not 10-Ks.**  They have no body FTS today.  Keep latest high-interest full calls (or land a transcript FTS mirror) until that changes.
+9. **Experience-memory, owner coaching, lessons, and fills are a do-not-touch class.**  Full records.  Exempt from purge and from highlight+signal re-embed.
+10. **`corpus-reembed` must land in the same change as the writer split.**  A highlight+signal accession covers leftover FTS rows.  No embed-model flip in this window.
+11. **Coverage is latest-only universe, then deepen high-interest.**  Already coded.  Do not invert.  **No Pass C** full-body leftover.
+12. **Every filing/transcript type gets a compact highlight.**  FMP is a gap, not the live producer — do not block the calendar on it.  ROIC/EarningsCalls already write `earnings-summary`.
+13. **Prefer existing tables.**  `document_chunks_fts`, `document_abstracts`, `sec_artifacts`, `ingested_accessions`, `earningscalls_transcripts`.  Ledger columns ship with the producer split.
+14. **Missing corpus is a receipt, never a trade block.**
+15. **Operator flip is an Infisical env set after PR A and PR B, not after A alone, and not a silent Aug 30 default in unread producer code.**
 
 ## PR Plan
 
-Each PR is independently mergeable, has its own tests, and can ship if the next one never lands.
+Independently mergeable where it does not fight the calendar.  The flip depends on **PR A and PR B**.
 
-### PR 1 — Write-class knob + coverage honesty (no ingest behavior change by default)
+### PR A — Split writer + write class + re-embed guard (calendar-critical, inert)
 
-- Add `src/lib/rag/pinecone-write-class.ts` with parser + `selectSignalChunks` unit tests against fixture 10-K sections.
-- Default **`full-body`** while `isPineconeTrialActive()` so we do not silently stop mid-trial without an explicit flip.
-- Extend `/api/admin/rag-coverage` with abstract counts and FTS-vs-ledger counts.
-- Docs: this file + a short rollout note.
-- **Verify:** unit tests for the classifier and `selectSignalChunks`; existing coverage tests updated.
-- **Rollback:** delete the module; admin fields are additive.
+- New `pinecone-write-class.ts` (`full-body` default, inert until the post-B env flip).
+- `persistLocalComplete` writes FTS `accession` = **bare** SEC accession.  Section `document_key` contains that bare accession.  Test: `searchCorpusWideLexicalCandidates` returns the section occurrence.
+- Producer honor of `highlight+signal` when the env is set (not the default).
+- `selectSignalChunks` tests on real 10-K `chunkDocument` output and ROIC `speakerSections`.
+- `ingested_accessions` columns + ingest audit fields.
+- `corpus-reembed` skip leftover FTS rows when a highlight+signal (or live full) commit exists.  Test: does not re-upsert 175/933 body chunks.
+- Transcript exception for high-interest latest calls.
+- Admin coverage: FTS vs abstract vs Pinecone counts.
+- **Verify:** `test/sec-filings.test.ts`, worker tests, `test/roic-*.test.ts`, new `test/pinecone-write-class.test.ts`, `test/corpus-reembed*.test.ts`.
+- **Rollback:** env unset; local-complete can remain.
 
-### PR 2 — FMP (and any other) missing abstract writer
+### PR B — Dossier + local hydrate (flip gate)
 
-- After a successful `storeDocument` in `fmp-transcripts.ts`, call `generateAndStoreDocumentAbstract` exactly like `roic-transcripts.ts` / `earningscalls-transcripts.ts`.
-- Respect FMP rights: abstract is FMP-derived; keep provenance.
-- Backfill: a bounded worker that upgrades `abstractNeedsUpgrade` for already-ingested FMP accessions from local/cached content only (no new FMP spend if the body is already on disk/SQLite).
-- **Verify:** `test/fmp-transcripts.test.ts` asserts an `earnings-summary` row + `document_abstracts` insert on a fixture body.
-- **Independence:** valuable even if we never change Pinecone write class.
-
-### PR 3 — `assembleProposerDossier` behind `RAG_PROPOSER_DOSSIER` (default on after tests, flag-off rollback)
-
-- New `src/lib/rag/proposer-dossier.ts`.  `strategy.ts` calls it instead of the inline 8/1 loop when the flag is on.
-- SQLite abstracts inlined first; retrieve still runs for signal/summaries; `orderChunksForProposer` retained.
-- Coverage receipt folded into existing `ragRetrievalStatusRows`.
-- Scout abstracts truncated to keep the 24k family budget honest (proposed 1,200 chars).
-- **Verify:** new `test/proposer-dossier.test.ts` (abstract-only name, mixed, empty corpus).  Existing strategy RAG tests still pass with the flag off.
+- `proposer-dossier.ts` + **local-only** `hydrateAccession` (no EDGAR, 150 ms / 8-accession fail-open).
+- 1,200-char scout stub; suppress retrieved compact types for inlined accessions; reserved 1A.
+- `RAG_PROPOSER_DOSSIER` flag.
+- Production eval on `retrieveContextDetailed`.
+- **Verify:** `test/proposer-dossier.test.ts` (abstract-only, mixed, empty, no double-print, no network on hydrate miss).
 - **Independence:** works against today’s full-body index.
 
-### PR 4 — Producers honor `highlight+signal` when the knob is set
+### PR C — Reviewer resolver + Coach tool + filing sheet (EDGAR allowed)
 
-- `ingestFiling`, `sec-ingest-worker` embed path, `sec8k` body path, ROIC/FMP/EarningsCalls: if class ≠ `full-body`, pass only highlight (already a separate `storeDocument`) + `selectSignalChunks` into the body `storeDocument`.
-- **Always** run the current FTS mirror of the **full** `chunkDocument` output.  FTS is the body.
-- `ingested_accessions.chunk_count` records full FTS cardinality, not the Pinecone subset (document this in the audit payload to avoid “175 vs 12” confusion).
-- **Verify:** sec-filings + sec-ingest-worker tests: Pinecone attempted == signal slice; FTS rows == full chunk list; abstract still written.
-- **Independence:** can land before or after PR 3.  Default knob still `full-body` until PR 6 or an operator flip.
+- Dual-identity `resolveFilingBody` (local then optional EDGAR).
+- `get_filing_body`; `formatChunkWithProvenance` prints bare accession.
+- Console + iOS sheet (not PWA).
+- **Verify:** resolver tests both identities; chat tool tests; iOS build if `ios/**` is touched.
 
-### PR 5 — `get_filing_body` Coach tool + accession in provenance headers
+### PR D — FMP abstract writer (off the critical path)
 
-- `resolveFilingBody` in `sec-filings.ts` (local → FTS → EDGAR).
-- `get_filing_body` in `chat/tools.ts`, 20k char cap, section index when `parseFilingHtml` sections exist.
-- `formatChunkWithProvenance` includes accession when present.
-- **Verify:** chat tool tests + sec-filings resolver tests with a temp artifact file.
-- **Independence:** useful today for Coach, even with full-body Pinecone.
+- Same call as ROIC/EarningsCalls after a successful FMP `storeDocument`.
+- Bounded local backfill from cached bodies.
+- **Verify:** `test/fmp-transcripts.test.ts`.
 
-### PR 6 — Post-trial default + optional held-name full-body leftover
+### PR E — Prune inventory, then delete (storage calendar)
 
-- When `pineconeTrialState().mode === "free"`, `pineconeWriteClass()` defaults to `highlight+signal`.
-- Env override still wins (`RAG_PINECONE_WRITE_CLASS=full-body`).
-- Pass C helper: if trial is active AND Pass A coverage for the symbol is complete AND the symbol is in `rankHighInterestSymbols`, allow `full-body` for that document only.  After snap, this branch is dead.
-- **Verify:** `test/pinecone-trial-window.test.ts` + write-class tests for free/trial/override.
-- **Independence:** one-file default change once PR 4 exists.
+- Dry-run inventory PR, then a separate delete PR.
+- Keep-set math vs live Pinecone record count.
+- Experience-memory excluded.
+- **Verify:** fixture occurrence set; no production delete in the inventory PR.
 
-### PR 7 — Optional prune of non-signal full-body vectors (do not start until Pass A is green)
-
-- Inventory-only first (dry-run, like managed-vector-reconcile).  Delete Pinecone records whose `doc_type` is `10-k`/`10-q`/`earnings-transcript` **and** whose section is outside the signal table **and** whose accession has a current `document_abstracts` row.
-- Never delete experience-memory / lesson / coach-note / fundamentals.
-- Never delete FTS rows or artifacts.
-- **Verify:** dry-run tests on a fixture occurrence set.  No production delete in the same PR as the inventory.
-- **Independence:** skippable forever if storage is fine.
-
-Land order recommendation: **1 → 2 → 5 → 3 → 4 → 6**, with 7 later.  2 and 5 can parallel 3.
+Land order: **A → B → operator flip → C**, with D anytime after A, E after B (hydrate proven).  Flip is a dated Infisical step, not a PR.
 
 ## Open Questions
 
-1. **Should scout inline a full 8-highlight abstract (~2k tokens) or a 1,200-char stub?**  Recommendation: stub + accession, because 20 scouts × 2k tokens blows the 24k budget.  Owner can pick “full abstract, fewer scouts.”
-2. **Is the high-signal section list right?**  Item 8 (financial statements) is table-heavy and expensive in metadata bytes.  We may want Item 8 in FTS-only and keep Item 7 / 1A / 2.02 in Pinecone.
-3. **Do we ever prune old full-body vectors?**  Only if index size or stale-duplicate retrieval becomes a measured problem.  Not required to hit 60k/day.
-4. **Should Green/Red get a mid-run `get_filing_body` tool?**  Not in v1.  The strategy loop is already latency- and lock-sensitive.  Coach + human reviewer first.
-5. **20-F / 6-K / 40-F** for foreign private issuers in the manifest: treat as 10-K / 8-K equivalents for highlight purposes.  Not in PR 1–6 unless a producer already fetches them.
-6. **VECTOR_ASOF_STRICT** remains an owner flip (`FEATURE-ENABLEMENT-BACKLOG.md`).  This design does not depend on it.  Abstracts must keep `published_at` / `acceptance_datetime` so a future strict as-of still works.
+1. **Paid storage fallback vs hard free-tier.**  Key Decision 1 states the default (free keep-set + prune; paid if prune slips).  Owner should confirm they will actually drop to the ~2 GB plan rather than keep Starter/Standard and only snap writes.
+2. **How many `qa`/`analyst` turns (N) for transcripts?**  Recommendation N=8 inside the 12-chunk cap.  Measure on a held-name call before locking.
+3. **Should Green/Red get a mid-run `get_filing_body` tool?**  Not in v1.  Hydrate is cheaper and lock-safer.  Coach + sheet first.
+4. **20-F / 6-K / 40-F** for foreign private issuers: treat as 10-K / 8-K equivalents for highlight purposes.  Not in PR A–C unless a producer already fetches them.
+5. **`VECTOR_ASOF_STRICT`** remains an owner flip.  Abstracts and section docs must keep `published_at` / `acceptance_datetime`.
+6. **Live Pinecone record count / GB right now.**  Must be read from admin coverage + console before PR E.  Not guessed here.
+
+Resolved since rev 1 (no longer open): scout stub (KD 6); Item 8 default (KD 7); FTS-as-recall (retracted); Pass C (deleted); PR order vs Aug 30 (collapsed to A → B → env flip).  Resolved in rev 3: flip waits for B; money-path hydrate is local-only; FTS accession is pinned to the bare SEC key.
 
 ## References
 
-- `src/lib/strategy.ts` — 8/1 retrieve, evidence budget, Green/Red parity
+- `src/lib/strategy.ts` — 8/1 retrieve, 24k filings budget, Green/Red parity, cards in `ragContext`
 - `src/lib/rag/proposer-format.ts` — summary-first sort
 - `src/lib/rag/document-summarizer.ts` — extractive-highlights-v2
-- `src/lib/rag/information-routing.ts` — declared needs
+- `src/lib/rag/information-routing.ts` — declared needs + catalyst query
+- `src/lib/rag/corpus-wide-lexical.ts` — FTS INNER JOIN occurrences; `sec-edgar`/`sec-8k` only
+- `src/lib/rag/corpus-reembed.ts` — walks every FTS body row
+- `src/lib/rag/chunk.ts` — `section = itemCode + ". " + itemTitle`
 - `src/lib/rag/demand-first-symbols.ts` — holdings-first rank
-- `src/lib/rag/fts-mirror-bound.ts` — why FTS is tick-sliced, not why we drop it
-- `src/lib/web-sources/sec-filings.ts` — `ingestFiling`, `sortBreadthFirst`, local artifacts
-- `src/lib/web-sources/roic-transcripts.ts` — latest-then-deepen
-- `src/lib/web-sources/fmp-transcripts.ts` — full-body, no abstract
-- `src/lib/vector-db.ts` — `storeDocument`, WU estimate, `formatChunkWithProvenance`
-- `src/lib/pinecone-trial-window.ts` — trial calendar, $45 reserve, 60k snap
+- `src/lib/rag/fts-mirror-bound.ts` — 20 chunks / 6s; 933-chunk incident
+- `src/lib/web-sources/sec-filings.ts` — one-funnel ingest, `sortBreadthFirst` deepen
+- `src/lib/web-sources/roic-transcripts.ts` — `roleOfSpeaker`, latest-then-deepen, no body FTS
+- `src/lib/web-sources/sec8k.ts` — `WEB_SOURCE_SEC8K_FULL_BODY` default off
+- `src/lib/web-sources/fmp-transcripts.ts` — full-body, no abstract; not the live budget
+- `src/lib/vector-db.ts` — `storeDocument` completeness, WU ×2 managed, retrieve gate, parent flag
+- `src/lib/pinecone-trial-window.ts` — trial calendar, $45 reserve, effective daily = max(configured, paced)
 - `src/lib/experience-memory.ts` — episodic full-record exception
 - `docs/design/earnings-rag.md` — do not replace raw evidence with an ungrounded LLM brief
-- `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` — “do not turn every filing byte into a vector”
-- `docs/rollouts/2026-08-09-pinecone-trial-throughput-and-monthly-pace.md` — trial vs after knob table
-- `docs/rollouts/2026-08-16-prod-error-triage-48h.md` — 175 chunks / 2,698 WU receipt
+- `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`
+- `docs/rollouts/2026-08-09-pinecone-trial-throughput-and-monthly-pace.md` — **storage**, 2× WU, 250k records
+- `docs/rollouts/2026-08-16-prod-error-triage-48h.md` — 175 / 2,698 fuse-skip receipt
 
 ## Revision Summary
 
-- 2026-08-16 — Initial draft.  Confirmed against `trading-grok-error-triage-48h` (`grok/prod-error-triage-48h`).  No product code changed.
+- 2026-08-16 — Initial draft.
+- 2026-08-16 rev 2 — Addressed design review + adversarial memo: storage as binding constraint; retracted FTS-as-recall; split writer + hydrate checklist; Pinecone-first retrieve; `corpus-reembed` guard; real signal matcher; collapsed PR plan to beat Aug 30; WU range not 175-as-large; dual-identity resolver; ledger columns in the producer PR; 8-K default-off; FMP off the critical path; assembler double-print rule; configured vs effective trial fuse; 1,200-char scout stub as a Key Decision; killed Pass C.
+- 2026-08-16 rev 3 — One flip sequence: **A → B → Infisical flip**.  `hydrateAccession` is local-only (no EDGAR under the strategy lock); Coach/sheet `resolveFilingBody` may refetch.  `persistLocalComplete` pins FTS `accession` to the bare SEC key so section occurrences GLOB-join.
