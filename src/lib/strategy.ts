@@ -5804,7 +5804,8 @@ async function proposeTrades(input: {
             confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
             autonomyOverride: autonomyOverrideSchema,
             bracketStopLoss: { type: ["number", "null"], description: "Per-trade protective stop PRICE (absolute price, not a percent) for this position. For a buy set it BELOW the entry, for a short ABOVE it. Derive it from the setup's own structure — a support/resistance level, a multiple of ATR, or the price that invalidates the thesis — sized to conviction, not a fixed one-size percentage. Leave null to fall back to the account's default per-symbol stop." },
-            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." },
+            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null only after you debate whether a target would help; then say why in exitPlan." },
+            exitPlan: { type: ["string", "null"], description: "Staged exit plan in plain language: stop levels (and whether they are partial), take-profit levels or conditions (including trimming after a gain vs a wholesale exit), sized to this name, the current tape, and the account holding horizon. REQUIRED when bracketTakeProfit is null. Optional but preferred when a single target is set." },
             stopPlan: stopPlanSchema
           }
         }
@@ -6755,6 +6756,7 @@ export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradePro
       // short) and falls back to the per-symbol default when absent or nonsensical.
       bracketStopLoss: Number.isFinite(proposal.bracketStopLoss) && (proposal.bracketStopLoss ?? 0) > 0 ? proposal.bracketStopLoss : undefined,
       bracketTakeProfit: Number.isFinite(proposal.bracketTakeProfit) && (proposal.bracketTakeProfit ?? 0) > 0 ? proposal.bracketTakeProfit : undefined,
+      exitPlan: typeof proposal.exitPlan === "string" && proposal.exitPlan.trim() ? proposal.exitPlan.trim().slice(0, 2000) : undefined,
       timeInForce: proposal.timeInForce ?? "gfd",
       marketHours: proposal.marketHours ?? "regular_hours",
       tradeThesisTag: proposal.tradeThesisTag ?? undefined,
