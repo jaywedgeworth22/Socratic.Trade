@@ -8,6 +8,18 @@ Owner: explain rotation fail-open and 422s, then fix those plus Red timeout, and
 - Ingest: cherry-picked ROIC single-flight.  Requeue ~1k `embed_queued` dead letters that were misclassified budget-exceeded.  Budget skip defers 1h instead of dead-lettering.  Worker tick now claims at most 5 tasks across all jobs (prod had 521 running jobs claiming 5 each, so 2156 Aug-10 `facts_extracted` never ran).  Sibling #2748 owns the daily WU fuse park.
 
 Branch `grok/48h-money-path-ingest`, issue #2749.  Rollout: `docs/rollouts/2026-08-16-48h-money-path-ingest.md`.
+## Current (2026-08-16 GROK — review UX: approve speed, prices, retry red team, agent controls)
+
+Owner: Approve hung on "Sending approve…".  Review cards hid live vs proposed
+price.  Red Team timeout had no retry.  Start Agent and Stop Agent both showed
+while Autopilot was only paused for a closed market.  PWA unused.
+
+Approve quotes the proposal + holdings only (no full screener).  Cards show
+Proposed / Now / Target / Delay.  Retry Red Team on a failed critic.
+Agent Controls use one primary action.  `/mobile` redirects to `/console`.
+
+Branch `grok/review-ux-parity`, worktree `~/apps/trading-grok-review-ux`.
+Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
 ## Current (2026-08-16 GROK — ASC EULA + Coolify rolling already off)
 
 Owner authorized ASC writes and the Coolify rolling steps.  ST custom EULA

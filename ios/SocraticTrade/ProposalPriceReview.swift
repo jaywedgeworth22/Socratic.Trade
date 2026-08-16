@@ -49,8 +49,8 @@ struct ProposalPriceReview: Equatable {
         return AppFormat.money(proposed)
     }
 
-    var nowValue: String? {
-        guard let now, now > 0 else { return nil }
+    var nowValue: String {
+        guard let now, now > 0 else { return "—" }
         if let pct = nameMovePct {
             return "\(AppFormat.money(now))  (\(AppFormat.percent(pct, signed: true)))"
         }
@@ -98,7 +98,7 @@ struct ProposalPriceReview: Equatable {
         let target = Self.resolveTarget(proposal)
         let stop = proposal.bracketStopLoss ?? proposal.scorecard?.sniperPoints?.stopLoss
         return ProposalPriceReview(
-            proposed: pending.proposalReferencePrice ?? proposal.limitPrice,
+            proposed: pending.proposalReferencePrice ?? proposal.referencePrice ?? proposal.limitPrice,
             now: pending.proposalCurrentPrice,
             target: target,
             stop: stop,

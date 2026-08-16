@@ -312,6 +312,13 @@ function waitForApprovalRetry(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export async function retryRedTeam(id: string): Promise<{ ok: true; proposalId: string }> {
+  return request(`/api/proposals/${encodeURIComponent(id)}/retry-red-team`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
 export async function approveProposal(
   id: string,
   liveConfirmation?: LiveApprovalConfirmationBody

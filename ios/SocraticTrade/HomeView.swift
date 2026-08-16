@@ -340,53 +340,60 @@ private struct StrategyControlsCard: View {
         return ready && snapshot.pendingProposals.isEmpty
     }
 
+    private var plan: AgentControlPlan {
+        AgentControlPlan.from(
+            systemState: snapshot.readiness.systemState,
+            runState: deriveRunStateWord(snapshot: snapshot),
+            authority: snapshot.readiness.strategyAuthority,
+            snapshotStale: store.isSnapshotStale(),
+            ready: snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
+        )
+    }
+
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 14) {
-                SectionHeading(
-                    "Agent Controls",
-                    subtitle: heroOwnsRunOnce
-                        ? "Start scheduled autonomy or stop broker submissions.  Run Once is the primary button above."
-                        : "Every action is validated and executed by the backend."
-                )
+                SectionHeading("Agent Controls", subtitle: plan.statusTitle)
 
-                if heroOwnsRunOnce {
+                Text(plan.statusDetail)
+                    .font(.appSubheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !heroOwnsRunOnce {
+                    runOnceButton
+                }
+
+                if plan.primary == .stop {
+                    stopButton
+                    if plan.showStart {
+                        startButton
+                    }
+                } else if plan.showStart {
                     startButton
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) {
-                            runOnceButton
-                            startButton
-                        }
-                        VStack(spacing: 10) {
-                            runOnceButton
-                            startButton
-                        }
+                    if let reason = plan.startDisabledReason, !plan.startEnabled {
+                        Text(reason)
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
-                        closeOnlyButton
-                        windDownButton
+                        if plan.showCloseOnly { closeOnlyButton }
+                        if plan.showWindDown { windDownButton }
                     }
                     VStack(spacing: 10) {
-                        closeOnlyButton
-                        windDownButton
+                        if plan.showCloseOnly { closeOnlyButton }
+                        if plan.showWindDown { windDownButton }
                     }
                 }
 
-                CommandButton(
-                    "Stop Agent",
-                    systemImage: "stop.fill",
-                    isBusy: store.isBusy("strategy.stop"),
-                    role: .destructive
-                ) {
-                    submit("strategy.stop")
+                if plan.primary != .stop, plan.showStop {
+                    stopButton
                 }
-                .tint(AppPalette.negative)
 
-                Text("Close Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop immediately halts future broker submissions.  A broker request already submitted before the halt may still complete; review existing orders under Assets.")
+                Text("Close Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -418,13 +425,27 @@ private struct StrategyControlsCard: View {
 
     private var startButton: some View {
         CommandButton(
-            "Start Agent",
+            plan.startLabel,
             systemImage: "play.fill",
             isBusy: store.isBusy("strategy.start"),
-            isDisabled: !store.canSubmit("strategy.start")
+            isDisabled: !plan.startEnabled || !store.canSubmit("strategy.start"),
+            prominent: plan.primary != .stop
         ) {
             submit("strategy.start")
         }
+    }
+
+    private var stopButton: some View {
+        CommandButton(
+            "Stop Agent",
+            systemImage: "stop.fill",
+            isBusy: store.isBusy("strategy.stop"),
+            role: .destructive,
+            prominent: plan.primary == .stop
+        ) {
+            submit("strategy.stop")
+        }
+        .tint(AppPalette.negative)
     }
 
     // Protective de-risk states (labels match AppFormat.commandLabels; the store always
