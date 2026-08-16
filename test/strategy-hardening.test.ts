@@ -567,6 +567,13 @@ describe("sanitizeProposals — per-position stop plan coercion (Codex review, P
     const [p] = sanitizeProposals([buy({ side: "sell", stopPlan: { style: "trailing" } })]);
     expect(p.stopPlan).toBeUndefined();
   });
+
+  it("keeps a non-empty exitPlan and drops blank or oversized noise", () => {
+    const [kept] = sanitizeProposals([buy({ exitPlan: "  Trim a third at 220.  " })]);
+    expect(kept.exitPlan).toBe("Trim a third at 220.");
+    const [blank] = sanitizeProposals([buy({ exitPlan: "   " })]);
+    expect(blank.exitPlan).toBeUndefined();
+  });
 });
 
 describe("enrichOpeningProposal per-position stop plans", () => {

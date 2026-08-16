@@ -211,9 +211,8 @@ private struct ReadyHomeHero: View {
                         tint: pnlColor(openPnl)
                     )
                     MetricTile(
-                        title: "Proposals",
+                        title: "Proposals for Review",
                         value: "\(pendingCount)",
-                        detail: pendingCount == 0 ? "none waiting" : "Awaiting Review",
                         tint: pendingCount > 0 ? AppPalette.warning : AppPalette.accent
                     )
                 }
