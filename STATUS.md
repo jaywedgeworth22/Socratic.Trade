@@ -11,17 +11,6 @@ Agent Controls use one primary action.  `/mobile` redirects to `/console`.
 Branch `grok/review-ux-parity`, worktree `~/apps/trading-grok-review-ux`.
 Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
 
-## Current (2026-08-16 GROK — review UX parity)
-
-Approve was slow because it ran a full-universe market scan under the strategy
-lock.  iOS sat on "Sending approve…".  Live vs proposed price was missing when
-the symbol was not in the last full scan.  Red Team timeout had no retry.
-Start Agent and Stop Agent both showed on Home while the agent was already on
-and the market was closed.  PWA is retired.
-
-Branch `grok/review-ux-parity`, worktree `~/apps/trading-grok-review-ux`.
-Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
-
 ## Current (2026-08-16 GROK — iOS Proposals for Review + price delay)
 
 MERGED #2740 as `c1db7d12` (auto-deploy on).  Home tile title is
