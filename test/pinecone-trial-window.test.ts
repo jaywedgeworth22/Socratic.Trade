@@ -1,0 +1,120 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-pinecone-trial-${randomUUID()}.db`)}`;
+});
+
+const mocks = vi.hoisted(() => ({
+  alertStorageWarning: vi.fn().mockResolvedValue(undefined)
+}));
+
+vi.mock("../src/lib/db-health", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/db-health")>();
+  return { ...actual, alertStorageWarning: mocks.alertStorageWarning };
+});
+
+async function load() {
+  return import("../src/lib/pinecone-trial-window");
+}
+
+const AUG_16 = Date.UTC(2026, 7, 16, 19, 30, 0);
+const AUG_30 = Date.UTC(2026, 7, 30, 0, 0, 0);
+const SEP_01 = Date.UTC(2026, 8, 1, 0, 0, 0);
+
+describe("pinecone trial window", () => {
+  beforeEach(async () => {
+    const { getDb, deleteInternalSetting, applyVersionedMigrations } = await import("../src/lib/db");
+    applyVersionedMigrations(getDb());
+    const { PINECONE_TRIAL_ROLLED_BACK_KEY } = await load();
+    deleteInternalSetting(PINECONE_TRIAL_ROLLED_BACK_KEY);
+    delete process.env.PINECONE_TRIAL_ENDS_AT;
+    delete process.env.PINECONE_TRIAL_CREDIT_USD;
+    delete process.env.PINECONE_WU_USD_PER_MILLION;
+    delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
+    delete process.env.RAG_INGEST_MAX_TEXTS_PER_DAY;
+    delete process.env.PINECONE_MONTHLY_WU_BUDGET;
+    mocks.alertStorageWarning.mockClear();
+  });
+
+  it("does not treat a normal 200k fuse as this trial", async () => {
+    const { assessPineconeTrialWindow } = await load();
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: 2_500_000,
+      configuredDailyWriteUnits: 200_000,
+      configuredTextsPerDay: 20_000,
+      configuredMonthlyWriteUnits: 0
+    });
+    expect(state.mode).toBe("configured");
+    expect(state.active).toBe(false);
+    expect(state.effectiveDailyWriteUnits).toBe(200_000);
+  });
+
+  it("paces remaining trial dollars across remaining days instead of a flat 2.5M fuse", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow } = await load();
+    // $62 of write-units already delivered (~15.5M WU at $4/M) with 14 days left.
+    const spentWu = Math.round((62 / 4) * 1_000_000);
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: spentWu,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 0
+    });
+    expect(state.active).toBe(true);
+    expect(state.mode).toBe("trial");
+    expect(state.remainingDays).toBe(14);
+    expect(state.remainingUsd).toBeCloseTo(238, 0);
+    expect(state.effectiveDailyWriteUnits).toBeGreaterThan(2_500_000);
+    expect(state.effectiveDailyWriteUnits).toBe(Math.floor(state.remainingWriteUnits / 14));
+    expect(state.effectiveTextsPerDay).toBe(250_000);
+    expect(state.effectiveMonthlyWriteUnits).toBe(0);
+  });
+
+  it("snaps leftover trial Infisical knobs to free-tier on the morning the trial ends", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "250000";
+    const { assessPineconeTrialWindow, PINECONE_FREE_TIER_WU_PER_DAY, PINECONE_FREE_TIER_TEXTS_PER_DAY, PINECONE_FREE_TIER_MONTHLY_WU } = await load();
+    const state = assessPineconeTrialWindow({
+      now: AUG_30,
+      mtdWriteUnits: 20_000_000,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 0
+    });
+    expect(state.active).toBe(false);
+    expect(state.mode).toBe("free");
+    expect(state.effectiveDailyWriteUnits).toBe(PINECONE_FREE_TIER_WU_PER_DAY);
+    expect(state.effectiveTextsPerDay).toBe(PINECONE_FREE_TIER_TEXTS_PER_DAY);
+    expect(state.effectiveMonthlyWriteUnits).toBe(PINECONE_FREE_TIER_MONTHLY_WU);
+  });
+
+  it("honors PINECONE_TRIAL_ENDS_AT=off", async () => {
+    process.env.PINECONE_TRIAL_ENDS_AT = "off";
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow, pineconeTrialEndsAtMs } = await load();
+    expect(pineconeTrialEndsAtMs(SEP_01)).toBeNull();
+    const state = assessPineconeTrialWindow({
+      now: SEP_01,
+      mtdWriteUnits: 0,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 0
+    });
+    expect(state.mode).toBe("configured");
+    expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
+  });
+
+  it("advises the free-tier rollback once", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { maybeAdvisePineconeTrialRollback } = await load();
+    expect(await maybeAdvisePineconeTrialRollback(AUG_30, 1)).toBe(true);
+    expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
+    expect(await maybeAdvisePineconeTrialRollback(AUG_30, 1)).toBe(false);
+    expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
+  });
+});

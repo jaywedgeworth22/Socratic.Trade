@@ -28,8 +28,14 @@ alert.
 
 Touched files:
 
+- `src/lib/pinecone-trial-window.ts` — trial calendar, remaining-credit daily
+  pace, free-tier snap on trial end
 - `src/lib/vector-db.ts` — `hasPineconeWriteBudget`, honest fuse copy, early
-  `storeDocument` refuse before `beginVectorCommit`
+  `storeDocument` refuse before `beginVectorCommit`, trial-aware daily WU/text caps
+- `src/lib/pinecone-monthly-pace.ts` — after-trial monthly 1.6M when env is 0
+- `src/lib/scheduler.ts` — one rollback advisory
+- `app/api/admin/rag-coverage/route.ts` — `trialWindow` on the Pinecone card
+- `.env.example` — `PINECONE_TRIAL_ENDS_AT`
 - `src/lib/web-sources/roic-transcripts.ts` — skip the fetch loop when the fuse is spent
 - `src/lib/web-sources/sec-filings.ts` — same preflight as the text budget
 - `src/lib/web-sources/fmp-transcripts.ts` — same
@@ -38,6 +44,12 @@ Touched files:
   not `Ingestion budget or capacity exceeded mid-task`
 - tests for the above
 - `STATUS.md`, `docs/EFFORT-LOG.md`, this note
+
+Owner follow-up: the flat 2.5M fuse stopped writes while trial spend was *behind*
+the calendar ($62 of $300, 7 of 21 days).  The daily fuse is now remaining trial
+credit / remaining days (~4.25M WU/day at that snapshot).  On 2026-08-30 UTC
+ingest snaps to free-tier 60k WU/day, 20k texts/day, 1.6M WU/month even if
+Infisical still holds the trial numbers.  `PINECONE_TRIAL_ENDS_AT=off` disables.
 
 ## 3. Decisions & Trade-offs
 

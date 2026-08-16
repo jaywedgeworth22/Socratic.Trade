@@ -17,6 +17,7 @@ import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { refreshLitestreamRemoteInventoryIfDue } from "./litestream-remote-inventory";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
+import { maybeAdvisePineconeTrialRollback } from "./pinecone-trial-window";
 import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
@@ -555,6 +556,9 @@ async function tick(): Promise<void> {
   // crossings and persists a snapshot for the admin dashboard card.
   void journalLane("r2-usage-check", {}, () => runR2UsageCheckIfDue())
     .catch((err) => console.error("[scheduler] r2 usage check error:", err));
+
+  void journalLane("pinecone-trial-rollback", {}, () => maybeAdvisePineconeTrialRollback())
+    .catch((err) => console.error("[scheduler] pinecone trial rollback error:", err));
 
   // Daily R2 free-tier digest (owner opt-in 2026-07-31): fresh check + notify()
   // summary of MTD usage and month-end pace, whether or not anything crossed.

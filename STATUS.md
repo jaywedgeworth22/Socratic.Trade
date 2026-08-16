@@ -5,8 +5,9 @@ rolling-24h write fuse at the trial cap of 2.5M estimated WUs, not a Pinecone
 outage.  Retrieval still works.  Did not raise the cap.
 
 Park incremental ingest (ROIC / filings / 8-K / FMP / SEC worker) when the fuse
-is spent, and tell the truth in the alert.  Branch
-`grok/prod-error-triage-48h`, worktree `~/apps/trading-grok-error-triage-48h`.
+is spent, and tell the truth in the alert.  Daily fuse during the trial is
+remaining $300 / remaining days, not a flat 2.5M.  On 2026-08-30 UTC ingest
+snaps to free-tier 60k WU/day.  Branch `grok/prod-error-triage-48h`.
 
 Rollout: `docs/rollouts/2026-08-16-prod-error-triage-48h.md`.
 ## Current (2026-08-16 GROK — 13F/ARK ops fix)

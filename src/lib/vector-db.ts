@@ -31,6 +31,8 @@ import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { estimateRagDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled, type RagEmbedRerankProvider } from "./rag-metering";
+import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
+import { pineconeTrialState } from "./pinecone-trial-window";
 import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
@@ -547,7 +549,8 @@ function ingestBudgetEnabled(): boolean {
 }
 
 function ingestMaxTextsPerDay(): number {
-  return Math.floor(numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", DEFAULT_INGEST_MAX_TEXTS_PER_DAY, 1));
+  const configured = Math.floor(numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", DEFAULT_INGEST_MAX_TEXTS_PER_DAY, 1));
+  return pineconeTrialState(Date.now(), pineconeMonthToDateWriteUnits()).effectiveTextsPerDay || configured;
 }
 
 function remainingIngestTexts(userId: string, requested: number): { allowed: number; used: number; limit: number } {
@@ -587,7 +590,8 @@ function pineconeWriteBudgetEnabled(): boolean {
 }
 
 function pineconeMaxWriteUnitsPerDay(): number {
-  return Math.floor(numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", DEFAULT_PINECONE_WRITE_UNITS_PER_DAY, 1));
+  const configured = Math.floor(numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", DEFAULT_PINECONE_WRITE_UNITS_PER_DAY, 1));
+  return pineconeTrialState(Date.now(), pineconeMonthToDateWriteUnits()).effectiveDailyWriteUnits || configured;
 }
 
 /**
@@ -596,7 +600,7 @@ function pineconeMaxWriteUnitsPerDay(): number {
  * RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY (trial installs are often 2.5M).
  */
 export const PINECONE_DAILY_WU_FUSE_RECOMMENDATION =
-  "This is the app's rolling-24h write fuse (RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY), not a Pinecone outage.  Retrieval still works.  New upserts resume as the 24h window rolls.  If this fired outside a planned trial or backfill ingest, inspect chunking, deduping, and repeated writes before raising the cap.";
+  "This is the app's rolling-24h write fuse, not a Pinecone outage.  Retrieval still works.  During a Standard trial the fuse is remaining trial credit divided by remaining days.  After the trial it snaps to free-tier 60k WU/day.  New upserts resume as the 24h window rolls.";
 
 /** True when the daily write fuse still has room (or is disabled).  Fail-open like the text budget. */
 export function hasPineconeWriteBudget(userId: string = "local"): boolean {
