@@ -187,7 +187,7 @@ private struct ProposalQueueSummary: View {
                 .frame(width: 46, height: 46)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(snapshot.pendingProposals.count) Proposals For Review")
+                    Text("\(snapshot.pendingProposals.count) Proposals for Review")
                         .font(.appHeadline)
                     Text("\(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority)) · backend validation remains final")
                         .font(.appCaption)

@@ -1,7 +1,7 @@
 ## Current (2026-08-15 GROK — iOS Proposals For Review + price delay)
 
-Owner: the Home count subtitle should say **Proposals For Review**, not
-"Awaiting Review".  Review cards must show the price at proposal time, the live
+Owner: the Home tile title is **Proposals for Review** above the count,
+with nothing under the number so it matches the Open P&L card height.  Review cards must show the price at proposal time, the live
 price, the proposer's guessed target when they had one, and how much the delay
 changed the trade.  When a proposer leaves the target blank, Green + Red debate
 whether a target and a staged exit (partial stops / partial takes) would help.

@@ -10,9 +10,10 @@ target and a staged exit would help.
 
 ## 2. Changes Made
 
-- Home metric detail is Title Case `Proposals For Review` when the count is
-  non-zero.  Empty stays `none waiting`.
-- Proposal queue heading is `N Proposals For Review`.
+- Home tile title is `Proposals for Review` above the count, with no subtitle
+  so the card matches Open P&L height.  Owner correction: not a line under
+  the number, and not the bare title `Proposals`.
+- Proposal queue heading is `N Proposals for Review`.
 - Review cards list **Proposed**, **Now** (with signed %), **Target** (with
   dollars left, or `none`), **Delay** (better/worse $ on the proposed size),
   and **Stop** when present.
