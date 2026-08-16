@@ -5,6 +5,7 @@ import {
   publishedAtIso,
   recentFiscalPeriods,
   roleOfSpeaker,
+  roicRefreshDueFromState,
   roicTranscriptAccession,
   roicV3Identifiers,
   speakerTurnsFromRoicPayload,
@@ -133,6 +134,50 @@ describe("roic-transcripts", () => {
 
   it("builds a stable accession for skip-if-stored", () => {
     expect(roicTranscriptAccession("aapl", 2026, 2)).toBe("roic:AAPL:2026Q2");
+  });
+
+  it("roicRefreshDueFromState resumes a leftover cursor and does not restack an in-flight walk", () => {
+    const hour = 3_600_000;
+    const now = Date.parse("2026-08-16T20:00:00.000Z");
+    const base = {
+      enabled: true,
+      lastCompleteAt: null,
+      lastAttemptAt: null,
+      now,
+      completeTtlMs: 6 * hour,
+      runStaleMs: 30 * 60 * 1_000
+    };
+    expect(roicRefreshDueFromState({ ...base, cursorQueueLength: 0 })).toBe(true);
+    expect(roicRefreshDueFromState({ ...base, enabled: false, cursorQueueLength: 4 })).toBe(false);
+    expect(roicRefreshDueFromState({ ...base, cursorQueueLength: 12 })).toBe(true);
+    expect(
+      roicRefreshDueFromState({
+        ...base,
+        cursorQueueLength: 0,
+        lastCompleteAt: "2026-08-16T18:00:00.000Z"
+      })
+    ).toBe(false);
+    expect(
+      roicRefreshDueFromState({
+        ...base,
+        cursorQueueLength: 0,
+        lastAttemptAt: "2026-08-16T19:50:00.000Z"
+      })
+    ).toBe(false);
+    expect(
+      roicRefreshDueFromState({
+        ...base,
+        cursorQueueLength: 0,
+        lastAttemptAt: "2026-08-16T19:00:00.000Z"
+      })
+    ).toBe(true);
+    expect(
+      roicRefreshDueFromState({
+        ...base,
+        cursorQueueLength: 3,
+        lastAttemptAt: "2026-08-16T19:50:00.000Z"
+      })
+    ).toBe(true);
   });
 
   it("latest pass takes only the newest period; deepen takes the plan-tier cap", async () => {

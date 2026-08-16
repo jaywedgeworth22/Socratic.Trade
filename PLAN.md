@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-16 GROK — ROIC single-flight (`grok/roic-singleflight`).**  Every 60s tick started another universe walk because `lastAttemptAt` was written only at the end.  714 stacked journal rows crashed prod ~every 22 minutes.  Single-flight + start watermark + incremental cursor.  L1 keep-400 shrink still running so L2 can compact.  FilingAPI still needs an owner Plus key.  Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
 > **2026-08-16 GROK — overlay regime match hotfix (`grok/overlay-regime-match`).**  Live apply now passes the classified enum; router also accepts persisted labels.  Overlay text is contained as `coach` and scanned as untrusted.  Rollout: `docs/rollouts/2026-08-16-overlay-regime-match.md`.
 
 > **2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF (`grok/overlay-poly-asof`).**  Full overlay UI on Strategy; Polymarket sector/theme + macro tilts; ASOF dry-run receipt (13076/13076 epoch'd).  No Reddit/X.  Weekly hard-delete deferred.  Rollout: `docs/rollouts/2026-08-16-overlay-poly-asof.md`.  Merged #2743.
