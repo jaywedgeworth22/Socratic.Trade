@@ -30,6 +30,7 @@ import {
   ExitPlanSection,
   ExposureSection,
   FactorSection,
+  LastCallSection,
   FundamentalsSection,
   PeerAccountsSection,
   SignalSummarySection,
@@ -452,6 +453,7 @@ export function SymbolDrilldownSheet({
                 void activateAccount(accountId);
               }}
             />
+            <LastCallSection lastCall={desk?.lastCall} />
           </>
         ) : (
           <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">

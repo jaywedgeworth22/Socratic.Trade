@@ -8,7 +8,7 @@
  */
 
 import { normalizeSymbol } from "./money";
-import type { ConnectedAccount, EquityPosition, PendingProposal } from "./types";
+import type { ConnectedAccount, EquityPosition, PendingProposal, SocraticDecisionCase } from "./types";
 import type { PositionStopPlan, TakeProfitTrimBand } from "./db-api-keys";
 
 export type PeerAccountDirection = "long" | "short";
@@ -45,12 +45,58 @@ export type SymbolDeskProposal = {
   createdAt?: string;
 };
 
+export type SymbolDeskLastCall = {
+  id: string;
+  side?: string;
+  status: string;
+  green?: string;
+  red?: string;
+  outcome?: string;
+};
+
 export type SymbolDesk = {
   symbol: string;
   peerAccounts: PeerAccountHolding[];
   exit?: SymbolDeskExit;
   pending: SymbolDeskProposal[];
+  lastCall?: SymbolDeskLastCall;
 };
+
+function clipLine(text: string | undefined, max = 200): string | undefined {
+  const t = (text ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return undefined;
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}
+
+export function compactLastCall(
+  cases: SocraticDecisionCase[] | undefined,
+  symbol: string
+): SymbolDeskLastCall | undefined {
+  const want = normalizeSymbol(symbol);
+  const match = (cases ?? []).find((item) => normalizeSymbol(item.symbol ?? "") === want);
+  if (!match) return undefined;
+  const red = match.redTeamVerdict;
+  const redLine = !red
+    ? undefined
+    : !red.available
+      ? clipLine(red.reason ? `Red unavailable: ${red.reason}` : "Red unavailable")
+      : clipLine(
+          red.rejected
+            ? `Red reject${red.reason ? `: ${red.reason}` : ""}`
+            : red.verdict === "approve-at-half"
+              ? `Red half-size${red.reason ? `: ${red.reason}` : ""}`
+              : `Red approve${red.reason ? `: ${red.reason}` : ""}`
+        );
+  const green = clipLine(match.greenTeamRationale || match.thesis || match.rationale);
+  return {
+    id: match.id,
+    ...(match.side ? { side: match.side } : {}),
+    status: match.status,
+    ...(green ? { green } : {}),
+    ...(redLine ? { red: redLine } : {}),
+    ...(match.outcome?.status ? { outcome: match.outcome.status } : {})
+  };
+}
 
 export function signedQuantityToDirection(quantity: number): PeerAccountDirection | undefined {
   if (!Number.isFinite(quantity) || quantity === 0) return undefined;
@@ -151,6 +197,7 @@ export function buildSymbolDesk(input: {
   stopPlan?: PositionStopPlan;
   trim?: TakeProfitTrimBand;
   pending: PendingProposal[];
+  cases?: SocraticDecisionCase[];
 }): SymbolDesk {
   const symbol = normalizeSymbol(input.symbol);
   return {
@@ -162,6 +209,7 @@ export function buildSymbolDesk(input: {
       latestPositions: input.latestPositions
     }),
     exit: compactExit(input.stopPlan, input.trim),
-    pending: compactPending(input.pending, symbol)
+    pending: compactPending(input.pending, symbol),
+    lastCall: compactLastCall(input.cases, symbol)
   };
 }

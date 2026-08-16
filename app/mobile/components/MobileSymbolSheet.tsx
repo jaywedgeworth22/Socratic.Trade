@@ -54,10 +54,20 @@ type DeskPending = {
   rationale?: string;
 };
 
+type DeskLastCall = {
+  id: string;
+  side?: string;
+  status: string;
+  green?: string;
+  red?: string;
+  outcome?: string;
+};
+
 type SymbolDesk = {
   peerAccounts?: DeskPeer[];
   exit?: DeskExit;
   pending?: DeskPending[];
+  lastCall?: DeskLastCall;
 };
 
 function money(value: unknown): string {
@@ -221,6 +231,19 @@ export function MobileSymbolSheet({
             <p className="text-xs text-faint">
               Size and direction only.  Switch accounts from Home to see that book.
             </p>
+          </div>
+        ) : null}
+
+        {desk?.lastCall ? (
+          <div className="mb-3 space-y-1 rounded-md border border-line bg-surface p-3 text-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-faint">Last Desk Call</p>
+            <p>
+              {desk.lastCall.side ? `${desk.lastCall.side} · ` : ""}
+              {desk.lastCall.status.replace(/_/g, " ")}
+              {desk.lastCall.outcome ? ` · ${desk.lastCall.outcome}` : ""}
+            </p>
+            {desk.lastCall.green ? <p>Green: {desk.lastCall.green}</p> : null}
+            {desk.lastCall.red ? <p className="text-muted">{desk.lastCall.red}</p> : null}
           </div>
         ) : null}
 

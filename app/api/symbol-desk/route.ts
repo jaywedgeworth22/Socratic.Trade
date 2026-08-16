@@ -6,7 +6,8 @@ import {
   getTakeProfitTrimBands,
   listConnectedAccounts,
   listPendingProposals,
-  listPortfolioSnapshots
+  listPortfolioSnapshots,
+  listSocraticDecisionCases
 } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/request-user";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -35,6 +36,10 @@ export async function GET(request: Request) {
   const rawPlans = currentAccountNumber ? getStopPlans(currentAccountNumber, userId) : {};
   const trims = currentAccountNumber ? getTakeProfitTrimBands(currentAccountNumber, userId) : {};
   const pending = currentAccountNumber ? listPendingProposals(currentAccountNumber, userId) : [];
+  const cases = listSocraticDecisionCases(userId, {
+    limit: 40,
+    ...(active?.id ? { connectedAccountId: active.id } : {})
+  });
 
   const desk = buildSymbolDesk({
     symbol,
@@ -48,7 +53,8 @@ export async function GET(request: Request) {
     },
     stopPlan: rawPlans[symbol],
     trim: trims[symbol],
-    pending
+    pending,
+    cases
   });
 
   return NextResponse.json(desk);

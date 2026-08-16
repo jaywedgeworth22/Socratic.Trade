@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { type ReactNode } from "react";
 import type { EquityOrder, EquityPosition, PendingProposal } from "@/lib/types";
-import type { PeerAccountHolding, SymbolDeskExit } from "@/lib/symbol-desk";
+import type { PeerAccountHolding, SymbolDeskExit, SymbolDeskLastCall } from "@/lib/symbol-desk";
 import { type ProtectionInfo } from "../lib/derive";
 import { friendlySource, orderedSourceEntries, provenanceLabel } from "@/lib/dashboard-ui";
 import { cx, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
@@ -194,6 +194,40 @@ export function PeerAccountsSection({
       <p className="mt-2 text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
         Last recorded lot on another account of yours — not a live broker refresh.  Switching loads that account&apos;s full book.
       </p>
+    </Section>
+  );
+}
+
+export function LastCallSection({ lastCall }: { lastCall?: SymbolDeskLastCall }) {
+  if (!lastCall) return null;
+  return (
+    <Section
+      title="Last desk call"
+      titleHint="The latest Green/Red decision case for this ticker on this account.  Full evidence stays on the decision page."
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {lastCall.side && <Chip tone={lastCall.side === "buy" || lastCall.side === "cover" ? "pos" : "neg"}>{lastCall.side}</Chip>}
+        <Chip tone="muted">{lastCall.status.replace(/_/g, " ")}</Chip>
+        {lastCall.outcome && lastCall.outcome !== "open" && lastCall.outcome !== "unknown" && (
+          <Chip tone={lastCall.outcome === "won" ? "pos" : lastCall.outcome === "lost" ? "neg" : "muted"}>
+            {lastCall.outcome}
+          </Chip>
+        )}
+      </div>
+      {lastCall.green && (
+        <p className="mt-2 text-[length:var(--con-fs-sm)] leading-snug">Green: {lastCall.green}</p>
+      )}
+      {lastCall.red && (
+        <p className="mt-1 text-[length:var(--con-fs-sm)] leading-snug text-[color:var(--con-faint)]">
+          {lastCall.red}
+        </p>
+      )}
+      <Link
+        href={`/console/decisions/${encodeURIComponent(lastCall.id)}`}
+        className="mt-2 inline-block font-semibold text-[color:var(--con-accent)] hover:underline"
+      >
+        Open decision
+      </Link>
     </Section>
   );
 }

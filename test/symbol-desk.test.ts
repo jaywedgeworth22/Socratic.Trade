@@ -3,6 +3,7 @@ import {
   buildSymbolDesk,
   collectPeerHoldings,
   compactExit,
+  compactLastCall,
   findHeldLot,
   peerHoldingFromLot,
   signedQuantityToDirection
@@ -131,5 +132,38 @@ describe("symbol desk helpers", () => {
     expect(desk.peerAccounts[0]).toMatchObject({ direction: "short", quantity: 3, accountId: "ira" });
     expect(desk.exit).toEqual({ style: "atr", resolvedStopPct: 7.5 });
     expect(desk.pending[0].rationale).toMatch(/green team/);
+  });
+
+  it("last call is a clipped Green/Red pair with no evidence dump", () => {
+    const last = compactLastCall(
+      [
+        {
+          id: "c1",
+          userId: "u1",
+          createdAt: stamp,
+          updatedAt: stamp,
+          symbol: "NVDA",
+          side: "buy",
+          status: "placed",
+          authority: "decide",
+          thesis: "momentum",
+          rationale: "x".repeat(300),
+          greenTeamRationale: "Hold the core; trail.",
+          action: "buy",
+          evidence: [{ text: "secret evidence" }],
+          ragAttributions: [],
+          dissent: [],
+          redTeamVerdict: { rejected: false, available: true, verdict: "approve", reason: "size ok" },
+          outcome: { status: "won", outcomes: [] }
+        } as never
+      ],
+      "NVDA"
+    );
+    expect(last?.id).toBe("c1");
+    expect(last?.green).toBe("Hold the core; trail.");
+    expect(last?.red).toMatch(/^Red approve/);
+    expect(last?.outcome).toBe("won");
+    expect(JSON.stringify(last)).not.toMatch(/secret evidence/);
+    expect((last?.green ?? "").length).toBeLessThanOrEqual(200);
   });
 });

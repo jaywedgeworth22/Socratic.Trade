@@ -59,6 +59,9 @@ struct SymbolInfoSheet: View {
                     if let pending = desk?.pending, !pending.isEmpty {
                         PendingIdeasCard(items: pending)
                     }
+                    if let lastCall = desk?.lastCall {
+                        LastCallCard(call: lastCall)
+                    }
                     if let peers = desk?.peerAccounts, !peers.isEmpty {
                         PeerAccountsCard(peers: peers) { accountId in
                             Task {
@@ -278,6 +281,31 @@ private struct PendingIdeasCard: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct LastCallCard: View {
+    let call: SymbolDeskInfo.LastCall
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeading("Last Desk Call")
+            AppCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(call.side.map { "\($0) · " } ?? "")\(call.status.replacingOccurrences(of: "_", with: " "))\(call.outcome.map { " · \($0)" } ?? "")")
+                        .font(.appSubheadline.weight(.semibold))
+                    if let green = call.green, !green.isEmpty {
+                        Text("Green: \(green)")
+                            .font(.appCaption)
+                    }
+                    if let red = call.red, !red.isEmpty {
+                        Text(red)
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

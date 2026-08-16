@@ -559,10 +559,20 @@ struct SymbolDeskInfo: Decodable {
         let rationale: String?
     }
 
+    struct LastCall: Decodable {
+        let id: String
+        let side: String?
+        let status: String
+        let green: String?
+        let red: String?
+        let outcome: String?
+    }
+
     let symbol: String
     let peerAccounts: [PeerAccount]
     let exit: Exit?
     let pending: [Pending]
+    let lastCall: LastCall?
 }
 
 struct CommandEnvelope: Decodable {
