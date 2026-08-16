@@ -9,9 +9,10 @@
 //
 // Budget stance: stays reliably far under the R2 free tier. One weekly run costs ~20
 // Class A ops (create + ~16 parts at 100 MB + complete + list + up to a couple deletes)
-// ≈ 90/month vs the 1M free-tier allowance; storage is retain×DB-size (4 × ~1.5 GB ≈ 6 GB
-// of the 10 GiB tier — shared with any historic litestream objects; the r2-usage monitor's
-// absolute storage alert remains the watchdog for that headroom). A budget guard refuses
+// ≈ 90/month vs the 1M free-tier allowance; storage is retain×DB-size.  The live DB
+// is ~4.2 GB (2026-08-15), so default retain is 1 (~4.2 GB of the 10 GiB free
+// tier).  Four copies would be ~17 GB and trip the 70% guard.  Override with
+// R2_COLD_SNAPSHOT_RETAIN only when the file is small enough.  A budget guard refuses
 // to run at all when the r2-usage monitor's latest ST snapshot shows month-to-date Class A
 // ops above 50% of the free tier. The R2 free-tier kill-switch in r2-usage.ts is untouched
 // (it is gated to litestream's endpoint being R2, which it no longer is).
@@ -55,7 +56,7 @@ export const R2_COLD_SNAPSHOT_PREFIX = "cold-snapshots/";
 export const R2_COLD_SNAPSHOT_UTC_DAY = 0; // Sunday
 export const R2_COLD_SNAPSHOT_UTC_HOUR = 3;
 export const R2_COLD_SNAPSHOT_UTC_MINUTE = 17;
-export const R2_COLD_SNAPSHOT_DEFAULT_RETAIN = 4;
+export const R2_COLD_SNAPSHOT_DEFAULT_RETAIN = 1;
 export const R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES = 100 * 1024 * 1024; // 100 MB parts
 /** S3 floor for every part except the last. */
 export const R2_COLD_SNAPSHOT_MIN_PART_BYTES = 5 * 1024 * 1024;

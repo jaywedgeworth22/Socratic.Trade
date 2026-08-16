@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+> **2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF (`grok/overlay-poly-asof`).**  Full overlay UI on Strategy; Polymarket sector/theme + macro tilts; ASOF dry-run receipt (13076/13076 epoch'd).  No Reddit/X.  Weekly hard-delete deferred.  Rollout: `docs/rollouts/2026-08-16-overlay-poly-asof.md`.
+
+> **2026-08-16 GROK — Litestream L1 suffix + FilingAPI + ROIC universe (`grok/litestream-filingapi-roic`).**  Delete non-contiguous L1 so L2/L3 can rebuild.  FilingAPI key is a dead trial (401); free signup already claimed — owner Plus checkout.  ROIC ingest is list-first + speaker-section RAG + universe cursor; retrieval admits ROIC without FMP rights.  Rollout: `docs/rollouts/2026-08-16-litestream-filingapi-roic.md`.
+
 > **2026-08-14 GROK — unstick #2707 webpack `node:crypto`.** Merged origin/main
 > (clean). `src/lib/kalshi.ts` now imports bare `crypto` so Next/webpack
 > resolve.fallback applies. Rollout:

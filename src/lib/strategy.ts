@@ -135,7 +135,7 @@ import {
   type FmpTranscriptRightsGenerationClaim
 } from "./web-sources/fmp-transcripts";
 import { earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
-import { roicTranscriptsEnabled } from "./web-sources/roic-transcripts";
+import { roicTranscriptsEnabled } from "./roic-transcripts-gate";
 import { deterministicFilingsRetrievalQuery, strategyInformationRouting } from "./rag/information-routing";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
@@ -173,7 +173,15 @@ import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-t
 import { isEscalationRegime } from "./regime-watch";
 import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
 import { compactHeadlinesForPrompt } from "./prompt-headlines";
-import { fetchPolymarketContextForSymbols, formatPolymarketLinesForPrompt, polymarketTtlMs, type PolymarketMarketMatch } from "./polymarket-provider";
+import {
+  attachThemesToSymbols,
+  fetchPolymarketContextForSymbols,
+  fetchPolymarketMacroContext,
+  fetchPolymarketThemeContext,
+  formatPolymarketLinesForPrompt,
+  polymarketTtlMs,
+  type PolymarketMarketMatch
+} from "./polymarket-provider";
 import { fetchKalshiMacroContext, type KalshiMacroContext } from "./kalshi-macro";
 import { getOrRecordHeadlineFirstSeen, headlineFingerprint } from "./headline-first-seen";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
@@ -4940,12 +4948,19 @@ async function proposeTrades(input: {
   // polymarket-provider.ts). Knob-gated + fail-open: the fetch itself never throws, but the
   // outer .catch mirrors every other prompt-context helper on this seam so a future change to
   // that contract can't silently blank the prompt block.
-  const polymarketBySymbol = input.marketScan
+  const polymarketCompanyBySymbol = input.marketScan
     ? await fetchPolymarketContextForSymbols(
         input.marketScan.topCandidates.map((c) => c.symbol),
         Object.fromEntries(input.marketScan.topCandidates.map((c) => [normalizeSymbol(c.symbol), c.companyName]))
       ).catch(() => ({}) as Record<string, PolymarketMarketMatch[]>)
     : {};
+  const polymarketThemes = input.marketScan
+    ? await fetchPolymarketThemeContext(input.marketScan.topCandidates).catch(() => ({} as Record<string, PolymarketMarketMatch[]>))
+    : {};
+  const polymarketBySymbol = input.marketScan
+    ? attachThemesToSymbols(input.marketScan.topCandidates, polymarketThemes, polymarketCompanyBySymbol)
+    : {};
+  const polymarketMacro = await fetchPolymarketMacroContext().catch(() => ({ lines: [] as string[], markets: [] as PolymarketMarketMatch[] }));
 
   const kalshiMacro: KalshiMacroContext = await fetchKalshiMacroContext(input.userId).catch(() => ({
     series: [],
@@ -5568,6 +5583,14 @@ async function proposeTrades(input: {
           }
         }
       : {}),
+    ...(polymarketMacro.lines.length > 0
+      ? {
+          predictionMarketsMacro: {
+            note: "Polymarket real-money YES/NO odds.  Macro/regime context only — not a single-name trigger, not a quote, not a 0-100 score.  Weight thin books down.  Read next to eventMarkets (Kalshi) and macroeconomicData.  `tilt` is a label from the question kind and the Yes price.",
+            markets: polymarketMacro.lines
+          }
+        }
+      : {}),
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
@@ -5624,7 +5647,10 @@ async function proposeTrades(input: {
       const predictionMarkets = formatPolymarketLinesForPrompt(polymarketBySymbol[sym]);
       if (predictionMarkets.length > 0) fields.push({ name: `polymarket:${sym}`, text: predictionMarkets.join("\n") });
       return fields;
-    })
+    }),
+    ...(polymarketMacro.lines.length > 0
+      ? [{ name: "polymarket:macro", text: polymarketMacro.lines.join("\n") } satisfies UntrustedPromptField]
+      : [])
   ];
   const promptSafetyFindings = scanForInjectionAttempts(untrustedPromptFields);
   const writeFmpAwareAudit = (kind: string, payload: unknown) => {

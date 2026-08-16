@@ -418,7 +418,7 @@ canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
 
 ## Mac local processes (binding)
 
-If you create, change, load, bootout, or retire a LaunchAgent, cron row, login item, pm2 KeepAlive job, **or any helper script other agents are expected to run**, you **must** add or update a row on `/Users/jay/apps/MAC-LOCAL-PROCESSES.md` **and** refresh the pinned Apple Note `[FLEET, Grok] Mac background jobs master list` in the same change.  Say whether it is **always-on** or **on-demand**.  A new background Python/Node/bash job that is not on the list is unfinished work.  Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Mac local processes.
+If you create, change, load, bootout, or retire a LaunchAgent, cron row, login item, pm2 KeepAlive job, **or any helper script other agents are expected to run**, you **must** add or update a row on `/Users/jay/apps/MAC-LOCAL-PROCESSES.md` **and** refresh the pinned Apple Note `⭐️ Background Jobs Master List` in the same change.  Say whether it is **always-on** or **on-demand**.  A new background Python/Node/bash job that is not on the list is unfinished work.  Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Mac local processes.
 
 ## Delegation & model economics (fleet rule — binding for every agent)
 
