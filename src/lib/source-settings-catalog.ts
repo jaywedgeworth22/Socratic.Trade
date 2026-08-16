@@ -377,11 +377,11 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     group: "transcripts",
     label: "ROIC transcripts per run",
     description:
-      "Max transcript fetches per scheduler pass.  Free ROIC is 5 req/min; Individual is 300/min.  20 is a safe paid-or-free bump from the old 12.",
+      "Max transcript fetches per scheduler pass.  Free ROIC is 5 req/min (keep this small).  Individual is 300/min and 20 quarters of history — 80 is the paid default so the universe can actually fill.",
     type: "number",
-    defaultValue: 20,
+    defaultValue: 80,
     min: 1,
-    max: 50
+    max: 300
   },
   {
     id: "PUBLIC_EXECUTION_ENABLED",
@@ -502,6 +502,34 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     defaultValue: 0.5,
     min: 0,
     max: 1
+  },
+  {
+    id: "POLYMARKET_THEME_CONTEXT",
+    group: "enrichment",
+    label: "Polymarket sector and theme books",
+    description:
+      "Attach curated sector/theme Polymarket books (semiconductors, AI, energy, finance, defense) to matching scan candidates.  Still keyless.  Off leaves only company-name markets.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "POLYMARKET_MACRO_CONTEXT",
+    group: "enrichment",
+    label: "Polymarket macro books",
+    description:
+      "Inject run-level US recession, Fed, CPI, and WTI books next to Kalshi event markets.  Real-money odds, not a quote.  Off omits the block.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "POLYMARKET_MAX_THEME_QUERIES",
+    group: "enrichment",
+    label: "Polymarket theme query cap",
+    description: "Maximum distinct theme searches per strategy run.  Cached 10 minutes.",
+    type: "number",
+    defaultValue: 6,
+    min: 0,
+    max: 20
   },
 
   // ── Kalshi event-market macro context (public GET /markets; KALSHI_ENV

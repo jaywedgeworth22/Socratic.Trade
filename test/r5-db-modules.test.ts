@@ -43,4 +43,13 @@ describe("strategy_overlays persistence", () => {
     expect(deleteStrategyOverlay("u", row.id)).toBe(true);
     expect(listStrategyOverlays("u")).toEqual([]);
   });
+
+  it("seeds starter templates once by name", async () => {
+    const { seedStrategyOverlayTemplates, listStrategyOverlays } = await import("../src/lib/db-overlays");
+    const first = seedStrategyOverlayTemplates("u");
+    const second = seedStrategyOverlayTemplates("u");
+    expect(first.length).toBeGreaterThan(0);
+    expect(second).toEqual([]);
+    expect(listStrategyOverlays("u").every((row) => row.enabled === false)).toBe(true);
+  });
 });

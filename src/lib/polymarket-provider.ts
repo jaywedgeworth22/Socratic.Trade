@@ -53,10 +53,35 @@ import { scoreHeadlineRelevance } from "./news-relevance";
 import { audit } from "./db";
 import { normalizeSymbol } from "./money";
 import { resolveSourceBool, resolveSourceNumber } from "./source-settings";
+import {
+  POLYMARKET_MACRO_CATALOG,
+  POLYMARKET_THEME_CATALOG,
+  bookDepthFrom,
+  classifyMarketKind,
+  crowdLeanFromYes,
+  isUsScopedQuestion,
+  parseYesNoPercents,
+  themesForQuote,
+  tiltFrom,
+  yesImpliesForKind,
+  type PolymarketBookDepth,
+  type PolymarketCrowdLean,
+  type PolymarketEquityTilt,
+  type PolymarketMarketKind,
+  type PolymarketScope
+} from "./polymarket-signals";
+
+export type {
+  PolymarketBookDepth,
+  PolymarketCrowdLean,
+  PolymarketEquityTilt,
+  PolymarketMarketKind,
+  PolymarketScope
+} from "./polymarket-signals";
 
 const GAMMA_BASE_URL = "https://gamma-api.polymarket.com";
 
-/** One currently-active, company-relevant Polymarket market. */
+/** One currently-active Polymarket market, optionally translated into a labeled tilt. */
 export interface PolymarketMarketMatch {
   question: string;
   /** 0-100, 1dp — the probability of this market's most-likely outcome (whichever side of the
@@ -66,6 +91,16 @@ export interface PolymarketMarketMatch {
   outcomeLabel?: string;
   volume24h?: number;
   volumeTotal?: number;
+  scope?: PolymarketScope;
+  themeId?: string;
+  kind?: PolymarketMarketKind;
+  yesPct?: number;
+  noPct?: number;
+  crowdLean?: PolymarketCrowdLean;
+  yesImplies?: PolymarketEquityTilt;
+  tilt?: PolymarketEquityTilt;
+  tiltBasis?: string;
+  bookDepth?: PolymarketBookDepth;
 }
 
 // In-process cache: news moves in minutes, and the upstream CDN itself caches 5 minutes — 10
@@ -181,17 +216,40 @@ function impliedProbabilityFromOutcomes(m: GammaMarket): { pct: number; label?: 
   return { pct: Math.round(prices[bestIdx] * 1000) / 10, label: outcomes[bestIdx] };
 }
 
-function toMarketMatch(m: GammaMarket): PolymarketMarketMatch | undefined {
+function toMarketMatch(m: GammaMarket, scope: PolymarketScope = "company", themeId?: string): PolymarketMarketMatch | undefined {
   const question = typeof m.question === "string" ? m.question.trim() : "";
   if (!question) return undefined;
   const implied = impliedProbabilityFromOutcomes(m);
   if (!implied) return undefined;
+  const outcomes = parseJsonStringArray(m.outcomes);
+  const prices = parseJsonStringArray(m.outcomePrices).map(Number);
+  const yesNo = parseYesNoPercents(outcomes, prices);
+  const volume24h = toFiniteNumber(m.volume24hr);
+  const volumeTotal = toFiniteNumber(m.volume);
+  const kind = classifyMarketKind(question);
+  const bookDepth = bookDepthFrom(volume24h, volumeTotal);
+  const yesImplies = yesImpliesForKind(kind);
+  const crowdLean = yesNo ? crowdLeanFromYes(yesNo.yesPct) : undefined;
+  const tilt = yesNo && crowdLean ? tiltFrom(yesImplies, crowdLean, bookDepth) : "unclear";
+  const tiltBasis = yesNo
+    ? `yes ${yesNo.yesPct}% on kind=${kind}; lean=${crowdLean}; book=${bookDepth}`
+    : `kind=${kind}; no Yes token`;
   return {
     question,
     impliedProbabilityPct: implied.pct,
     outcomeLabel: implied.label,
-    volume24h: toFiniteNumber(m.volume24hr),
-    volumeTotal: toFiniteNumber(m.volume)
+    volume24h,
+    volumeTotal,
+    scope,
+    themeId,
+    kind,
+    yesPct: yesNo?.yesPct,
+    noPct: yesNo?.noPct,
+    crowdLean,
+    yesImplies,
+    tilt,
+    tiltBasis,
+    bookDepth
   };
 }
 
@@ -266,7 +324,7 @@ export async function fetchPolymarketContextForSymbols(
             const rawMarkets = await fetchMarketsForQuery(query);
             const scored = rawMarkets
               .filter(isLiveMarket)
-              .map(toMarketMatch)
+              .map((m) => toMarketMatch(m, "company"))
               .filter((m): m is PolymarketMarketMatch => Boolean(m))
               .map((match) => ({ match, relevance: scoreHeadlineRelevance(match.question, symbol, companyName).score }));
 
@@ -289,7 +347,11 @@ export async function fetchPolymarketContextForSymbols(
 
     // One bounded aggregate audit row per call, never per-market (audit_events is a hash-chained
     // log; see marketaux-provider.ts's identical convention for why this stays a single row).
-    audit("polymarket.context", { symbolsProbed: bounded.length, marketsMatched, droppedForRelevance }, "local");
+    audit(
+      "polymarket.context",
+      { symbolsProbed: bounded.length, marketsMatched, droppedForRelevance },
+      "local"
+    );
   } catch {
     // Fail open — an unexpected error (bad knob read, etc.) yields no data, never a thrown error
     // out of a prompt-context helper.
@@ -312,13 +374,128 @@ function formatCompactVolume(value: number): string {
  */
 export function formatPolymarketLinesForPrompt(markets: readonly PolymarketMarketMatch[] | undefined): string[] {
   if (!markets || markets.length === 0) return [];
-  return markets.slice(0, MAX_MARKETS_PER_SYMBOL).map((m) => {
-    const pct = Math.round(m.impliedProbabilityPct);
-    const pctLabel = m.outcomeLabel ? `${m.outcomeLabel} ${pct}%` : `${pct}%`;
-    const volParts: string[] = [];
-    if (typeof m.volume24h === "number") volParts.push(`24h vol ${formatCompactVolume(m.volume24h)}`);
-    if (typeof m.volumeTotal === "number") volParts.push(`total vol ${formatCompactVolume(m.volumeTotal)}`);
-    const volSuffix = volParts.length > 0 ? ` (${volParts.join(", ")})` : "";
-    return `Polymarket: "${m.question}" — ${pctLabel}${volSuffix}`;
-  });
+  return markets.slice(0, 5).map(formatOneMarketLine);
+}
+
+function formatOneMarketLine(m: PolymarketMarketMatch): string {
+  const scopeTag =
+    m.scope === "macro"
+      ? "macro"
+      : m.scope === "sector" || m.scope === "theme"
+        ? `${m.scope}:${m.themeId ?? "theme"}`
+        : "company";
+  const yesNo =
+    typeof m.yesPct === "number"
+      ? `Yes ${Math.round(m.yesPct)}%${typeof m.noPct === "number" ? ` / No ${Math.round(m.noPct)}%` : ""}`
+      : m.outcomeLabel
+        ? `${m.outcomeLabel} ${Math.round(m.impliedProbabilityPct)}%`
+        : `${Math.round(m.impliedProbabilityPct)}%`;
+  const tiltLabel =
+    m.tilt === "unclear"
+      ? "tilt unclear — read the question"
+      : m.tilt
+        ? `tilt ${m.tilt}`
+        : undefined;
+  const parts = [yesNo];
+  if (m.crowdLean) parts.push(`crowd ${m.crowdLean}`);
+  if (tiltLabel) parts.push(tiltLabel);
+  if (m.kind && m.kind !== "other") parts.push(`kind ${m.kind}`);
+  if (m.bookDepth) parts.push(`${m.bookDepth} book`);
+  if (typeof m.volume24h === "number") parts.push(`24h ${formatCompactVolume(m.volume24h)}`);
+  return `Polymarket (${scopeTag}): "${m.question}" — ${parts.join(" · ")}`;
+}
+
+const MAX_THEME_MARKETS = 2;
+
+function themeQueryCap(): number {
+  const value = resolveSourceNumber("POLYMARKET_MAX_THEME_QUERIES");
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 6;
+}
+
+function liveMatchesForQuery(query: string, scope: PolymarketScope, themeId?: string): Promise<PolymarketMarketMatch[]> {
+  return fetchMarketsForQuery(query)
+    .then((raw) =>
+      raw
+        .filter(isLiveMarket)
+        .map((m) => toMarketMatch(m, scope, themeId))
+        .filter((m): m is PolymarketMarketMatch => Boolean(m))
+    )
+    .catch(() => []);
+}
+
+export async function fetchPolymarketThemeContext(
+  candidates: readonly { sector?: string; industry?: string }[]
+): Promise<Record<string, PolymarketMarketMatch[]>> {
+  const out: Record<string, PolymarketMarketMatch[]> = {};
+  try {
+    if (!resolveSourceBool("POLYMARKET_CONTEXT") || !resolveSourceBool("POLYMARKET_THEME_CONTEXT")) return out;
+    const wanted = new Map<string, (typeof POLYMARKET_THEME_CATALOG)[number]>();
+    for (const candidate of candidates) {
+      for (const theme of themesForQuote(candidate)) wanted.set(theme.id, theme);
+    }
+    const queries: { themeId: string; query: string }[] = [];
+    for (const theme of wanted.values()) {
+      for (const query of theme.queries) queries.push({ themeId: theme.id, query });
+    }
+    const bounded = queries.slice(0, themeQueryCap());
+    await Promise.all(
+      bounded.map(async ({ themeId, query }) => {
+        const matches = await liveMatchesForQuery(query, "theme", themeId);
+        if (matches.length === 0) return;
+        const ranked = [...matches].sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0)).slice(0, MAX_THEME_MARKETS);
+        const existing = out[themeId] ?? [];
+        out[themeId] = [...existing, ...ranked].slice(0, MAX_THEME_MARKETS);
+      })
+    );
+  } catch {
+    return {};
+  }
+  return out;
+}
+
+export async function fetchPolymarketMacroContext(): Promise<{ lines: string[]; markets: PolymarketMarketMatch[] }> {
+  const empty = { lines: [] as string[], markets: [] as PolymarketMarketMatch[] };
+  try {
+    if (!resolveSourceBool("POLYMARKET_CONTEXT") || !resolveSourceBool("POLYMARKET_MACRO_CONTEXT")) return empty;
+    const override = String(process.env.POLYMARKET_MACRO_QUERIES ?? "").trim();
+    const catalog = override
+      ? override.split(",").map((q) => ({ id: q.trim(), queries: [q.trim()], kind: "other" as const }))
+      : POLYMARKET_MACRO_CATALOG;
+    const markets: PolymarketMarketMatch[] = [];
+    for (const spec of catalog) {
+      for (const query of spec.queries) {
+        const matches = (await liveMatchesForQuery(query, "macro", spec.id)).filter((m) => isUsScopedQuestion(m.question));
+        if (matches.length === 0) continue;
+        matches.sort((a, b) => (b.volume24h ?? b.volumeTotal ?? 0) - (a.volume24h ?? a.volumeTotal ?? 0));
+        markets.push({ ...matches[0], kind: spec.kind, themeId: spec.id, scope: "macro" });
+        break;
+      }
+    }
+    return { lines: formatPolymarketLinesForPrompt(markets), markets };
+  } catch {
+    return empty;
+  }
+}
+
+export function attachThemesToSymbols(
+  candidates: readonly { symbol: string; sector?: string; industry?: string }[],
+  themeById: Record<string, PolymarketMarketMatch[]>,
+  companyBySymbol: Record<string, PolymarketMarketMatch[]>
+): Record<string, PolymarketMarketMatch[]> {
+  const merged: Record<string, PolymarketMarketMatch[]> = { ...companyBySymbol };
+  for (const candidate of candidates) {
+    const symbol = normalizeSymbol(candidate.symbol);
+    if (!symbol) continue;
+    const themes = themesForQuote(candidate);
+    const extras: PolymarketMarketMatch[] = [];
+    for (const theme of themes) {
+      const rows = themeById[theme.id] ?? [];
+      extras.push(...rows.map((row) => ({ ...row, scope: "theme" as const, themeId: theme.id })));
+    }
+    const company = (merged[symbol] ?? []).slice(0, MAX_MARKETS_PER_SYMBOL);
+    const themeSlice = extras.slice(0, 2);
+    const next = [...company, ...themeSlice];
+    if (next.length > 0) merged[symbol] = next;
+  }
+  return merged;
 }

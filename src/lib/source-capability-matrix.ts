@@ -695,9 +695,10 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
     sources: [
       opt("roic-earnings-transcript", 1, "primary", "medium", [
         "Owner individual plan — best ST full-text path when key present.",
-        "API: GET /v2/transcript/{symbol}/{year}/{quarter}.",
-        "Min body length 200 chars before ingest.",
-        "CRITICAL: helpers in web-sources/roic-transcripts.ts; scheduler wire was missing 2026-08-05 (library-only) — root cause of empty ROIC saves.",
+        "API: GET /v3.0.0/earnings-calls?identifier= then GET /v3.0.0/earnings-calls/{EXCHANGE:SYM}?fiscal_year=&fiscal_quarter=.",
+        "List-first, skip-if-stored, speaker-section chunks, earnings-summary digest.",
+        "Universe = holdings then watchlist then policy indices then RAG manifest.  Individual = 20 quarters.",
+        "Retrieval gated by ROIC key + ROIC_TRANSCRIPTS_DISABLED, independent of FMP rights.",
       ], { implHint: "src/lib/web-sources/roic-transcripts.ts" }),
       opt("earningscalls", 2, "good", "scarce", [
         "~200 req/month free RapidAPI class.",

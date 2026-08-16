@@ -697,11 +697,11 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     }
   }
 
-  const envKey = envVar ? process.env[envVar] : undefined;
+  const envKey = envVar ? process.env[envVar]?.trim() : undefined;
 
   // 2. shared-operator-infra: global env fallback first, then fallback to `local` user's key.
   if (credTierForService(canonical) === "shared-operator-infra") {
-    // Check global env key first.
+    // Check global env key first.  Trim so Infisical/Coolify trailing newlines cannot 401.
     if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
 
     // Fall back to the Socratic.Trade owner's ('local') key as the system default, since background
