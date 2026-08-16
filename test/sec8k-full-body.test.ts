@@ -15,6 +15,7 @@ beforeAll(() => {
 const mocks = vi.hoisted(() => ({
   politeFetchText: vi.fn(),
   hasIngestTextBudget: vi.fn().mockReturnValue(true),
+  hasPineconeWriteBudget: vi.fn().mockReturnValue(true),
   insertSecArtifact: vi.fn(),
   storeDocument: vi.fn().mockResolvedValue({
     attempted: 1,
@@ -52,6 +53,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
     ...actual,
     managedVectorLedgerAuthority: vi.fn(),
     hasIngestTextBudget: mocks.hasIngestTextBudget,
+    hasPineconeWriteBudget: mocks.hasPineconeWriteBudget,
     storeDocument: async (...args: Parameters<typeof actual.storeDocument>) => {
       const result = await mocks.storeDocument(...args);
       return result?.documentComplete === true
@@ -87,6 +89,7 @@ beforeEach(() => {
   delete process.env.WEB_SOURCE_SEC8K_FULL_BODY;
   mocks.politeFetchText.mockResolvedValue(SAMPLE_HTML);
   mocks.hasIngestTextBudget.mockReturnValue(true);
+  mocks.hasPineconeWriteBudget.mockReturnValue(true);
   mocks.insertSecArtifact.mockImplementation(() => undefined);
   mocks.storeDocument.mockResolvedValue({
     attempted: 1,

@@ -134,4 +134,24 @@ describe("roic-transcripts", () => {
   it("builds a stable accession for skip-if-stored", () => {
     expect(roicTranscriptAccession("aapl", 2026, 2)).toBe("roic:AAPL:2026Q2");
   });
+
+  it("latest pass takes only the newest period; deepen takes the plan-tier cap", async () => {
+    const { selectRoicPeriodsForPhase, roicDepthForPhase } = await import("../src/lib/web-sources/roic-transcripts");
+    const periods = [
+      { year: 2025, quarter: 1 },
+      { year: 2026, quarter: 2 },
+      { year: 2025, quarter: 4 }
+    ];
+    expect(selectRoicPeriodsForPhase(periods, "latest", 20)).toEqual([{ year: 2026, quarter: 2 }]);
+    expect(selectRoicPeriodsForPhase(periods, "deepen", 2)).toEqual([
+      { year: 2026, quarter: 2 },
+      { year: 2025, quarter: 4 }
+    ]);
+    expect(roicDepthForPhase("latest")).toBe(1);
+    const prev = process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL;
+    process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL = "20";
+    expect(roicDepthForPhase("deepen")).toBe(20);
+    if (prev === undefined) delete process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL;
+    else process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL = prev;
+  });
 });
