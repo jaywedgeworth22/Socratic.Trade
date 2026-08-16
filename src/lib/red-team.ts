@@ -12,7 +12,8 @@
 // - No model default and no fallback to the Green model: an unchosen Red model resolves to "" and
 //   this function fails closed (`not_configured`) so the caller routes the opening to a human.
 // - No hidden model failover (R11): transient failures get a small bounded same-model retry
-//   (fetchLlmWithRetry); a reviewer that still can't answer declares itself unavailable.
+//   (llmFetchCapturing, same soft timeout as Green); a reviewer that still can't answer
+//   declares itself unavailable.
 
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
@@ -21,10 +22,11 @@ import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
   LLM_REQUEST_DEFAULTS,
-  fetchLlmWithRetry,
+  llmFetchCapturing,
   resolveReviewerReasoningEffort,
   isRetryableLlmStatus,
-  isRetryableLlmError
+  isRetryableLlmError,
+  strategyLlmTimeoutMs
 } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
@@ -138,8 +140,7 @@ export function validateRedTeamVerdictShape(parsed: unknown): { verdict: RedTeam
   };
 }
 
-/** Abort each Red Team LLM attempt after this long so a hung provider can't wedge the run lock. */
-const RED_TEAM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 45_000;
+/** Soft timeout for one Red attempt — same wall clock as Green (`strategyLlmTimeoutMs`). */
 
 /** Verdict shape the Red Team must return — strict json_schema on OpenAI-compatible transports and
  *  the forced-tool input_schema on Anthropic (both via buildLlmRequestBody). */
@@ -367,7 +368,7 @@ export async function debateProposal(
           try {
             // Fast fallback to secondary models (§4.3): 1 attempt total per provider model, fresh
             // per-attempt timeout signal so a hung provider can't wedge the per-user run lock.
-            const response = await fetchLlmWithRetry(
+            const response = await llmFetchCapturing(
               attempt.url,
               {
                 method: "POST",
@@ -375,13 +376,10 @@ export async function debateProposal(
                 body: JSON.stringify(attempt.body)
               },
               {
-                attempts: 1,
-                baseDelayMs: 500,
-                timeoutMs: RED_TEAM_TIMEOUT_MS,
-                onRetry: (info) =>
-                  console.warn(
-                    `[RedTeam] transient failure (attempt ${info.attempt}${info.status ? `, HTTP ${info.status}` : ""}); retrying ${proposal.symbol} ${proposal.side} review once.`
-                  )
+                softTimeoutMs: strategyLlmTimeoutMs(
+                  attempt.model,
+                  resolveReviewerReasoningEffort(policy)
+                )
               }
             );
 

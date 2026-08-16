@@ -6,6 +6,7 @@ import {
   heartbeatSecIngestTask,
   reconcileSecIngestJob,
   releaseSecIngestTaskForResume,
+  requeueSecIngestDeadLetters,
   SecIngestTask
 } from "../db-rag-ingest";
 import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
@@ -38,6 +39,25 @@ export class SecIngestWorker {
   async start() {
     if (this.active) return;
     this.active = true;
+    // Prod dead-lettered ~1k embed_queued filings as "Ingestion budget or capacity
+    // exceeded mid-task" instead of parking them.  Requeue only that misclassified
+    // error so they resume when the daily WU fuse has room.  Other dead letters stay.
+    try {
+      const revived = requeueSecIngestDeadLetters({
+        errorTypeLike: "worker-error",
+        errorLike: "Ingestion budget or capacity exceeded%"
+      });
+      if (revived.requeuedTasks > 0) {
+        console.warn(
+          `[SecIngestWorker] requeued ${revived.requeuedTasks} budget-misclassified dead letters (${revived.reopenedJobs} jobs reopened)`
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "[SecIngestWorker] budget-dead-letter requeue failed:",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
     // Serialize ticks: fetching/embedding routinely outlasts intervalMs, and an unguarded
     // interval would start overlapping runTick() calls that claim extra batches and run
     // EDGAR/Voyage/Pinecone work concurrently. Skip the tick while one is still in flight.
@@ -380,6 +400,17 @@ export class SecIngestWorker {
                 deferUntil: res.wuExhaustedUntil ?? new Date(Date.now() + 6 * 60 * 60_000).toISOString(),
                 reasonType: "wu_exhausted_deferred",
                 reason: `Pinecone monthly write units exhausted mid-store; deferred until ${res.wuExhaustedUntil ?? "next check"}`
+              });
+              return;
+            }
+            if ((res.writeUnitBudgetSkipped ?? 0) > 0 || (res.budgetSkipped ?? 0) > 0) {
+              deferSecIngestTask({
+                taskId: task.id,
+                owner,
+                leaseToken,
+                deferUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
+                reasonType: "wu_exhausted_deferred",
+                reason: "Pinecone daily write fuse or ingest text budget spent; deferred 1h"
               });
               return;
             }

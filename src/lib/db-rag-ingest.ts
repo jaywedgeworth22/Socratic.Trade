@@ -1132,7 +1132,7 @@ export function releaseSecIngestTaskForResume(input: {
  * jobIds and/or a LIKE pattern on last_error_type.
  */
 export function requeueSecIngestDeadLetters(
-  options: { jobIds?: string[]; errorTypeLike?: string; now?: Date } = {}
+  options: { jobIds?: string[]; errorTypeLike?: string; errorLike?: string; now?: Date } = {}
 ): { requeuedTasks: number; reopenedJobs: number } {
   const database = getDb();
   const nowIso = (options.now ?? new Date()).toISOString();
@@ -1146,6 +1146,10 @@ export function requeueSecIngestDeadLetters(
     if (options.errorTypeLike) {
       where += " AND COALESCE(last_error_type, '') LIKE ?";
       params.push(options.errorTypeLike);
+    }
+    if (options.errorLike) {
+      where += " AND COALESCE(last_error, '') LIKE ?";
+      params.push(options.errorLike);
     }
     const jobRows = database
       .prepare(`SELECT DISTINCT job_id FROM sec_ingest_tasks WHERE ${where}`)

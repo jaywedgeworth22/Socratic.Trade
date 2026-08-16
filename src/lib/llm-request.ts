@@ -566,7 +566,10 @@ export const LLM_OUTPUT_TOKEN_CAPS = {
    * duplicate `strategyCritique` (in-flow Bear, deleted) and `redTeamDebate` caps — one adversary,
    * one cap.
    */
-  adversaryReview: LLM_REQUEST_DEFAULTS.maxOutputTokens,
+  // 1500 was the shared default and truncated / emptied Gemini Red bodies on
+  // 23k-59k-token payloads (48h review 2026-08-13/15).  Verdict JSON is small
+  // but reasoning models spend this budget on hidden tokens first.
+  adversaryReview: 2500,
   postMortemReflection: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   proposalRevalidation: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   // Small — a structured-output extraction of a handful of {kind,subject,value,symbol} candidates

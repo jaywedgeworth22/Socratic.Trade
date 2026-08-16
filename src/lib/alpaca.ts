@@ -24,7 +24,7 @@ import {
   type OptionOrderInput
 } from "./option-orders";
 import { OrderValidationError } from "./types";
-import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
+import { fromAlpacaSymbol, normalizeSymbol, roundAlpacaPrice, toAlpacaSymbol } from "./money";
 import { mergeAccountCapabilities } from "./venue-contract";
 import { toBrokerSide, isRejectedOrCanceledState } from "./broker-side";
 import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
@@ -671,25 +671,25 @@ class AlpacaBrokerGateway implements BrokerGateway {
           orderOptions.notional = effectiveNotional;
         }
 
-        if (input.limitPrice) orderOptions.limit_price = input.limitPrice;
+        if (input.limitPrice) orderOptions.limit_price = roundAlpacaPrice(input.limitPrice);
         // stop_price is only legal on stop-family order types — Alpaca rejects a limit order that
         // carries one with HTTP 422 40010001 "limit orders require no stop price" (proposals may
         // carry a protective stopPrice idea; that intent rides the bracket stop_loss /
         // protective-stop systems, never this field).
         if (input.stopPrice && (input.type === "stop_market" || input.type === "stop_limit")) {
-          orderOptions.stop_price = input.stopPrice;
+          orderOptions.stop_price = roundAlpacaPrice(input.stopPrice);
         }
         if (input.marketHours === "extended_hours") orderOptions.extended_hours = true;
 
         if (isBracket) {
           orderOptions.order_class = "bracket";
           if (input.bracketTakeProfit != null) {
-            orderOptions.take_profit = { limit_price: input.bracketTakeProfit };
+            orderOptions.take_profit = { limit_price: roundAlpacaPrice(input.bracketTakeProfit) };
           }
           if (input.bracketStopLoss != null) {
             orderOptions.stop_loss = {
-              stop_price: input.bracketStopLoss,
-              ...(input.bracketStopLimit != null ? { limit_price: input.bracketStopLimit } : {})
+              stop_price: roundAlpacaPrice(input.bracketStopLoss),
+              ...(input.bracketStopLimit != null ? { limit_price: roundAlpacaPrice(input.bracketStopLimit) } : {})
             };
           }
         }
@@ -729,22 +729,22 @@ class AlpacaBrokerGateway implements BrokerGateway {
     if (effectiveQty != null) orderArgs.qty = String(effectiveQty);
     else if (effectiveNotional != null) orderArgs.notional = String(effectiveNotional);
 
-    if (input.limitPrice) orderArgs.limit_price = String(input.limitPrice);
+    if (input.limitPrice) orderArgs.limit_price = String(roundAlpacaPrice(input.limitPrice));
     // Same constraint as the REST path: stop_price only on stop-family types (Alpaca 422s a
     // limit order carrying one).
     if (input.stopPrice && (input.type === "stop_market" || input.type === "stop_limit")) {
-      orderArgs.stop_price = String(input.stopPrice);
+      orderArgs.stop_price = String(roundAlpacaPrice(input.stopPrice));
     }
 
     if (isBracket) {
       orderArgs.order_class = "bracket";
       if (input.bracketTakeProfit != null) {
-        orderArgs.take_profit = { limit_price: input.bracketTakeProfit };
+        orderArgs.take_profit = { limit_price: roundAlpacaPrice(input.bracketTakeProfit) };
       }
       if (input.bracketStopLoss != null) {
         orderArgs.stop_loss = {
-          stop_price: input.bracketStopLoss,
-          ...(input.bracketStopLimit != null ? { limit_price: input.bracketStopLimit } : {})
+          stop_price: roundAlpacaPrice(input.bracketStopLoss),
+          ...(input.bracketStopLimit != null ? { limit_price: roundAlpacaPrice(input.bracketStopLimit) } : {})
         };
       }
     }
@@ -777,7 +777,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         side: optionIntentToBrokerSide(input.intent),
         type: input.type,
         time_in_force: "day",
-        limit_price: input.type === "limit" && input.limitPrice != null ? String(input.limitPrice) : undefined,
+        limit_price: input.type === "limit" && input.limitPrice != null ? String(roundAlpacaPrice(input.limitPrice)) : undefined,
         client_order_id: input.refId
       }));
       return {

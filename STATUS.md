@@ -1,3 +1,14 @@
+## Current (2026-08-16 GROK — 48h money-path + ingest)
+
+Owner: explain rotation fail-open and 422s, then fix those plus Red timeout, and unstick SEC/ROIC/RAG ingest (Pinecone stay builder/free-ready).
+
+- Rotation fail-open: when `/models/user` times out we still used the full catalog, including `kimi-latest` / `claude-fable-5` whose OpenRouter slugs 404.  Fail-open now drops those known-dead ids.
+- 422: Alpaca HTTP reject.  Sub-penny limits on T (`24.865`) now round to `$0.01` at the Alpaca boundary.
+- Red Team: same `llmFetchCapturing` + `strategyLlmTimeoutMs` path as Green (no 45s hard abort).  Adversary output cap 2500.
+- Ingest: cherry-picked ROIC single-flight.  Requeue ~1k `embed_queued` dead letters that were misclassified budget-exceeded.  Budget skip defers 1h instead of dead-lettering.  Sibling #2748 owns the daily WU fuse park.
+
+Branch `grok/48h-money-path-ingest`, issue #2749.  Rollout: `docs/rollouts/2026-08-16-48h-money-path-ingest.md`.
+
 ## Current (2026-08-16 GROK — ticker desk sheet)
 
 Tapping a ticker on the website (desktop and phone widths) and iOS now

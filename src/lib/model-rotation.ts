@@ -65,6 +65,25 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * Order interleaves providers so consecutive runs hit different providers even before the
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
  */
+/**
+ * Catalog ids whose OpenRouter wire slugs 404 today (`moonshotai/kimi-latest`,
+ * `anthropic/claude-fable-latest`).  When /models/user is reachable they are
+ * already skipped.  When it times out we still must not serve them.
+ */
+export const DEAD_OPENROUTER_ROTATION_MODELS: readonly string[] = [
+  "kimi-latest",
+  "claude-fable-5"
+];
+
+export function isDeadOpenRouterRotationModel(model: string): boolean {
+  return DEAD_OPENROUTER_ROTATION_MODELS.includes(model);
+}
+
+/** Credential pool after dropping known-dead slugs. Used when /models/user is down. */
+export function applyRotationAvailabilityFailOpen(credentialPool: readonly string[]): string[] {
+  return credentialPool.filter((model) => !isDeadOpenRouterRotationModel(model));
+}
+
 export const MODEL_ROTATION_POOL: readonly string[] = [
   "gpt-5.6-terra",
   "claude-haiku-4.5",
@@ -193,11 +212,15 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
   }
   const availability = await getOpenRouterUserModelAvailability(credential.key, credential.keyRef);
   if (availability.status === "unavailable") {
-    // Fail OPEN to the credential-filtered pool.  A /models/user timeout or 429 must not
-    // wipe rotation — that aborted every scheduled run on 2026-08-13 (availabilityError=timeout).
+    // Fail OPEN to the credential-filtered pool so a /models/user timeout or 429 cannot
+    // wipe rotation (that aborted every scheduled run on 2026-08-13).  Still drop catalog
+    // ids whose OpenRouter wire slugs have 404'd (kimi-latest, claude-fable-latest) —
+    // serving those is how fail-open became "empty rotation seats" on 2026-08-13/14.
+    const safe = applyRotationAvailabilityFailOpen(credentialPool);
+    const dead = credentialPool.filter((model) => isDeadOpenRouterRotationModel(model));
     return {
-      pool: credentialPool,
-      skipped,
+      pool: safe,
+      skipped: [...skipped, ...dead],
       availability: "unavailable",
       availabilityError: availability.reason
     };

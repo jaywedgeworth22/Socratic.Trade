@@ -199,6 +199,38 @@ describe("EDGAR 403 handling and dead-letter requeue (2026-08-09 outage class)",
     expect(reclaimed).toHaveLength(1);
     expect(reclaimed[0]!.id).toBe(task.id);
   });
+
+  it("requeues only budget-misclassified dead letters when errorLike is set", async () => {
+    const budget = makeClaimedTask("idemp-requeue-budget", "0000798354-26-000099");
+    const other = makeClaimedTask("idemp-requeue-other", "0000798354-26-000098");
+    const { failSecIngestTask, requeueSecIngestDeadLetters, getSecIngestTask } =
+      await import("../src/lib/db-rag-ingest");
+
+    failSecIngestTask({
+      taskId: budget.task.id,
+      owner: "test-worker",
+      leaseToken: budget.task.leaseToken || "",
+      retryable: false,
+      errorType: "worker-error",
+      error: "Ingestion budget or capacity exceeded mid-task"
+    });
+    failSecIngestTask({
+      taskId: other.task.id,
+      owner: "test-worker",
+      leaseToken: other.task.leaseToken || "",
+      retryable: false,
+      errorType: "worker-error",
+      error: "HTTP 403 for https://www.sec.gov/Archives/..."
+    });
+
+    const result = requeueSecIngestDeadLetters({
+      errorTypeLike: "worker-error",
+      errorLike: "Ingestion budget or capacity exceeded%"
+    });
+    expect(result.requeuedTasks).toBe(1);
+    expect(getSecIngestTask(budget.task.id)!.status).toBe("retry_wait");
+    expect(getSecIngestTask(other.task.id)!.status).toBe("dead_letter");
+  });
 });
 
 describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix, sub-batched + yielded)", () => {
