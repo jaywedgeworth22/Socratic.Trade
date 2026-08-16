@@ -30,11 +30,14 @@ struct ProposalsView: View {
                         feedback: feedback,
                         approveBusy: store.isBusy(approveOperationID(proposal)),
                         rejectBusy: store.isBusy(rejectOperationID(proposal)),
+                        retryBusy: store.isBusy(retryOperationID(proposal)),
                         approveDisabled: !store.canSubmit("proposal.approve"),
                         rejectDisabled: !store.canSubmit("proposal.reject"),
+                        retryDisabled: !store.canSubmit("proposal.retry_red_team"),
                         requiresTypedConfirmation: requiresLiveConfirmation(proposal, snapshot: snapshot),
                         approve: { approve(proposal, snapshot: snapshot) },
                         reject: { reject(proposal) },
+                        retryRedTeam: { retryRedTeam(proposal) },
                         presentedSymbol: $presentedSymbol
                     )
                     // Swipe is REJECT-only — approval always goes through the buttons
@@ -130,6 +133,16 @@ struct ProposalsView: View {
         }
     }
 
+    private func retryRedTeam(_ proposal: PendingProposal) {
+        Task {
+            await store.submit(
+                "proposal.retry_red_team",
+                payload: ["proposalId": proposal.id],
+                operationID: retryOperationID(proposal)
+            )
+        }
+    }
+
     private func approveConfirmedLiveProposal(_ proposal: PendingProposal) {
         let confirmation = LiveApprovalConfirmation(
             proposalId: proposal.id,
@@ -156,6 +169,10 @@ struct ProposalsView: View {
 
     private func rejectOperationID(_ proposal: PendingProposal) -> String {
         "proposal.reject:\(proposal.id)"
+    }
+
+    private func retryOperationID(_ proposal: PendingProposal) -> String {
+        "proposal.retry_red_team:\(proposal.id)"
     }
 
     private func expectedConfirmation(for proposal: PendingProposal) -> String {
@@ -203,11 +220,14 @@ private struct ProposalCard: View {
     let feedback: ProposalActionFeedback?
     let approveBusy: Bool
     let rejectBusy: Bool
+    let retryBusy: Bool
     let approveDisabled: Bool
     let rejectDisabled: Bool
+    let retryDisabled: Bool
     let requiresTypedConfirmation: Bool
     let approve: () -> Void
     let reject: () -> Void
+    let retryRedTeam: () -> Void
     @Binding var presentedSymbol: PresentedSymbol?
 
     private var sideColor: Color {
@@ -261,12 +281,8 @@ private struct ProposalCard: View {
 
                 VStack(alignment: .leading, spacing: 7) {
                     DetailLine(label: "Order", value: orderDescription)
-                    if let proposed = priceReview.proposedValue {
-                        DetailLine(label: "Proposed", value: proposed)
-                    }
-                    if let now = priceReview.nowValue {
-                        DetailLine(label: "Now", value: now)
-                    }
+                    DetailLine(label: "Proposed", value: priceReview.proposedValue ?? "—")
+                    DetailLine(label: "Now", value: priceReview.nowValue)
                     DetailLine(label: "Target", value: priceReview.targetValue)
                     if let delay = priceReview.delayValue {
                         DetailLine(label: "Delay", value: delay)
@@ -311,7 +327,12 @@ private struct ProposalCard: View {
                 }
 
                 if let verdict = proposal.proposal.redTeamVerdict {
-                    RedTeamReview(verdict: verdict)
+                    RedTeamReview(
+                        verdict: verdict,
+                        retryBusy: retryBusy,
+                        retryDisabled: retryDisabled || actionInFlight,
+                        retry: retryRedTeam
+                    )
                 }
 
                 Divider()
@@ -447,7 +468,12 @@ private struct ProposalActionFeedbackBanner: View {
         case .sending(let action):
             return action == .approve ? "Sending approve…" : "Sending reject…"
         case .pending(let action, let status):
-            let verb = action == .approve ? "Approve" : "Reject"
+            if action == .approve {
+                return status == "running"
+                    ? "Approve is working at the broker…"
+                    : "Approve queued…"
+            }
+            let verb = action == .reject ? "Reject" : "Retry"
             return "\(verb) \(status)…"
         case .failed(_, let message):
             return message
@@ -475,6 +501,13 @@ private struct ProposalActionFeedbackBanner: View {
 
 private struct RedTeamReview: View {
     let verdict: RedTeamVerdict
+    let retryBusy: Bool
+    let retryDisabled: Bool
+    let retry: () -> Void
+
+    private var canRetry: Bool {
+        !verdict.available && verdict.failureKind != "not_configured"
+    }
 
     private var title: String {
         guard verdict.available else {
@@ -513,6 +546,13 @@ private struct RedTeamReview: View {
             }
             if verdict.humanOverrideApplied == true {
                 StatusPill("Human override applied", color: AppPalette.warning, systemImage: "person.badge.shield.checkmark")
+            }
+            if canRetry {
+                Button(retryBusy ? "Retrying Red Team…" : "Retry Red Team") {
+                    retry()
+                }
+                .buttonStyle(.bordered)
+                .disabled(retryDisabled || retryBusy)
             }
         }
         .padding(12)

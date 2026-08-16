@@ -35,6 +35,18 @@ vi.mock("../src/lib/notifications", () => ({
 // tests past even a 30s timeout. Stub ONLY scanMarket (importOriginal keeps mergeQuoteData
 // and the other exports real) with a minimal fresh AAPL scan so the price/staleness gates in
 // policy.ts still see a quote.
+vi.mock("../src/lib/approval-quote-scan", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/approval-quote-scan")>();
+  return {
+    ...actual,
+    loadApprovalQuoteScan: async () =>
+      actual.buildApprovalQuoteScan(
+        { AAPL: { symbol: "AAPL", price: 200, bid: 199, ask: 200, provider: "test-scan" } },
+        []
+      )
+  };
+});
+
 vi.mock("../src/lib/market", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/market")>();
   return {
