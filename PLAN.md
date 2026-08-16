@@ -2,6 +2,7 @@
 
 > **2026-08-16 GROK — ROIC single-flight (`grok/roic-singleflight`).**  Every 60s tick started another universe walk because `lastAttemptAt` was written only at the end.  714 stacked journal rows crashed prod ~every 22 minutes.  Single-flight + start watermark + incremental cursor.  L1 keep-400 shrink still running so L2 can compact.  FilingAPI still needs an owner Plus key.  Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
 
+> **2026-08-16 GROK — ASC EULA + Coolify rolling already off (`grok/asc-eula-100`).**  Owner-authorized ASC writes.  Coolify `socratic-app` already has consistent container names + 60s start period.  What's New blocked on first versions.  Rollout: `docs/rollouts/2026-08-16-asc-eula-coolify.md`.
 > **2026-08-16 GROK — ticker desk sheet (`grok/ticker-desk-sheet`).** Ticker
 > tap on iOS + website (desktop/mobile viewports) shows current lot, exit
 > plan, pending rationale, last Green/Red call, and other-account

@@ -13,6 +13,14 @@ FilingAPI: Infisical `FILINGAPI` is the same dead 32-char trial key (401).  Free
 ROIC coverage before the pile-up: 46 transcripts across USB / OXY / SHEL (Individual 20-quarter depth).  After this lands the cursor can walk the rest of the universe without crashing the box.
 
 Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
+## Current (2026-08-16 GROK — ASC EULA + Coolify rolling already off)
+
+Owner authorized ASC writes and the Coolify rolling steps.  ST custom EULA
+was patched to two spaces.  What's New cannot be edited on first version
+`1.0.0` (Apple STATE_ERROR).  Coolify `socratic-app` already has consistent
+container names and a 60s health-check start period — no flip.  B2 L2 cleanup
+was not authorized in this ask.  Receipt:
+`docs/rollouts/2026-08-16-asc-eula-coolify.md`.
 ## Current (2026-08-16 GROK — 13F/ARK ops fix)
 
 #2736 is live (schema 83) but not fully operational.  Prod receipts:
