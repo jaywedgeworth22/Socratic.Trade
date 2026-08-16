@@ -623,4 +623,34 @@ describe("embed_queued FTS slice + durable resume", () => {
       .get(`${accession}:1:document.html`) as { n: number };
     expect(rows.n).toBe(0);
   });
+
+  it("runTick claims at most SEC_INGEST_TASKS_PER_TICK tasks across all running jobs", async () => {
+    const { SEC_INGEST_TASKS_PER_TICK } = await import("../src/lib/rag/sec-ingest-worker");
+    const processed: string[] = [];
+    const worker = new SecIngestWorker();
+    worker.processTask = async (task) => {
+      processed.push(task.id);
+    };
+
+    for (let i = 0; i < 3; i++) {
+      const job = createSecIngestJob({
+        idempotencyKey: `tick-cap-${i}-${randomUUID()}`,
+        corpusRevision: "corp-v1"
+      });
+      transitionSecIngestJob(job.id, "running");
+      for (let t = 0; t < 3; t++) {
+        enqueueSecIngestTask({
+          jobId: job.id,
+          accession: `0000320193-26-00020${i}${t}`,
+          cik: "0000320193",
+          symbol: "AAPL",
+          payload: { url: "https://www.sec.gov/x", docType: "10-K", filedAt: "2026-07-15" }
+        });
+      }
+    }
+
+    await worker.runTick();
+    expect(processed).toHaveLength(SEC_INGEST_TASKS_PER_TICK);
+    expect(SEC_INGEST_TASKS_PER_TICK).toBe(5);
+  });
 });

@@ -28,6 +28,11 @@ import {
 } from "./fts-mirror-bound";
 import crypto from "crypto";
 
+/** Hard cap on tasks one tick may claim+process.  Prod has ~500 running jobs; claiming
+ *  5 per job let a single tick lease thousands of facts_extracted rows and hang for
+ *  hours on chunkDocument, so later jobs never ran (2156 pending since 2026-08-10). */
+export const SEC_INGEST_TASKS_PER_TICK = 5;
+
 export class SecIngestWorker {
   private active = false;
   private intervalId: NodeJS.Timeout | null = null;
@@ -99,11 +104,13 @@ export class SecIngestWorker {
     const db = getDb();
     const activeJobs = db.prepare("SELECT id FROM sec_ingest_jobs WHERE status = 'running'").all() as any[];
 
+    let remaining = SEC_INGEST_TASKS_PER_TICK;
     for (const job of activeJobs) {
+      if (remaining <= 0) break;
       const tasks = claimSecIngestTasks(job.id, {
         owner: this.workerId,
         leaseMs: 60000,
-        limit: 5
+        limit: remaining
       });
 
       for (const task of tasks) {
@@ -124,6 +131,8 @@ export class SecIngestWorker {
           });
         }
       }
+
+      remaining -= tasks.length;
 
       // Nothing else flips a job from 'running' to a terminal status once its tasks finish — the
       // seeder seals intake up front but does not itself watch for completion. Reconcile here (cheap,

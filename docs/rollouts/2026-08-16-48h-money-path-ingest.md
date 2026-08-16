@@ -17,6 +17,7 @@ Owner asked what "rotation fail-open" and "422s" mean, then to fix those plus Re
 - Alpaca REST/MCP/options limit and stop prices go through `roundAlpacaPrice` (>= $1 → pennies).
 - Cherry-picked ROIC single-flight so 60s ticks cannot stack another universe walk.
 - Requeue SEC `embed_queued` dead letters whose error is exactly "Ingestion budget or capacity exceeded mid-task" (~1k on prod).  A daily-fuse skip now defers 1h instead of dead-lettering.
+- Worker `runTick` claims at most 5 tasks **across all running jobs** (`SEC_INGEST_TASKS_PER_TICK`).  Prod had 521 running jobs × 5 claims, so one tick leased thousands of `facts_extracted` rows and hung on `chunkDocument`; 2156 pending since 2026-08-10 never moved.
 - Did not raise Pinecone daily/monthly caps.  Sibling #2748 parks incremental ingest when the 2.5M trial fuse is spent.
 
 Touched:
@@ -27,7 +28,7 @@ Touched:
 - `src/lib/money.ts`
 - `src/lib/alpaca.ts`
 - `src/lib/db-rag-ingest.ts`
-- `src/lib/rag/sec-ingest-worker.ts`
+- `src/lib/rag/sec-ingest-worker.ts` (`SEC_INGEST_TASKS_PER_TICK` global claim cap)
 - `src/lib/web-sources/roic-transcripts.ts` (cherry-pick)
 - tests for the above
 - `STATUS.md`, `docs/EFFORT-LOG.md`, this note
