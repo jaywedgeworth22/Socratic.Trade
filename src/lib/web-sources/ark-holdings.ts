@@ -17,7 +17,7 @@ import {
 import { normalizeSymbol } from "../money";
 import { resolveSourceNumber } from "../source-settings";
 import { retryBackoffMs } from "./congress";
-import { politeFetchText } from "./http";
+import { BROWSER_UA, politeFetchText } from "./http";
 import type { WebSourceRefreshResult } from "./types";
 
 const DATASET_KEY = "webSource:ark:dataset";
@@ -71,10 +71,32 @@ export function getArkDataset(): ArkDataset | undefined {
 
 export function isArkRefreshDue(now: number = Date.now()): boolean {
   const lastAttempt = getInternalSetting<string>(ATTEMPT_KEY);
-  if (lastAttempt && now - Date.parse(lastAttempt) < retryBackoffMs()) return false;
   const dataset = getArkDataset();
-  if (!dataset?.fetchedAt || (dataset.recordCount ?? 0) <= 0) return true;
+  const empty = !dataset?.fetchedAt || (dataset.recordCount ?? 0) <= 0;
+  if (lastAttempt) {
+    const age = now - Date.parse(lastAttempt);
+    // An empty book should not sit behind the 1h scrape backoff.
+    const backoff = empty ? 2 * 60_000 : retryBackoffMs();
+    if (age < backoff) return false;
+  }
+  if (empty) return true;
   return now - Date.parse(dataset.fetchedAt) >= arkTtlMs();
+}
+
+export async function resolveArkCsvUrl(
+  fund: (typeof ARK_FUNDS)[number],
+  fetchText: (url: string, options?: { headers?: Record<string, string>; timeoutMs?: number }) => Promise<string> = politeFetchText
+): Promise<string> {
+  const fallback = `${ARK_CSV_PREFIX}${fund.fallbackCsv}`;
+  try {
+    const docs = await fetchText(`${ARK_SITE}/api/fund/document-table/${fund.fundId}`, {
+      headers: { accept: "text/html", "user-agent": BROWSER_UA },
+      timeoutMs: 12_000
+    });
+    return extractArkCsvHref(docs) ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export function parseArkCsvDate(raw: string): string | undefined {
@@ -239,12 +261,11 @@ export async function refreshArkHoldings(now: number = Date.now(), force = false
 
   for (const fund of ARK_FUNDS) {
     try {
-      const docs = await politeFetchText(`${ARK_SITE}/api/fund/document-table/${fund.fundId}`, {
-        headers: { accept: "text/html" },
-        timeoutMs: 15_000
+      const csvUrl = await resolveArkCsvUrl(fund);
+      const csv = await politeFetchText(csvUrl, {
+        headers: { "user-agent": BROWSER_UA },
+        timeoutMs: 20_000
       });
-      const csvUrl = extractArkCsvHref(docs) ?? `${ARK_CSV_PREFIX}${fund.fallbackCsv}`;
-      const csv = await politeFetchText(csvUrl, { timeoutMs: 20_000 });
       const parsed = parseArkHoldingsCsv(csv);
       if (parsed.length === 0) continue;
       const asOf = parsed[0].asOf;

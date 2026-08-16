@@ -55,8 +55,8 @@ Full `scripts/land.sh` gate before PR.
 
 ## Next Steps & Blockers
 
-After deploy, confirm prod `ark_holdings` > 0, 13F `okFilers` = 12, and
-`period_end` values are ISO quarter-ends.  Then close #2735.
+13F confirmed in prod after #2747: 413 rows, 12/12 `okFilers`, ISO
+quarter-ends.  ARK follow-up: `docs/rollouts/2026-08-16-ark-csv-fallback.md`.
 
 ## Zero-Code Findings
 

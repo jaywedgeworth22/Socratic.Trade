@@ -19,7 +19,9 @@ import {
   parseArkHoldingsCsv,
   previousArkAsOf,
   getArkSignals,
-  isArkRefreshDue
+  isArkRefreshDue,
+  resolveArkCsvUrl,
+  ARK_FUNDS
 } from "../src/lib/web-sources/ark-holdings";
 import {
   replaceThirteenFFiling,
@@ -185,6 +187,20 @@ describe("ARK parsers", () => {
       recordCount: 0
     });
     expect(isArkRefreshDue(Date.parse("2026-08-16T12:00:00.000Z"))).toBe(true);
+  });
+
+  it("retries an empty ARK book after 2 minutes instead of 1 hour", () => {
+    setInternalSetting("webSource:ark:lastAttempt", "2026-08-16T20:56:13.903Z");
+    setInternalSetting("webSource:ark:dataset", { fetchedAt: "", recordCount: 0 });
+    expect(isArkRefreshDue(Date.parse("2026-08-16T20:57:00.000Z"))).toBe(false);
+    expect(isArkRefreshDue(Date.parse("2026-08-16T20:59:00.000Z"))).toBe(true);
+  });
+
+  it("uses the official CSV fallback when the document table is blocked", async () => {
+    const url = await resolveArkCsvUrl(ARK_FUNDS[0], async () => {
+      throw new Error("HTTP 403");
+    });
+    expect(url).toContain("ARK_INNOVATION_ETF_ARKK_HOLDINGS.csv");
   });
 });
 
