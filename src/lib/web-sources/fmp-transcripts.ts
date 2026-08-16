@@ -2202,8 +2202,8 @@ async function refreshFmpTranscriptsUnlocked(
     let retrySameSymbol = false;
     for (const ref of refsToAttempt) {
       const accession = transcriptAccession(ref.symbol, ref.year, ref.quarter);
-      const { hasIngestTextBudget } = await import("../vector-db");
-      if (!hasIngestTextBudget(userId)) {
+      const { hasIngestTextBudget, hasPineconeWriteBudget } = await import("../vector-db");
+      if (!hasIngestTextBudget(userId) || !hasPineconeWriteBudget(userId)) {
         result.deferredForEmbedBudget += 1;
         retrySameSymbol = true;
         break;

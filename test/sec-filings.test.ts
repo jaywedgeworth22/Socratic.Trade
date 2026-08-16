@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => ({
     })
   })),
   hasIngestTextBudget: vi.fn(() => true),
+  hasPineconeWriteBudget: vi.fn(() => true),
   insertSecArtifact: vi.fn(),
   audit: vi.fn(),
   setInternalSetting: vi.fn(),
@@ -108,6 +109,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
     },
     storeContexts: mocks.storeContexts,
     hasIngestTextBudget: mocks.hasIngestTextBudget,
+    hasPineconeWriteBudget: mocks.hasPineconeWriteBudget,
     activeEmbeddingProvider: mocks.activeEmbeddingProvider
   };
 });
@@ -115,6 +117,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
 afterEach(async () => {
   vi.clearAllMocks();
   mocks.hasIngestTextBudget.mockImplementation(() => true);
+  mocks.hasPineconeWriteBudget.mockImplementation(() => true);
   mocks.insertSecArtifact.mockImplementation(() => undefined);
   mocks.storeContexts.mockResolvedValue({ attempted: 1, indexed: 1 });
   mocks.getEnrichmentProvider.mockImplementation(() => ({

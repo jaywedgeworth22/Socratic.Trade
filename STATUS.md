@@ -1,3 +1,15 @@
+## Current (2026-08-16 GROK — 48h prod error triage, Pinecone daily write fuse)
+
+Pinecone trial is healthy ($238 of $300).  The "Usage limit hit" is the app's
+rolling-24h write fuse at the trial cap of 2.5M estimated WUs, not a Pinecone
+outage.  Retrieval still works.  Did not raise the cap.
+
+Park incremental ingest (ROIC / filings / 8-K / FMP / SEC worker) when the fuse
+is spent, and tell the truth in the alert.  Branch
+`grok/prod-error-triage-48h`, worktree `~/apps/trading-grok-error-triage-48h`.
+
+Rollout: `docs/rollouts/2026-08-16-prod-error-triage-48h.md`.
+
 ## Current (2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF receipt)
 
 Owner: (1) full overlay product + expansions; (2) defer weekly hard-delete; (3) no Reddit/X — deepen Polymarket including sector/macro tilts; (4) run VECTOR_ASOF_STRICT coverage.

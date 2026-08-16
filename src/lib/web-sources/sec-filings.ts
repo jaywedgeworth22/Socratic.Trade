@@ -531,9 +531,9 @@ export async function ingestFiling(
   // budget-skip it (and emit a budget warning per filing; prod 2026-07-10 saw a 20-event
   // burst from exactly this). Deferring here costs nothing: the accession stays
   // un-recorded and retries at the next tick.
-  const { hasIngestTextBudget } = await import("../vector-db");
+  const { hasIngestTextBudget, hasPineconeWriteBudget } = await import("../vector-db");
   assertSecFilingLease(leaseGuard);
-  if (!hasIngestTextBudget(userId)) {
+  if (!hasIngestTextBudget(userId) || !hasPineconeWriteBudget(userId)) {
     return { skipped: true, chunks: 0, budgetExhausted: true };
   }
   // Same preflight for the MONTHLY Pinecone write-unit breaker: while it is active every

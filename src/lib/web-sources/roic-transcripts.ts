@@ -39,7 +39,7 @@ import {
 } from "../roic-transcripts-gate";
 import { resolveSourceNumber } from "../source-settings";
 import { getTechnicalWatchlist } from "./technical";
-import { storeDocument } from "../vector-db";
+import { hasPineconeWriteBudget, storeDocument } from "../vector-db";
 
 export { ROIC_TRANSCRIPT_DOC_TYPE, ROIC_TRANSCRIPT_SOURCE, roicTranscriptsKillSwitchOn };
 
@@ -626,6 +626,11 @@ export async function refreshRoicTranscriptsIfDue(options?: {
   };
   if (!enabled) return base;
   if (!options?.force && !isRoicTranscriptRefreshDue(now)) return base;
+  // Daily Pinecone write fuse is already spent: keep the cursor and skip the ROIC fetch
+  // loop.  storeDocument would refuse each new transcript after opening no useful work.
+  if (!hasPineconeWriteBudget(options?.userId ?? "local")) {
+    return { ...base, due: true };
+  }
 
   const nowIso = new Date(now).toISOString();
   let queue: string[];
