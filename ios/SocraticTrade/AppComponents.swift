@@ -25,6 +25,7 @@ enum AppFormat {
         "strategy.liquidating": "Wind Down",
         "proposal.approve": "Approve Proposal",
         "proposal.reject": "Reject Proposal",
+        "proposal.retry_red_team": "Retry Red Team",
         "account.activate": "Switch Account",
         "order.cancel": "Cancel Order",
         "watchlist.add": "Add to Watchlist",

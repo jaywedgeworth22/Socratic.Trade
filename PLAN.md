@@ -1,6 +1,12 @@
 # Active Implementation Plan
 
 > **2026-08-16 GROK — latest-first RAG + proposer corpus design (`grok/prod-error-triage-48h`).**  Cover latest transcript + latest 10-K/10-Q for the universe first, then deepen held/watchlist.  Expert consensus: extractive highlights (no ingest LLM) in Pinecone; full bodies stay local.  Do not flip write-class until ingest/FTS/ledger are split — `storeDocument` completeness currently gates FTS + abstracts.  Design: `docs/designs/2026-08-16-proposer-corpus-storage.md`.  Rollout: `docs/rollouts/2026-08-16-prod-error-triage-48h.md`.
+> **2026-08-16 GROK — review UX parity (`grok/review-ux-parity`).** Fast
+> approve (no full-universe scan).  Proposed / Now / Target / Delay on website
+> + iOS.  Retry Red Team.  State-aware Start/Stop.  PWA `/mobile` ->
+> `/console`.  Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
+
+
 > **2026-08-16 GROK — ASC EULA + Coolify rolling already off (`grok/asc-eula-100`).**  Owner-authorized ASC writes.  Coolify `socratic-app` already has consistent container names + 60s start period.  What's New blocked on first versions.  Rollout: `docs/rollouts/2026-08-16-asc-eula-coolify.md`.
 > **2026-08-16 GROK — ticker desk sheet (`grok/ticker-desk-sheet`).** Ticker
 > tap on iOS + website (desktop/mobile viewports) shows current lot, exit

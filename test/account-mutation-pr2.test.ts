@@ -64,6 +64,18 @@ vi.mock("../src/lib/system-state-placement-guard", async (importOriginal) => {
 // (this file verifies the mutation-lease wrap, not scoring), but unmocked it makes REAL
 // Nasdaq/Yahoo fetches — the 2026-06-21 recurring full-suite timeout flake. Stub scanMarket; keep
 // every other market.ts export real.
+vi.mock("../src/lib/approval-quote-scan", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/approval-quote-scan")>();
+  return {
+    ...actual,
+    loadApprovalQuoteScan: async () =>
+      actual.buildApprovalQuoteScan(
+        { AAPL: { symbol: "AAPL", price: 200, bid: 199, ask: 200, provider: "test-scan" } },
+        []
+      )
+  };
+});
+
 vi.mock("../src/lib/market", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/market")>();
   return {

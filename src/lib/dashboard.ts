@@ -962,12 +962,26 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
   // the latest scan's quotes), so it's a free read — no new network calls. Fresh proposals are
   // intentionally left blank: delayed/intraday quote sources can otherwise show noisy "since" moves
   // seconds after creation. Degrades to undefined when no anchor or current price is available.
-  const scanQuotes = scanForInternals?.quotesBySymbol;
+  const scanQuotes = newestScan?.quotesBySymbol ?? scanForInternals?.quotesBySymbol;
+  const pendingProposalLatestPrices = (() => {
+    try {
+      const symbols = [
+        ...pendingProposals.map((item) => item.proposal.symbol),
+        ...recentProposals.map((item) => item.proposal.symbol)
+      ];
+      const prices = getSymbolLatestPrices(symbols);
+      return Object.keys(prices).length > 0 ? prices : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
   const proposalCurrentPrice = (symbol: string): number | undefined => {
     const sym = normalizeSymbol(symbol);
     if (typeof currentPrices[sym] === "number" && currentPrices[sym] > 0) return currentPrices[sym];
     const q = scanQuotes?.[sym];
-    return q && typeof q.price === "number" && q.price > 0 ? q.price : undefined;
+    if (q && typeof q.price === "number" && q.price > 0) return q.price;
+    const stored = pendingProposalLatestPrices?.[sym];
+    return stored && stored.price > 0 ? stored.price : undefined;
   };
   const proposalIsOldEnoughForPerformance = (createdAt?: string): boolean => {
     if (!createdAt) return true;
@@ -977,11 +991,23 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
   };
   const withProposalPerf = <T extends { proposal: TradeProposal; createdAt?: string }>(items: T[]): T[] =>
     items.map((item) => {
-      if (!proposalIsOldEnoughForPerformance(item.createdAt)) return item;
-      const current = proposalCurrentPrice(item.proposal.symbol);
+      const reference =
+        (typeof item.proposal.referencePrice === "number" && item.proposal.referencePrice > 0
+          ? item.proposal.referencePrice
+          : undefined) ??
+        (typeof item.proposal.limitPrice === "number" && item.proposal.limitPrice > 0
+          ? item.proposal.limitPrice
+          : undefined);
+      const current = proposalIsOldEnoughForPerformance(item.createdAt)
+        ? proposalCurrentPrice(item.proposal.symbol)
+        : undefined;
       const pct = returnSinceProposalPct(item.proposal.referencePrice, current, item.proposal.side);
-      if (pct == null) return item;
-      return { ...item, performanceSinceProposalPct: pct, proposalReferencePrice: item.proposal.referencePrice, proposalCurrentPrice: current };
+      return {
+        ...item,
+        ...(pct != null ? { performanceSinceProposalPct: pct } : {}),
+        ...(reference != null ? { proposalReferencePrice: reference } : {}),
+        ...(current != null ? { proposalCurrentPrice: current } : {})
+      };
     });
   const recentProposalsWithPerf = withProposalPerf(recentProposals);
   const pendingProposalsWithPerf = withProposalPerf(pendingProposals);

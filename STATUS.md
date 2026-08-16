@@ -13,6 +13,18 @@ FTS + artifacts; do not LLM-summarize ingest; after trial put only extractive
 highlights + N best sections in Pinecone.  Branch `grok/prod-error-triage-48h`.
 
 Rollout: `docs/rollouts/2026-08-16-prod-error-triage-48h.md`.
+## Current (2026-08-16 GROK — review UX: approve speed, prices, retry red team, agent controls)
+
+Owner: Approve hung on "Sending approve…".  Review cards hid live vs proposed
+price.  Red Team timeout had no retry.  Start Agent and Stop Agent both showed
+while Autopilot was only paused for a closed market.  PWA unused.
+
+Approve quotes the proposal + holdings only (no full screener).  Cards show
+Proposed / Now / Target / Delay.  Retry Red Team on a failed critic.
+Agent Controls use one primary action.  `/mobile` redirects to `/console`.
+
+Branch `grok/review-ux-parity`, worktree `~/apps/trading-grok-review-ux`.
+Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
 ## Current (2026-08-16 GROK — ASC EULA + Coolify rolling already off)
 
 Owner authorized ASC writes and the Coolify rolling steps.  ST custom EULA
