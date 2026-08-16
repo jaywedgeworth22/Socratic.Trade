@@ -383,6 +383,17 @@ export class SecIngestWorker {
               });
               return;
             }
+            if ((res.writeUnitBudgetSkipped ?? 0) > 0 || (res.budgetSkipped ?? 0) > 0) {
+              deferSecIngestTask({
+                taskId: task.id,
+                owner,
+                leaseToken,
+                deferUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
+                reasonType: "wu_exhausted_deferred",
+                reason: "Pinecone daily write fuse or ingest text budget spent; deferred 1h"
+              });
+              return;
+            }
             throw new Error("Ingestion budget or capacity exceeded mid-task");
           }
 

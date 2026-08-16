@@ -13,6 +13,21 @@ FilingAPI: Infisical `FILINGAPI` is the same dead 32-char trial key (401).  Free
 ROIC coverage before the pile-up: 46 transcripts across USB / OXY / SHEL (Individual 20-quarter depth).  After this lands the cursor can walk the rest of the universe without crashing the box.
 
 Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
+## Current (2026-08-16 GROK — 48h prod error triage, Pinecone daily write fuse)
+
+Pinecone trial is healthy ($238 of $300).  The "Usage limit hit" is the app's
+rolling-24h write fuse at the trial cap of 2.5M estimated WUs, not a Pinecone
+outage.  Retrieval still works.  Did not raise the cap.
+
+Park incremental ingest when the fuse is spent.  Trial ingest stays full-steam
+until ~$45 remains, then paces to the trial end.  On 2026-08-30 UTC snaps to
+free-tier 60k WU/day.  ROIC/FMP/SEC now take the **latest** transcript and
+latest 10-K/10-Q for the universe first, then extra history only for
+held/watchlist/technical names.  Expert consensus: keep full bodies in SQLite
+FTS + artifacts; do not LLM-summarize ingest; after trial put only extractive
+highlights + N best sections in Pinecone.  Branch `grok/prod-error-triage-48h`.
+
+Rollout: `docs/rollouts/2026-08-16-prod-error-triage-48h.md`.
 ## Current (2026-08-16 GROK — review UX: approve speed, prices, retry red team, agent controls)
 
 Owner: Approve hung on "Sending approve…".  Review cards hid live vs proposed
@@ -33,6 +48,16 @@ was patched to two spaces.  What's New cannot be edited on first version
 container names and a 60s health-check start period — no flip.  B2 L2 cleanup
 was not authorized in this ask.  Receipt:
 `docs/rollouts/2026-08-16-asc-eula-coolify.md`.
+## Current (2026-08-16 GROK — ARK official CSV fallback)
+
+#2747 is live.  13F is complete in prod (413 rows, 12/12 filers, ISO
+quarter-ends).  ARK stayed 0 because `ark-funds.com` document-table is a
+Cloudflare 403 and the throw skipped the working
+`assets.ark-funds.com` CSV fallback.
+
+Branch `grok/ark-csv-fallback`.  Use the official CSV URL when the table
+is blocked.  Empty ARK retries after 2 minutes, not 1 hour.
+
 ## Current (2026-08-16 GROK — 13F/ARK ops fix)
 
 #2736 is live (schema 83) but not fully operational.  Prod receipts:

@@ -592,6 +592,42 @@ describe("storeDocument receipt transaction", () => {
     `).get(commit.id)).toEqual({ count: 2 });
   });
 
+  it("parks storeDocument before a commit when the rolling-24h write fuse is already spent", async () => {
+    const { getDb } = await import("../src/lib/db");
+    const { meterPineconeUpsert } = await import("../src/lib/rag-metering");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    const db = getDb();
+    db.exec("DELETE FROM rag_usage");
+    mocks.embed.mockClear();
+    mocks.upsert.mockClear();
+    process.env.RAG_INGEST_BUDGET_ENABLED = "off";
+    process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED = "on";
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "10";
+    meterPineconeUpsert(1, "local", 10);
+
+    const accession = `SEC-WU-SPENT:${randomUUID()}`;
+    const stored = await storeDocument({
+      text: `${randomUUID()} already-at-cap transcript body for fuse park`,
+      doc_id: accession,
+      ticker: "MSFT",
+      title: "MSFT fuse-spent 10-Q",
+      doc_type: "10-q",
+      source: "sec-edgar",
+      published_at: "2026-07-14T12:00:00.000Z"
+    }, "local", { maxTokens: 36, overlapRatio: 0 });
+
+    expect(stored).toMatchObject({
+      indexed: 0,
+      skipped: true,
+      documentComplete: false
+    });
+    expect(stored.writeUnitBudgetSkipped).toBeGreaterThan(0);
+    expect(mocks.embed).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM vector_ingest_commits WHERE accession = ?").get(accession))
+      .toEqual({ count: 0 });
+  });
+
   it("requires the complete provider vector set before reconciliation can finalize a commit", async () => {
     const {
       beginVectorCommit,
