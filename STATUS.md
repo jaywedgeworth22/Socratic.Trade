@@ -8,6 +8,12 @@ Owner: explain rotation fail-open and 422s, then fix those plus Red timeout, and
 - Ingest: cherry-picked ROIC single-flight.  Requeue ~1k `embed_queued` dead letters that were misclassified budget-exceeded.  Budget skip defers 1h instead of dead-lettering.  Worker tick now claims at most 5 tasks across all jobs (prod had 521 running jobs claiming 5 each, so 2156 Aug-10 `facts_extracted` never ran).  Sibling #2748 owns the daily WU fuse park.
 
 Branch `grok/48h-money-path-ingest`, issue #2749.  Rollout: `docs/rollouts/2026-08-16-48h-money-path-ingest.md`.
+## Current (2026-08-16 GROK — iOS Proposals for Review TestFlight)
+
+#2740 `c1db7d12` is on TestFlight **1.0.36 (202608162123)**, ASC
+`IN_BETA_TESTING`.  Home tile title is **Proposals for Review** above the
+count.  Cron ship run `31970196190`.  Owner: install that build on the phone.
+
 ## Current (2026-08-16 GROK — overlay regime match hotfix)
 
 #2743 shipped Overlays, but live apply passed `determineMarketRegime` labels (`Risk-On (Low Volatility)`) into a router that matches enums (`risk-on`).  Only `any` overlays could fire.  Branch `grok/overlay-regime-match`.  Rollout: `docs/rollouts/2026-08-16-overlay-regime-match.md`.

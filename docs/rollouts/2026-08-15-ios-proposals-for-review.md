@@ -71,15 +71,14 @@ npx vitest run test/strategy-hardening.test.ts test/strategy-exit-plan-prompts.t
 # npm run lint: 0 errors (grandfathered warnings only).
 # Merged origin/main twice (real 2.9.0 pin conflict, then phantom after #2742).
 # CI verify green on 9f39a6d3.  Squash-merged #2740 as c1db7d12 2026-08-16T20:13:56Z.
-# xcodebuild test against iPhone 17 Pro failed because this Mac has no iOS 26.5
-# simulator runtime after the freeze (`simctl list runtimes` is empty).  CI Mac
-# runner compiles Swift.
+# Cron ios-ship run 31970196190 uploaded 1.0.36 (202608162123) of c1db7d12.
+# ASC ensure-tf-ready 2026-08-16: IN_BETA_TESTING, enc=false.
 ```
 
 ## 5. Next Steps & Blockers
 
-- Ship TestFlight so the owner can see the Home tile and price rows on a
-  device.  Web auto-deploy does not update the native app.
+- Owner: update TestFlight on the phone to **1.0.36 (202608162123)** to see
+  the Home tile and price rows.
 - Web approval card still uses the compact `$200 → $202` line.  Same fields
   could be promoted there later.
 - Existing pending proposals without `exitPlan` get the fallback note until
