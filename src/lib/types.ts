@@ -1567,6 +1567,12 @@ export interface TradeProposal {
   referencePriceProvenance?: "provided" | "limit-fallback";
   /** Limit price for the take-profit leg of a bracket order. */
   bracketTakeProfit?: number;
+  /**
+   * Green Team's staged-exit note when they set (or deliberately omit) a target.
+   * Optional.  Used on the iOS review card when `bracketTakeProfit` is missing
+   * so the owner can see the expert-panel debate instead of a blank target.
+   */
+  exitPlan?: string;
   /** Stop price for the stop-loss leg of a bracket order. */
   bracketStopLoss?: number;
   /**
