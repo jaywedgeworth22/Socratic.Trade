@@ -192,6 +192,23 @@ describe("Alpaca MCP path — stop_price gating by order type", () => {
     expect(args).not.toHaveProperty("stop_price");
   });
 
+  it("rounds a sub-penny T limit (>= $1) to the $0.01 increment Alpaca accepts", async () => {
+    await seedRestAccount();
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    await getAlpacaGateway("local").placeEquityOrder({
+      accountNumber: "MOCK_ACC",
+      symbol: "T",
+      side: "buy",
+      type: "limit",
+      quantity: 10,
+      limitPrice: 24.865,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      refId: "ref-t-penny-1"
+    });
+    expect(lastCreateOrderOpts.limit_price).toBe(24.87);
+  });
+
   it("DOES set stop_price on a stop_limit order in the MCP tool args", async () => {
     await seedMcpAccount();
     const argsSeen = stubMcpFetch();
