@@ -13,6 +13,12 @@ FilingAPI: Infisical `FILINGAPI` is the same dead 32-char trial key (401).  Free
 ROIC coverage before the pile-up: 46 transcripts across USB / OXY / SHEL (Individual 20-quarter depth).  After this lands the cursor can walk the rest of the universe without crashing the box.
 
 Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
+## Current (2026-08-16 GROK — iOS Proposals for Review TestFlight)
+
+#2740 `c1db7d12` is on TestFlight **1.0.36 (202608162123)**, ASC
+`IN_BETA_TESTING`.  Home tile title is **Proposals for Review** above the
+count.  Cron ship run `31970196190`.  Owner: install that build on the phone.
+
 ## Current (2026-08-16 GROK — overlay regime match hotfix)
 
 #2743 shipped Overlays, but live apply passed `determineMarketRegime` labels (`Risk-On (Low Volatility)`) into a router that matches enums (`risk-on`).  Only `any` overlays could fire.  Branch `grok/overlay-regime-match`.  Rollout: `docs/rollouts/2026-08-16-overlay-regime-match.md`.
