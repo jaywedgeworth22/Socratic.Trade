@@ -6,6 +6,7 @@
 > `/console`.  Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
 
 
+> **2026-08-16 GROK — ASC EULA + Coolify rolling already off (`grok/asc-eula-100`).**  Owner-authorized ASC writes.  Coolify `socratic-app` already has consistent container names + 60s start period.  What's New blocked on first versions.  Rollout: `docs/rollouts/2026-08-16-asc-eula-coolify.md`.
 > **2026-08-16 GROK — ticker desk sheet (`grok/ticker-desk-sheet`).** Ticker
 > tap on iOS + website (desktop/mobile viewports) shows current lot, exit
 > plan, pending rationale, last Green/Red call, and other-account
