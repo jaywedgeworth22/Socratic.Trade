@@ -41,4 +41,39 @@ describe("selectActiveOverlays", () => {
       })
     ).toEqual([]);
   });
+
+  it("matches persisted determineMarketRegime labels, not only enums", () => {
+    const riskOn = overlay({
+      id: "ro",
+      name: "Trend",
+      marketRegimes: ["risk-on"],
+      instructions: "leaders",
+      priority: 5
+    });
+    const chop = overlay({
+      id: "n",
+      name: "Chop",
+      marketRegimes: ["neutral"],
+      instructions: "fade",
+      priority: 10
+    });
+    expect(
+      selectActiveOverlays({
+        regime: "Risk-On (Low Volatility)",
+        overlays: [riskOn, chop]
+      }).map((row) => row.id)
+    ).toEqual(["ro"]);
+    expect(
+      selectActiveOverlays({
+        regime: "Neutral (Normal Volatility)",
+        overlays: [riskOn, chop]
+      }).map((row) => row.id)
+    ).toEqual(["n"]);
+    expect(
+      selectActiveOverlays({
+        regime: "risk-on",
+        overlays: [riskOn, chop]
+      }).map((row) => row.id)
+    ).toEqual(["ro"]);
+  });
 });

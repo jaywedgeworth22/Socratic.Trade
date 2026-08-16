@@ -1,3 +1,7 @@
+## Current (2026-08-16 GROK — overlay regime match hotfix)
+
+#2743 shipped Overlays, but live apply passed `determineMarketRegime` labels (`Risk-On (Low Volatility)`) into a router that matches enums (`risk-on`).  Only `any` overlays could fire.  Branch `grok/overlay-regime-match`.  Rollout: `docs/rollouts/2026-08-16-overlay-regime-match.md`.
+
 ## Current (2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF receipt)
 
 Owner: (1) full overlay product + expansions; (2) defer weekly hard-delete; (3) no Reddit/X — deepen Polymarket including sector/macro tilts; (4) run VECTOR_ASOF_STRICT coverage.
