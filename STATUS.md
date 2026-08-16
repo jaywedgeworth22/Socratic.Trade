@@ -1,3 +1,9 @@
+## Current (2026-08-16 GROK — 13F + ARK + Form 4 operational)
+
+#2735 closed.  Live `f0fd2b70` after #2736 + #2747 + #2758:
+Form 4 537 (340 ticker), 13F 413 / 12/12 ISO quarter-ends, ARK 222
+across ARKK/Q/W/G/F/X as-of 2026-08-14.  Observe-only.
+
 ## Current (2026-08-16 GROK — review UX: approve speed, prices, retry red team, agent controls)
 
 Owner: Approve hung on "Sending approve…".  Review cards hid live vs proposed
