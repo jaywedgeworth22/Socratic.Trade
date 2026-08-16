@@ -6,8 +6,11 @@ outage.  Retrieval still works.  Did not raise the cap.
 
 Park incremental ingest when the fuse is spent.  Trial ingest stays full-steam
 until ~$45 remains, then paces to the trial end.  On 2026-08-30 UTC snaps to
-free-tier 60k WU/day.  Filings now share holdings-first rank.  Proposer dossiers
-lead with compact summaries.  Branch `grok/prod-error-triage-48h`.
+free-tier 60k WU/day.  ROIC/FMP/SEC now take the **latest** transcript and
+latest 10-K/10-Q for the universe first, then extra history only for
+held/watchlist/technical names.  Expert consensus: keep full bodies in SQLite
+FTS + artifacts; do not LLM-summarize ingest; after trial put only extractive
+highlights + N best sections in Pinecone.  Branch `grok/prod-error-triage-48h`.
 
 Rollout: `docs/rollouts/2026-08-16-prod-error-triage-48h.md`.
 ## Current (2026-08-16 GROK — ASC EULA + Coolify rolling already off)

@@ -155,6 +155,16 @@ afterEach(() => {
   delete process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED;
 });
 
+describe("fmpTranscriptCapThisVisit", () => {
+  it("takes only the latest until it is stored, then deepens high-interest names only", async () => {
+    const { fmpTranscriptCapThisVisit } = await import("../src/lib/web-sources/fmp-transcripts");
+    expect(fmpTranscriptCapThisVisit({ latestStored: false, highInterest: false, maxPerSymbol: 2 })).toBe(1);
+    expect(fmpTranscriptCapThisVisit({ latestStored: false, highInterest: true, maxPerSymbol: 2 })).toBe(1);
+    expect(fmpTranscriptCapThisVisit({ latestStored: true, highInterest: true, maxPerSymbol: 2 })).toBe(2);
+    expect(fmpTranscriptCapThisVisit({ latestStored: true, highInterest: false, maxPerSymbol: 2 })).toBe(0);
+  });
+});
+
 describe("FMP transcript contracts", () => {
   it("requires both the producer flag and explicit content-storage rights confirmation", async () => {
     const { fmpTranscriptsEnabled } = await import("../src/lib/web-sources/fmp-transcripts");

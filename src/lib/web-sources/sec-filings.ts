@@ -6,7 +6,8 @@
 //
 // KEY DESIGN DECISIONS (owner-resolved 2026-06-21; gate made provider-aware 2026-07-19):
 //  • Incremental ingest only: 1 filing per scheduler tick on free tier (Voyage, unpaid key).
-//  • Recency window: 1 most-recent 10-K + 2 most-recent 10-Qs per symbol.
+//  • Recency window: latest 10-K + latest 10-Q for the universe; extra 10-Qs/Ks
+//    only for held/watchlist/technical names (rankHighInterestSymbols).
 //  • De-dup: ingested_accessions (accession + doc_type) is the sole gate — never re-embed.
 //  • All corpus writes use userId='local' (cleanMetadata → scope:'shared', app-funded).
 //  • CIK map: reused from sec8k.ts loadCikMap (named export).
@@ -37,6 +38,7 @@ import {
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { activeEmbeddingProvider } from "../vector-db";
 import { resolveSourceNumber } from "../source-settings";
+import { rankHighInterestSymbols } from "../rag/demand-first-symbols";
 import { loadCikMap } from "./sec8k";
 import { parseFilingHtml } from "./sec-parser";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
@@ -969,8 +971,10 @@ async function refreshFilingBodiesUnlocked(
     await sleep(CIK_POLITE_DELAY_MS);
   }
 
-  // 3. Sort pending breadth-first globally so newest annual reports are ingested first
-  const sortedPending = sortBreadthFirst(pending);
+  // 3. Sort pending breadth-first globally so newest annual reports are ingested first.
+  // Extra history (2nd+ 10-Q / older 10-K) only for held/watchlist/technical names.
+  const deepenTickers = new Set(rankHighInterestSymbols({ now }));
+  const sortedPending = sortBreadthFirst(pending, deepenTickers);
   pending.splice(0, pending.length, ...sortedPending);
 
   // Process pending filings sequentially (EDGAR + Voyage both require polite pacing).
@@ -1153,8 +1157,9 @@ export async function ingestFundamentalsCard(
   }
 }
 
-function sortBreadthFirst(
-  filings: Array<{ ticker: string; ref: FilingRef }>
+export function sortBreadthFirst(
+  filings: Array<{ ticker: string; ref: FilingRef }>,
+  deepenTickers?: Set<string>
 ): Array<{ ticker: string; ref: FilingRef }> {
   // Group by ticker
   const byTicker: Record<string, { k: FilingRef[]; q: FilingRef[] }> = {};
@@ -1186,21 +1191,26 @@ function sortBreadthFirst(
     if (lists.q.length > 0) {
       priorityLevels[1].push({ ticker, ref: lists.q[0] });
     }
-    // Level 2: second newest 10-Q
-    if (lists.q.length > 1) {
+    const deepen = !deepenTickers || deepenTickers.has(ticker);
+    // Level 2: second newest 10-Q (depth — high-interest names only)
+    if (deepen && lists.q.length > 1) {
       priorityLevels[2].push({ ticker, ref: lists.q[1] });
     }
     // Level 3: third newest 10-Q
-    if (lists.q.length > 2) {
+    if (deepen && lists.q.length > 2) {
       priorityLevels[3].push({ ticker, ref: lists.q[2] });
     }
     // Level 4: remaining 10-Ks
-    for (let i = 1; i < lists.k.length; i++) {
-      priorityLevels[4].push({ ticker, ref: lists.k[i] });
+    if (deepen) {
+      for (let i = 1; i < lists.k.length; i++) {
+        priorityLevels[4].push({ ticker, ref: lists.k[i] });
+      }
     }
     // Level 5: remaining 10-Qs
-    for (let i = 3; i < lists.q.length; i++) {
-      priorityLevels[5].push({ ticker, ref: lists.q[i] });
+    if (deepen) {
+      for (let i = 3; i < lists.q.length; i++) {
+        priorityLevels[5].push({ ticker, ref: lists.q[i] });
+      }
     }
   }
 

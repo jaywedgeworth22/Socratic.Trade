@@ -13,7 +13,8 @@
 import crypto from "crypto";
 import { CircuitOpenError } from "../api-circuit-breaker";
 import { fetchWithRetry, apiKeyFingerprint } from "../data-providers";
-import { audit, getDb } from "../db";
+import { audit, getDb, hasIngestedAccession } from "../db";
+import { rankHighInterestSymbols } from "../rag/demand-first-symbols";
 import { resolveApiKeyWithSource } from "../db-api-keys";
 import { logApiHealth } from "../db-health";
 import {
@@ -225,6 +226,20 @@ function maxRequestsPerRun(): number {
 
 function maxTranscriptsPerSymbol(): number {
   return positiveInt(process.env.FMP_TRANSCRIPT_MAX_PER_SYMBOL, DEFAULT_TRANSCRIPTS_PER_SYMBOL, 8);
+}
+
+/**
+ * Latest-only until that period is stored; extra history only for held/watchlist
+ * names.  Universe-tail names do not spend the run re-fetching already-stored calls.
+ */
+export function fmpTranscriptCapThisVisit(opts: {
+  latestStored: boolean;
+  highInterest: boolean;
+  maxPerSymbol: number;
+}): number {
+  if (!opts.latestStored) return 1;
+  if (opts.highInterest) return Math.max(1, opts.maxPerSymbol);
+  return 0;
 }
 
 function httpRetries(): number {
@@ -2121,6 +2136,7 @@ async function refreshFmpTranscriptsUnlocked(
       : nonNegativeInt(options.maxRequests, 0, 500),
     used: 0
   };
+  const highInterest = new Set(rankHighInterestSymbols({ now }));
 
   symbolLoop: for (const symbol of orderedSymbols) {
     throwIfOperationLeaseCancelled(leaseSignal);
@@ -2190,13 +2206,28 @@ async function refreshFmpTranscriptsUnlocked(
     const refsInAttemptOrder = retryIndex > 0
       ? [refs[retryIndex]!, ...refs.slice(0, retryIndex), ...refs.slice(retryIndex + 1)]
       : refs;
+    const latest = refs[0];
+    const latestStored = latest
+      ? hasIngestedAccession(
+        transcriptAccession(latest.symbol, latest.year, latest.quarter),
+        FMP_TRANSCRIPT_DOC_TYPE
+      )
+      : false;
+    const cap = fmpTranscriptCapThisVisit({
+      latestStored,
+      highInterest: highInterest.has(symbol),
+      maxPerSymbol: maxTranscriptsPerSymbol()
+    });
     const refsToAttempt: FmpTranscriptRef[] = [];
     for (const ref of refsInAttemptOrder) {
-      // Re-fetch a bounded recent set even after initial ingestion: FMP can correct a transcript
-      // body without changing symbol/year/quarter. Body SHA-256 below distinguishes versions and
-      // preserves the older PIT version rather than overwriting it.
+      const accession = transcriptAccession(ref.symbol, ref.year, ref.quarter);
+      // A parked retry still runs even when the latest-only cap would skip this name.
+      if (pendingRetry && accession === pendingRetry) {
+        refsToAttempt.push(ref);
+        continue;
+      }
+      if (refsToAttempt.length >= cap) break;
       refsToAttempt.push(ref);
-      if (refsToAttempt.length >= maxTranscriptsPerSymbol()) break;
     }
 
     let retrySameSymbol = false;

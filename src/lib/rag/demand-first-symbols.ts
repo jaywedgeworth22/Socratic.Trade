@@ -27,6 +27,49 @@ function loadManifestRank(manifestPath: string = path.resolve("data/rag-universe
   return rank;
 }
 
+function pushUnique(out: string[], seen: Set<string>, raw: string): void {
+  const s = normalizeSymbol(raw);
+  if (!s || seen.has(s)) return;
+  seen.add(s);
+  out.push(s);
+}
+
+/**
+ * Names the desk is most likely to trade: held by value, then watchlists,
+ * then the technical watchlist.  Used to deepen history after a latest-only
+ * universe pass.  Does not include the policy index or the 1k manifest tail.
+ */
+export function rankHighInterestSymbols(options?: { now?: number }): string[] {
+  const now = options?.now ?? Date.now();
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  try {
+    const held = [...listRecentlyHeldSymbolValuesAllUsers(30, now).entries()]
+      .filter(([, value]) => value > 0)
+      .sort((a, b) => b[1] - a[1]);
+    for (const [symbol] of held) pushUnique(out, seen, symbol);
+  } catch {
+    for (const s of listRecentlyHeldSymbolsAllUsers(30, now)) pushUnique(out, seen, s);
+  }
+
+  for (const userId of listUsers()) {
+    try {
+      for (const item of listWatchlistSymbols(userId)) pushUnique(out, seen, item.symbol);
+    } catch {
+      // ignore per-user watchlist errors
+    }
+  }
+
+  try {
+    for (const s of getTechnicalWatchlist()) pushUnique(out, seen, s);
+  } catch {
+    // ignore
+  }
+
+  return out;
+}
+
 /**
  * Holdings by value, then watchlists, technical watchlist, each user's policy
  * index universe, then the 1k-issuer RAG manifest.  A symbol appears once at
@@ -36,58 +79,25 @@ export function rankDemandFirstSymbols(options?: { symbols?: string[]; now?: num
   if (options?.symbols?.length) {
     const seen = new Set<string>();
     const out: string[] = [];
-    for (const raw of options.symbols) {
-      const s = normalizeSymbol(raw);
-      if (!s || seen.has(s)) continue;
-      seen.add(s);
-      out.push(s);
-    }
+    for (const raw of options.symbols) pushUnique(out, seen, raw);
     return out;
   }
 
   const now = options?.now ?? Date.now();
   const seen = new Set<string>();
-  const out: string[] = [];
-  const push = (raw: string) => {
-    const s = normalizeSymbol(raw);
-    if (!s || seen.has(s)) return;
-    seen.add(s);
-    out.push(s);
-  };
-
-  try {
-    const held = [...listRecentlyHeldSymbolValuesAllUsers(30, now).entries()]
-      .filter(([, value]) => value > 0)
-      .sort((a, b) => b[1] - a[1]);
-    for (const [symbol] of held) push(symbol);
-  } catch {
-    for (const s of listRecentlyHeldSymbolsAllUsers(30, now)) push(s);
-  }
+  const out = rankHighInterestSymbols({ now });
+  for (const s of out) seen.add(s);
 
   for (const userId of listUsers()) {
     try {
-      for (const item of listWatchlistSymbols(userId)) push(item.symbol);
-    } catch {
-      // ignore per-user watchlist errors
-    }
-  }
-
-  try {
-    for (const s of getTechnicalWatchlist()) push(s);
-  } catch {
-    // ignore
-  }
-
-  for (const userId of listUsers()) {
-    try {
-      for (const s of symbolsForPolicyUniverse(getPolicy(userId))) push(s);
+      for (const s of symbolsForPolicyUniverse(getPolicy(userId))) pushUnique(out, seen, s);
     } catch {
       // ignore per-user policy errors
     }
   }
 
   const manifest = [...loadManifestRank().entries()].sort((a, b) => a[1] - b[1]);
-  for (const [symbol] of manifest) push(symbol);
+  for (const [symbol] of manifest) pushUnique(out, seen, symbol);
 
   return out;
 }

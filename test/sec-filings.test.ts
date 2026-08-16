@@ -952,3 +952,36 @@ describe("Blended Fundamentals Profile Card Ingest", () => {
     expect(mocks.storeContexts).not.toHaveBeenCalled();
   });
 });
+
+describe("sortBreadthFirst latest-then-deepen", () => {
+  function ref(docType: "10-K" | "10-Q", filedAt: string, accession: string) {
+    return {
+      accession,
+      docType,
+      filedAt,
+      acceptanceDateTime: `${filedAt}T00:00:00.000Z`,
+      primaryDoc: "a.htm",
+      url: "https://example.com"
+    };
+  }
+
+  it("covers latest 10-K and 10-Q for every ticker before extra history", async () => {
+    const { sortBreadthFirst } = await import("../src/lib/web-sources/sec-filings");
+    const filings = [
+      { ticker: "ZZZ", ref: ref("10-K", "2024-01-01", "k-old-zzz") },
+      { ticker: "ZZZ", ref: ref("10-K", "2025-01-01", "k-new-zzz") },
+      { ticker: "ZZZ", ref: ref("10-Q", "2025-05-01", "q1-zzz") },
+      { ticker: "ZZZ", ref: ref("10-Q", "2025-08-01", "q2-zzz") },
+      { ticker: "AAA", ref: ref("10-K", "2025-02-01", "k-aaa") },
+      { ticker: "AAA", ref: ref("10-Q", "2025-06-01", "q-aaa") }
+    ];
+    const ordered = sortBreadthFirst(filings, new Set(["AAA"]));
+    expect(ordered.map((row) => row.ref.accession)).toEqual([
+      "k-aaa",
+      "k-new-zzz",
+      "q2-zzz",
+      "q-aaa"
+    ]);
+  });
+});
+

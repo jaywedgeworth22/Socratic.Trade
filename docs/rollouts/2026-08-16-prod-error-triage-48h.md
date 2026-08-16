@@ -52,6 +52,43 @@ of trial credit remains, then pace the rest so it lasts through the trial
 ingest now uses the same holdings-first rank as ROIC.  Green/Red dossiers put
 document-summary / earnings-summary chunks first.
 
+Second follow-up: cover the latest earnings transcript and latest 10-K/10-Q
+for as many in-universe names as possible, then deepen held/watchlist history.
+That is feasible on remaining trial credit (expert envelope ~$8–$85 for a
+latest-only 1k-name pass).  ROIC is no longer depth-first (20 quarters per
+ticker before the next name).  It now walks `latest` then `deepen`.  FMP
+takes one latest call until stored, then extra history only for high-interest
+names.  SEC `sortBreadthFirst` still ships latest 10-K + latest 10-Q for
+everyone; levels 2+ (older 10-Qs/Ks) are held/watchlist/technical only.
+
+Third follow-up: expert team on how proposers should store/read this data.
+Consensus (not a Pinecone schema change in this PR):
+
+- Do **not** LLM-summarize on ingest.  Extractive highlights already exist
+  (`document-summarizer.ts`, `extractive-highlights-v2`) and cost ~0 LLM.
+- Green/Red only see **8 chunks** (held/top-3) or **1 chunk** (scouts) inside
+  a 6k-token hose.  A 10-K is ~100–400 chunks.  Full-body Pinecone vectors
+  are mostly a retrieval index, not prompt text.
+- Keep full bodies in SQLite FTS + `sec_artifacts` (already there).  After
+  the 2026-08-30 free snap (60k WU/day), write Pinecone as
+  `document-summary` + N best sections, not 400-chunk 10-Ks.  Do not delete
+  existing full-body vectors until FTS coverage is proven — live
+  `retrieveContextDetailed` is still Pinecone-only.
+- App performance / fills / experience-memory stay full.  Never summary-only.
+
+Design: `docs/designs/2026-08-16-proposer-corpus-storage.md`.  Expert memos
+in session scratch `grok-501` (retrieval, storage, ingest, adversarial).
+
+Adversarial critic (do not skip): today's `ingestFiling` only writes FTS,
+`ingested_accessions`, and the extractive abstract **after** a complete
+full-body `storeDocument`.  Live `retrieveContextDetailed` is Pinecone-only.
+FTS lexical inject joins committed Pinecone occurrences and only
+`sec-edgar`/`sec-8k`.  ROIC/EarningsCalls bodies are not FTS-mirrored.
+`corpus-reembed` would put full bodies back.  So the write-class flip is
+a later PR train (split local-complete from Pinecone, then hydrate
+retrieval, then stop full-body upserts).  This PR only changes *order*
+of ingest, not what is written.
+
 ## 3. Decisions & Trade-offs
 
 - Do not raise `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY`.  2.5M is the documented
@@ -81,6 +118,12 @@ runs before the PR.
 
 ## 5. Next Steps & Blockers
 
+- Land latest-first ingest on #2748 so remaining trial days buy universe
+  coverage instead of 20-quarter depth on a few names.
+- Next corpus PRs (design § PR Plan): FMP abstract writer; write-class
+  knob; split local-complete from Pinecone; retrieve hydration; then
+  post-trial `highlight+signal` default.  Do not prune existing vectors
+  until FTS coverage is proven.
 - After trial: drop `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` toward 60k and set
   `PINECONE_MONTHLY_WU_BUDGET` (owner/Infisical).
 - Residual owner: Litestream L2/L3 wedge (rolling deploy + B2 prefix).
