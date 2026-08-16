@@ -100,6 +100,15 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(AppFormat.peRatioDisplay(peRatio: quote.peRatio, eps: quote.eps), "26.4")
         XCTAssertEqual(AppFormat.peRatioDisplay(peRatio: nil, eps: -1), "n/a")
         XCTAssertEqual(AppFormat.peRatioDisplay(peRatio: nil, eps: nil), "—")
+
+        let desk = try JSONDecoder().decode(
+            SymbolDeskInfo.self,
+            from: Data(#"{"symbol":"GOOG","peerAccounts":[{"accountId":"ira","label":"Roth IRA","environment":"live","direction":"long","quantity":4}],"exit":{"style":"trailing","stopPrice":300,"takeProfitPrice":420,"trailPercent":6},"pending":[{"id":"p1","side":"buy","quantity":1,"rationale":"green team: still a hold"}]}"#.utf8)
+        )
+        XCTAssertEqual(desk.peerAccounts.first?.quantity, 4)
+        XCTAssertEqual(desk.peerAccounts.first?.direction, "long")
+        XCTAssertEqual(desk.exit?.style, "trailing")
+        XCTAssertEqual(desk.pending.first?.side, "buy")
     }
 
     @MainActor
