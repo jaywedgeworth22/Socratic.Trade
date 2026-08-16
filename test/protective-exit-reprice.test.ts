@@ -60,6 +60,18 @@ vi.mock("../src/lib/broker", () => ({
 // Stub ONLY scanMarket (importOriginal keeps mergeQuoteData and the other exports real) so the
 // approval-time scan carries a fresh AAPL quote that has fallen through the stored exit limit:
 // bid 199 / ask 200 with the ask-biased composite at 200.
+vi.mock("../src/lib/approval-quote-scan", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/approval-quote-scan")>();
+  return {
+    ...actual,
+    loadApprovalQuoteScan: async () =>
+      actual.buildApprovalQuoteScan(
+        { AAPL: { symbol: "AAPL", price: 200, bid: 199, ask: 200, provider: "test-scan" } },
+        []
+      )
+  };
+});
+
 vi.mock("../src/lib/market", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/market")>();
   return {

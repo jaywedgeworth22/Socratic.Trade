@@ -18,10 +18,18 @@ import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   approveProposal,
   rejectProposal,
+  retryRedTeam,
   ConsoleApiError,
   LiveConfirmationRequiredError,
   type ApproveResult
 } from "../lib/api";
+import {
+  delayAdvantageUsd,
+  nameMovePct,
+  resolveProposedPrice,
+  resolveProposalStop,
+  resolveProposalTarget
+} from "@/lib/proposal-price-review";
 import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
@@ -31,7 +39,7 @@ import { ProposalScorecardBlock } from "./proposal-scorecard";
 import { proposalGreenRationale, proposalHumanReviewReasons } from "../lib/thesis";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
+import { Ago, Btn, Chip, LiveTag, SignedText, TextInput } from "../ui/primitives";
 import { ModelBadge } from "../ui/provider-logo";
 import { Sheet } from "../ui/sheet";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -221,7 +229,7 @@ export function redTeamSummaryChip(
 export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
-  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [busy, setBusy] = useState<"approve" | "reject" | "retry" | null>(null);
   const [liveOpen, setLiveOpen] = useState(false);
   // PR-A2: default collapsed so Approve/Reject stay reachable; expand for the full receipt.
   const [expanded, setExpanded] = useState(false);
@@ -241,11 +249,23 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
   const dailyUsed = finite(pending.decision.dailyNotionalUsed) ? pending.decision.dailyNotionalUsed : snapshot?.dailyStats.notional;
   const dailyCap = policy ? resolveDailyOpeningCap(policy, snapshot?.portfolio?.totalMarketValue) : undefined;
   const dailyRemaining = dailyCap && finite(dailyUsed) ? Math.max(0, dailyCap.notional - dailyUsed) : undefined;
-  const referencePrice = p.referencePrice ?? pending.proposalReferencePrice;
-  const currentDrift =
-    finite(referencePrice) && finite(pending.proposalCurrentPrice) && referencePrice > 0
-      ? ((pending.proposalCurrentPrice - referencePrice) / referencePrice) * 100
-      : undefined;
+  const referencePrice = resolveProposedPrice({
+    proposalReferencePrice: pending.proposalReferencePrice,
+    referencePrice: p.referencePrice,
+    limitPrice: p.limitPrice
+  });
+  const livePrice = finite(pending.proposalCurrentPrice) && pending.proposalCurrentPrice > 0
+    ? pending.proposalCurrentPrice
+    : undefined;
+  const currentDrift = nameMovePct(referencePrice, livePrice);
+  const targetPrice = resolveProposalTarget(p);
+  const stopPrice = resolveProposalStop(p);
+  const delayUsd = delayAdvantageUsd({
+    proposed: referencePrice,
+    now: livePrice,
+    quantity: p.quantity,
+    side: p.side
+  });
 
   // Estimated realized P/L for an exit (sell-of-long or cover-of-short): only meaningful when
   // there's a matching held position to close against. Fresh price prefers the proposal's own
@@ -375,6 +395,61 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
     }
   };
 
+  const retryCritic = async () => {
+    setBusy("retry");
+    try {
+      await retryRedTeam(pending.id);
+      await refresh();
+      toast.push("info", `Red Team retried ${p.symbol}`, "The new verdict is on this card.");
+    } catch (error) {
+      toast.push("neg", "Red Team retry failed", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const priceStrip = (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[length:var(--con-fs-xs)] sm:grid-cols-4">
+      <div>
+        <div className="con-card-title mb-0.5">Proposed</div>
+        <p className="con-num">{referencePrice != null ? fmtMoney(referencePrice) : EM_DASH}</p>
+      </div>
+      <div>
+        <div className="con-card-title mb-0.5">Now</div>
+        <p className="con-num">
+          {livePrice != null ? fmtMoney(livePrice) : EM_DASH}
+          {currentDrift != null && (
+            <>
+              {" "}
+              <SignedText value={currentDrift}>{fmtPct(currentDrift, 2, true)}</SignedText>
+            </>
+          )}
+        </p>
+      </div>
+      <div>
+        <div className="con-card-title mb-0.5">Target</div>
+        <p className="con-num">{targetPrice != null ? fmtMoney(targetPrice) : "none"}</p>
+      </div>
+      <div>
+        <div className="con-card-title mb-0.5">Delay</div>
+        <p>
+          {delayUsd == null
+            ? EM_DASH
+            : Math.abs(delayUsd) < 0.005
+              ? "unchanged"
+              : delayUsd > 0
+                ? `better by ${fmtMoney(delayUsd)}`
+                : `worse by ${fmtMoney(Math.abs(delayUsd))}`}
+        </p>
+      </div>
+      {stopPrice != null && (
+        <div className="col-span-2 sm:col-span-4">
+          <span className="text-[color:var(--con-faint)]">Stop {fmtMoney(stopPrice)}</span>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     // No overflow-hidden: it creates a containing block that breaks sticky CTAs (PR-A2).
     <article className={cx("con-card", live && "border-[color:var(--con-live-border)]")}>
@@ -421,6 +496,14 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
                 Proposed <Ago iso={pending.createdAt} />
               </span>
             </div>
+            {priceStrip}
+            {p.redTeamVerdict && !p.redTeamVerdict.available && p.redTeamVerdict.failureKind !== "not_configured" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void retryCritic()}>
+                  {busy === "retry" ? "Retrying Red Team…" : "Retry Red Team"}
+                </Btn>
+              </div>
+            )}
             {greenRationale ? (
               <p className="line-clamp-3 leading-relaxed text-[color:var(--con-muted)]">{greenRationale}</p>
             ) : (
@@ -577,6 +660,11 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
                   trigger: {redTrigger.label}
                 </Chip>
               )}
+              {!p.redTeamVerdict.available && p.redTeamVerdict.failureKind !== "not_configured" && (
+                <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void retryCritic()}>
+                  {busy === "retry" ? "Retrying Red Team…" : "Retry Red Team"}
+                </Btn>
+              )}
             </div>
           </div>
         )}
@@ -730,6 +818,8 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
           )}
         </div>
 
+        {priceStrip}
+
         {/* Since proposed + revalidation */}
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
@@ -741,13 +831,14 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
                 <SignedText value={pending.performanceSinceProposalPct}>{fmtPct(pending.performanceSinceProposalPct, 2, true)}</SignedText>{" "}
                 <span className="text-[color:var(--con-faint)]">
                   in the proposed direction
-                  {typeof pending.proposalReferencePrice === "number" && typeof pending.proposalCurrentPrice === "number"
-                    ? ` (${fmtMoney(pending.proposalReferencePrice)} → ${fmtMoney(pending.proposalCurrentPrice)})`
-                    : ""}
+                  {referencePrice != null && livePrice != null ? ` (${fmtMoney(referencePrice)} → ${fmtMoney(livePrice)})` : ""}
                 </span>
               </p>
             ) : (
-              <Dash />
+              <p className="text-[color:var(--con-faint)]">
+                {referencePrice != null ? `Proposed ${fmtMoney(referencePrice)}` : "No proposed price on this card."}
+                {livePrice != null ? ` · now ${fmtMoney(livePrice)}` : ""}
+              </p>
             )}
           </div>
           <div>
