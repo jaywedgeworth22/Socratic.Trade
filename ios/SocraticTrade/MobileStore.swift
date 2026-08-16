@@ -458,6 +458,10 @@ final class MobileStore: ObservableObject {
         try await client.symbolQuote(symbol)
     }
 
+    func fetchSymbolDesk(_ symbol: String) async throws -> SymbolDeskInfo {
+        try await client.symbolDesk(symbol)
+    }
+
     func fetchChatHistory() async throws -> [ChatTurn] {
         try await client.chatHistory()
     }

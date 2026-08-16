@@ -27,12 +27,18 @@ import {
   AnalystSection,
   DerivedTilesSection,
   EvidenceSection,
+  ExitPlanSection,
   ExposureSection,
   FactorSection,
+  LastCallSection,
   FundamentalsSection,
+  PeerAccountsSection,
   SignalSummarySection,
   SourcesSection
 } from "./drilldown-sections";
+import { activateAccount } from "../lib/api";
+import { deriveProtection } from "../lib/derive";
+import type { SymbolDesk } from "@/lib/symbol-desk";
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -282,7 +288,35 @@ export function SymbolDrilldownSheet({
     );
   }, [companyName, normalized, updateDrawerTitle]);
 
+  const [desk, setDesk] = useState<SymbolDesk | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setDesk(null);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/symbol-desk?symbol=${encodeURIComponent(normalized)}`);
+        if (!res.ok) return;
+        const json = (await res.json()) as SymbolDesk;
+        if (!cancelled) setDesk(json);
+      } catch {
+        // Desk extras are optional — the sheet still shows quote, position, and scan research.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalized]);
+
   const position = snapshot?.positions?.find((p) => p.symbol.trim().toUpperCase() === normalized);
+  const protection =
+    position && snapshot
+      ? deriveProtection(
+          position,
+          snapshot.orders ?? [],
+          snapshot.policy,
+          snapshot.stopPlanBySymbol?.[normalized] ?? snapshot.stopPlanBySymbol?.[position.symbol]
+        )
+      : null;
   const pending = useMemo(
     () => (snapshot?.pendingProposals ?? []).filter((p) => p.proposal.symbol.trim().toUpperCase() === normalized),
     [snapshot?.pendingProposals, normalized]
@@ -407,7 +441,20 @@ export function SymbolDrilldownSheet({
             all, so say that plainly instead of letting ExposureSection's normal empty state
             ("no position, no pending ideas, no recent orders") assert a negative it can't know. */}
         {hasAccountData ? (
-          <ExposureSection symbol={normalized} position={position} pending={pending} orders={recentOrders} />
+          <>
+            <ExposureSection symbol={normalized} position={position} pending={pending} orders={recentOrders} />
+            {protection && (
+              <ExitPlanSection symbol={normalized} protection={protection} exit={desk?.exit} />
+            )}
+            <PeerAccountsSection
+              symbol={normalized}
+              peers={desk?.peerAccounts ?? []}
+              onSwitch={(accountId) => {
+                void activateAccount(accountId);
+              }}
+            />
+            <LastCallSection lastCall={desk?.lastCall} />
+          </>
         ) : (
           <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
             Account exposure (position, pending ideas, recent orders) isn&apos;t available here — open{" "}
