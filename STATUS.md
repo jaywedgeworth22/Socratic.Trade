@@ -14,6 +14,17 @@ ROIC coverage before the pile-up: 46 transcripts across USB / OXY / SHEL (Indivi
 
 Rollout: `docs/rollouts/2026-08-16-roic-singleflight.md`.
 
+## Current (2026-08-16 GROK — ticker desk sheet)
+
+Tapping a ticker on the website (desktop and phone widths) and iOS now
+shows the current lot (qty, avg cost, open P&L), the persisted exit plan,
+pending ideas, last Green/Red call, and a size+direction mention of the
+same name on another of the user's accounts with a switch control.  PWA
+is not a product surface (owner 2026-08-16) — no further `/mobile` work.
+No extra broker fan-out; peer lots are last recorded snapshots.
+
+Branch `grok/ticker-desk-sheet`.  Rollout:
+`docs/rollouts/2026-08-16-ticker-desk-sheet.md`.
 ## Current (2026-08-16 GROK — overlay CRUD + Polymarket deepen + ASOF receipt)
 
 Owner: (1) full overlay product + expansions; (2) defer weekly hard-delete; (3) no Reddit/X — deepen Polymarket including sector/macro tilts; (4) run VECTOR_ASOF_STRICT coverage.
@@ -147,6 +158,18 @@ Advisory-tail reword / settings-surface sweep is NOT in these five commits (it r
 #2682) — left alone.
 
 Rollout: `docs/rollouts/2026-08-13-claude-r4-pickup.md`.
+## Current (2026-08-16 GROK — ticker desk sheet)
+
+Tapping a ticker on web, PWA, and iOS now shows the current lot (qty, avg
+cost, open P&amp;L), the persisted exit plan (stop / take-profit / trail /
+harvest band / kill condition), pending ideas with their rationale, and a
+size+direction mention of the same name on another of the user's accounts
+with a switch control.  No extra broker fan-out; peer lots are last
+recorded snapshots.  RAG/full debate left for v2.
+
+Branch `grok/ticker-desk-sheet`.  Rollout:
+`docs/rollouts/2026-08-16-ticker-desk-sheet.md`.
+
 ## Current (2026-08-14 GROK — stale ~1200s quotes + origin timeouts)
 
 Production 2026-08-13/14: Autopilot openings warned "quote was ~1200s old",
