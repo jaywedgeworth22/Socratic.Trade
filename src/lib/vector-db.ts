@@ -17,6 +17,7 @@ import { applyOpenRouterClassifierEnrichment } from "./llm-call";
 import { timeSync as timeSyncGuard } from "./slow-sync-guard";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
+import { ROIC_TRANSCRIPT_SOURCE, roicTranscriptsEnabled } from "./roic-transcripts-gate";
 import { envFlagOn } from "./rag/env-flag";
 import { resolveSourceBool } from "./source-settings";
 import { serverKnobBool } from "./server-knobs";
@@ -6146,13 +6147,13 @@ function docTypeVariants(docTypes: string[]): string[] {
 export function buildExtraFilters(options?: RetrieveOptions): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
   const transcriptRightsConfirmed = fmpTranscriptRightsActive();
-  // Two independently-gated transcript producers share the "earnings-transcript" doc type:
-  // FMP (rights-flag + durable gate generation) and EarningsCalls.dev (key = opt-in +
-  // kill-switch; see earningscalls-gate.ts). The doc-type filter stays open when EITHER gate
-  // is active; the post-fetch guard (filterMatchesForTranscriptRights) then enforces the
-  // per-SOURCE gate on each match, so one producer's gate can never leak the other's chunks.
+  // Independently-gated transcript producers share the "earnings-transcript" doc type:
+  // FMP (rights-flag), EarningsCalls.dev (key + kill-switch), and ROIC.ai (key + kill-switch).
+  // The doc-type filter stays open when ANY gate is active; the post-fetch guard then
+  // enforces the per-SOURCE gate so one producer's consent cannot leak another's chunks.
   const earningsCallsActive = earningsCallsTranscriptsEnabled();
-  const anyTranscriptSourceActive = transcriptRightsConfirmed || earningsCallsActive;
+  const roicActive = roicTranscriptsEnabled();
+  const anyTranscriptSourceActive = transcriptRightsConfirmed || earningsCallsActive || roicActive;
   if (options?.docType && options.docType.length > 0) {
     const allowedDocTypes = anyTranscriptSourceActive
       ? options.docType
@@ -6167,6 +6168,8 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
       ? { $eq: "__fmp_transcript_rights_unconfirmed__" }
       : !earningsCallsActive && options.source === EARNINGSCALLS_TRANSCRIPT_SOURCE
         ? { $eq: "__earningscalls_transcripts_disabled__" }
+        : !roicActive && options.source === ROIC_TRANSCRIPT_SOURCE
+          ? { $eq: "__roic_transcripts_disabled__" }
         : { $eq: options.source };
   }
   if (options?.accountScope === "exact") {
@@ -6190,7 +6193,11 @@ export function filterMatchesForTranscriptRights<T extends { metadata?: Record<s
   // EarningsCalls.dev chunks after the owner pulled that key or set its kill-switch.
   const hasBlockedEarningsCalls = !earningsCallsTranscriptsEnabled() &&
     matches.some((match) => match?.metadata?.source === EARNINGSCALLS_TRANSCRIPT_SOURCE);
-  if (rightsConfirmed && !hasMarkedDerivative && !hasBlockedEarningsCalls) return matches;
+  const hasBlockedRoic = !roicTranscriptsEnabled() &&
+    matches.some((match) => match?.metadata?.source === ROIC_TRANSCRIPT_SOURCE);
+  if (rightsConfirmed && !hasMarkedDerivative && !hasBlockedEarningsCalls && !hasBlockedRoic) {
+    return matches;
+  }
   let activeGeneration: number | undefined;
   if (rightsConfirmed && hasMarkedDerivative) {
     try {
@@ -6205,6 +6212,7 @@ export function filterMatchesForTranscriptRights<T extends { metadata?: Record<s
     }
   }
   const earningsCallsActive = earningsCallsTranscriptsEnabled();
+  const roicActive = roicTranscriptsEnabled();
   return matches.filter((match) => {
     const docType = match?.metadata?.doc_type;
     const source = match?.metadata?.source;
@@ -6212,10 +6220,10 @@ export function filterMatchesForTranscriptRights<T extends { metadata?: Record<s
       const generation = Number(match.metadata.fmp_rights_generation);
       return rightsConfirmed && activeGeneration !== undefined && generation === activeGeneration;
     }
-    // EarningsCalls.dev-sourced chunks are gated by their OWN source predicate (key present +
-    // kill-switch off), never by the FMP rights flag — and vice versa: an active FMP gate does
-    // not resurrect earningscalls chunks after the owner pulls the key/sets the kill-switch.
+    // Each producer is gated by its OWN predicate.  An active FMP flag must never
+    // resurrect EarningsCalls or ROIC chunks after those keys are pulled.
     if (source === EARNINGSCALLS_TRANSCRIPT_SOURCE) return earningsCallsActive;
+    if (source === ROIC_TRANSCRIPT_SOURCE) return roicActive;
     if (rightsConfirmed) return true;
     return source !== "fmp-earnings-transcript" &&
       (typeof docType !== "string" || docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE);

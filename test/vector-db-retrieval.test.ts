@@ -28,6 +28,8 @@ describe("buildExtraFilters", () => {
   });
   it("excludes transcripts from broad and explicit retrieval when rights are unconfirmed", () => {
     vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    vi.stubEnv("ROIC_API_KEY", "");
+    vi.stubEnv("ROIC_TRANSCRIPTS_DISABLED", "");
     // Broad queries preserve server-side recall for legacy vectors that lack doc_type; the
     // post-fetch guard below removes transcripts before ranking/prompt injection.
     expect(buildExtraFilters()).toEqual({});
@@ -42,6 +44,23 @@ describe("buildExtraFilters", () => {
     const filing = { id: "filing", metadata: { doc_type: "10-k" } };
     const transcript = { id: "transcript", metadata: { doc_type: "EARNINGS-TRANSCRIPT" } };
     expect(filterMatchesForTranscriptRights([legacy, filing, transcript])).toEqual([legacy, filing]);
+  });
+  it("admits ROIC earnings-transcript chunks when the ROIC key is on and FMP/EarningsCalls are off", () => {
+    vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    vi.stubEnv("EARNINGSCALLS_API_KEY", "");
+    vi.stubEnv("EARNINGSCALLS_RAPIDAPI_KEY", "");
+    vi.stubEnv("ROIC_API_KEY", "test-roic-key");
+    vi.stubEnv("ROIC_TRANSCRIPTS_DISABLED", "");
+    const explicit = buildExtraFilters({ docType: ["earnings-transcript"] }).doc_type as { $in: string[] };
+    expect(new Set(explicit.$in)).toEqual(new Set(["earnings-transcript", "EARNINGS-TRANSCRIPT"]));
+    const roic = { id: "roic", metadata: { doc_type: "earnings-transcript", source: "roic-earnings-transcript" } };
+    const fmp = { id: "fmp", metadata: { doc_type: "earnings-transcript", source: "fmp-earnings-transcript" } };
+    expect(filterMatchesForTranscriptRights([roic, fmp])).toEqual([roic]);
+    vi.stubEnv("ROIC_TRANSCRIPTS_DISABLED", "1");
+    expect(filterMatchesForTranscriptRights([roic, fmp])).toEqual([]);
+    expect(buildExtraFilters({ source: "roic-earnings-transcript" })).toEqual({
+      source: { $eq: "__roic_transcripts_disabled__" }
+    });
   });
   it("leaves broad transcript matches available while rights are confirmed", async () => {
     const { activateFmpTranscriptRightsGeneration } = await import("../src/lib/web-sources/fmp-transcripts");
