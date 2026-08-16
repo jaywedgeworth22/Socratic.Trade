@@ -10,6 +10,7 @@ import {
   lookupTickerByCusip,
   upsertCusipTicker,
   replaceThirteenFFiling,
+  purgeInvalidThirteenFPeriods,
   listThirteenFHoldingsForTicker,
   listLatestThirteenFPeriodByFiler,
   listThirteenFHoldingsForFilerPeriod,
@@ -65,6 +66,8 @@ export interface ThirteenFDataset {
   fetchedAt: string;
   recordCount: number;
   filers: number;
+  /** Filers that returned rows on the last successful refresh.  Incomplete sets stay due. */
+  okFilers?: string[];
 }
 
 export function thirteenFTtlMs(): number {
@@ -80,8 +83,25 @@ export function isThirteenFRefreshDue(now: number = Date.now()): boolean {
   const lastAttempt = getInternalSetting<string>(ATTEMPT_KEY);
   if (lastAttempt && now - Date.parse(lastAttempt) < retryBackoffMs()) return false;
   const dataset = getThirteenFDataset();
-  if (!dataset?.fetchedAt) return true;
+  if (!dataset?.fetchedAt || dataset.recordCount <= 0) return true;
+  if ((dataset.okFilers?.length ?? 0) < DEFAULT_13F_FILERS.length) return true;
   return now - Date.parse(dataset.fetchedAt) >= thirteenFTtlMs();
+}
+
+/** EDGAR cover tags may be namespaced (`ns1:cusip`) and dates are often MM-DD-YYYY. */
+export function xmlTagText(xml: string, tag: string): string | undefined {
+  const re = new RegExp(`<(?:[\\w]+:)?${tag}(?:\\s[^>]*)?>([^<]*)`, "i");
+  const raw = xml.match(re)?.[1]?.trim();
+  return raw || undefined;
+}
+
+export function normalizeEdgarDate(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const us = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (!us) return undefined;
+  return `${us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
 }
 
 /** Latest 13F-HR accession + folder from a company atom feed. */
@@ -95,35 +115,45 @@ export function parseLatest13FFeed(atomXml: string): { dir: string; accession: s
   return null;
 }
 
-export function pick13FXmls(indexJson: unknown): { infoTable?: string; primary?: string } {
+function indexXmlNames(indexJson: unknown): string[] {
   const items = (indexJson as { directory?: { item?: Array<{ name?: string }> } })?.directory?.item;
-  if (!Array.isArray(items)) return {};
-  const names = items.map((i) => i?.name ?? "").filter(Boolean);
-  return {
-    infoTable: names.find((n) => /infoTable|informationtable|form13fInfoTable/i.test(n) && /\.xml$/i.test(n)),
-    primary: names.find((n) => /primary_doc|primary-doc|form13f/i.test(n) && /\.xml$/i.test(n))
-  };
+  if (!Array.isArray(items)) return [];
+  return items.map((i) => i?.name ?? "").filter((n) => /\.xml$/i.test(n));
+}
+
+export function pick13FXmls(indexJson: unknown): { infoTable?: string; primary?: string } {
+  const names = indexXmlNames(indexJson);
+  // Do not treat form13f_YYYYMMDD.xml as the cover — that is often the information table.
+  const primary = names.find((n) => /primary[_-]?doc/i.test(n));
+  const namedInfo = names.find(
+    (n) => n !== primary && /infoTable|informationtable|form13fInfoTable|infotable/i.test(n)
+  );
+  const other = names.find((n) => n !== primary && n !== namedInfo);
+  return { infoTable: namedInfo ?? other, primary };
+}
+
+export function pick13FInfoTableCandidates(indexJson: unknown): string[] {
+  const xmls = pick13FXmls(indexJson);
+  const rest = indexXmlNames(indexJson).filter((n) => n !== xmls.infoTable && n !== xmls.primary);
+  return [xmls.infoTable, ...rest].filter((n): n is string => Boolean(n));
 }
 
 export function parse13FPeriod(coverXml: string): string | undefined {
-  const raw =
-    coverXml.match(/<reportCalendarOrQuarter>([^<]+)<\/reportCalendarOrQuarter>/)?.[1]?.trim() ??
-    coverXml.match(/<periodOfReport>([^<]+)<\/periodOfReport>/)?.[1]?.trim();
-  if (!raw) return undefined;
-  const iso = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
-  return iso;
+  return normalizeEdgarDate(
+    xmlTagText(coverXml, "reportCalendarOrQuarter") ?? xmlTagText(coverXml, "periodOfReport")
+  );
 }
 
 export function parse13FInfoTable(xml: string): ThirteenFInfoRow[] {
   const out: ThirteenFInfoRow[] = [];
-  const blocks = xml.split(/<infoTable[\s>]/i).slice(1);
+  const blocks = xml.split(/<(?:[\w]+:)?infoTable[\s>]/i).slice(1);
   for (const block of blocks) {
-    const cusip = (block.match(/<cusip>([^<]+)<\/cusip>/i)?.[1] ?? "").replace(/\s+/g, "").toUpperCase();
-    const issuerName = (block.match(/<nameOfIssuer>([^<]+)<\/nameOfIssuer>/i)?.[1] ?? "").replace(/\s+/g, " ").trim();
-    const titleOfClass = (block.match(/<titleOfClass>([^<]+)<\/titleOfClass>/i)?.[1] ?? "").trim();
-    const shares = Number(block.match(/<sshPrnamt>([\d.]+)<\/sshPrnamt>/i)?.[1] ?? 0);
-    const valueThousands = Number(block.match(/<value>([\d.]+)<\/value>/i)?.[1] ?? 0);
-    const sshPrnType = (block.match(/<sshPrnamtType>([^<]+)<\/sshPrnamtType>/i)?.[1] ?? "SH").trim();
+    const cusip = (xmlTagText(block, "cusip") ?? "").replace(/\s+/g, "").toUpperCase();
+    const issuerName = (xmlTagText(block, "nameOfIssuer") ?? "").replace(/\s+/g, " ").trim();
+    const titleOfClass = xmlTagText(block, "titleOfClass") ?? "";
+    const shares = Number(xmlTagText(block, "sshPrnamt") ?? 0);
+    const valueThousands = Number(xmlTagText(block, "value") ?? 0);
+    const sshPrnType = xmlTagText(block, "sshPrnamtType") ?? "SH";
     if (!cusip || !Number.isFinite(shares) || shares <= 0) continue;
     out.push({
       cusip,
@@ -271,26 +301,43 @@ export async function refreshThirteenF(
   let warning: string | undefined;
   let ingested = 0;
   const fetchedAt = new Date(now).toISOString();
+  const okFilers: string[] = [];
 
   const results = await runRateLimited([...DEFAULT_13F_FILERS], 250, async (filer) => {
     try {
       const atom = await politeFetchText(
         `${SEC_BASE}/cgi-bin/browse-edgar?action=getcompany&CIK=${filer.cik}&type=13F-HR&count=5&output=atom`,
-        { headers: { "user-agent": ua, accept: "application/atom+xml" } }
+        { headers: { "user-agent": ua, accept: "application/atom+xml" }, timeoutMs: 15_000 }
       );
       const latest = parseLatest13FFeed(atom);
       if (!latest) return 0;
-      const indexJson = JSON.parse(await politeFetchText(`${latest.dir}index.json`, { headers: { "user-agent": ua } }));
+      const indexJson = JSON.parse(
+        await politeFetchText(`${latest.dir}index.json`, { headers: { "user-agent": ua }, timeoutMs: 15_000 })
+      );
       const xmls = pick13FXmls(indexJson);
-      if (!xmls.infoTable) return 0;
-      const infoXml = await politeFetchText(`${latest.dir}${xmls.infoTable}`, { headers: { "user-agent": ua } });
+      const candidates = pick13FInfoTableCandidates(indexJson);
       let period = "";
       if (xmls.primary) {
-        const cover = await politeFetchText(`${latest.dir}${xmls.primary}`, { headers: { "user-agent": ua } });
+        const cover = await politeFetchText(`${latest.dir}${xmls.primary}`, {
+          headers: { "user-agent": ua },
+          timeoutMs: 15_000
+        });
         period = parse13FPeriod(cover) ?? "";
       }
-      if (!period) period = latest.accession.slice(0, 10);
-      const infoRows = parse13FInfoTable(infoXml);
+      if (!period) {
+        warning = `13f ${filer.short}: no report calendar quarter`;
+        return 0;
+      }
+      let infoRows: ThirteenFInfoRow[] = [];
+      for (const name of candidates) {
+        const infoXml = await politeFetchText(`${latest.dir}${name}`, {
+          headers: { "user-agent": ua },
+          timeoutMs: 20_000
+        });
+        infoRows = parse13FInfoTable(infoXml);
+        if (infoRows.length > 0) break;
+      }
+      if (infoRows.length === 0) return 0;
       const tickers = await resolveCusipsToTickers(
         infoRows.map((r) => r.cusip),
         fetchImpl
@@ -311,6 +358,8 @@ export async function refreshThirteenF(
         fetchedAt
       }));
       replaceThirteenFFiling(rows);
+      purgeInvalidThirteenFPeriods(padCik(filer.cik));
+      okFilers.push(padCik(filer.cik));
       return rows.length;
     } catch (error) {
       warning = error instanceof Error ? error.message : "13f fetch failed";
@@ -320,12 +369,14 @@ export async function refreshThirteenF(
   ingested = results.reduce((s, n) => s + (n ?? 0), 0);
   const recordCount = countThirteenFHoldings();
   const ok = ingested > 0 || recordCount > 0;
+  const prev = getThirteenFDataset();
   const dataset: ThirteenFDataset = {
-    fetchedAt: ingested > 0 ? fetchedAt : getThirteenFDataset()?.fetchedAt ?? fetchedAt,
+    fetchedAt: ingested > 0 ? fetchedAt : prev?.fetchedAt ?? "",
     recordCount,
-    filers: DEFAULT_13F_FILERS.length
+    filers: DEFAULT_13F_FILERS.length,
+    okFilers
   };
   setInternalSetting(DATASET_KEY, dataset);
-  audit("web_source_refresh", { id: "13f", ok, recordCount, fresh: ingested, warning });
+  audit("web_source_refresh", { id: "13f", ok, recordCount, fresh: ingested, okFilers: okFilers.length, warning });
   return { id: "13f", ok, recordCount, sources: ["sec-edgar"], fetchedAt: dataset.fetchedAt, warning };
 }
