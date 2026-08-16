@@ -28,8 +28,9 @@ alert.
 
 Touched files:
 
-- `src/lib/pinecone-trial-window.ts` — trial calendar, remaining-credit daily
-  pace, free-tier snap on trial end
+- `src/lib/pinecone-trial-window.ts` — trial calendar, $45 reserve, free-tier snap
+- `src/lib/rag/demand-first-symbols.ts` — shared holdings-first ingest order
+- `src/lib/rag/proposer-format.ts` — summary-first Green/Red dossier order
 - `src/lib/vector-db.ts` — `hasPineconeWriteBudget`, honest fuse copy, early
   `storeDocument` refuse before `beginVectorCommit`, trial-aware daily WU/text caps
 - `src/lib/pinecone-monthly-pace.ts` — after-trial monthly 1.6M when env is 0
@@ -45,11 +46,11 @@ Touched files:
 - tests for the above
 - `STATUS.md`, `docs/EFFORT-LOG.md`, this note
 
-Owner follow-up: the flat 2.5M fuse stopped writes while trial spend was *behind*
-the calendar ($62 of $300, 7 of 21 days).  The daily fuse is now remaining trial
-credit / remaining days (~4.25M WU/day at that snapshot).  On 2026-08-30 UTC
-ingest snaps to free-tier 60k WU/day, 20k texts/day, 1.6M WU/month even if
-Infisical still holds the trial numbers.  `PINECONE_TRIAL_ENDS_AT=off` disables.
+Owner follow-up: full-steam ingest is fine.  Do not throttle until about $40-50
+of trial credit remains, then pace the rest so it lasts through the trial
+(unless even the configured 2.5M/day fuse would leave dollars unused).  Filing
+ingest now uses the same holdings-first rank as ROIC.  Green/Red dossiers put
+document-summary / earnings-summary chunks first.
 
 ## 3. Decisions & Trade-offs
 

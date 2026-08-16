@@ -600,7 +600,7 @@ function pineconeMaxWriteUnitsPerDay(): number {
  * RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY (trial installs are often 2.5M).
  */
 export const PINECONE_DAILY_WU_FUSE_RECOMMENDATION =
-  "This is the app's rolling-24h write fuse, not a Pinecone outage.  Retrieval still works.  During a Standard trial the fuse is remaining trial credit divided by remaining days.  After the trial it snaps to free-tier 60k WU/day.  New upserts resume as the 24h window rolls.";
+  "This is the app's rolling-24h write fuse, not a Pinecone outage.  Retrieval still works.  During a Standard trial ingest stays full-steam until about $45 of credit remains, then paces the rest to the trial end.  After the trial it snaps to free-tier 60k WU/day.";
 
 /** True when the daily write fuse still has room (or is disabled).  Fail-open like the text budget. */
 export function hasPineconeWriteBudget(userId: string = "local"): boolean {

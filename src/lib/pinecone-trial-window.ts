@@ -26,6 +26,12 @@ export const PINECONE_FREE_TIER_WU_PER_DAY = 60_000;
 export const PINECONE_FREE_TIER_TEXTS_PER_DAY = 20_000;
 /** 80% of a 2M-WU month — same number as the 2026-08-09 after-trial table. */
 export const PINECONE_FREE_TIER_MONTHLY_WU = 1_600_000;
+/**
+ * Keep full-steam ingest until about this much trial credit remains, then pace the rest
+ * so it lasts through the trial instead of dumping the last dollars in one day.
+ * Override with PINECONE_TRIAL_RESERVE_USD.
+ */
+export const PINECONE_TRIAL_RESERVE_USD = 45;
 export const PINECONE_TRIAL_ROLLED_BACK_KEY = "pinecone:trialRolledBackAt";
 const DAY_MS = 24 * 60 * 60_000;
 const MAX_TRIAL_DAILY_WU = 10_000_000;
@@ -88,6 +94,12 @@ function wuUsdPerMillion(): number {
   return PINECONE_WU_USD_PER_MILLION;
 }
 
+function reserveUsd(): number {
+  const parsed = Number(process.env.PINECONE_TRIAL_RESERVE_USD);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  return PINECONE_TRIAL_RESERVE_USD;
+}
+
 export interface PineconeTrialAssessment {
   active: boolean;
   endsAt: string | null;
@@ -100,6 +112,8 @@ export interface PineconeTrialAssessment {
   effectiveDailyWriteUnits: number;
   effectiveTextsPerDay: number;
   effectiveMonthlyWriteUnits: number;
+  /** full-steam = remaining credit still above the reserve; finish = last $40-50 paced to trial end. */
+  phase: "full-steam" | "finish" | "idle";
   mode: "trial" | "free" | "configured";
 }
 
@@ -127,6 +141,18 @@ export function assessPineconeTrialWindow(input: {
     : 0;
 
   if (active) {
+    // Full steam while remaining credit is above the reserve.  Raise the fuse only when
+    // even the configured trial cap would leave dollars unused at trial end.  At/under
+    // the reserve, pace remaining / remaining days so the last $40-50 lasts the trial
+    // (unless that pace is still above the configured cap — then keep going).
+    const wouldMissTrialAtConfiguredCap = pacedDailyWriteUnits > input.configuredDailyWriteUnits;
+    const belowReserve = remainingUsd <= reserveUsd();
+    const phase: "full-steam" | "finish" = belowReserve && !wouldMissTrialAtConfiguredCap
+      ? "finish"
+      : "full-steam";
+    const effectiveDaily = phase === "full-steam"
+      ? Math.max(input.configuredDailyWriteUnits, pacedDailyWriteUnits, 1)
+      : Math.max(pacedDailyWriteUnits, 1);
     return {
       active: true,
       endsAt: new Date(endsMs!).toISOString(),
@@ -136,9 +162,10 @@ export function assessPineconeTrialWindow(input: {
       remainingUsd,
       remainingWriteUnits,
       pacedDailyWriteUnits,
-      effectiveDailyWriteUnits: Math.max(pacedDailyWriteUnits, 1),
+      effectiveDailyWriteUnits: Math.min(MAX_TRIAL_DAILY_WU, remainingWriteUnits, effectiveDaily),
       effectiveTextsPerDay: input.configuredTextsPerDay,
       effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits,
+      phase,
       mode: "trial"
     };
   }
@@ -160,6 +187,7 @@ export function assessPineconeTrialWindow(input: {
       effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits > 0
         ? input.configuredMonthlyWriteUnits
         : PINECONE_FREE_TIER_MONTHLY_WU,
+      phase: "idle",
       mode: "free"
     };
   }
@@ -176,6 +204,7 @@ export function assessPineconeTrialWindow(input: {
     effectiveDailyWriteUnits: input.configuredDailyWriteUnits,
     effectiveTextsPerDay: input.configuredTextsPerDay,
     effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits,
+    phase: "idle",
     mode: "configured"
   };
 }

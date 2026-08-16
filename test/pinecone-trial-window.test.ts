@@ -69,10 +69,45 @@ describe("pinecone trial window", () => {
     expect(state.mode).toBe("trial");
     expect(state.remainingDays).toBe(14);
     expect(state.remainingUsd).toBeCloseTo(238, 0);
+    expect(state.phase).toBe("full-steam");
     expect(state.effectiveDailyWriteUnits).toBeGreaterThan(2_500_000);
     expect(state.effectiveDailyWriteUnits).toBe(Math.floor(state.remainingWriteUnits / 14));
     expect(state.effectiveTextsPerDay).toBe(250_000);
     expect(state.effectiveMonthlyWriteUnits).toBe(0);
+  });
+
+  it("stays full-steam at the configured 2.5M fuse when remaining credit is still above the $45 reserve", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow } = await load();
+    // $80 remaining over 14 days would pace to ~1.4M WU/day — do not throttle yet.
+    const spentWu = Math.round(((300 - 80) / 4) * 1_000_000);
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: spentWu,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 0
+    });
+    expect(state.remainingUsd).toBeCloseTo(80, 0);
+    expect(state.phase).toBe("full-steam");
+    expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
+  });
+
+  it("paces the last ~$45 so the trial finishes instead of dumping the reserve in one day", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow } = await load();
+    const spentWu = Math.round(((300 - 45) / 4) * 1_000_000);
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: spentWu,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 0
+    });
+    expect(state.remainingUsd).toBeCloseTo(45, 0);
+    expect(state.phase).toBe("finish");
+    expect(state.effectiveDailyWriteUnits).toBe(Math.floor(state.remainingWriteUnits / 14));
+    expect(state.effectiveDailyWriteUnits).toBeLessThan(2_500_000);
   });
 
   it("snaps leftover trial Infisical knobs to free-tier on the morning the trial ends", async () => {
