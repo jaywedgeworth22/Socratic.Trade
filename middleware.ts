@@ -280,12 +280,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
 
   // Host-level routing: mobile.socratictrade.com / mobile.socratic.trade
+  // PWA retired (owner 2026-08-16) — send this host to the website console.
   if (host === "mobile.socratictrade.com" || host === "mobile.socratic.trade") {
-    if (pathname === "/") {
-      return NextResponse.redirect(new URL("/mobile", req.url));
+    if (pathname === "/" || pathname === "/mobile" || pathname.startsWith("/mobile/")) {
+      return NextResponse.redirect(new URL("/console", req.url));
     }
-    if (!pathname.startsWith("/mobile") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
-      return NextResponse.redirect(new URL(`/mobile${pathname}`, req.url));
+    if (!pathname.startsWith("/console") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
+      return NextResponse.redirect(new URL(`/console${pathname}`, req.url));
     }
   }
 

@@ -12,18 +12,18 @@ function createRequest(urlStr: string, hostHeader: string): NextRequest {
 }
 
 describe("middleware — subdomain routing for mobile and console", () => {
-  it("redirects mobile.socratictrade.com/ to /mobile", async () => {
+  it("redirects mobile.socratictrade.com/ to /console (PWA retired)", async () => {
     const req = createRequest("https://mobile.socratictrade.com/", "mobile.socratictrade.com");
     const res = await middleware(req);
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe("https://mobile.socratictrade.com/mobile");
+    expect(res.headers.get("location")).toBe("https://mobile.socratictrade.com/console");
   });
 
-  it("redirects mobile.socratic.trade/settings to /mobile/settings", async () => {
+  it("redirects mobile.socratic.trade/settings to /console/settings", async () => {
     const req = createRequest("https://mobile.socratic.trade/settings", "mobile.socratic.trade");
     const res = await middleware(req);
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe("https://mobile.socratic.trade/mobile/settings");
+    expect(res.headers.get("location")).toBe("https://mobile.socratic.trade/console/settings");
   });
 
   it("redirects console.socratictrade.com/ to /console", async () => {
@@ -40,10 +40,11 @@ describe("middleware — subdomain routing for mobile and console", () => {
     expect(res.headers.get("location")).toBe("https://console.socratic.trade/console/usage");
   });
 
-  it("passes through requests that already target /mobile or /console", async () => {
+  it("sends leftover /mobile paths on the mobile host to /console", async () => {
     const reqMobile = createRequest("https://mobile.socratictrade.com/mobile", "mobile.socratictrade.com");
     const resMobile = await middleware(reqMobile);
-    expect(resMobile.status).not.toBe(307);
+    expect(resMobile.status).toBe(307);
+    expect(resMobile.headers.get("location")).toBe("https://mobile.socratictrade.com/console");
 
     const reqConsole = createRequest("https://console.socratictrade.com/console", "console.socratictrade.com");
     const resConsole = await middleware(reqConsole);

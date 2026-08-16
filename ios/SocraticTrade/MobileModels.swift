@@ -307,6 +307,7 @@ struct Proposal: Decodable {
     let quantity: Double?
     let dollarAmount: Double?
     let limitPrice: Double?
+    let referencePrice: Double?
     let stopPrice: Double?
     let timeInForce: String?
     let rationale: String?

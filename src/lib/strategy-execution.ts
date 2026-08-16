@@ -1,5 +1,5 @@
 import { LANE_WAITS, withAccountMutation } from "./account-mutation";
-import { fetchFreshQuotesCascade } from "./quotes-cascade";
+import { loadApprovalQuoteScan } from "./approval-quote-scan";
 import { repriceStoredLimitProposal } from "./approval-reprice";
 import { getBrokerGateway } from "./broker";
 import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from "./broker-held-orders";
@@ -30,14 +30,12 @@ import {
   redTeamSizingFromSnapshot,
   stampRedTeamResult
 } from "./finalized-sizing-review";
-import { dynamicIndexUniversesForPolicy } from "./index-universes";
-import { scanMarket, mergeQuoteData } from "./market";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { OperationLeaseOwnershipError } from "./operation-lease";
 import { recordFillFromProposal } from "./performance";
-import { allowedSymbolsForPolicy, estimateNotional, applyOpeningOrderHeadroom, evaluateTradeProposal } from "./policy";
+import { estimateNotional, applyOpeningOrderHeadroom, evaluateTradeProposal } from "./policy";
 import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { repriceStoredProtectiveExit, assessProtectiveExitRepriceDrift } from "./protective-exit-routing";
@@ -54,7 +52,7 @@ import {
   startStrategyLockGuard,
   StrategyLockOwnershipLostError
 } from "./strategy-lock-guard";
-import { appendDecisionStep, assertLiveApprovalConfirmation, uniqueSymbols, currentPricesFromScan, protectiveExitQuoteFromScan, openingPolicyNotionalCap, autoRevertOnCapBreach, auditWashSaleProceed } from "./strategy";
+import { appendDecisionStep, assertLiveApprovalConfirmation, protectiveExitQuoteFromScan, openingPolicyNotionalCap, autoRevertOnCapBreach, auditWashSaleProceed } from "./strategy";
 
 export interface LiveApprovalConfirmation {
   proposalId?: string;
@@ -309,21 +307,18 @@ export async function executeProposal(
       gateway.getEquityPositions(policy.accountNumber),
       gateway.getEquityOrders(policy.accountNumber)
     ]);
-    const allowedSymbols = allowedSymbolsForPolicy(policy);
-    const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-      candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve,
-      universeFloor: policy.universeFloor
+    // Quote the proposal + held names only. A full-universe scanMarket here is why
+    // Approve sat on "Sending approve…" for tens of seconds (NASDAQ screener + enrich).
+    const approvalScan = await loadApprovalQuoteScan({
+      proposal,
+      positions,
+      userId,
+      accountNumber: policy.accountNumber,
+      connectedAccountId: policy.connectedAccountId
     });
-    const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
-    const approvalScan = mergeQuoteData(
-      approvalScanBase,
-      await fetchFreshQuotesCascade(approvalQuoteSymbols, userId, policy.accountNumber, policy.connectedAccountId)
-    );
 
     // An account is an account: the approval is always evaluated against the real broker-reported
     // portfolio and positions for the active account — there is no local-simulation alternative.
-    const currentPrices = currentPricesFromScan(approvalScan);
     const account = { portfolio, positions };
     lockGuard.assertOwned();
     await notifyStaleLimitOrders({ userId, policy, orders });

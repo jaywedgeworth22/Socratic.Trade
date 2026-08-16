@@ -400,7 +400,7 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
       { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false },
       etDate("2026-06-13", 12, 0) // Saturday
     );
-    expect(info.label).toBe("Paused · market closed");
+    expect(info.label).toBe("Ask-first · market closed");
     expect(info.marketOpen).toBe(false);
     expect(info.tone).toBe("muted");
     expect(info.state).toBe("active"); // underlying run-state is unchanged — display-only fix
@@ -426,7 +426,7 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
       etDate("2026-06-10", 8, 0)
     );
     expect(info.marketOpen).toBe(false);
-    expect(info.label).toBe("Paused · market closed");
+    expect(info.label).toBe("Ask-first · market closed");
   });
 
   it("undefined runDuringExtendedHours means 'can't know' — no paused/running split (undefined ≠ false)", () => {
@@ -457,7 +457,7 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
     // Paused-market-closed: word IS the compound phrase — surfaces must not invent "Running".
     const paused = deriveStateInfo({ systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false }, closedMarket);
     expect(paused.word).toBe("Paused · market closed");
-    expect(paused.label).toBe(paused.word);
+    expect(paused.label).toBe("Ask-first · market closed");
     // Non-active states: word === label.
     expect(deriveStateInfo({ systemState: "close_only", strategyAuthority: "propose" }, closedMarket).word).toBe("Exit-only");
     expect(deriveStateInfo({ systemState: "liquidating", strategyAuthority: "propose" }, closedMarket).word).toBe("Winding down");

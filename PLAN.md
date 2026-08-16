@@ -1,5 +1,11 @@
 # Active Implementation Plan
 
+> **2026-08-16 GROK — review UX parity (`grok/review-ux-parity`).** Fast
+> approve (no full-universe scan).  Proposed / Now / Target / Delay on website
+> + iOS.  Retry Red Team.  State-aware Start/Stop.  PWA `/mobile` ->
+> `/console`.  Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
+
+
 > **2026-08-16 GROK — ticker desk sheet (`grok/ticker-desk-sheet`).** Ticker
 > tap on iOS + website (desktop/mobile viewports) shows current lot, exit
 > plan, pending rationale, last Green/Red call, and other-account

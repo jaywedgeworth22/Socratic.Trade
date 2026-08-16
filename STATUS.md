@@ -1,3 +1,27 @@
+## Current (2026-08-16 GROK — review UX: approve speed, prices, retry red team, agent controls)
+
+Owner: Approve hung on "Sending approve…".  Review cards hid live vs proposed
+price.  Red Team timeout had no retry.  Start Agent and Stop Agent both showed
+while Autopilot was only paused for a closed market.  PWA unused.
+
+Approve quotes the proposal + holdings only (no full screener).  Cards show
+Proposed / Now / Target / Delay.  Retry Red Team on a failed critic.
+Agent Controls use one primary action.  `/mobile` redirects to `/console`.
+
+Branch `grok/review-ux-parity`, worktree `~/apps/trading-grok-review-ux`.
+Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
+
+## Current (2026-08-16 GROK — review UX parity)
+
+Approve was slow because it ran a full-universe market scan under the strategy
+lock.  iOS sat on "Sending approve…".  Live vs proposed price was missing when
+the symbol was not in the last full scan.  Red Team timeout had no retry.
+Start Agent and Stop Agent both showed on Home while the agent was already on
+and the market was closed.  PWA is retired.
+
+Branch `grok/review-ux-parity`, worktree `~/apps/trading-grok-review-ux`.
+Rollout: `docs/rollouts/2026-08-16-review-ux-parity.md`.
+
 ## Current (2026-08-16 GROK — iOS Proposals for Review + price delay)
 
 Owner: the Home tile title is **Proposals for Review** above the count,

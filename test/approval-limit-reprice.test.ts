@@ -63,6 +63,18 @@ vi.mock("../src/lib/broker", () => ({
 
 // Stub ONLY scanMarket (importOriginal keeps mergeQuoteData and the other exports real) so the
 // approval-time scan carries the fresh AAPL quote from the mutable `scan` state above.
+vi.mock("../src/lib/approval-quote-scan", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/approval-quote-scan")>();
+  return {
+    ...actual,
+    loadApprovalQuoteScan: async () =>
+      actual.buildApprovalQuoteScan(
+        { AAPL: { symbol: "AAPL", price: 200, bid: 199, ask: 200, provider: "test-scan" } },
+        []
+      )
+  };
+});
+
 vi.mock("../src/lib/market", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/market")>();
   return {

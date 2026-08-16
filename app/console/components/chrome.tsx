@@ -322,13 +322,16 @@ export function RunStateButton({ snapshot }: { snapshot: DashboardSnapshot }) {
   const [open, setOpen] = useState(false);
   const state = snapshot.policy.systemState;
   const isStartDirection = state === "halted" || state === "close_only";
-  const label = state === "halted" ? "Start" : state === "close_only" ? "Resume" : "STOP";
+  const info = deriveStateInfo(snapshot.policy);
+  const label = state === "halted" ? "Start Agent" : state === "close_only" ? "Resume Agent" : "Stop Agent";
   const title =
-    state === "halted"
-      ? "Open start options. Scheduled/autonomous runs stay off until you confirm Start."
-      : state === "close_only"
-        ? "Open resume options. You can resume full operation or change run state."
-        : "Stop the strategy. Stopping never sells anything.";
+    info.word === "Paused · market closed"
+      ? "The agent is on.  Scheduled runs wait for the next open.  Open this to stop it or change run state."
+      : state === "halted"
+        ? "Open start options.  Scheduled runs stay off until you confirm Start Agent."
+        : state === "close_only"
+          ? "Open resume options.  You can resume full operation or change run state."
+          : "Stop the agent.  Stopping never sells anything.";
   return (
     <>
       <button
@@ -336,7 +339,7 @@ export function RunStateButton({ snapshot }: { snapshot: DashboardSnapshot }) {
         className={isStartDirection ? "con-start-btn" : "con-stop-btn"}
         onClick={() => setOpen(true)}
         title={title}
-        aria-label={label === "STOP" ? "Stop strategy" : `${label} strategy`}
+        aria-label={label}
       >
         {isStartDirection ? <Play size={15} /> : <OctagonMinus size={15} />}
         {label}
@@ -370,17 +373,17 @@ function ControlSheet({
   const info = deriveStateInfo(snapshot.policy);
   const state = snapshot.policy.systemState;
 
-  const startLabel = state === "close_only" ? "Resume" : "Start";
+  const startLabel = state === "close_only" ? "Resume Agent" : "Start Agent";
   const startGerund = state === "close_only" ? "Resuming" : "Starting";
   const startProgressLabel = `${startGerund}…`;
   const liquidatePhrase = "WIND DOWN";
   const sheetTitle = emergency
-    ? "Stop the strategy"
+    ? "Stop Agent"
     : state === "halted"
-      ? "Start the strategy"
+      ? "Start Agent"
       : state === "close_only"
-        ? "Resume or change run state"
-        : "Run state";
+        ? "Resume or Change Run State"
+        : "Change Agent";
 
   const act = async (verb: string, fn: () => Promise<unknown>, successTitle: string, successDetail?: string) => {
     setBusy(verb);
@@ -462,7 +465,12 @@ function ControlSheet({
           Now: <strong className="text-[color:var(--con-fg)]">{info.label}</strong>
         </span>
       </div>
-      <p className="mb-4 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">{info.detail}</p>
+      <p className="mb-4 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+        {info.detail}
+        {info.word === "Paused · market closed"
+          ? "  Stop Agent turns scheduled autonomy off.  The market being closed is not the same as the agent being stopped."
+          : ""}
+      </p>
 
       <div className="flex flex-col gap-2.5">
         {options

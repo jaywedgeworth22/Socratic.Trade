@@ -139,16 +139,15 @@ export function deriveStateInfo(
       const marketOpen =
         policy.runDuringExtendedHours === undefined ? undefined : isRunAllowedNow(policy.runDuringExtendedHours, now);
       if (marketOpen === false) {
+        const authority = policy.strategyAuthority === "decide" ? "Autopilot" : "Ask-first";
         return {
           state: "active",
           word: "Paused · market closed",
-          label: "Paused · market closed",
+          label: `${authority} · market closed`,
           detail:
-            `Scheduled runs pause while the market is closed and resume automatically once it reopens ` +
-            `(next open ${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}).  ` +
-            (policy.strategyAuthority === "decide"
-              ? "Autopilot placement is paused too — nothing places itself outside market hours."
-              : "Every trade still waits for your approval once runs resume."),
+            `${authority} is still on.  Scheduled runs wait for the next open ` +
+            `(${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}).  ` +
+            "Stop Agent turns them off.  The market being closed is not the same as the agent being stopped.",
           tone: "muted",
           marketOpen: false
         };
