@@ -1,6 +1,8 @@
 import { autonomyAuthorityWord, autonomyStatusLabel } from "./autonomy-labels";
 import { getInternalSetting } from "./db-settings";
 import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy, getServiceHealthSummaries, databasePath } from "./db";
+import { isHardStoppedHealthSummary } from "./db-health";
+import { isIntentionalOffHealthService } from "./retired-direct-vendors";
 import { getTaskJournalSummary } from "./db-task-journal";
 import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
@@ -392,13 +394,17 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     const summaries = getServiceHealthSummaries();
     for (const summary of summaries) {
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
-      if (isGlobal) {
-        dependencies[summary.service] = {
-          ok: !summary.stoppedWorking,
-          reason: summary.stoppedReason,
-          lastFailure: summary.lastFailureError
-        };
-      }
+      if (!isGlobal) continue;
+      // Retired vendors stay on Connections as muted OFF. Do not list them as live
+      // dependency failures (FilingAPI leftover 401s after the 2026-08-17 retire).
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
+      dependencies[summary.service] = {
+        // Match /api/health: only a hard 5-streak fails `ok`. Soft "no success this
+        // hour" / expected-limit 429s are degraded signal, not an outage.
+        ok: !isHardStoppedHealthSummary(summary),
+        reason: summary.stoppedReason,
+        lastFailure: summary.lastFailureError
+      };
     }
   } catch {}
 

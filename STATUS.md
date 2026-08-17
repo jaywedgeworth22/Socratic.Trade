@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Alert-noise leftover after the 4:23pm CT burst
+
+Owner All Messages 4:23–4:38pm CT.  Live ST is healthy after the 21:35:38Z Coolify restart of
+`5f9b4aaf`.  Most cards were boot probes, expected fuses, or leftover FilingAPI 401s.  This
+branch stamps retired vendors OFF in health summaries, aligns ops-snapshot `ok` with hard-stop
+only, and mutes connection pages for the first 5 minutes of a `DB_BOOTSTRAP=live` boot.
+
+Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
+
 ## 2026-08-17 CURSOR — Settings search in the command palette (#2558)
 
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.

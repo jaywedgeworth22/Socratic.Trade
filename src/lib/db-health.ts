@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
-import { isIntentionalOffHealthService } from "./retired-direct-vendors";
+import { intentionalOffHealthReason, isIntentionalOffHealthService } from "./retired-direct-vendors";
+import { runtimeReleaseIdentity } from "./runtime-health";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
@@ -177,11 +178,38 @@ export interface ServiceHealthSummary {
    *  placeholder-lane reason; a lane with no rows cannot be saturated. */
   laneLogCap?: number;
   /**
-   * Product-retired vendor lane (FMP / Quiver / UW). Admin Connections must render these as
-   * muted OFF — not red STOPPED — and exclude them from the "N stopped" header. Set by the
-   * connections-health route from `retired-direct-vendors`; not computed from the log.
+   * Product-retired vendor lane (FMP / Quiver / UW / FilingAPI). Admin Connections must
+   * render these as muted OFF — not red STOPPED — and exclude them from the "N stopped"
+   * header. Stamped by `getServiceHealthSummaries` from `retired-direct-vendors` so ops
+   * snapshot and `/api/health` see the same OFF as Connections (leftover 401 rows must
+   * not paint a retired vendor as a live outage).
    */
   intentionalOff?: boolean;
+}
+
+/** Hard consecutive-failure STOPPED, excluding product-retired lanes. */
+export function isHardStoppedHealthSummary(
+  summary: Pick<ServiceHealthSummary, "stoppedWorking" | "stoppedReason" | "intentionalOff">
+): boolean {
+  if (summary.intentionalOff) return false;
+  return Boolean(summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES);
+}
+
+/**
+ * Coolify `DB_BOOTSTRAP=live` restarts page every probe that 5xxs during the first minutes
+ * (nasdaq-quote / vix / congress.trade / alpaca-broker). Those are boot, not an outage.
+ * Tests and local/dev never set `DB_BOOTSTRAP=live`, so the existing hard-streak pages stay.
+ */
+export const CONNECTION_ALERT_STARTUP_GRACE_SECONDS = 5 * 60;
+
+export function shouldSuppressConnectionAlertForStartup(
+  processUptimeSeconds: number,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  if (env.DB_BOOTSTRAP !== "live") return false;
+  const raw = Number(env.HEALTH_ALERT_STARTUP_GRACE_SECONDS ?? CONNECTION_ALERT_STARTUP_GRACE_SECONDS);
+  const grace = Number.isFinite(raw) && raw >= 0 ? raw : CONNECTION_ALERT_STARTUP_GRACE_SECONDS;
+  return processUptimeSeconds < grace;
 }
 
 export interface HealthLogRow {
@@ -440,6 +468,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         stoppedReasonKind = "no-success-this-hour";
       }
 
+      const intentionalOff = isIntentionalOffHealthService(service);
       return {
         service,
         keySource: ks,
@@ -449,10 +478,12 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         lastFailureError: lastFailure?.error_text ?? null,
         callsLastHour,
         callsLast24h,
-        stoppedWorking,
-        stoppedReason,
-        stoppedReasonKind,
+        // Leftover 401/5xx rows after a vendor retire must not paint the lane STOPPED.
+        stoppedWorking: intentionalOff ? false : stoppedWorking,
+        stoppedReason: intentionalOff ? intentionalOffHealthReason(service) : stoppedReason,
+        stoppedReasonKind: intentionalOff ? null : stoppedReasonKind,
         laneLogCap: HEALTH_LOG_LANE_CAP,
+        intentionalOff: intentionalOff || undefined
       };
     });
   } catch {
@@ -632,6 +663,9 @@ export async function alertConnectionFailure(
     // cause instead (audit row + threshold-gated "local database contention" advisory).
     if (isLocalDbFaultMessage(errorText)) {
       await noteLocalDbFault({ lane: service, operation: "connection health", message: errorText, userId: targetUserId });
+      return;
+    }
+    if (shouldSuppressConnectionAlertForStartup(runtimeReleaseIdentity().processUptimeSeconds)) {
       return;
     }
     // Cool down GLOBAL lanes (env/none) by service+source only — NOT per-user. In a multi-user outage

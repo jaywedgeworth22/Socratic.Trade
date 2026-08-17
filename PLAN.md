@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-17 CURSOR — Alert-noise leftover (`cursor/alert-noise-retired-boot-64c1`).** Owner 4:23–4:38pm CT burst was mostly the 21:35Z Coolify restart plus leftover FilingAPI 401s and expected-limit 429s. Stamp retired vendors OFF in health summaries; ops-snapshot `ok` matches hard-stop only; mute connection pages for 5 min on live boot. Do not raise Pinecone/Anthropic/AV budgets. Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
+
 > **2026-08-17 CURSOR — Settings search in ⌘K (`cursor/settings-search-palette-6e98`, #2558).** Wire the existing `searchSettings` catalog into the command palette; drop phantom `defaultLandingAccount`. Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
 
 > **2026-08-17 CURSOR — Retire FilingAPI.dev (`cursor/retire-filingapi-roic-de61`, #2778).** Owner has ROIC, not filingapi.dev. Remove live HTTP, health lane, and cascade registration. Keep ROIC + SEC EDGAR. Do not buy Plus / do not charge Stripe. Rollout: `docs/rollouts/2026-08-17-retire-filingapi-roic.md`.
