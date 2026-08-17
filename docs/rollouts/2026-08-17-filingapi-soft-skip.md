@@ -9,7 +9,7 @@ Owner reversed the #2787 retirement.  Keep the filingapi.dev integration.  Stop 
 ## Changes Made
 
 - Restored `FilingApiEnrichmentProvider`, the `filingapi` health probe, capability-matrix entries, catalog, quotas, and Connections row.
-- New `src/lib/filingapi-auth.ts`: SHA-256 fingerprint of the secret; in-memory rejected set.  After the first 401/403 that fingerprint is not called again.  A different key is tried.
+- New `src/lib/filingapi-auth.ts` + `src/lib/filingapi-auth-classify.ts`: SHA-256 fingerprint of the secret; in-memory rejected set.  After the first 401/403 that fingerprint is not called again.  A different key is tried.  Classifiers stay free of `node:crypto` so `db-health` can import them from the client graph.
 - Cascade registers FilingAPI only when `shouldUseFilingApiKey` is true.
 - `getJson` logs 401/403 as soft health and marks the fingerprint rejected.
 - Health probe: no key → `ok` `no-key-skip`; known-dead → `ok` `unauthorized-skip` (no HTTP); live 401/403 → mark + `ok` skip.
@@ -19,7 +19,9 @@ Owner reversed the #2787 retirement.  Keep the filingapi.dev integration.  Stop 
 Touched files:
 
 - `src/lib/filingapi-auth.ts` (new)
+- `src/lib/filingapi-auth-classify.ts` (new)
 - `src/lib/data-providers.ts`
+- `vitest.config.ts` (blank FILINGAPI* so a Cloud/CI dead key cannot open live sockets)
 - `src/lib/db-health.ts`
 - `src/lib/health-lane-reprobe.ts`
 - `app/api/keys/route.ts`

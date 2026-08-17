@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
 import { intentionalOffHealthReason, isIntentionalOffHealthService } from "./retired-direct-vendors";
-import { isFilingApiAuthErrorText } from "./filingapi-auth";
+import { isFilingApiAuthErrorText } from "./filingapi-auth-classify";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the

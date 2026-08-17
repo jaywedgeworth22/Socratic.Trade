@@ -7,27 +7,15 @@
  * trial key after the first 401, without storing the secret.
  */
 
-import { createHash } from "node:crypto";
+import { createHash } from "crypto";
+import { isFilingApiAuthErrorText, isFilingApiAuthStatus } from "./filingapi-auth-classify";
+
+export { isFilingApiAuthErrorText, isFilingApiAuthStatus };
 
 const rejectedFingerprints = new Set<string>();
 
 export function filingApiKeyFingerprint(apiKey: string): string {
   return createHash("sha256").update(apiKey).digest("hex");
-}
-
-export function isFilingApiAuthStatus(status: number): boolean {
-  return status === 401 || status === 403;
-}
-
-export function isFilingApiAuthErrorText(errorText: string | null | undefined): boolean {
-  if (!errorText) return false;
-  return (
-    /\bHTTP 401\b/i.test(errorText) ||
-    /\bHTTP 403\b/i.test(errorText) ||
-    /\bunauthorized\b/i.test(errorText) ||
-    /\binvalid api key\b/i.test(errorText) ||
-    /\binvalid_api_key\b/i.test(errorText)
-  );
 }
 
 export function isFilingApiKeyRejected(apiKey: string | null | undefined): boolean {
