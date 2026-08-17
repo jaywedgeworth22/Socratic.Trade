@@ -1274,14 +1274,45 @@ const LITESTREAM_RUNTIME_LOG_MAX_FINDINGS = 5;
  */
 const LITESTREAM_RUNTIME_LOG_TAIL_MAX_BYTES = 256 * 1024;
 
+function parseLitestreamLogTimeMs(line: string): number | null {
+  const match = line.match(/time=(\d{4}-\d{2}-\d{2}T[0-9:.]+Z)/);
+  if (!match) return null;
+  const ms = Date.parse(match[1]);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Numeric compaction level (`level=2`), not the log severity (`level=ERROR`). */
+function parseLitestreamCompactionLevel(line: string): string | null {
+  const matches = [...line.matchAll(/\blevel=(\d+)\b/g)];
+  return matches.length > 0 ? matches[matches.length - 1]![1]! : null;
+}
+
 /** Pure: scan already-read text for litestream's own failure lines. Unit-testable without I/O. */
 export function scanLitestreamRuntimeLogText(text: string): LitestreamRuntimeLogFinding[] {
+  const lastCompleteByLevel = new Map<string, number>();
+  let lastCompleteAny = 0;
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line.includes("compaction complete")) continue;
+    const at = parseLitestreamLogTimeMs(line);
+    if (at == null) continue;
+    const lvl = parseLitestreamCompactionLevel(line) ?? "*";
+    lastCompleteByLevel.set(lvl, Math.max(lastCompleteByLevel.get(lvl) ?? 0, at));
+    lastCompleteAny = Math.max(lastCompleteAny, at);
+  }
+
   const findings: LitestreamRuntimeLogFinding[] = [];
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
     const marker = LITESTREAM_RUNTIME_LOG_FAILURE_MARKERS.find((candidate) => line.includes(candidate));
     if (!marker) continue;
+    const at = parseLitestreamLogTimeMs(line);
+    const lvl = parseLitestreamCompactionLevel(line);
+    const recoveredAt = (lvl ? lastCompleteByLevel.get(lvl) : undefined) ?? lastCompleteAny;
+    // A later successful compaction for that level (or any level, if we cannot parse one)
+    // means the hole was healed. Keep paging only on failures that are still the newest signal.
+    if (at != null && recoveredAt > at) continue;
     findings.push({
       marker,
       line: line.length > LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS

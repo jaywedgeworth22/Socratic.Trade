@@ -1243,6 +1243,24 @@ describe("scanLitestreamRuntimeLogText (pure)", () => {
     expect(scanLitestreamRuntimeLogText(text)).toEqual([]);
   });
 
+  it("does not page a compaction failure that a later successful compaction already healed", () => {
+    const text = [
+      'time=2026-08-16T14:40:12.456Z level=ERROR msg="compaction failed" level=2 error="non-contiguous transaction ids"',
+      'time=2026-08-17T21:10:07.000Z level=INFO msg="compaction complete" level=2 txid=000000000007e109 size=4096'
+    ].join("\n");
+    expect(scanLitestreamRuntimeLogText(text)).toEqual([]);
+  });
+
+  it("still pages a compaction failure that is newer than the last successful compaction", () => {
+    const text = [
+      'time=2026-08-17T21:10:07.000Z level=INFO msg="compaction complete" level=2 txid=000000000007e109 size=4096',
+      'time=2026-08-17T21:15:12.456Z level=ERROR msg="compaction failed" level=2 error="non-contiguous transaction ids"'
+    ].join("\n");
+    const findings = scanLitestreamRuntimeLogText(text);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].marker).toBe("compaction failed");
+  });
+
   it("caps the number of findings and the length of each reported line", () => {
     const longSuffix = "x".repeat(1000);
     const lines = Array.from(

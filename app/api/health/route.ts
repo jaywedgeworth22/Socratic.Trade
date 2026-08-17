@@ -19,6 +19,7 @@ import { getLease } from "@/lib/scheduler-lease";
 import { getTradingLivenessSummary } from "@/lib/trading-liveness";
 import { getOpenRouterCreditStatus } from "@/lib/openrouter-credits";
 import { authorizeOpsRequest } from "@/lib/ops-auth";
+import { isIntentionalOffHealthService } from "@/lib/retired-direct-vendors";
 import { statSync, statfsSync } from "fs";
 import { dirname } from "path";
 
@@ -233,6 +234,9 @@ export async function GET(request: Request) {
       if (!hardStopped) configuredLaneHealthy.add(summary.service);
     }
     for (const summary of summaries) {
+      // Retired vendors (FilingAPI, FMP, Quiver, UW) keep historical failure rows. Public
+      // health must not list them as live ok:false — that pages UptimeRobot / Pushover.
+      if (isIntentionalOffHealthService(summary.service)) continue;
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
       if (!isGlobal) continue;
       // Ignore a stale "none"/null lane once the service has a real configured lane — otherwise it

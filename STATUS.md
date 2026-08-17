@@ -1,5 +1,21 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
+
+Owner: the app thinks monthly Pinecone write units are at the free-tier limit, and Pushover
+is still firing for Litestream plus leftover health noise.  Live Pinecone is a Standard trial
+(usage-billed ~$300 through 2026-08-30).  It does **not** have the Starter 2M WU / month cap.
+
+A leftover `pinecone:wuExhaustedUntil` marker (or a 2M-shaped 429) parked every vector write
+until the 1st of next month.  The gate runs before any upsert, so success could never clear
+it.  A leftover `PINECONE_MONTHLY_WU_BUDGET=2000000` (or the post-trial 1.6M snap) also paged
+the monthly pace guard.  Litestream L0–L3/L9 were already advancing; the remaining page was a
+healed `compaction failed` line still in the log tail.  Public `/api/health` still listed
+retired FilingAPI as `ok: false`.
+
+Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
+`docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
+
 ## 2026-08-17 CURSOR — Settings search in the command palette (#2558)
 
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.

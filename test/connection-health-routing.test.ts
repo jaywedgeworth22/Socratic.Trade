@@ -412,6 +412,21 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies.apify.ok).toBe(false);
   });
 
+  it("/api/health omits retired FilingAPI rows so a stale 401 does not look like a live outage", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "filingapi", ok: false, errorText: "Invalid API key", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET(anonymousHealthRequest());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.checks.dependencies.filingapi).toBeUndefined();
+  });
+
   it("/api/health reports the live recovery path degraded when Litestream cannot be observed", async () => {
     const { healthRoute, db } = await load();
 
