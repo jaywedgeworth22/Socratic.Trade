@@ -41,6 +41,7 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | `RAG_MULTIQUERY` | off (prod Infisical **on** 2026-08-12) | **Yes** (paid embed + run-budget) | Facet sub-queries. Guarded by `RAG_RUN_BUDGET_ENABLED`. |
 | `RAG_HYDE` | off (prod Infisical **on** 2026-08-12) | **Yes** (needs MULTIQUERY) | One cheap LLM draft per pass (`gpt-5.4-mini`). |
 | `RAG_PERSIST_CANDIDATE_POOL` | off | **Yes** (canary) | Short diagnostic canaries only; watch DB growth. Keep `…_FULL` off. |
+| `VECTOR_ASOF_STRICT` | off (prod Infisical **on** 2026-08-16) | **Live** | Fail-closed dated retrieval.  Live desk still omits `asOf`.  Receipt 13076/13076 epoch'd.  Re-run dry-run after large ingest.  `docs/rollouts/2026-08-16-asof-strict-on.md`. |
 
 ---
 
@@ -48,7 +49,6 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 
 | Flag / gate | Default | Blocker |
 |-------------|---------|---------|
-| `VECTOR_ASOF_STRICT` | off | **Receipt 2026-08-16:** dry-run `backfill-asof-epoch` on live `socratic-trade` scanned 13076, skippedHasEpoch 13076, skippedUndated 0, errors 0.  Fail-closed dated retrieval would currently drop nothing.  Chat / live strategy still omit `asOf`.  Owner flip only.  Re-run after large ingest.  Detail: `docs/rollouts/2026-08-16-asof-strict-coverage.md`. |
 | `SEC_INGEST_WORKER_ENABLED` | off | Seed via `/api/admin/sec-ingest`; confirm queue/DLQ first |
 | `WEB_SOURCE_FMP_TRANSCRIPTS` + `FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED` | both off | Dual gate: entitled FMP plan **and** owner commercial storage rights |
 | `RAG_PERSIST_CANDIDATE_POOL_FULL` | off | Full pool persistence — too heavy for always-on |
