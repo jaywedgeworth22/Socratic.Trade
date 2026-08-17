@@ -679,6 +679,9 @@ Read-only audit of macro/regime, Green/Red/Bull, proposal→fill, risk, backtest
 Highest P1s: propose-time regime uses 24h-cached VIX while the vol brake uses live VIX; `compareGreenRedParity` is never called in production; paper lessons pool into live (owner-directed) while Phase 7 still describes a transfer gate; `oosPurgeEmbargo` defaults off and IC sample caps at 500; paper cost default is 1 bps vs OOS 20 bps; #2280 slice 2 (PIT masking) still blocks LLM-in-history eval.
 
 Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-outcomes-audit-c37a`.  Rollout: `docs/rollouts/2026-08-17-trading-outcomes-audit.md`.
+## 2026-08-17 CURSOR — Architecture & backend audit (docs-only)
+
+Read-only audit of framework, API, queues, persistence, caching, concurrency, recovery, and durability against `main` `4980322b`.  No product fixes.  Report: `docs/audits/2026-08-17-architecture-backend.md`.  Branch `cursor/architecture-backend-audit-6186`.  Headline: no active P0 in code; new gap is stale `strategy_run_requests` (F3); Litestream L2/L3 wedge remains owner-ops (F1, already tracked).  Rollout: `docs/rollouts/2026-08-17-architecture-backend-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
