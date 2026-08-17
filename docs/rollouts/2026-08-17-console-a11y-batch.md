@@ -66,10 +66,14 @@ Commands run:
 
 ```bash
 npx vitest run test/console-a11y.test.ts test/console-sheet.test.tsx test/console-focus-trap.test.ts test/scan-table-columns.test.ts
+npm run lint
+npx tsc --noEmit
+npm run build
 ```
 
-Focused suite: 20 passed.  Full `npm run lint` / `npx tsc --noEmit` / `npm test`
-/ `npm run build` follow in this same change.
+Focused suite: 20 passed.  Lint 0 errors (grandfathered warnings only).  `tsc --noEmit` clean.  `next build` succeeded.
+
+GitHub `verify` + `verify-hosted` on PR #2795 are green (the required merge gate).  A full local `npm test` in this cloud VM also hit three unrelated env failures (TwelveData call-count fixture, `usesLocalHost` on the VM, usage-budget picking up a real bearer).  Those files are outside this change; CI is the authority.
 
 ## Next Steps & Blockers
 

@@ -708,7 +708,7 @@ Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-1
 
 P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.
 
-Branch `cursor/console-a11y-batch-08ac`.  Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.  No trading/money-path changes.
+Branch `cursor/console-a11y-batch-08ac`.  PR #2795.  Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.  No trading/money-path changes.
 
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 
