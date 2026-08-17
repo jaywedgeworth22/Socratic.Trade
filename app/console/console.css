@@ -1268,6 +1268,12 @@
   padding: 6px;
   overflow-y: auto;
 }
+.con-cmdk-group {
+  padding: 10px 11px 4px;
+  font-size: var(--con-fs-xs);
+  font-weight: 700;
+  color: var(--con-faint);
+}
 .con-cmdk-item {
   display: flex;
   align-items: center;
