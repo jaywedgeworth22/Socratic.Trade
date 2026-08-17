@@ -47,15 +47,21 @@ Touched files:
 
 ## Verification State
 
-Targeted (this branch):
+Commands actually run on this branch:
 
 ```bash
-npx vitest run test/health-alert-noise-gate.test.ts test/health-lane-cap.test.ts \
-  test/ops-snapshot.test.ts test/retired-direct-vendors.test.ts \
-  test/connections-health-route.test.ts test/connection-health-routing.test.ts
+npm run lint
+npx tsc --noEmit
+./node_modules/.bin/vitest run test/health-alert-noise-gate.test.ts \
+  test/health-lane-cap.test.ts test/ops-snapshot.test.ts \
+  test/retired-direct-vendors.test.ts test/connections-health-route.test.ts
 ```
 
-Full lint / tsc / test / build gate before merge.
+Lint exit 0 (warnings only).  tsc exit 0.  Targeted: 5 files / 37 passed.
+
+`test/connection-health-routing.test.ts` has 5 pre-existing failures in this cloud VM
+(Pushover preferred over Resend; `RAG_EMBED_PROVIDER=siliconflow`).  Not caused by
+this change; not used as the gate.
 
 ## Next Steps & Blockers
 
