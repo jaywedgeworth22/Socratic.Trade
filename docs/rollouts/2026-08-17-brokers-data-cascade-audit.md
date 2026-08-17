@@ -18,6 +18,8 @@ Exact files:
 - `STATUS.md`
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
+- `docs/phase-4-market-data-scoring.md` (FilingAPI #2792 caveat + audit pointer)
+- `docs/source-capability-matrix.md` (same)
 
 ## Decisions & Trade-offs
 
