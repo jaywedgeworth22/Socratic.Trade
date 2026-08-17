@@ -171,9 +171,10 @@ describe("ops diagnostic snapshot", () => {
 
     const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
     const snapshot = buildOpsSnapshot({ runsPerUser: 1, auditPerUser: 1 });
-    expect(snapshot.dependencies.filingapi).toBeUndefined();
-    expect(snapshot.dependencies["vix-yahoo"]?.ok).toBe(true);
-    expect(snapshot.dependencies.roic?.ok).toBe(true);
+    const deps = snapshot.dependencies ?? {};
+    expect(deps.filingapi).toBeUndefined();
+    expect(deps["vix-yahoo"]?.ok).toBe(true);
+    expect(deps.roic?.ok).toBe(true);
   });
 
   it("summarizeBrokerOrderList separates live working from historical done_for_day", async () => {

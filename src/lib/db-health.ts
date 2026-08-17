@@ -204,7 +204,7 @@ export const CONNECTION_ALERT_STARTUP_GRACE_SECONDS = 5 * 60;
 
 export function shouldSuppressConnectionAlertForStartup(
   processUptimeSeconds: number,
-  env: NodeJS.ProcessEnv = process.env
+  env: Record<string, string | undefined> = process.env
 ): boolean {
   if (env.DB_BOOTSTRAP !== "live") return false;
   const raw = Number(env.HEALTH_ALERT_STARTUP_GRACE_SECONDS ?? CONNECTION_ALERT_STARTUP_GRACE_SECONDS);
