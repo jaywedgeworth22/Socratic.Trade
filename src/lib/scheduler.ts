@@ -18,6 +18,7 @@ import { runProviderTierCheckIfDue } from "./provider-tier";
 import { refreshLitestreamRemoteInventoryIfDue } from "./litestream-remote-inventory";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
 import { maybeAdvisePineconeTrialRollback } from "./pinecone-trial-window";
+import { pineconeWuExhaustedUntil } from "./pinecone-wu-breaker";
 import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
@@ -559,6 +560,11 @@ async function tick(): Promise<void> {
 
   void journalLane("pinecone-trial-rollback", {}, () => maybeAdvisePineconeTrialRollback())
     .catch((err) => console.error("[scheduler] pinecone trial rollback error:", err));
+  // Cheap: while the Standard trial is open, drop a leftover Starter 2M monthly-WU marker
+  // so ingest is not parked behind a free-tier latch the write-success path can never clear.
+  void journalLane("pinecone-wu-breaker-trial-clear", {}, async () => {
+    pineconeWuExhaustedUntil();
+  }).catch((err) => console.error("[scheduler] pinecone wu-breaker trial-clear error:", err));
 
   // Daily R2 free-tier digest (owner opt-in 2026-07-31): fresh check + notify()
   // summary of MTD usage and month-end pace, whether or not anything crossed.

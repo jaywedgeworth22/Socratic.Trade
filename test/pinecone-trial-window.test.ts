@@ -76,6 +76,21 @@ describe("pinecone trial window", () => {
     expect(state.effectiveMonthlyWriteUnits).toBe(0);
   });
 
+  it("ignores a leftover Starter 2M monthly budget while the Standard trial is active", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow } = await load();
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: 5_000_000,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 2_000_000
+    });
+    expect(state.active).toBe(true);
+    expect(state.mode).toBe("trial");
+    expect(state.effectiveMonthlyWriteUnits).toBe(0);
+  });
+
   it("stays full-steam at the configured 2.5M fuse when remaining credit is still above the $45 reserve", async () => {
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     const { assessPineconeTrialWindow } = await load();

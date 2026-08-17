@@ -164,7 +164,8 @@ export function assessPineconeTrialWindow(input: {
       pacedDailyWriteUnits,
       effectiveDailyWriteUnits: Math.min(MAX_TRIAL_DAILY_WU, remainingWriteUnits, effectiveDaily),
       effectiveTextsPerDay: input.configuredTextsPerDay,
-      effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits,
+      // Standard trial has no monthly write-unit cap. Ignore a leftover Starter 2M env budget.
+      effectiveMonthlyWriteUnits: 0,
       phase,
       mode: "trial"
     };

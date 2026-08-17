@@ -20,6 +20,7 @@
 
 import { audit, deleteInternalSetting, getInternalSetting, setInternalSetting } from "./db";
 import { alertStorageWarning } from "./db-health";
+import { isPineconeTrialActive } from "./pinecone-trial-window";
 
 /** Internal-settings key holding the ISO instant writes may resume (first day of next month UTC). */
 export const PINECONE_WU_EXHAUSTED_UNTIL_KEY = "pinecone:wuExhaustedUntil";
@@ -44,13 +45,46 @@ export function firstDayOfNextMonthUtc(fromMs: number = Date.now()): string {
   return new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 1)).toISOString();
 }
 
+/** Monthly write-unit number from Pinecone's 429 text, or null when the message has no count. */
+export function pineconeWuLimitFromMessage(message: string | null | undefined): number | null {
+  if (!message) return null;
+  const match = message.match(/current month \((\d+)\)/i);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function clearWuBreakerMarker(reason: string, operation?: string | null): void {
+  try {
+    const existing = getInternalSetting<string>(PINECONE_WU_EXHAUSTED_UNTIL_KEY);
+    if (!existing) return;
+    deleteInternalSetting(PINECONE_WU_EXHAUSTED_UNTIL_KEY);
+    audit(
+      "pinecone_wu_breaker_cleared",
+      { reason, operation: operation ?? null, hadUntil: existing },
+      "local"
+    );
+    console.log(`[pinecone-wu-breaker] Marker cleared — ${reason}; vector ingest resumed.`);
+  } catch {
+    // never throw from a success / trial-clear path
+  }
+}
+
 /**
  * The active marker's expiry ISO, or null when the breaker is inactive (never tripped, cleared,
  * or expired — expiry IS the auto-resume: an expired marker gates nothing). Never throws;
  * fails open (writes proceed) on any storage error.
+ *
+ * A Standard trial has no Starter 2M monthly write cap. A leftover marker from the pre-trial
+ * Starter 429 (or a mis-attributed 2M error) must not keep parking writes — the gate runs
+ * BEFORE any upsert, so `notePineconeWriteSuccess` can never clear it.
  */
 export function pineconeWuExhaustedUntil(nowMs: number = Date.now()): string | null {
   try {
+    if (isPineconeTrialActive(nowMs)) {
+      clearWuBreakerMarker("standard-trial-active");
+      return null;
+    }
     const until = getInternalSetting<string>(PINECONE_WU_EXHAUSTED_UNTIL_KEY);
     if (!until || typeof until !== "string") return null;
     const expiry = Date.parse(until);
@@ -74,12 +108,16 @@ export async function tripPineconeWuBreaker(
   nowMs: number = Date.now()
 ): Promise<{ tripped: boolean; until: string }> {
   try {
+    if (isPineconeTrialActive(nowMs)) {
+      clearWuBreakerMarker("standard-trial-ignores-monthly-wu-429", input.operation ?? null);
+      return { tripped: false, until: firstDayOfNextMonthUtc(nowMs) };
+    }
     const active = pineconeWuExhaustedUntil(nowMs);
     if (active) return { tripped: false, until: active };
     const until = firstDayOfNextMonthUtc(nowMs);
     setInternalSetting(PINECONE_WU_EXHAUSTED_UNTIL_KEY, until);
-    const limitMatch = input.message.match(/current month \((\d+)\)/i);
-    const limitLabel = limitMatch ? `(${(Number(limitMatch[1]) / 1_000_000).toString()}M)` : "(monthly quota)";
+    const limit = pineconeWuLimitFromMessage(input.message);
+    const limitLabel = limit != null ? `(${(limit / 1_000_000).toString()}M)` : "(monthly quota)";
     const resumeDate = until.slice(0, 10);
     audit(
       "pinecone_wu_breaker_tripped",
@@ -117,15 +155,7 @@ const PINECONE_WRITE_OP_RE = /upsert|commit|update|delete|erase|purge/i;
 export function notePineconeWriteSuccess(operation?: string): void {
   try {
     if (operation !== undefined && !PINECONE_WRITE_OP_RE.test(operation)) return;
-    const existing = getInternalSetting<string>(PINECONE_WU_EXHAUSTED_UNTIL_KEY);
-    if (!existing) return;
-    deleteInternalSetting(PINECONE_WU_EXHAUSTED_UNTIL_KEY);
-    audit(
-      "pinecone_wu_breaker_cleared",
-      { reason: "pinecone-write-succeeded", operation: operation ?? null, hadUntil: existing },
-      "local"
-    );
-    console.log("[pinecone-wu-breaker] Marker cleared — a Pinecone write succeeded; vector ingest resumed.");
+    clearWuBreakerMarker("pinecone-write-succeeded", operation ?? null);
   } catch {
     // never throw from a success path
   }

@@ -35,7 +35,7 @@
 
 import { audit, getInternalSetting, setInternalSetting } from "./db";
 import { alertStorageWarning } from "./db-health";
-import { pineconeTrialState } from "./pinecone-trial-window";
+import { isPineconeTrialActive, pineconeTrialState } from "./pinecone-trial-window";
 
 /** Internal-settings key holding `{ month: "YYYY-MM", units, updatedAt }` for the current month. */
 export const PINECONE_MONTH_WU_KEY = "pinecone:monthWriteUnits";
@@ -84,7 +84,11 @@ export function pineconeMonthWindow(nowMs: number = Date.now()): PineconeMonthWi
  * Monthly write-unit budget from PINECONE_MONTHLY_WU_BUDGET. Returns 0 when unset, empty,
  * non-numeric, or <= 0 — and 0 means the throttle is OFF (accounting still runs).
  */
-export function pineconeMonthlyWuBudget(): number {
+export function pineconeMonthlyWuBudget(nowMs: number = Date.now()): number {
+  // Standard trial is usage-billed against the $300 credit, not the Starter 2M monthly wall.
+  // A leftover PINECONE_MONTHLY_WU_BUDGET=2000000 (or the post-trial 1.6M snap) must not
+  // park ingest or page "free-tier monthly write units" while the trial is still open.
+  if (isPineconeTrialActive(nowMs)) return 0;
   const raw = process.env.PINECONE_MONTHLY_WU_BUDGET;
   let configured = 0;
   if (raw != null && String(raw).trim() !== "") {
@@ -93,7 +97,7 @@ export function pineconeMonthlyWuBudget(): number {
   }
   // After the Standard trial, Infisical often still has 0 (off). Snap to the free-tier
   // monthly pace so bulk backfill cannot walk into the Starter 2M-WU wall.
-  return pineconeTrialState().effectiveMonthlyWriteUnits || configured;
+  return pineconeTrialState(nowMs).effectiveMonthlyWriteUnits || configured;
 }
 
 interface MonthCounterRow {
@@ -213,7 +217,7 @@ export function assessPineconeWuPace(input: { mtd: number; budget: number; now: 
 export function pineconeWuPaceState(nowMs: number = Date.now()): PineconeWuPaceAssessment {
   return assessPineconeWuPace({
     mtd: pineconeMonthToDateWriteUnits(nowMs),
-    budget: pineconeMonthlyWuBudget(),
+    budget: pineconeMonthlyWuBudget(nowMs),
     now: nowMs
   });
 }
@@ -291,7 +295,7 @@ export async function pineconeBackfillPaceGate(
   nowMs: number = Date.now()
 ): Promise<PineconePaceGateResult> {
   try {
-    const budget = pineconeMonthlyWuBudget();
+    const budget = pineconeMonthlyWuBudget(nowMs);
     // Cheap exit before any DB read: budget off, or a lane this guard never touches.
     if (budget <= 0 || lane !== "backfill") {
       return {
