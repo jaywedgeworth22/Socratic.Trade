@@ -718,7 +718,7 @@ Aug 6: five Green Team runs died on OpenRouter `Empty response` across rotated m
 Branch `cursor/green-empty-failover-credits-7003`.  Rollout: `docs/rollouts/2026-08-17-green-empty-failover-credits.md`.
 ## 2026-08-17 CURSOR — Website favicon cropped offset ST
 
-Issue #2731.  Website tab icon is the #1626 candlestick ST, S raised above T, tight crop, transparent background.  Generator: `node scripts/generate-favicon-st.mjs`.  iOS App Icon (dollar-sign candlesticks) was not written.  Branch `cursor/favicon-crop-st-e6ee`.  Rollout: `docs/rollouts/2026-08-17-favicon-crop-st.md`.
+Issue #2731.  Website tab icon is the iOS App Icon's offset candlestick ST (S higher than T), cropped so it barely fits, transparent background.  Generator: `node scripts/generate-favicon-st.mjs`.  iOS App Icon was not written.  Branch `cursor/favicon-crop-st-e6ee`.  Rollout: `docs/rollouts/2026-08-17-favicon-crop-st.md`.
 
 ## 2026-08-17 GROK — Effort-board hygiene
 

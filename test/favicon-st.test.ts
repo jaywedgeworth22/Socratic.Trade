@@ -1,50 +1,47 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
-const S_T_SPLIT_X = 254;
-
-function read(rel: string): string {
-  return readFileSync(resolve(rel), "utf8");
+function read(rel: string): Buffer {
+  return readFileSync(resolve(rel));
 }
 
-function lineXs(svg: string): { x: number; y1: number }[] {
-  return [...svg.matchAll(/<line x1="([\d.]+)" y1="([\d.]+)"/g)].map((match) => ({
-    x: Number(match[1]),
-    y1: Number(match[2])
-  }));
+function pngHeader(buf: Buffer): { width: number; height: number; colorType: number } {
+  expect(buf.toString("ascii", 1, 4)).toBe("PNG");
+  return {
+    width: buf.readUInt32BE(16),
+    height: buf.readUInt32BE(20),
+    colorType: buf[25]
+  };
 }
+
+const APP_ICON = "ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png";
 
 describe("website favicon ST crop", () => {
-  it("ships a transparent offset ST with S higher than T", () => {
-    const shipped = read("public/icon.svg");
-    expect(shipped).not.toMatch(/fill="#ffffff"/);
-    expect(shipped).not.toMatch(/fill="#080b12"/);
-    expect(shipped).not.toMatch(/<rect[^>]*width="512"[^>]*fill=/);
-    expect(shipped).toContain("Transparent canvas");
-    expect(shipped).toContain('role="img"');
-
-    const lines = lineXs(shipped);
-    const sYs = lines.filter((line) => line.x < S_T_SPLIT_X).map((line) => line.y1);
-    const tYs = lines.filter((line) => line.x >= S_T_SPLIT_X).map((line) => line.y1);
-    expect(sYs.length).toBeGreaterThan(0);
-    expect(tYs.length).toBeGreaterThan(0);
-    expect(Math.min(...sYs)).toBeLessThan(Math.min(...tYs));
+  it("ships a transparent cropped PNG of the offset ST", () => {
+    const favicon = pngHeader(read("public/icon.png"));
+    expect(favicon).toEqual({ width: 512, height: 512, colorType: 6 });
+    expect(pngHeader(read("public/icons/icon-512.png"))).toEqual({ width: 512, height: 512, colorType: 6 });
+    expect(pngHeader(read("public/icons/icon-192.png"))).toEqual({ width: 192, height: 192, colorType: 6 });
+    expect(pngHeader(read("public/icons/apple-touch-icon-180.png"))).toEqual({
+      width: 180,
+      height: 180,
+      colorType: 6
+    });
   });
 
-  it("keeps the pipeline source and raises S relative to that dump", () => {
-    const source = read("graphics/favicon-st-source.svg");
-    const shipped = read("public/icon.svg");
-    const sourceS = Math.min(...lineXs(source).filter((line) => line.x < S_T_SPLIT_X).map((line) => line.y1));
-    const shippedS = Math.min(...lineXs(shipped).filter((line) => line.x < S_T_SPLIT_X).map((line) => line.y1));
-    expect(shippedS).toBeLessThan(sourceS);
-    expect(source).toMatch(/<rect width="512" height="512" fill="#ffffff"/);
+  it("leaves the iOS App Icon as the opaque 1024 offset ST", () => {
+    const appIcon = read(APP_ICON);
+    expect(pngHeader(appIcon)).toEqual({ width: 1024, height: 1024, colorType: 2 });
+    expect(createHash("md5").update(appIcon).digest("hex")).toBe("46703def33604e89c127cfbaeafff1f0");
   });
 
-  it("rasterizes website PNGs only and never the iOS App Icon", () => {
-    const generator = read("scripts/generate-favicon-st.mjs");
-    const raster = read("scripts/generate-pwa-icons.mjs");
-    expect(generator).toContain("never writes the iOS App Icon");
+  it("reads the App Icon and never writes it", () => {
+    const generator = read("scripts/generate-favicon-st.mjs").toString("utf8");
+    const raster = read("scripts/generate-pwa-icons.mjs").toString("utf8");
+    expect(generator).toContain("never writes the App Icon file");
+    expect(generator).toContain("AppIcon-1024.png");
     expect(raster).toMatch(/must not write the iOS App Icon/);
     expect(raster).not.toMatch(/file:\s*["']AppIcon-1024/);
     expect(raster).toContain("websitePngTargets");

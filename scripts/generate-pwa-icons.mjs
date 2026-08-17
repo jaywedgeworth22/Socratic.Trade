@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
-/** Rasterize public/icon.svg to the website PNG sizes Safari and some
- *  Android/PWA installers need.  Re-run after the SVG changes:
+/** Resize public/icon.png to the website PNG sizes Safari and some
+ *  Android installers need.  Re-run after the master favicon changes:
  *
  *    node scripts/generate-favicon-st.mjs
  *    node scripts/generate-pwa-icons.mjs
  *
  *  Website only.  Do not write the iOS App Icon
  *  (ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png).
- *  That asset is the dollar-sign candlesticks and is owned by the native app.
+ *  That asset is the offset candlestick ST and is owned by the native app.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -18,15 +18,15 @@ import sharp from "sharp";
 import { websitePngTargets } from "./generate-favicon-st.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const SOURCE_SVG = path.join(ROOT, "public", "icon.svg");
+const SOURCE_PNG = path.join(ROOT, "public", "icon.png");
 
 async function main() {
   for (const { file, size } of websitePngTargets()) {
-    if (file.includes("AppIcon") || file.includes("ios/")) {
+    if (file.includes("AppIcon") || file.includes(`${path.sep}ios${path.sep}`)) {
       throw new Error("website icon generator must not write the iOS App Icon");
     }
     await mkdir(path.dirname(file), { recursive: true });
-    await sharp(SOURCE_SVG, { density: 384 })
+    await sharp(SOURCE_PNG)
       .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
       .png()
       .toFile(file);

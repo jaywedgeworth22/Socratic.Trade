@@ -1,175 +1,37 @@
 #!/usr/bin/env node
 
-/** Build the website favicon from the candlestick-ST pipeline dump.
+/** Build the website favicon from the iOS App Icon's offset candlestick ST.
  *
- *  Source: graphics/favicon-st-source.svg — the last committed
- *  sampleWordmark("ST") -> buildTickerUnits() -> drawTicker geometry
- *  from PR #1626 (high-contrast greens/reds from the 2026-08-01 pass).
- *
- *  Owner ask (#2731): crop so the ST barely fits, transparent background,
- *  offset S higher than T.  Website only — never writes the iOS App Icon
- *  (dollar-sign candlesticks).
+ *  Source (read-only): ios/.../AppIcon-1024.png — 3D candlestick S and T,
+ *  S higher than T, on a light grid.  Owner: that IS the mark; crop it so
+ *  the ST barely fits and drop the background to transparent.  Website only.
+ *  This script never writes the App Icon file.
  *
  *    node scripts/generate-favicon-st.mjs
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import sharp from "sharp";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const SOURCE_SVG = path.join(ROOT, "graphics", "favicon-st-source.svg");
-const OUT_SVG = path.join(ROOT, "public", "icon.svg");
+export const APP_ICON_SOURCE = path.join(
+  ROOT,
+  "ios",
+  "SocraticTrade",
+  "Assets.xcassets",
+  "AppIcon.appiconset",
+  "AppIcon-1024.png"
+);
 
-/** Midpoint of the 21.48-pitch column gap between S (x=232.37) and T (x=275.33). */
-export const S_T_SPLIT_X = 254;
-
-/** Raise S by this fraction of the shared letter height so the combined
- *  mark is nearly square and the tight crop barely contains both letters. */
-export const S_RAISE_OF_LETTER_HEIGHT = 0.6;
-
-/** Inset around the offset mark, as a fraction of the square side.
- *  Small on purpose: the owner asked for the ST to barely fit. */
-export const CROP_PAD_RATIO = 0.02;
-
-const ATTR_RE = /([a-zA-Z0-9:-]+)="([^"]*)"/g;
-const LINE_RE = /<line\s+([^>]+?)\s*\/>/g;
-const RECT_RE = /<rect\s+([^>]+?)\s*\/>/g;
-
-function attrs(raw) {
-  const out = {};
-  for (const match of raw.matchAll(ATTR_RE)) out[match[1]] = match[2];
-  return out;
-}
-
-function num(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) throw new Error(`expected number, got ${value}`);
-  return n;
-}
-
-/** Parse pipeline candles.  Drops the full-bleed background rect. */
-export function parseCandles(svg) {
-  const lines = [];
-  for (const match of svg.matchAll(LINE_RE)) {
-    const a = attrs(match[1]);
-    lines.push({
-      kind: "line",
-      x1: num(a.x1),
-      y1: num(a.y1),
-      x2: num(a.x2),
-      y2: num(a.y2),
-      stroke: a.stroke,
-      strokeWidth: num(a["stroke-width"]),
-      strokeLinecap: a["stroke-linecap"] ?? "round"
-    });
-  }
-  const rects = [];
-  for (const match of svg.matchAll(RECT_RE)) {
-    const a = attrs(match[1]);
-    if (a.x === undefined || a.y === undefined) continue;
-    const width = num(a.width);
-    const height = num(a.height);
-    if (width >= 500 && height >= 500) continue;
-    rects.push({
-      kind: "rect",
-      x: num(a.x),
-      y: num(a.y),
-      width,
-      height,
-      rx: a.rx ?? "1.50",
-      fill: a.fill
-    });
-  }
-  if (lines.length === 0 || rects.length === 0) {
-    throw new Error("favicon source has no candlestick geometry");
-  }
-  return { lines, rects };
-}
-
-function letterOf(x) {
-  return x < S_T_SPLIT_X ? "S" : "T";
-}
-
-export function offsetAndCrop(candles) {
-  const ys = candles.lines.flatMap((line) => [line.y1, line.y2]);
-  const letterHeight = Math.max(...ys) - Math.min(...ys);
-  const raise = letterHeight * S_RAISE_OF_LETTER_HEIGHT;
-
-  const lines = candles.lines.map((line) => {
-    const dy = letterOf(line.x1) === "S" ? raise : 0;
-    return { ...line, y1: line.y1 - dy, y2: line.y2 - dy, letter: letterOf(line.x1) };
-  });
-  const rects = candles.rects.map((rect) => {
-    const cx = rect.x + rect.width / 2;
-    const dy = letterOf(cx) === "S" ? raise : 0;
-    return { ...rect, y: rect.y - dy, letter: letterOf(cx) };
-  });
-
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const line of lines) {
-    const pad = line.strokeWidth;
-    minX = Math.min(minX, line.x1 - pad, line.x2 - pad);
-    maxX = Math.max(maxX, line.x1 + pad, line.x2 + pad);
-    minY = Math.min(minY, line.y1 - pad, line.y2 - pad);
-    maxY = Math.max(maxY, line.y1 + pad, line.y2 + pad);
-  }
-  for (const rect of rects) {
-    minX = Math.min(minX, rect.x);
-    maxX = Math.max(maxX, rect.x + rect.width);
-    minY = Math.min(minY, rect.y);
-    maxY = Math.max(maxY, rect.y + rect.height);
-  }
-
-  const width = maxX - minX;
-  const height = maxY - minY;
-  const side = Math.max(width, height);
-  const pad = side * CROP_PAD_RATIO;
-  const square = side + pad * 2;
-  const viewMinX = minX - (square - width) / 2;
-  const viewMinY = minY - (square - height) / 2;
-
-  return {
-    lines,
-    rects,
-    raise,
-    letterHeight,
-    viewBox: { x: viewMinX, y: viewMinY, size: square },
-    sMinY: Math.min(...lines.filter((line) => line.letter === "S").map((line) => line.y1)),
-    tMinY: Math.min(...lines.filter((line) => line.letter === "T").map((line) => line.y1))
-  };
-}
-
-function fmt(value) {
-  return Number(value).toFixed(2);
-}
-
-export function renderFaviconSvg(model) {
-  const { x, y, size } = model.viewBox;
-  const parts = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${fmt(x)} ${fmt(y)} ${fmt(size)} ${fmt(size)}" role="img" aria-label="Socratic Trade">`,
-    `  <!-- Cropped offset candlestick ST (S higher than T). Transparent canvas. Website favicon only. -->`
-  ];
-  for (const line of model.lines) {
-    parts.push(
-      `  <line x1="${fmt(line.x1)}" y1="${fmt(line.y1)}" x2="${fmt(line.x2)}" y2="${fmt(line.y2)}" stroke="${line.stroke}" stroke-width="${fmt(line.strokeWidth)}" stroke-linecap="${line.strokeLinecap}"/>`
-    );
-  }
-  for (const rect of model.rects) {
-    parts.push(
-      `  <rect x="${fmt(rect.x)}" y="${fmt(rect.y)}" width="${fmt(rect.width)}" height="${fmt(rect.height)}" rx="${rect.rx}" fill="${rect.fill}"/>`
-    );
-  }
-  parts.push("</svg>", "");
-  return parts.join("\n");
-}
-
-export function buildFaviconSvg(sourceSvg) {
-  return renderFaviconSvg(offsetAndCrop(parseCandles(sourceSvg)));
-}
+/** HSV saturation below this is treated as paper/grid (fully transparent). */
+export const SAT_TRANSPARENT = 0.08;
+/** HSV saturation at or above this keeps the candle fully opaque. */
+export const SAT_OPAQUE = 0.26;
+/** Crop to pixels at least this opaque, then pad so the ST barely fits. */
+export const CROP_ALPHA = 24;
+export const CROP_PAD_RATIO = 0.03;
 
 const WEBSITE_PNGS = [
   { file: path.join(ROOT, "public", "icon.png"), size: 512 },
@@ -184,11 +46,90 @@ export function websitePngTargets() {
   return WEBSITE_PNGS.map((target) => ({ ...target }));
 }
 
-async function rasterizeWebsitePngs(svg) {
-  const sharp = (await import("sharp")).default;
+function smoothstep(edge0, edge1, x) {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+function hsvSat(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  return max === 0 ? 0 : (max - min) / max;
+}
+
+/** Knock the light grid to alpha via a saturation ramp, then un-composite
+ *  remaining fringe from white so AA edges keep candle color. */
+export function knockoutGrid(rgba) {
+  const out = Buffer.from(rgba);
+  for (let i = 0; i < out.length; i += 4) {
+    const r = out[i];
+    const g = out[i + 1];
+    const b = out[i + 2];
+    const sat = hsvSat(r, g, b);
+    const alpha = Math.round(255 * smoothstep(SAT_TRANSPARENT, SAT_OPAQUE, sat));
+    if (alpha === 0) {
+      out[i] = 0;
+      out[i + 1] = 0;
+      out[i + 2] = 0;
+      out[i + 3] = 0;
+      continue;
+    }
+    if (alpha < 255) {
+      const a = alpha / 255;
+      out[i] = Math.min(255, Math.max(0, Math.round((r - 255 * (1 - a)) / a)));
+      out[i + 1] = Math.min(255, Math.max(0, Math.round((g - 255 * (1 - a)) / a)));
+      out[i + 2] = Math.min(255, Math.max(0, Math.round((b - 255 * (1 - a)) / a)));
+    }
+    out[i + 3] = alpha;
+  }
+  return out;
+}
+
+export function contentBox(rgba, width, height, minAlpha = CROP_ALPHA) {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (rgba[(y * width + x) * 4 + 3] >= minAlpha) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) throw new Error("favicon knockout produced an empty image");
+  return { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+export function squareCrop(box, imageWidth, imageHeight, padRatio = CROP_PAD_RATIO) {
+  const side = Math.ceil(Math.max(box.width, box.height) * (1 + padRatio * 2));
+  const cx = (box.minX + box.maxX + 1) / 2;
+  const cy = (box.minY + box.maxY + 1) / 2;
+  let left = Math.round(cx - side / 2);
+  let top = Math.round(cy - side / 2);
+  left = Math.max(0, Math.min(left, imageWidth - side));
+  top = Math.max(0, Math.min(top, imageHeight - side));
+  return { left, top, width: Math.min(side, imageWidth), height: Math.min(side, imageHeight) };
+}
+
+async function readAppIconRgba() {
+  const { data, info } = await sharp(APP_ICON_SOURCE).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (info.width !== 1024 || info.height !== 1024) {
+    throw new Error(`expected 1024x1024 App Icon, got ${info.width}x${info.height}`);
+  }
+  return { data, info };
+}
+
+async function writeWebsitePngs(masterPng) {
   for (const { file, size } of WEBSITE_PNGS) {
+    if (file.includes("AppIcon") || file.includes(`${path.sep}ios${path.sep}`)) {
+      throw new Error("website icon generator must not write the iOS App Icon");
+    }
     await mkdir(path.dirname(file), { recursive: true });
-    await sharp(Buffer.from(svg), { density: 384 })
+    await sharp(masterPng)
       .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
       .png()
       .toFile(file);
@@ -196,20 +137,24 @@ async function rasterizeWebsitePngs(svg) {
   }
 }
 
+export async function buildWebsiteFavicon() {
+  const { data, info } = await readAppIconRgba();
+  const knocked = knockoutGrid(data);
+  const box = contentBox(knocked, info.width, info.height);
+  const crop = squareCrop(box, info.width, info.height);
+  const master = await sharp(knocked, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .extract(crop)
+    .png()
+    .toBuffer();
+  return { master, box, crop };
+}
+
 async function main() {
-  const source = await readFile(SOURCE_SVG, "utf8");
-  const model = offsetAndCrop(parseCandles(source));
-  if (!(model.sMinY < model.tMinY)) {
-    throw new Error(`S must sit higher than T (sMinY=${model.sMinY}, tMinY=${model.tMinY})`);
-  }
-  const svg = renderFaviconSvg(model);
-  if (/<rect[^>]*width="512"[^>]*fill=/.test(svg) || /fill="#ffffff"/.test(svg) || /fill="#080b12"/.test(svg)) {
-    throw new Error("generated favicon must stay transparent (no full-bleed fill)");
-  }
-  await mkdir(path.dirname(OUT_SVG), { recursive: true });
-  await writeFile(OUT_SVG, svg);
-  console.log(`wrote ${path.relative(ROOT, OUT_SVG)} (S raised ${model.raise.toFixed(1)}px, viewBox ${model.viewBox.size.toFixed(1)})`);
-  await rasterizeWebsitePngs(svg);
+  const { master, box, crop } = await buildWebsiteFavicon();
+  console.log(
+    `crop ${crop.width}x${crop.height} from content ${box.width}x${box.height} at (${box.minX},${box.minY})-(${box.maxX},${box.maxY})`
+  );
+  await writeWebsitePngs(master);
 }
 
 const invoked = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
