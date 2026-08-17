@@ -1,3 +1,9 @@
+# Current Handoff
+
+## 2026-08-17 GROK — Effort-board hygiene
+
+In Progress rebuilt to leftover real work. Verified-merged rows moved to Completed. Landing this mirror so GitHub effort issues close.
+
 ## Current (2026-08-17 GROK — strategy-run slugs + lease-lost mislabel)
 
 Owner screenshot 8:34–8:38am CT.  Green Team failed on OpenRouter `mistralai/mistral-medium-3.5` (invalid; public slug is `mistral-medium-3-5`) and `gpt-5.4-nano` 400 Provider returned error (slug is correct; OpenAI endpoint is status -2 and does not advertise `max_completion_tokens`, Azure is healthy).  Pinecone + OpenRouter rerank "connection failed" at 13:34Z are `ProviderDispatchLeaseLostError` during the UptimeRobot 1m23s blip, not vendor outages.  Last-2d Pinecone Sentry otherwise is the known WU-fuse park.
