@@ -686,7 +686,7 @@ Read-only audit of framework, API, queues, persistence, caching, concurrency, re
 
 Read-only audit of ingest, SEC/ROIC/transcripts/news, chunk/embed, retrieval, grounding, PIT, lineage, learning ledger, memory, evals, and failure recovery.  Highest gaps: worker embeds raw HTML; transcripts have no FTS backstop; golden harness scores a different retriever than Green/Red; memory decay/lifecycle unwired; chat/desk omit `asOf` so prod `VECTOR_ASOF_STRICT` is a no-op there.
 
-Branch `cursor/rag-learning-recall-audit-f94a`.  Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-17-rag-learning-recall-audit.md`.
+Branch `cursor/rag-learning-recall-audit-f94a`.  PR #2803.  Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-17-rag-learning-recall-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
