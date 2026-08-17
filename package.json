@@ -40,7 +40,7 @@
     "@langfuse/tracing": "^5.10.0",
     "@opentelemetry/instrumentation": "^0.221.0",
     "@opentelemetry/sdk-trace-node": "^2.10.0",
-    "@pinecone-database/pinecone": "^8.0.0",
+    "@pinecone-database/pinecone": "^8.2.0",
     "@sentry/nextjs": "^10.70.0",
     "@xyflow/react": "^12.11.2",
     "better-sqlite3": "^13.0.2",
