@@ -275,10 +275,14 @@ export function formatIc(value: number | undefined, digits = 3): string {
 
 export function formatAuditPayloadPreview(payload: unknown, max = 160): string {
   let text: string;
-  try {
-    text = JSON.stringify(payload);
-  } catch {
-    text = String(payload);
+  if (typeof payload === "string") {
+    text = payload;
+  } else {
+    try {
+      text = JSON.stringify(payload);
+    } catch {
+      text = String(payload);
+    }
   }
   if (!text) return "—";
   return text.length > max ? `${text.slice(0, max)}…` : text;
