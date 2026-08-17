@@ -956,6 +956,13 @@ Branch `cursor/p3-curl-only-ui-2563-814a`.  PR #2793.  Rollout: `docs/rollouts/2
 P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.
 
 Branch `cursor/console-a11y-batch-08ac`.  PR #2795.  Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.  No trading/money-path changes.
+## 2026-08-17 CURSOR — CT+UM lane backoff (#2550)
+
+ST consumers of Congress.Trade and Usage-Monitor now widen backoff when those
+lanes are slow (p50 > 2s) and treat SSE flaps as soft.  Console stays up.  No
+CT/UM server changes.
+
+Branch `cursor/ct-um-lane-backoff-7cf2`.  Rollout: `docs/rollouts/2026-08-17-ct-um-lane-backoff.md`.
 
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 

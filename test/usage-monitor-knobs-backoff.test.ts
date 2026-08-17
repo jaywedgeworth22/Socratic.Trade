@@ -18,14 +18,18 @@ beforeEach(async () => {
   process.env.USAGE_READ_TOKEN = "test-dummy-value"; // fetchKnobMap requires this before it will call fetchImpl
   delete process.env.USAGE_MONITOR_KNOBS_ENABLED;
   const { resetUsageMonitorKnobsCacheForTests } = await import("../src/lib/usage-monitor-knobs");
+  const { resetPeerLaneBackoffForTests } = await import("../src/lib/peer-lane-backoff");
   resetUsageMonitorKnobsCacheForTests();
+  resetPeerLaneBackoffForTests();
 });
 
 afterEach(async () => {
   delete process.env.USAGE_MONITOR_BASE_URL;
   delete process.env.USAGE_READ_TOKEN;
   const { resetUsageMonitorKnobsCacheForTests } = await import("../src/lib/usage-monitor-knobs");
+  const { resetPeerLaneBackoffForTests } = await import("../src/lib/peer-lane-backoff");
   resetUsageMonitorKnobsCacheForTests();
+  resetPeerLaneBackoffForTests();
   vi.useRealTimers();
 });
 
@@ -70,5 +74,18 @@ describe("usage-monitor knob failure backoff", () => {
     getUsageMonitorKnobsCached({ fetchImpl: okFetch as unknown as typeof fetch });
     await flush();
     expect(okFetch.mock.calls.length).toBe(calls);
+  });
+
+  it("a slow-but-200 monitor (p50 > 2s) suppresses further refreshes — #2550", async () => {
+    const { getUsageMonitorKnobsCached } = await import("../src/lib/usage-monitor-knobs");
+    const { recordPeerLaneSample, PEER_LANE_USAGE_MONITOR } = await import("../src/lib/peer-lane-backoff");
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 6900);
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 7100);
+    const okFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([]), { status: 200, headers: { "content-type": "application/json" } })
+    );
+    getUsageMonitorKnobsCached({ fetchImpl: okFetch as unknown as typeof fetch });
+    await flush();
+    expect(okFetch).not.toHaveBeenCalled();
   });
 });

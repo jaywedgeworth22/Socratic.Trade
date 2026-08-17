@@ -158,6 +158,7 @@
 > into Strategy / Lessons / Admin / Activity.  No server-behavior change.  Rollout:
 > `docs/rollouts/2026-08-17-curl-only-ui-entry.md`.
 > **2026-08-17 CURSOR — Console a11y batch (`cursor/console-a11y-batch-08ac`, #2561).** Light chip tokens darkened one step for AA on soft fills; Sheet + TabsSheet + scan Columns popover adopt `useFocusTrap`; tooltip tabIndex/aria-describedby; Meter `label`; dark faint lift; Toggle `label` required. Presentation only — no trading/money-path changes. Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.
+> **2026-08-17 CURSOR — CT+UM lane backoff (`cursor/ct-um-lane-backoff-7cf2`, #2550).** Latency-aware backoff on ST's UM knobs/budget/push and CT HTTP/SSE. Flaps are soft; reconnect storms capped. No CT/UM server edits. Rollout: `docs/rollouts/2026-08-17-ct-um-lane-backoff.md`.
 
 > **2026-08-17 CURSOR — FilingAPI optional key, degrade on missing/401 (`cursor/filingapi-soft-skip-de61`, #2778 retarget).** Owner reversed #2787. Keep the filingapi.dev integration. Do not buy Plus / do not charge Stripe. A dead or missing key skips the lane (no health fail); ROIC + EDGAR stay the fallback. A later valid key is used again. Rebased onto `main` `cde3deee` so #2792 is mergeable. Rollout: `docs/rollouts/2026-08-17-filingapi-soft-skip.md`.
 
