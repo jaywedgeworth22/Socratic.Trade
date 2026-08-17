@@ -1,6 +1,7 @@
 # Active Implementation Plan
 
 > **2026-08-17 CURSOR — Deploy freshness + shared-box OCR isolation (`cursor/deploy-freshness-ocr-isolate-d4cf`, #2545).** Standing cron pages when the oldest undeployed main commit is >1h old (silent-freeze class: webhook 200s, health green on old sha).  Isolation script dry-runs a no-restart CPU cap on CT OCR/scan workers.  Remaining constraint: Coolify/CT-repo limits and retry-on-255 are not settable from this repo.  Do not take prod down.  Rollout: `docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
+> **2026-08-17 CURSOR — Settings search in ⌘K (`cursor/settings-search-palette-6e98`, #2558).** Wire the existing `searchSettings` catalog into the command palette; drop phantom `defaultLandingAccount`. Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
 
 > **2026-08-17 CURSOR — Retire FilingAPI.dev (`cursor/retire-filingapi-roic-de61`, #2778).** Owner has ROIC, not filingapi.dev. Remove live HTTP, health lane, and cascade registration. Keep ROIC + SEC EDGAR. Do not buy Plus / do not charge Stripe. Rollout: `docs/rollouts/2026-08-17-retire-filingapi-roic.md`.
 
