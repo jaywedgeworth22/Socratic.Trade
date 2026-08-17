@@ -70,7 +70,7 @@ export const CATALOG_SOURCES: CatalogSource[] = [
   { id: "sec-edgar-13f", label: "SEC 13F-HR superinvestor holdings", status: "keyless", notes: "Official EDGAR 13F books for a curated filer set. Observe only." },
   { id: "ark-funds-holdings", label: "ARK official daily holdings CSVs", status: "keyless", notes: "ARKK/Q/W/G/F/X from assets.ark-funds.com. Observe only." },
   { id: "sec-filings-rag", label: "SEC 10-K/10-Q/8-K ingest → vector DB", status: "active", notes: "RAG corpus; presented as retrievedFinancialContext (not full corpus dump)." },
-  { id: "filingapi", label: "FilingAPI.dev", status: "scarce", notes: "~50/day free; sector/earnings/insider." },
+  { id: "filingapi", label: "FilingAPI.dev", status: "retired", notes: "Retired 2026-08-17; ROIC.ai + SEC EDGAR cover this class. Do not re-enable." },
   { id: "congress.trade", label: "Congress.Trade peer", status: "peer", notes: "Disclosures/analytics default ON; fundamentals peer default OFF." },
   { id: "congress-web", label: "Congressional trade web cache", status: "active", notes: "senateTrades / congress composite from local web-source cache." },
   { id: "finra", label: "FINRA short volume", status: "keyless", notes: "Short volume ratio signals." },
@@ -245,7 +245,7 @@ export const CATALOG_FIELDS: CatalogField[] = [
     description: "GICS-like sector label.",
     provenanceRequired: true,
     llmKey: "sec",
-    sources: [src("yahoo-finance", undefined, true), src("roic"), src("filingapi"), src("sec-xbrl"), src("symbol_field_latest")]
+    sources: [src("yahoo-finance", undefined, true), src("roic"), src("sec-xbrl"), src("symbol_field_latest"), src("filingapi", "RETIRED")]
   },
   {
     id: "industry",
@@ -255,7 +255,7 @@ export const CATALOG_FIELDS: CatalogField[] = [
     description: "Industry classification.",
     provenanceRequired: true,
     llmKey: "ind",
-    sources: [src("yahoo-finance", undefined, true), src("roic"), src("filingapi"), src("symbol_field_latest")]
+    sources: [src("yahoo-finance", undefined, true), src("roic"), src("symbol_field_latest"), src("filingapi", "RETIRED")]
   },
   {
     id: "pbRatio",
@@ -297,8 +297,8 @@ export const CATALOG_FIELDS: CatalogField[] = [
     llmKey: "insiderSent",
     sources: [
       src("sec-edgar-form4", "Web-source overlay", true),
-      src("filingapi", "Scarce"),
       src("rapidapi-*", "insiders-rapidapi"),
+      src("filingapi", "RETIRED"),
       src("symbol_field_latest")
     ]
   },
@@ -361,7 +361,7 @@ export const CATALOG_FIELDS: CatalogField[] = [
     description: "Calendar days to next report.",
     provenanceRequired: true,
     llmKey: "earnIn",
-    sources: [src("yahoo-finance"), src("nasdaq-calendar", undefined, true), src("alpha-vantage", "Market-wide CSV"), src("finnhub"), src("filingapi"), src("symbol_field_latest")]
+    sources: [src("yahoo-finance"), src("nasdaq-calendar", undefined, true), src("alpha-vantage", "Market-wide CSV"), src("finnhub"), src("roic"), src("symbol_field_latest"), src("filingapi", "RETIRED")]
   },
   {
     id: "senateTrades",

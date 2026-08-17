@@ -6,7 +6,7 @@
  * when we know how) every 3–6 hours by default, or at a known quota reset when the
  * failure stamped one (daily AV midnight, etc.).
  *
- * Does NOT re-enable intentionally retired vendors (FMP/Quiver/UW).
+ * Does NOT re-enable intentionally retired vendors (FMP/Quiver/UW/FilingAPI).
  * Does NOT invent success — a failed re-probe logs an honest failure; only a
  * real probe success (or natural traffic success after the window opens) clears red.
  */
@@ -21,7 +21,6 @@ import {
 } from "./db-health";
 import { getDb } from "./db";
 import { isIntentionalOffHealthService } from "./retired-direct-vendors";
-import { resolveApiKey } from "./db-api-keys";
 
 const DEFAULT_REPROBE_INTERVAL_MS = 4 * 60 * 60_000; // 4h (mid of 3–6h)
 const MIN_REPROBE_INTERVAL_MS = 3 * 60 * 60_000;
@@ -292,20 +291,6 @@ export function probeFnForService(service: string): ProbeFn | null {
       });
       if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
       return { ok: true, latencyMs: Date.now() - t0 };
-    };
-  }
-  if (s === "filingapi") {
-    return async () => {
-      const key = resolveApiKey("filingapi")?.trim();
-      if (!key) return { ok: false, detail: "no-key" };
-      const t0 = Date.now();
-      const res = await fetch("https://filingapi.dev/v1/company/AAPL", {
-        headers: { Accept: "application/json", "X-API-Key": key },
-        signal: AbortSignal.timeout(8_000)
-      }).catch(() => null);
-      if (!res) return { ok: false, detail: "fetch-failed", latencyMs: Date.now() - t0 };
-      if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
-      return { ok: true, detail: "AAPL", latencyMs: Date.now() - t0 };
     };
   }
   if (s === "usage-monitor") {

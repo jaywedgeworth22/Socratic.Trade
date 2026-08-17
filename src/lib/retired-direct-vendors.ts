@@ -1,6 +1,6 @@
 /**
- * Owner directive (2026-08-04): Socratic.Trade must NEVER call QuiverQuant,
- * Unusual Whales, or FMP directly.
+ * Owner directive (2026-08-04, FilingAPI 2026-08-17): Socratic.Trade must NEVER
+ * call QuiverQuant, Unusual Whales, FMP, or FilingAPI.dev directly.
  *
  * - Congressional disclosures, FMP-class fundamentals/analyst snapshots that
  *   App A already stores, and alt-data latency observations live on
@@ -8,17 +8,21 @@
  *   (`src/lib/api-clients/congress.ts`) and the Congress.Trade enrichment tier.
  * - Unusual Whales has never been a production ST producer; it stays banned so
  *   it cannot be reintroduced as a direct lane.
+ * - FilingAPI.dev is retired: ROIC.ai covers fundamentals / transcripts /
+ *   statements / prices. 10-K/10-Q bodies stay on SEC EDGAR
+ *   (`src/lib/web-sources/sec-filings.ts`). Do not re-add a Plus key or checkout.
  *
  * Keep this module tiny and import it at every choke point that would otherwise
  * open a socket to those hosts. There is intentionally no emergency override.
  */
 
-export type RetiredDirectVendor = "fmp" | "quiverquant" | "unusual_whales";
+export type RetiredDirectVendor = "fmp" | "quiverquant" | "unusual_whales" | "filingapi";
 
 export const RETIRED_DIRECT_VENDORS: readonly RetiredDirectVendor[] = [
   "fmp",
   "quiverquant",
-  "unusual_whales"
+  "unusual_whales",
+  "filingapi"
 ] as const;
 
 /** Always false — direct access is permanently retired for this app. */
@@ -27,6 +31,12 @@ export function isDirectVendorAccessAllowed(_vendor: RetiredDirectVendor): boole
 }
 
 export function directVendorRetirementMessage(vendor: RetiredDirectVendor): string {
+  if (vendor === "filingapi") {
+    return (
+      "filingapi direct access is retired in Socratic.Trade; " +
+      "use ROIC.ai for fundamentals/transcripts/statements and SEC EDGAR for 10-K/10-Q bodies"
+    );
+  }
   return (
     `${vendor} direct access is retired in Socratic.Trade; ` +
     `consume congressional / FMP-class data via Congress.Trade`
@@ -38,7 +48,8 @@ export const RETIRED_DIRECT_VENDOR_HOSTS: readonly string[] = [
   "financialmodelingprep.com",
   "api.quiverquant.com",
   "api.unusualwhales.com",
-  "unusualwhales.com"
+  "unusualwhales.com",
+  "filingapi.dev"
 ] as const;
 
 export function isRetiredDirectVendorUrl(url: string): boolean {
@@ -51,7 +62,7 @@ export function isRetiredDirectVendorUrl(url: string): boolean {
  * product use. Admin Connections health must show these as muted OFF — never
  * red STOPPED — even when historical failure rows exist in api_health_log.
  *
- * Includes FMP native + RapidAPI / transcript variants and Quiver / UW.
+ * Includes FMP native + RapidAPI / transcript variants, Quiver / UW, and FilingAPI.
  */
 export function isIntentionalOffHealthService(service: string): boolean {
   const s = service.trim().toLowerCase();
@@ -64,6 +75,9 @@ export function isIntentionalOffHealthService(service: string): boolean {
     s.includes("unusualwhales") ||
     s.includes("unusual_whales")
   ) {
+    return true;
+  }
+  if (s === "filingapi" || s === "filing-api" || s === "filing_api" || s.startsWith("filingapi")) {
     return true;
   }
   return false;
@@ -85,6 +99,9 @@ export function intentionalOffHealthReason(service: string): string {
     s.includes("unusual_whales")
   ) {
     return "Unusual Whales is not a Socratic.Trade producer (permanently retired)";
+  }
+  if (s === "filingapi" || s === "filing-api" || s === "filing_api" || s.startsWith("filingapi")) {
+    return "FilingAPI.dev is retired; ROIC.ai covers fundamentals/transcripts and SEC EDGAR covers 10-K/10-Q bodies";
   }
   return directVendorRetirementMessage("fmp");
 }

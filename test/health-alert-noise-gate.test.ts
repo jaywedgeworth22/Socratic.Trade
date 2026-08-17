@@ -169,14 +169,15 @@ describe("connection-health alert gate: hard streak required", () => {
     await vi.waitFor(async () => expect(await alertKinds()).toEqual(["congress-trade"]));
   });
 
-  it("REGRESSION GUARD: a real filingapi 401 still alerts", async () => {
-    // SOCRATIC-TRADE-1G. A broken credential fails every call, so it reaches the hard streak too —
-    // and a 401 is not soft-classified, so nothing suppresses it.
+  it("REGRESSION GUARD: a retired filingapi 401 never alerts", async () => {
+    // FilingAPI.dev is product-retired (2026-08-17). Leftover 401 rows from the dead trial
+    // key must stay muted OFF — not page as a live credential outage.
     const { logApiHealth } = await import("../src/lib/db-health");
     for (let i = 0; i < 5; i++) {
       logApiHealth({ service: "filingapi", ok: false, errorText: "HTTP 401 Unauthorized", keySource: "env" });
     }
-    await vi.waitFor(async () => expect(await alertKinds()).toEqual(["filingapi"]));
+    await settleAlerts();
+    expect(await alertKinds()).toEqual([]);
   });
 
   it("quotaResetAt still alerts on the very first row (single 'pool exhausted' signal)", async () => {
@@ -196,7 +197,7 @@ describe("connection-health alert gate: hard streak required", () => {
 describe("connection-health alert gate: retired vendors", () => {
   it("a product-retired vendor lane never alerts, even at a full hard streak", async () => {
     const { logApiHealth } = await import("../src/lib/db-health");
-    for (const service of ["fmp", "fmp-transcripts", "quiverquant", "unusual_whales"]) {
+    for (const service of ["fmp", "fmp-transcripts", "quiverquant", "unusual_whales", "filingapi"]) {
       for (let i = 0; i < 5; i++) {
         logApiHealth({ service, ok: false, errorText: "HTTP 403 Forbidden", keySource: "env" });
       }

@@ -79,7 +79,9 @@ describe("provider-tier-plan mapping", () => {
       { maxRequests: 100_000, windowMs: MONTH }
     ]);
     expect(isRetiredMarketDataService("fmp")).toBe(true);
+    expect(isRetiredMarketDataService("filingapi")).toBe(true);
     expect(isRetiredMarketDataService("tiingo")).toBe(false);
+    expect(isRetiredMarketDataService("roic")).toBe(false);
   });
 
   it("maps ROIC free vs individual to documented per-minute caps (not invented daily)", () => {

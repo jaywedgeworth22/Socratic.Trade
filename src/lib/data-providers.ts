@@ -6,6 +6,7 @@
 // Congress.Trade fundamentals/analyst read-back is opt-in only (default OFF).
 //
 // Owner 2026-08-04: FMP, QuiverQuant, and Unusual Whales are NEVER called from this app.
+// Owner 2026-08-17: FilingAPI.dev is NEVER called — ROIC.ai + SEC EDGAR cover that class.
 // Congressional disclosures/analytics come from Congress.Trade; fundamentals do not default there.
 //
 // A quota-scarce RapidAPI-hosted FAILOVER tier (Mboum Finance, YH Finance 15, Alpha Vantage's
@@ -44,7 +45,7 @@ import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
 import { resolveQuiverApiKey } from "./quiver-provider";
-import { isDirectVendorAccessAllowed } from "./retired-direct-vendors";
+import { isDirectVendorAccessAllowed, isRetiredDirectVendorUrl } from "./retired-direct-vendors";
 import { NasdaqCalendarEnrichmentProvider } from "./nasdaq-calendar-provider";
 import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wisesheets-provider";
 import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
@@ -652,6 +653,9 @@ export async function fetchWithRetry(
     apiKey?: string;
   } = {}
 ): Promise<Response> {
+  if (isRetiredDirectVendorUrl(url)) {
+    throw new Error(`retired vendor host refused: ${url.split("?")[0]}`);
+  }
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
   const healthService = options.healthService ?? options.service;
@@ -1106,11 +1110,12 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values. Set SEC_XBRL_ENRICHMENT_ENABLED=0 to disable.
   if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
-  // FilingAPI.dev (FILINGAPI / FILINGAPI_KEY): company sector/industry, earnings calendar,
-  // insider summary — scarce free-tier (50/day) so wave-C only.
+  // FilingAPI.dev: RETIRED (owner 2026-08-17). ROIC.ai covers fundamentals/transcripts/
+  // statements/prices; 10-K/10-Q bodies stay on SEC EDGAR. A leftover FILINGAPI key must
+  // never register a cascade lane or open a socket to filingapi.dev.
   const filingApi = resolveApiKeyWithSource("filingapi", userId);
   if (filingApi.key) {
-    providers.push(withHealthLane(new FilingApiEnrichmentProvider(filingApi.key, filingApi.source, userId), filingApi.source));
+    console.warn("[data-providers] FilingAPI key present but direct access is retired; not registering filingapi");
   }
   // Wisesheets + SimFin: two new (2026-08-02) free/keyed fundamentals "second opinions" layered
   // on top of FMP/roic/SEC-XBRL above, both key-gated on their own env var (process.env only,
@@ -1136,7 +1141,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
     console.warn("[data-providers] QuiverQuant key present but direct access is retired; not registering quiverquant");
   }
   // Keyless Nasdaq earnings-calendar backfill for daysToEarnings — registered after every paid
-  // per-symbol source (Yahoo/FMP/FilingApi/ROIC) that already fills this field cheaper in one call,
+  // per-symbol source (Yahoo/ROIC) that already fills this field cheaper in one call,
   // so it only spends its own (market-wide-per-date, not per-symbol) calls on genuine gaps — the
   // context.coveredFields short-circuit inside NasdaqCalendarEnrichmentProvider.enrich already
   // enforces this at the per-symbol level regardless of registration order. Fully keyless/self-
@@ -6577,163 +6582,6 @@ export class TwelveDataRapidApiEnrichmentProvider implements MarketEnrichmentPro
     } finally {
       clearTimeout(timeout);
     }
-  }
-}
-
-// ── FilingAPI.dev (FILINGAPI) ────────────────────────────────────────────────
-// https://filingapi.dev — X-API-Key header (company/calendar); some routes also
-// accept ?api_key=. Free tier ~50 req/day → scarce wave-C only.
-
-export function parseFilingApiCompany(payload: unknown): SymbolEnrichment {
-  const row = payload as Record<string, unknown> | undefined;
-  if (!row || typeof row !== "object") return {};
-  const ticker = firstString(row, ["ticker", "symbol"]);
-  const sector = firstString(row, ["sector"]);
-  const industry = firstString(row, ["industry"]);
-  const companyName = firstString(row, ["company_name", "companyName", "name"]) ?? ticker;
-  return {
-    ...(companyName !== undefined && { companyName }),
-    ...(sector !== undefined && { sector }),
-    ...(industry !== undefined && { industry })
-  };
-}
-
-export function parseFilingApiEarningsCalendar(
-  payload: unknown,
-  symbol: string,
-  now: number = Date.now()
-): Pick<SymbolEnrichment, "daysToEarnings"> {
-  const earnings = (payload as { earnings?: Array<Record<string, unknown>> } | undefined)?.earnings;
-  if (!Array.isArray(earnings) || earnings.length === 0) return {};
-  const upper = symbol.toUpperCase();
-  const future = earnings
-    .filter((e) => String(e.symbol ?? "").toUpperCase() === upper && typeof e.date === "string")
-    .map((e) => Date.parse(String(e.date)))
-    .filter((ts) => Number.isFinite(ts) && ts >= now - 12 * 3_600_000)
-    .sort((a, b) => a - b);
-  if (future.length === 0) return {};
-  const days = Math.max(0, Math.ceil((future[0] - now) / 86_400_000));
-  return { daysToEarnings: days };
-}
-
-/** Map FilingAPI insider summary → 0–100 insiderSentiment (50 = neutral). */
-export function parseFilingApiInsiderSummary(payload: unknown): Pick<SymbolEnrichment, "insiderSentiment"> {
-  const row = payload as Record<string, unknown> | undefined;
-  if (!row || typeof row !== "object") return {};
-  const sellRatio = firstNumber(row, ["sell_ratio", "sellRatio"]);
-  const signal = firstString(row, ["signal"]);
-  let score: number | undefined;
-  if (sellRatio !== undefined) {
-    score = Math.max(5, Math.min(95, Math.round(50 - (sellRatio - 0.5) * 80)));
-  } else if (signal === "net_selling") {
-    score = 30;
-  } else if (signal === "net_buying") {
-    score = 70;
-  }
-  return score !== undefined ? { insiderSentiment: score } : {};
-}
-
-export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
-  readonly name = "filingapi";
-  readonly costTier = "paid" as const;
-  readonly configured = true;
-  readonly quotaScarce = true;
-  readonly suppliesFields = ["companyName", "sector", "industry", "daysToEarnings", "insiderSentiment"] as const;
-  private readonly base = "https://filingapi.dev";
-  private readonly scope: CacheScope;
-  private readonly keySource: ApiKeySource;
-
-  constructor(
-    private readonly apiKey: string,
-    keySource: ApiKeySource = "env",
-    private readonly userId?: string
-  ) {
-    this.scope = cacheScopeForKeySource(keySource, userId);
-    this.keySource = keySource;
-  }
-
-  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
-    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
-    if (normalized.length === 0) return {};
-    const now = Date.now();
-    const consented = hasDataPoolConsent(this.userId ?? "local");
-    const result: Record<string, SymbolEnrichment> = {};
-    const misses: string[] = [];
-    for (const symbol of normalized) {
-      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
-      if (cached) result[symbol] = cached.data;
-      else misses.push(symbol);
-    }
-    if (misses.length === 0) return result;
-
-    const credKey = `${this.keySource}:${this.userId ?? ""}`;
-    // ~50/day free tier — admit at most one symbol-bundle per reservation unit.
-    const allowed = admitProviderRequests(this.name, credKey, misses.length);
-    if (!allowed) return result;
-    const work = misses.slice(0, allowed);
-
-    for (let i = 0; i < work.length; i += CONCURRENCY) {
-      const chunk = work.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          try {
-            const covered = context?.coveredFields?.[symbol];
-            const needCompany =
-              !covered || !covered.has("companyName") || !covered.has("sector") || !covered.has("industry");
-            const needEarnings = !covered || !covered.has("daysToEarnings");
-            const needInsiders = !covered || !covered.has("insiderSentiment");
-            const [companyRes, earningsRes, insiderRes] = await Promise.allSettled([
-              needCompany ? this.getJson(`/v1/company/${encodeURIComponent(symbol)}`) : Promise.resolve(undefined),
-              needEarnings
-                ? this.getJson(`/v1/calendar/earnings?ticker=${encodeURIComponent(symbol)}`)
-                : Promise.resolve(undefined),
-              needInsiders
-                ? this.getJson(`/v1/insiders/${encodeURIComponent(symbol)}/summary?api_key=${encodeURIComponent(this.apiKey)}`)
-                : Promise.resolve(undefined)
-            ]);
-            const merged: SymbolEnrichment = {
-              ...(companyRes.status === "fulfilled" ? parseFilingApiCompany(companyRes.value) : {}),
-              ...(earningsRes.status === "fulfilled"
-                ? parseFilingApiEarningsCalendar(earningsRes.value, symbol, now)
-                : {}),
-              ...(insiderRes.status === "fulfilled" ? parseFilingApiInsiderSummary(insiderRes.value) : {})
-            };
-            if (Object.keys(merged).length > 0) {
-              writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + 6 * 60 * 60_000);
-            }
-            result[symbol] = merged;
-          } catch {
-            result[symbol] = {};
-          }
-        })
-      );
-    }
-    return result;
-  }
-
-  private async getJson(path: string): Promise<unknown> {
-    return withProviderLimit(this.name, async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      try {
-        const res = await fetchWithRetry(
-          `${this.base}${path}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-            headers: {
-              Accept: "application/json",
-              "X-API-Key": this.apiKey
-            }
-          },
-          { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey, retries: 0 }
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-      } finally {
-        clearTimeout(timeout);
-      }
-    });
   }
 }
 

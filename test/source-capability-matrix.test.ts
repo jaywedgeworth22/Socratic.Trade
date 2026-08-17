@@ -37,10 +37,12 @@ describe("source-capability-matrix", () => {
     expect(sourcesFor("earnings_transcript").some((r) => r.sourceId === "fmp-earnings-transcript")).toBe(false);
   });
 
-  it("marks FMP and Quiver as not ST-allowed", () => {
+  it("marks FMP, Quiver, and FilingAPI as not ST-allowed", () => {
     expect(isStAllowedSource("fmp")).toBe(false);
     expect(isStAllowedSource("quiverquant")).toBe(false);
+    expect(isStAllowedSource("filingapi")).toBe(false);
     expect(isStAllowedSource("yahoo-finance")).toBe(true);
+    expect(isStAllowedSource("roic")).toBe(true);
   });
 
   it("maps yahoo-finance to many scan fields", () => {
