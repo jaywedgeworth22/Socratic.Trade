@@ -140,7 +140,7 @@
 - **[Socratic.Trade][GROK] iOS Proposals For Review: proposed / live / target / delay + expert-panel target debate — COMPLETED/DEPLOYED 2026-08-16 #2740 `c1db7d12`.**  Home tile title is "Proposals for Review" above the count, nothing below.  Prompt `agentic-strategy@2.10.0`.  TestFlight **1.0.36 (202608162123)** `IN_BETA_TESTING` (cron ship `31970196190`).  Docs closeout #2754.  Rollout: `docs/rollouts/2026-08-15-ios-proposals-for-review.md`.
 - **[Socratic.Trade][GROK] 13F + ARK + Form 4 idea sources — COMPLETED/DEPLOYED 2026-08-16 #2736+#2747+#2758 live `f0fd2b70` (issue #2735 closed).**  Form 4 537 (340 ticker).  13F 413 / 12/12 ISO.  ARK 222 across K/Q/W/G/F/X as-of 2026-08-14.  Observe-only.
 - **[Socratic.Trade][GROK] Ban grepping secrets files for KEY=value lines — COMPLETED 2026-08-15.**  #2732 merged (`fffecb4a`).  AGENTS.md + Don't list.  Fleet coordinator #32 also merged.  Names only: `grep -oE`.
-- **[Socratic.Trade][GROK] Website favicon: cropped offset candlestick ST, transparent — IN PROGRESS 2026-08-15 (branch `grok/favicon-crop-st`, issue #2731).**  Owner: larger/cropped so ST barely fits, transparent bg, S higher than T.  iOS App Icon untouched.
+- **[Socratic.Trade][GROK] Website favicon: cropped offset candlestick ST, transparent — IN PR 2026-08-17 (branch `cursor/favicon-crop-st-e6ee`, issue #2731).**  Cloud session landing the 2026-08-15 `grok/favicon-crop-st` claim (that branch was never pushed).  Owner: larger/cropped so ST barely fits, transparent bg, S higher than T.  iOS App Icon untouched.
 - **[Socratic.Trade][GROK] Point AGENTS.md at Mac background-jobs master list — COMPLETED/MERGED #2730 2026-08-15.**  Canonical `~/apps/MAC-LOCAL-PROCESSES.md` + pinned Note `[FLEET, Grok] Mac background jobs master list`.
 - **[Socratic.Trade][GROK] Stop boot-reseeding Gemini/DeepSeek user keys from Infisical env — COMPLETED/DEPLOYED 2026-08-15 #2729 `7957cf53` (live `4bd3bcc0` contains it; issue #2728 closed).**  Infisical ST prod `/` GEMINI/DEEPSEEK deleted.  Prod Connections rows tombstoned (`disabled by user`).  Safe set() refuses LLM runtime names.
 - **[Socratic.Trade][GROK] Account-config Title Case (Fractional Shares, Whole Shares, Regular + Extended) — COMPLETED/DEPLOYED 2026-08-15 #2727 `46d1dace` (issue #2726 closed).**  Capabilities sheet chips match Connected / Disabled: Fractional Shares / Whole Shares / Regular + Extended / Regular Only / Positions Only / Cash Only.
@@ -608,6 +608,11 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][GROK] Fix ST Litestream wedge and prefer Pushover over Resend — OPEN 2026-08-14.** Issue #2697.
 - **[Socratic.Trade][MONET] Durable litestream remote-inventory cache (PR #2665 leftover) — IN PROGRESS.** Issue #2694.
 - **[Socratic.Trade][CURSOR] FilingAPI optional key, degrade gracefully — IN PROGRESS 2026-08-17 (branch `cursor/filingapi-soft-skip-de61`, retarget #2778).** Owner reversed #2787 retirement. Keep FilingApiEnrichmentProvider + health lane + matrix. Dead/missing/401 key is a soft skip (no health fail); ROIC + EDGAR cover the class. A later valid key is used again. Do not buy Plus. Do not charge Stripe. Plus-checkout ask is superseded by this degrade path.
+- **2026-08-16 — GROK — IN PROGRESS — Review UX: fast approve, live vs proposed price, Retry Red Team, clearer agent controls.** Issue #2752. Worktree `~/apps/trading-grok-review-ux` (remote branch gone; local residue).
+- **2026-08-15 — GROK — IN PR 2026-08-17 — Website favicon: cropped offset candlestick ST, transparent.** Issue #2731. Landed on `cursor/favicon-crop-st-e6ee` (the `grok/favicon-crop-st` worktree was never pushed).
+- **[Socratic.Trade][GROK] Fix ST Litestream wedge and prefer Pushover over Resend — OPEN 2026-08-14.** Issue #2697.
+- **[Socratic.Trade][MONET] Durable litestream remote-inventory cache (PR #2665 leftover) — IN PROGRESS.** Issue #2694.
+- **[Socratic.Trade][OWNER] FilingAPI Plus checkout.** Stored FILINGAPI key is still 401. Do not charge ST Stripe. Needed for remaining L2/universe ingest after #2741.
 
 ## Deployed
 - **2026-08-05 — GROK — Board hygiene:** moved 3 Active/Planned → Deployed.

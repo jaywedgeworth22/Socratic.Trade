@@ -46,3 +46,7 @@ committed.
 
 - Optional: single-candle T stem (currently ~2 columns) if a crisper T is wanted;
   tune letter spacing.
+
+**2026-08-17 update:** issue #2731 crops this same pipeline mark, raises S above T,
+and drops the background.  Website only — see
+`docs/rollouts/2026-08-17-favicon-crop-st.md`.
