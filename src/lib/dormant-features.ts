@@ -64,10 +64,11 @@ export function listDormantFeatureStatus(env: EnvSource = process.env): DormantF
       id: "vector-asof-strict",
       flag: "VECTOR_ASOF_STRICT",
       enabled: flagOn("VECTOR_ASOF_STRICT", false, env),
-      readyToEnable: false,
+      readyToEnable: true,
       defaultWhenUnset: "off",
-      blocker: "Needs as_of_epoch_ms coverage proof on the live index before fail-closed undated drops.",
-      note: "Fail-closed PIT filter. Keep off until undated/un-epoch'd inventory is acceptable."
+      note: flagOn("VECTOR_ASOF_STRICT", false, env)
+        ? "ON: dated retrieval is fail-closed (undated chunks drop). Live desk omits asOf and is unchanged."
+        : "OFF: dated retrieval keeps undated chunks. Coverage receipt 2026-08-16 was 13076/13076 epoch'd."
     },
     {
       id: "rag-multiquery",

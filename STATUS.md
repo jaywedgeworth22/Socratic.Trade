@@ -1,3 +1,7 @@
+## Current (2026-08-16 GROK — VECTOR_ASOF_STRICT on)
+
+Owner: flip fail-closed dated retrieval.  Infisical ST prod `VECTOR_ASOF_STRICT=on` (was `off`).  Coolify restart `fwqascvivxvc7342hkw3aizk` finished; `https://socratictrade.com/api/health` is 200.  Live desk still omits `asOf`.  Branch `grok/asof-strict-on`.  Rollout: `docs/rollouts/2026-08-16-asof-strict-on.md`.
+
 ## Current (2026-08-16 GROK — ROIC Individual harvest)
 
 Owner: get all we can from ROIC Individual (couple of weeks left) — breadth across the universe plus depth on names of most interest.  Expert panel already decided storage in `docs/designs/2026-08-16-proposer-corpus-storage.md` rev 3 (#2760).  No second panel.

@@ -33,7 +33,8 @@ describe("listDormantFeatureStatus", () => {
     expect(byId["csp-report-only"]?.readyToEnable).toBe(true);
     expect(byId["usage-budget-enforce"]?.readyToEnable).toBe(true);
     expect(byId["vector-embed-clean-text"]?.readyToEnable).toBe(true);
-    expect(byId["vector-asof-strict"]?.readyToEnable).toBe(false);
+    expect(byId["vector-asof-strict"]?.readyToEnable).toBe(true);
+    expect(byId["vector-asof-strict"]?.enabled).toBe(false);
     expect(byId["rag-multiquery"]?.readyToEnable).toBe(true);
     expect(byId["rag-hyde"]?.readyToEnable).toBe(true);
     expect(byId["sec8k-full-body"]?.readyToEnable).toBe(true);
