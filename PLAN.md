@@ -21,6 +21,9 @@
 > **2026-08-17 CURSOR — Cross-app coordination audit (`cursor/cross-app-coordination-audit-1212`).** Report only.  Pins match CTS `v2.5.2`; ST pin-check is a no-op against vendor-era CT.  Independent-failure matrix and P1–P3 portfolio fixes in `docs/audits/2026-08-17-cross-app-coordination.md`.  Do not implement those fixes in this PR.
 
 > **2026-08-17 CURSOR — Pinecone trial WU + Litestream/FilingAPI alert noise (`cursor/pinecone-wu-trial-alerts-c9a3`).** Standard trial is usage-billed, not the Starter 2M monthly wall. Clear/ignore the monthly WU breaker and monthly pace budget while the trial is open. Ignore healed Litestream compaction-fail lines. Omit retired vendors from public `/api/health` dependencies. Do not raise the daily WU fuse. Rollout: `docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
+> **2026-08-17 CURSOR — Pinecone daily-fuse deadlock (`cursor/pinecone-write-deadlock-64c1`).** Do not clamp the trial daily fuse to leftover local-MTD remainder (that is the 15-WU / 1-text skip). Keep Yahoo VIX as failover; do not re-probe it while Cboe is serving. 429s are not a healthy expected outcome. CT OpenRouter prepaid-minimum is a leftover stored halt — owner has >$50. Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+
+> **2026-08-17 CURSOR — Pinecone trial WU + Litestream/FilingAPI alert noise (`cursor/pinecone-wu-trial-alerts-c9a3`).** Merged as #2799 `4980322b`. Standard trial is usage-billed, not the Starter 2M monthly wall. Daily remainder clamp is the follow-up above. Rollout: `docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
 
 > **2026-08-17 CURSOR — Settings search in ⌘K (`cursor/settings-search-palette-6e98`, #2558).** Wire the existing `searchSettings` catalog into the command palette; drop phantom `defaultLandingAccount`. Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
 

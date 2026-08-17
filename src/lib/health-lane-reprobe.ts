@@ -33,10 +33,33 @@ const NEXT_LANE_PREFIX = "healthLaneReprobe:next:";
 export type HealthReprobeOutcome =
   | "skipped_not_due"
   | "skipped_intentional_off"
+  | "skipped_sibling_healthy"
   | "window_opened"
   | "probe_ok"
   | "probe_fail"
   | "probe_unsupported";
+
+/** Backup health lane → primary that already serves the same reading. */
+export const BACKUP_HEALTH_LANES: Record<string, string> = {
+  "vix-yahoo": "vix-cboe"
+};
+
+/**
+ * True when this backup lane's primary is serving.  Do not re-probe (and 429)
+ * the backup while the primary is up — keep the backup for when the primary dies.
+ */
+export function backupLanePrimaryIsServing(
+  backupService: string,
+  summaries: Array<Pick<ServiceHealthSummary, "service" | "keySource" | "stoppedWorking">>
+): boolean {
+  const primary = BACKUP_HEALTH_LANES[backupService];
+  if (!primary) return false;
+  const row = summaries.find((s) => {
+    if (s.service !== primary) return false;
+    return s.keySource === "env" || s.keySource === "none" || s.keySource === null;
+  });
+  return row != null && row.stoppedWorking !== true;
+}
 
 export interface HealthReprobeLaneResult {
   service: string;
@@ -371,6 +394,16 @@ export async function runHealthLaneReprobeIfDue(
     const intervalMs = envIntervalMs();
 
     for (const s of candidates) {
+      if (backupLanePrimaryIsServing(s.service, summaries)) {
+        results.push({
+          service: s.service,
+          keySource: s.keySource,
+          outcome: "skipped_sibling_healthy",
+          reason: s.stoppedReason,
+          detail: `primary ${BACKUP_HEALTH_LANES[s.service]} is serving; keep this backup for failover`
+        });
+        continue;
+      }
       const nextDueIso = getInternalSetting<string>(laneKey(s.service, s.keySource));
       const due = isLaneDueForReprobe(s, nowMs, { nextDueIso, intervalMs });
       if (!due.due) {

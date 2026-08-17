@@ -460,6 +460,19 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
   }
 }
 
+/**
+ * Hard outage only: last 5 calls all failed.  Soft "no success this hour" and
+ * rate-limit rows are degraded signal, not a reason to paint the dependency down
+ * or abandon a backup lane.
+ */
+export function isHardStoppedHealthSummary(
+  summary: Pick<ServiceHealthSummary, "stoppedWorking" | "stoppedReasonKind" | "intentionalOff">
+): boolean {
+  if (summary.intentionalOff) return false;
+  if (!summary.stoppedWorking) return false;
+  return summary.stoppedReasonKind === "consecutive-failures";
+}
+
 // NOTE: `rowid DESC` tiebreaker — `ts` is ms-resolution, so rows written in the same millisecond
 // otherwise return in arbitrary order and "the newest row" reads become nondeterministic (bit
 // test/data-providers.test.ts's newest-row assertion, 2026-07-10). It must be `rowid` (implicit

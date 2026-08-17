@@ -87,6 +87,25 @@ fate; CT Senate ingest still needs the Mac.  DealDex is protocol-only.
 PR **#2802**.  Branch `cursor/cross-app-coordination-audit-1212`.  Audit:
 `docs/audits/2026-08-17-cross-app-coordination.md`.  Rollout:
 `docs/rollouts/2026-08-17-cross-app-coordination-audit.md`.
+## 2026-08-17 CURSOR — Pinecone daily-fuse deadlock (not a spent trial)
+
+Owner correction after the 4:32–4:38pm CT cards.  Pinecone should still be writing.  The live
+card was **used 0 of 15 estimated WUs, attempted 28, skipped 1** plus Siliconflow **0 or 1 of
+1 texts** — a deadlock, not the 2.5M daily fuse and not the Standard trial wall.  Local
+month-to-date WUs were treated as Pinecone's bill; remaining lifetime WUs collapsed the daily
+fuse below one document, so used stayed 0.  "Expected ingest park" was agent slang for that
+skip.  It was wrong.
+
+HTTP 429 on a backup lane is not a success and not a reason to abandon the source.  Cboe is
+serving ^VIX; Yahoo stays in the cascade for when Cboe dies.  Do not re-probe Yahoo while
+Cboe is up (that is what burns the backup into 429s).
+
+There is no OpenRouter files-endpoint prepaid-minimum outage.  ST `/api/health`
+`openrouterCredits.ok` is true (threshold $3 only).  Owner has >$50 on OpenRouter.  CT
+autopilot is still halted on a **stored** `error_class:billing` string — leftover, not a
+live balance check.  Fix that in Congress.Trade; do not repeat the prepaid line.
+
+Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 

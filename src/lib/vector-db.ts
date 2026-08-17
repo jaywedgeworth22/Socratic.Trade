@@ -33,6 +33,7 @@ import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-em
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { estimateRagDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled, type RagEmbedRerankProvider } from "./rag-metering";
 import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
+import { selectItemsWithinWriteBudget } from "./pinecone-write-budget";
 import { pineconeTrialState } from "./pinecone-trial-window";
 import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
@@ -601,7 +602,7 @@ function pineconeMaxWriteUnitsPerDay(): number {
  * RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY (trial installs are often 2.5M).
  */
 export const PINECONE_DAILY_WU_FUSE_RECOMMENDATION =
-  "This is the app's rolling-24h write fuse, not a Pinecone outage.  Retrieval still works.  During a Standard trial ingest stays full-steam until about $45 of credit remains, then paces the rest to the trial end.  After the trial it snaps to free-tier 60k WU/day.";
+  "This is the app's rolling-24h write fuse, not a Pinecone outage.  Retrieval still works.  During a Standard trial the fuse stays at the configured trial cap unless remaining local-MTD credit is still in a plausible range; it will not collapse to a remainder smaller than one document.  After the trial it snaps to free-tier 60k WU/day.";
 
 /** True when the daily write fuse still has room (or is disabled).  Fail-open like the text budget. */
 export function hasPineconeWriteBudget(userId: string = "local"): boolean {
@@ -2291,30 +2292,23 @@ function applyPineconeWriteBudget(
   }
 
   const used = usedPineconeWriteUnitsLast24h(userId);
-  let remaining = Math.max(0, limit - used);
-  let requested = 0;
-  let accepting = true;
-  const allowedDocuments: ContextDocument[] = [];
-
-  for (const document of documents) {
-    const estimatedPending = estimatePineconeWriteUnitsForDocument(document, vectorUserId, scope, tenantScope);
-    const estimated = isManagedCommit ? estimatedPending * 2 : estimatedPending;
-    requested += estimated;
-    if (accepting && remaining >= estimated) {
-      remaining -= estimated;
-      allowedDocuments.push(document);
-    } else {
-      accepting = false;
-    }
-  }
+  const selection = selectItemsWithinWriteBudget(
+    documents,
+    (document) => {
+      const estimatedPending = estimatePineconeWriteUnitsForDocument(document, vectorUserId, scope, tenantScope);
+      return isManagedCommit ? estimatedPending * 2 : estimatedPending;
+    },
+    used,
+    limit
+  );
 
   return {
-    documents: allowedDocuments,
-    skipped: documents.length - allowedDocuments.length,
+    documents: selection.kept,
+    skipped: selection.skipped,
     used,
     limit,
-    requested,
-    allowed: Math.max(0, limit - used)
+    requested: selection.requested,
+    allowed: selection.allowed
   };
 }
 
