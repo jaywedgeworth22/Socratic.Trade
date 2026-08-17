@@ -67,9 +67,10 @@ npx vitest run test/sentry-ci-report-workflows.test.ts
 ```
 
 Selftests: verify-deploy-sha 13/13, freshness 9/9, isolate 17/17 (offline;
-no production, no Slack, no docker).  Remaining gate commands (`npm run lint`,
-`npx tsc --noEmit`, `npm test`, `npm run build`) run before the PR is claimed
-done.  No prod container, DNS, or Coolify setting was touched.
+no production, no Slack, no docker).  Local `npm run lint` and `npx tsc --noEmit`
+clean.  GitHub `verify` / `verify-hosted` on PR #2796 passed (lint, tsc, vitest,
+build) before the `origin/main` rematch.  No prod container, DNS, or Coolify
+setting was touched.
 
 ## Next Steps & Blockers
 
