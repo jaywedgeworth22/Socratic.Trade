@@ -10,7 +10,7 @@ for CT OCR/scan workers that never restarts and never touches ST.  Remaining
 host constraint: durable isolation is Coolify/CT-repo; this repo cannot set
 those or a Coolify retry-on-255.  Did not touch prod.
 
-Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  Rollout:
+Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  PR #2796.  Rollout:
 `docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
 
 ## 2026-08-17 CURSOR — Settings search in the command palette (#2558)
