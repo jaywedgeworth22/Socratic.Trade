@@ -47,15 +47,22 @@ Touched files:
 
 ## Verification State
 
-Commands run (this note will be updated with receipts):
+Commands run:
 
 ```bash
 npm run lint
+# 0 errors, grandfathered warnings only
 ./node_modules/.bin/tsc --noEmit
+# clean after shouldUseFilingApiKey type predicate
 npx vitest run test/filingapi-auth.test.ts test/health-alert-noise-gate.test.ts test/health-lane-reprobe.test.ts test/filingapi-and-new-rapidapi.test.ts
-npm test
+# 4 files, 35 passed
+npx vitest run test/data-providers.test.ts -t "TwelveData caps"
+# 1 passed
 npm run build
+# Next.js 16.3.1 compiled successfully (after moving createHash to `crypto`, not `node:crypto`)
 ```
+
+A full `npm test` in this Cloud VM previously leaked the shell `FILINGAPI` dead key into strategy/enrichment tests (30s timeouts).  `vitest.config.ts` now blanks `FILINGAPI*`.  Focused suite above is the gate for this change.
 
 ## Next Steps & Blockers
 
