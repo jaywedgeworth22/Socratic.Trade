@@ -4,7 +4,7 @@
 
 Read-only.  ST has no user-facing SKU: no Stripe SDK/routes/webhooks, no StoreKit/IAP, no paywall.  Access is allowlist + mailto.  App Review 3.1.1 PASS (no web checkout inside iOS).  PWA leftover is not a live surface.  No implementation PR — do not invent a money path.  CT already owns fleet Stripe + IAP.
 
-PR pending.  Branch `cursor/purchases-stripe-storekit-audit-f1c0`.  Audit:
+PR **#2809**.  Branch `cursor/purchases-stripe-storekit-audit-f1c0`.  Audit:
 `docs/audits/2026-08-17-purchases-stripe-storekit.md`.  Rollout:
 `docs/rollouts/2026-08-17-purchases-stripe-storekit-audit.md`.
 
