@@ -68,17 +68,24 @@ Touched files:
 
 ## Verification State
 
-Commands run after the first push (see later commits if the gate needed a fix):
-
 ```bash
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint          # exit 0 (warnings only; no errors)
+npx tsc --noEmit      # exit 0
+npx vitest run test/ios-privacy-manifest.test.ts \
+  test/apple-app-site-association-route.test.ts \
+  test/apns-deep-link-contract.test.ts
+                      # 3 files / 16 tests passed
+npm run build         # Next.js 16.3.1 webpack, exit 0
 ```
 
+Full `npm test` was started in this Cloud VM and hung after many unrelated
+network failures (SEC company_tickers 404, FRED, TwelveData, vector-db
+receipts).  Those files are outside this change.  GitHub `verify` is the
+authoritative full-suite run.
+
 `xcodebuild` is not available in this Cloud VM.  iOS compile happens on the Mac
-ship / `ios-compile` CI job.
+ship / `ios-compile` CI job.  Next `xcodegen generate` on that Mac copies
+`PrivacyInfo.xcprivacy` into Copy Bundle Resources.
 
 ## Next Steps & Blockers
 
