@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Web / mobile-web / iOS parity audit (report-only)
+
+Owner asked for a UX + a11y + parity audit of desktop website, mobile website, and native iOS.  PWA is out of scope except leftover coupling.  Report: `docs/audits/2026-08-17-web-ios-parity.md`.  No product code.  Highest findings: web ignores `?proposal=` / `?symbol=`; iOS ignores `?symbol=`; iOS Activity has no Alert Center so `run_failed` taps land empty; dead `app/mobile/components` tree still in repo.
+
+Branch `cursor/web-ios-parity-audit-e83a`.  Rollout: `docs/rollouts/2026-08-17-web-ios-parity-audit.md`.
+
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
 Owner: the app thinks monthly Pinecone write units are at the free-tier limit, and Pushover
