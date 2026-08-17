@@ -688,7 +688,7 @@ Read-only audit of auth, secrets, tenant isolation, supply chain, PII, Litestrea
 deploy, alerting, fail-open/closed, spend, and SLOs.  Live health 200 on sha `4980322b`;
 Litestream replicating; restore still unproven on B2.  No code changes.
 
-Branch `cursor/security-reliability-audit-d8f6`.  Report:
+Branch `cursor/security-reliability-audit-d8f6`, PR #2806.  Report:
 `docs/audits/2026-08-17-security-reliability.md`.  Rollout:
 `docs/rollouts/2026-08-17-security-reliability-audit.md`.
 
