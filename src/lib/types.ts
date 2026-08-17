@@ -1089,10 +1089,12 @@ export interface TradingPolicy {
   benchmarkMode?: BenchmarkMode;
   /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
-   * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
-   * SAME request against each model in order; the first success serves the run. The failover is
-   * recorded loudly — a `strategy_llm_failover` audit per hop, plus the served model/provider and a
-   * reason on the Green Team llm step. Empty/unset = single primary endpoint, byte-identical to before.
+   * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx, timeout, or an HTTP-200 with
+   * empty/malformed content) transparently re-issues the SAME request against each model in order;
+   * the first success serves the run. The failover is recorded loudly — a `strategy_llm_failover`
+   * audit per hop, plus the served model/provider and a reason on the Green Team llm step.
+   * Empty/unset = single primary endpoint, unless the Green seat is rotating — then a small
+   * implicit pool failover is appended (issue #2577).
    */
   llmFallbackModels?: string[];
   /**

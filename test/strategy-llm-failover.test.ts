@@ -165,6 +165,83 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     expect(bullStep?.provider).toBe("gemini");
   }, 30_000);
 
+  it("flag ON: a malformed HTTP-200 JSON body from the primary fails over (same class as empty content)", async () => {
+    // Issue #2577: Red Team already continued on malformed HTTP-200 content; Green/Bull's
+    // response.json() throw was not retryable, so the run died on the primary.
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
+        const bodyStr = init?.body ? String(init.body) : "";
+        if (bodyStr.includes("claude")) {
+          return new Response("{not-json", { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return geminiOk();
+      }
+      if (href.includes("nasdaq.com")) return nasdaqRow();
+      return new Response("not found", { status: 404 });
+    });
+    await setup(true);
+    const { setPolicy, getPolicy } = await import("../src/lib/db");
+    setPolicy({ ...getPolicy("local"), llmModel: "openrouter/anthropic/claude-3-haiku" });
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listAudit } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+
+    expect(result.status).toBe("completed");
+    const failoverRows = listAudit(5000).filter(
+      (e) => (e.payload as { runId?: string })?.runId === result.runId && e.kind === "strategy_llm_failover"
+    );
+    expect(failoverRows.length).toBeGreaterThan(0);
+    const bullFailover = failoverRows.find((e) => (e.payload as { step?: string })?.step === "bull");
+    expect((bullFailover?.payload as { reason?: string })?.reason).toBe("malformed_response");
+    expect((bullFailover?.payload as { toModel?: string })?.toModel).toBe("google/gemini-2.5-flash");
+    const bullStep = result.llmSteps?.find((s) => s.step === "bull");
+    expect(bullStep?.provider).toBe("gemini");
+  }, 30_000);
+
+  it("run_failed names OpenRouter credits exhausted when the cached check is below threshold", async () => {
+    // Issue #2577 ask 2: empty-response deaths during a credits-low day should say so.
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_LOW_CREDIT_USD", "3");
+    const { __resetOpenRouterCreditCache } = await import("../src/lib/openrouter-credits");
+    __resetOpenRouterCreditCache();
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("/api/v1/credits") || href.endsWith("/credits")) {
+        return new Response(JSON.stringify({ data: { total_credits: 10, total_usage: 9.88 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
+        return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "" } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (href.includes("nasdaq.com")) return nasdaqRow();
+      return new Response("not found", { status: 404 });
+    });
+    await setup(false);
+    // Distinct provider lane so the 429 test above cannot park this primary in cooldown.
+    const { setPolicy, getPolicy } = await import("../src/lib/db");
+    setPolicy({ ...getPolicy("local"), llmModel: "openrouter/anthropic/claude-3-haiku" });
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listNotificationEvents } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+
+    expect(result.status).toBe("failed");
+    expect(result.summary).toMatch(/Empty response returned from LLM API/);
+    expect(result.summary).toMatch(/OpenRouter credits look exhausted \(\$0\.12 remaining; alert floor \$3\.00\)/);
+    const failed = listNotificationEvents("local").filter((e) => e.type === "run_failed");
+    expect(failed.length).toBeGreaterThan(0);
+    expect(String((failed[0]?.payload as { summary?: string })?.summary ?? "")).toMatch(/credits look exhausted/);
+  }, 30_000);
+
   it("flag OFF (default): a primary 429 is a hard failure — no failover, behavior unchanged", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {

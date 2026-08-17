@@ -57,7 +57,8 @@ import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfr
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
+import { implicitGreenRotationFallbacks, isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
+import { maybeOpenRouterCreditsExhaustedHint } from "./openrouter-credits";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
 import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
@@ -540,7 +541,7 @@ export async function runStrategyOnce(
     // gate). A run that aborts before that point (account unavailable, over budget, no candidate
     // cleared the threshold) writes nothing, so it never skews the rotation weights with a run that
     // generated no proposal.
-    const { commit: commitRotation, emptyReason, ...rotationOverride } = await resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
+    const { commit: commitRotation, emptyReason, greenRotationPool, ...rotationOverride } = await resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
     if (isModelRotationSentinel(policy.llmModel) && !rotationOverride.llmModel) {
       // Do not collapse this into "Choose both team models" — rotation IS the model choice.
       const reason =
@@ -1097,7 +1098,21 @@ export async function runStrategyOnce(
     // LLM context also sees a run-scoped close_only event-trigger override (if any).
     // Merge order matters: the usage-budget downgrade (runLlmOverride) intentionally WINS over the
     // rotation pick — enforcement is the owner's opt-in cost override of whatever would have run.
-    const runPolicy: RunnablePolicy = { ...gatePolicy, ...rotationOverride, ...runLlmOverride };
+    // Issue #2577: a rotating Green seat with no owner-configured llmFallbackModels used to be a
+    // single-model chain, so an empty/malformed OpenRouter 200 killed the run (five Aug 6 deaths
+    // named one rotated model each).  Append a small implicit failover from the same eligible
+    // pool.  Owner-configured fallbacks win unchanged.
+    const explicitGreenFallbacks = Array.isArray(gatePolicy.llmFallbackModels) ? gatePolicy.llmFallbackModels : [];
+    const implicitGreenFallbacks =
+      greenRotationPool && rotationOverride.llmModel && explicitGreenFallbacks.length === 0
+        ? implicitGreenRotationFallbacks(greenRotationPool, rotationOverride.llmModel)
+        : [];
+    const runPolicy: RunnablePolicy = {
+      ...gatePolicy,
+      ...rotationOverride,
+      ...runLlmOverride,
+      ...(implicitGreenFallbacks.length > 0 ? { llmFallbackModels: implicitGreenFallbacks } : {})
+    };
 
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
@@ -4339,11 +4354,20 @@ export async function runStrategyOnce(
 
   } catch (error) {
     const baseSummary = error instanceof Error ? error.message : "Strategy failed.";
-    const summary = error instanceof StrategyLockOwnershipLostError && completedProposalResults.length > 0
+    let summary = error instanceof StrategyLockOwnershipLostError && completedProposalResults.length > 0
       ? `${baseSummary} ${completedProposalResults.length} proposal result(s) completed before ownership was lost.`
       : baseSummary;
     if (error instanceof StrategyLlmStepFailure) {
       llmSteps = error.llmSteps;
+    }
+    const isKillSwitch = summary === "Kill switch is active.";
+    // Issue #2577: when OpenRouter prepaid is already below the health-probe floor, empty
+    // HTTP-200s are the observed symptom.  Name that cause on the run + run_failed alert
+    // instead of leaving a mystery "Empty response returned from LLM API."  Never rewrite
+    // the kill-switch sentence — that exact string selects the kill_switch event type.
+    if (!isKillSwitch) {
+      const creditsHint = await maybeOpenRouterCreditsExhaustedHint();
+      if (creditsHint) summary = `${summary}  ${creditsHint}`;
     }
     finishStrategyRun(runId, "failed", summary, userId);
     const policy = getPolicy(userId, connectedAccountId);
@@ -4355,7 +4379,7 @@ export async function runStrategyOnce(
       accountNumber: policy.accountNumber,
       ...(llmSteps.length > 0 ? { llmSteps } : {})
     };
-    if (summary === "Kill switch is active.") {
+    if (isKillSwitch) {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
     } else {
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
@@ -5832,8 +5856,10 @@ async function proposeTrades(input: {
   );
 
   // Cross-provider FAILOVER chain (Chat A item 4): primary first, then each policy.llmFallbackModels
-  // entry that has a credential. Empty list => primary only (default; byte-identical behavior). On a
-  // TRANSIENT failure (HTTP 429/5xx or timeout) the SAME request is re-issued against the next model.
+  // entry that has a credential. Empty list => primary only (default; byte-identical behavior),
+  // except a rotating Green seat appends implicit pool fallbacks upstream (issue #2577). On a
+  // TRANSIENT failure (HTTP 429/5xx, timeout, or HTTP-200 empty/malformed content) the SAME
+  // request is re-issued against the next model.
   const bullAttempts = [
     {
       url,
@@ -5900,6 +5926,11 @@ async function proposeTrades(input: {
   let bullServedTransport = transport;
   let bullServedKeySource = llmKeySource;
   let bullFailoverNote: string | undefined;
+  // The exhausted-chain error must name the LAST attempt (not the configured primary).  Aug 6
+  // run_failed alerts named a single model even when failover had been tried, which made it
+  // look like Green never left the first pick.
+  let lastBullAttemptProvider = provider;
+  let lastBullAttemptModel = model;
 
   const bullStepBase = {
     step: "bull" as const,
@@ -5961,6 +5992,8 @@ async function proposeTrades(input: {
           const attempt = plannedBullAttempts[i];
           const isLast = i === plannedBullAttempts.length - 1;
           const next = plannedBullAttempts[i + 1];
+          lastBullAttemptProvider = attempt.provider;
+          lastBullAttemptModel = attempt.model;
           try {
             const bullSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort);
             // Reasoning-class-aware SOFT wall-clock: a thinking-enabled model gets the widened bound.
@@ -6002,7 +6035,22 @@ async function proposeTrades(input: {
               }
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
             }
-            const payload = await response.json();
+            let payload: unknown;
+            try {
+              payload = await response.json();
+            } catch {
+              // HTTP-200 with a non-JSON body is the same class as empty content: a provider
+              // glitch, not a proposal.  isRetryableLlmError does not match SyntaxError, so
+              // without this branch the run died on the primary even with healthy fallbacks
+              // (Red Team already continues on malformed HTTP-200 content — issue #2577).
+              if (!isLast) {
+                lastError = new Error("Malformed response returned from LLM API.");
+                console.warn(`[Bull] ${attempt.model}/${attempt.provider} returned a malformed HTTP-200 body; failing over to ${next.model}/${next.provider}.`);
+                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "malformed_response", toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
+                continue;
+              }
+              throw new Error("Malformed response returned from LLM API.");
+            }
             recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(attempt.provider, payload), ...extractLlmUsage(payload) });
             bullServedProposalModel = attempt.proposalModel;
             // Served-by-fallback detection compares the ATTEMPT to the configured primary (not
@@ -6115,7 +6163,10 @@ async function proposeTrades(input: {
       }
     );
   } catch (error) {
-    const reason = humanizeLlmTransportError(error, { provider, model, stepLabel: "Green Team proposal", timeoutMs: strategyLlmTimeoutMs(model, input.policy.llmReasoningEffort) });
+    let reason = humanizeLlmTransportError(error, { provider: lastBullAttemptProvider, model: lastBullAttemptModel, stepLabel: "Green Team proposal", timeoutMs: strategyLlmTimeoutMs(lastBullAttemptModel, input.policy.llmReasoningEffort) });
+    if (plannedBullAttempts.length > 1) {
+      reason = `${reason}  Failover chain exhausted (${plannedBullAttempts.length} Green Team endpoints).`;
+    }
     const failedStep: StrategyLlmStep = { ...bullStepBase, status: "failed", reason };
     recordStep(failedStep);
     throw new StrategyLlmStepFailure(reason, llmSteps, error);

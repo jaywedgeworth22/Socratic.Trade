@@ -370,6 +370,15 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   temperature and explicit output caps. Their prompts and payloads use
   `broker/paper` and `broker/live` wording so broker-hosted paper fills are
   never confused with real-capital fills.
+- **Green Team empty/malformed failover + credits hint (2026-08-17, #2577)** —
+  Green Team is the Bull proposer.  Empty HTTP-200 content already failed over
+  along `llmFallbackModels` (2026-07-31).  A malformed HTTP-200 JSON body now
+  fails over the same way (`strategy_llm_failover` reason `malformed_response`).
+  A rotating Green seat with no owner fallbacks appends two other eligible pool
+  models so a single glitching pick cannot kill the run.  When the cached
+  OpenRouter credits check is below threshold, the strategy `run_failed`
+  notification (and run summary) adds a distinct "credits look exhausted" hint
+  — empty responses are the observed symptom of a near-zero prepaid balance.
 - **LLM step timeout diagnostics (2026-06-30)** — strategy runs now audit
   `llm_step` start/failure rows and preserve failed Green Team context in the
   final `strategy_run` audit. Raw abort strings are translated into
