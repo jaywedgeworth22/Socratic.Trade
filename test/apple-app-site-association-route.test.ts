@@ -42,6 +42,10 @@ describe("GET /.well-known/apple-app-site-association", () => {
     // A bare "/*" would hijack every link to the site into the app.
     expect(paths).not.toContain("/*");
     expect(paths).not.toContain("*");
+    // Broker connect + strategy universe are Safari handoffs from iOS.  Claiming
+    // them here would swallow the tap back into a screen the phone does not have.
+    expect(paths).not.toContain("/console/connections");
+    expect(paths).not.toContain("/console/strategy");
   });
 
   it("stays anonymously reachable through the edge middleware once auth is configured", async () => {

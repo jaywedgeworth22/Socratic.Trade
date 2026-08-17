@@ -704,6 +704,17 @@ Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.
 
 Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
+## 2026-08-17 CURSOR — iOS release-readiness leftovers (#2560)
+
+Close-only / Wind Down and APNs client+server already landed on main.  Remaining
+in-repo gaps: `PrivacyInfo.xcprivacy`, Safari handoffs from Home/Settings to
+`/console/connections` and `/console/strategy` (not AASA-claimed), honest
+price-alert copy, and a pin that `ITSAppUsesNonExemptEncryption=false` matches
+`project.yml`.  Do not invent APNS_* credentials — owner adds the Apple .p8 set
+in Infisical when ready.
+
+Branch `cursor/ios-release-readiness-2560-b532`.  Rollout:
+`docs/rollouts/2026-08-17-ios-release-readiness.md`.
 
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 

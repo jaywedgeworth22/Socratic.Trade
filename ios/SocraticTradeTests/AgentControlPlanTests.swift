@@ -32,6 +32,59 @@ final class AgentControlPlanTests: XCTestCase {
         XCTAssertTrue(plan.startEnabled)
     }
 
+    func testActiveShowsCloseOnlyAndWindDown() {
+        let plan = AgentControlPlan.from(
+            systemState: "active",
+            runState: .running,
+            authority: "decide",
+            snapshotStale: false,
+            ready: true
+        )
+        XCTAssertTrue(plan.showCloseOnly)
+        XCTAssertTrue(plan.showWindDown)
+        XCTAssertTrue(plan.showStop)
+        XCTAssertFalse(plan.showStart)
+    }
+
+    func testCloseOnlyHidesItsOwnButtonAndKeepsWindDown() {
+        let plan = AgentControlPlan.from(
+            systemState: "close_only",
+            runState: .running,
+            authority: "propose",
+            snapshotStale: false,
+            ready: true
+        )
+        XCTAssertFalse(plan.showCloseOnly)
+        XCTAssertTrue(plan.showWindDown)
+        XCTAssertEqual(plan.primary, .resume)
+        XCTAssertEqual(plan.startLabel, "Resume Agent")
+    }
+
+    func testLiquidatingHidesWindDownAndKeepsCloseOnly() {
+        let plan = AgentControlPlan.from(
+            systemState: "liquidating",
+            runState: .running,
+            authority: "decide",
+            snapshotStale: false,
+            ready: true
+        )
+        XCTAssertTrue(plan.showCloseOnly)
+        XCTAssertFalse(plan.showWindDown)
+        XCTAssertEqual(plan.statusTitle, "Winding Down")
+    }
+
+    func testStoppedStillOffersProtectiveControls() {
+        let plan = AgentControlPlan.from(
+            systemState: "halted",
+            runState: .stopped,
+            authority: "propose",
+            snapshotStale: false,
+            ready: true
+        )
+        XCTAssertTrue(plan.showCloseOnly)
+        XCTAssertTrue(plan.showWindDown)
+    }
+
     func testStaleSnapshotDisablesStartOnly() {
         let plan = AgentControlPlan.from(
             systemState: "halted",

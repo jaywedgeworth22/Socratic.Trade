@@ -34,6 +34,7 @@ ios/
 ├── project.yml                         # XcodeGen source of truth
 ├── Socratic Trade.xcodeproj/           # generated — do not hand-edit
 └── SocraticTrade/
+    ├── PrivacyInfo.xcprivacy           # App Store privacy manifest (UserDefaults CA92.1)
     ├── SocraticTradeApp.swift          # App entry, deep links, launch
     ├── MobileStore.swift               # @Observable client store (auth, snapshot, commands)
     ├── MobileAPIClient.swift           # HTTP to /api/mobile

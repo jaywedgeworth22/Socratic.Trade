@@ -45,6 +45,13 @@ targets:
           - README.md
           - Info.plist
           - SocraticTrade.entitlements
+          - PrivacyInfo.xcprivacy
+      # App Store / TestFlight require a privacy manifest in the bundle.  Listed
+      # explicitly as a resource so `xcodegen generate` (Mac ship) copies it even
+      # if a later exclude-glob would drop unknown file types.
+      - path: SocraticTrade/PrivacyInfo.xcprivacy
+        buildPhase: resources
+        type: file
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: trade.socratic.app
