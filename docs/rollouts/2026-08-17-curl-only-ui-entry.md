@@ -42,7 +42,25 @@ admin diagnostics stay on-demand.  Audit filter is client-side over the existing
 
 ## Verification State
 
-Pre-testing commit.  Focused + full gate run after the PR opens.
+```
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean
+npx vitest run test/operator-diagnostics-ui.test.ts \
+  test/console-tabs-keyboard.test.ts \
+  test/admin-operation-route-wiring.test.ts \
+  test/admin-operation-route-behavior.test.ts \
+  test/admin-gate.test.ts \
+  test/learning-loop-backlog.test.ts \
+  test/learning-loop-followon.test.ts \
+  test/admin-operation-guard.test.ts
+                      # 8 files / 100 passed
+npm run build         # Compiled successfully; /admin/backtest-ic registered
+```
+
+Full `npm test` in this cloud VM started failing unrelated network/env cases
+(SEC 404, FRED, Voyage, usage-monitor) and then stopped emitting output after
+`vector-db-lease-fencing`.  Stopped that run.  Server routes under test above
+are unchanged and still pass.
 
 ## Next Steps & Blockers
 

@@ -714,7 +714,7 @@ This branch adds console/admin paths and does not change server behavior.
 - Admin: Factor Backtest (`GET /api/admin/backtest-ic`)
 - Activity: Audit tab (`GET /api/audit`)
 
-Branch `cursor/p3-curl-only-ui-2563-814a`.  Rollout: `docs/rollouts/2026-08-17-curl-only-ui-entry.md`.
+Branch `cursor/p3-curl-only-ui-2563-814a`.  PR #2793.  Rollout: `docs/rollouts/2026-08-17-curl-only-ui-entry.md`.
 
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 
