@@ -477,6 +477,25 @@ describe("llmAuthHeaders", () => {
   });
 });
 
+describe("OpenRouter provider routing", () => {
+  it("requires advertised parameters so GPT-5.4 nano does not 400 on the OpenAI endpoint", () => {
+    const body = buildLlmRequestBody(
+      { provider: "openrouter", transport: "chat-completions" },
+      {
+        model: "openai/gpt-5.4-nano",
+        systemPrompt: "sys",
+        userContent: "{}",
+        schema: SCHEMA,
+        maxOutputTokens: 1500,
+        reasoningEffort: "low"
+      }
+    ) as Record<string, any>;
+    expect(body.provider).toEqual({ require_parameters: true, allow_fallbacks: true });
+    expect(body.max_completion_tokens).toBeGreaterThan(0);
+    expect(body.temperature).toBeUndefined();
+  });
+});
+
 describe("extractLlmText", () => {
   it("OpenAI chat-completions content", () => {
     expect(extractLlmText({ choices: [{ message: { content: "{\"ok\":true}" } }] })).toBe("{\"ok\":true}");

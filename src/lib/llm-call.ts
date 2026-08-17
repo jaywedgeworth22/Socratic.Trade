@@ -134,6 +134,22 @@ export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown
       err instanceof Error ? err.message : String(err)
     );
   }
+  // Independent of classifier telemetry: OpenRouter's default router will still pick a
+  // provider that does not advertise every parameter we send. GPT-5.4 nano's OpenAI
+  // endpoint (status -2 on 2026-08-17) lists `max_tokens` but not `max_completion_tokens`;
+  // we send the latter on reasoning chat-completions, so the call 400s as "Provider
+  // returned error" instead of failing over to healthy Azure. require_parameters skips
+  // incompatible endpoints; allow_fallbacks still lets a later healthy provider serve
+  // if the first preferred one dies. Always apply this, even when enrichment failed.
+  const existingProvider =
+    base.provider && typeof base.provider === "object" && !Array.isArray(base.provider)
+      ? (base.provider as Record<string, unknown>)
+      : {};
+  base.provider = {
+    ...existingProvider,
+    require_parameters: existingProvider.require_parameters ?? true,
+    allow_fallbacks: existingProvider.allow_fallbacks ?? true
+  };
 }
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */

@@ -223,6 +223,20 @@ describe("local-DB fault classification", () => {
     expect(await auditKinds()).toContain("local_db_contention");
   });
 
+  it("a dispatch-lease-lost settle does NOT fail the pinecone lane or push provider_degraded", async () => {
+    const { ProviderDispatchLeaseLostError } = await import("../src/lib/db-provider-dispatch");
+    mocks.listPaginated.mockRejectedValue(new ProviderDispatchLeaseLostError("attempt-lease-lost"));
+
+    const { inventoryVectorRecordsByMetadata } = await import("../src/lib/vector-db");
+    await expect(inventoryVectorRecordsByMetadata({ userId: "local" })).rejects.toThrow(
+      /Provider dispatch lease was lost before outcome persistence/
+    );
+
+    expect(await pineconeFailureRows()).toHaveLength(0);
+    expect(providerDegradedCalls()).toHaveLength(0);
+    expect(await auditKinds()).not.toContain("local_db_contention");
+  });
+
   it("a real Pinecone network failure still fails the lane and pushes 'Pinecone connection failed'", async () => {
     mocks.listPaginated.mockRejectedValue(new Error(PINECONE_NETWORK_ERROR));
 

@@ -185,7 +185,9 @@ export function normalizeOpenRouterModelId(rawModel: string | undefined): string
     } else if (/^mistral-large/i.test(model)) {
       model = "mistralai/mistral-large";
     } else if (/^mistral-medium/i.test(model)) {
-      model = "mistralai/mistral-medium-3.5";
+      // OpenRouter's public id is the dash form. The period form (`mistral-medium-3.5`) 404s
+      // as "not a valid model ID" — that is the 2026-08-17 Green Team failure.
+      model = "mistralai/mistral-medium-3-5";
     } else if (/^mistral-small/i.test(model)) {
       model = "mistralai/mistral-small-2603";
     } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
@@ -207,6 +209,10 @@ export function normalizeOpenRouterModelId(rawModel: string | undefined): string
     }
   }
   model = model.replace(/^openrouter\//i, "").replace(/^xai\//i, "x-ai/").replace(/^moonshot\//i, "moonshotai/");
+  // Remap a leftover period slug even when the caller already sent a vendor-prefixed id.
+  if (/^mistralai\/mistral-medium-3\.5(?::|$)/i.test(model)) {
+    model = model.replace(/mistral-medium-3\.5/i, "mistral-medium-3-5");
+  }
   // Dead / previous-class OpenRouter aliases → current Flash / Pro class.
   if (/^google\/gemini-flash-latest(?::batch)?$/i.test(model) || /^google\/gemini-3\.6-flash(?::batch)?$/i.test(model)) {
     return /:batch$/i.test(model) ? OPENROUTER_GEMINI_FLASH_BATCH : OPENROUTER_GEMINI_FLASH;
