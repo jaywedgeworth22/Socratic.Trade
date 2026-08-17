@@ -66,12 +66,24 @@ when p50 > 4s.  After 15 minutes without a new sample the lane is probed again.
 
 ## Verification State
 
-- Focused vitest on the #2550 files plus history / usage-compliance / connection-health
-  after the setupFiles reset.
-- `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` (recorded in the PR).
-- This cloud VM injects provider keys (Massive alt, ROIC, Tiingo, Pushover, SiliconFlow,
-  …).  Those are not part of this change; the suite is run with those names unset so
-  tests that assume a keyless process match CI.
+Commands run:
+
+```
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean
+npx vitest run test/peer-lane-backoff.test.ts \
+  test/usage-monitor-knobs-backoff.test.ts test/usage-budget.test.ts \
+  test/usage-monitor-push.test.ts test/api-clients-congress.test.ts \
+  test/congress-stream.test.ts test/alert-center-incident-grouping.test.ts
+  # 7 files, 94 passed
+npm test              # 6913 passed, 51 skipped; 1 failed
+npm run build         # Next.js 16.3.1 webpack build succeeded
+```
+
+The one `npm test` failure is `test/server-metrics.test.ts` expecting
+`usesLocalHost: true` while this cloud VM has Hetzner/Coolify host env, so the
+route takes the remote-host path.  Unrelated to CT/UM consume.  CI does not
+inject that host config.
 
 ## Next Steps & Blockers
 
