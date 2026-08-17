@@ -135,6 +135,7 @@ describe("market enrichment provider", () => {
     expect(provider.name).not.toContain("congress.trade");
     expect(provider.name).not.toMatch(/(^|\+)fmp($|\+)/);
     expect(provider.name).not.toContain("quiverquant");
+    expect(provider.name).not.toContain("filingapi");
   });
 
   it("keeps the unofficial Webull quote bridge disabled by default", async () => {
@@ -3322,18 +3323,21 @@ describe("enrichment symbol budget covers the full scan candidate set (starvatio
 });
 
 
-describe("FMP / Quiver direct access retired (owner 2026-08-04)", () => {
-  it("never registers FMP or Quiver even when keys are present", async () => {
+describe("FMP / Quiver / FilingAPI direct access retired", () => {
+  it("never registers FMP, Quiver, or FilingAPI even when keys are present", async () => {
     process.env.FMP_API_KEY = "should-not-register";
     process.env.QUIVER_API_KEY = "should-not-register";
+    process.env.FILINGAPI = "should-not-register";
     process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED = "off"; // isolate cascade name
     const { getEnrichmentProvider } = await import("../src/lib/data-providers");
     const provider = getEnrichmentProvider();
     expect(provider.name).not.toMatch(/(^|\+)fmp($|\+)/);
     expect(provider.name).not.toContain("quiverquant");
     expect(provider.name).not.toContain("fmp-rapidapi");
+    expect(provider.name).not.toContain("filingapi");
     delete process.env.FMP_API_KEY;
     delete process.env.QUIVER_API_KEY;
+    delete process.env.FILINGAPI;
     delete process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED;
   });
 
@@ -3343,6 +3347,16 @@ describe("FMP / Quiver direct access retired (owner 2026-08-04)", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const provider = new FmpEnrichmentProvider("test-key");
     await expect(provider.enrich(["AAPL"])).resolves.toEqual({});
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fetchWithRetry refuses filingapi.dev before opening a socket", async () => {
+    const { fetchWithRetry } = await import("../src/lib/data-providers");
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(
+      fetchWithRetry("https://filingapi.dev/v1/company/AAPL", { cache: "no-store" }, { retries: 0 })
+    ).rejects.toThrow(/retired vendor host refused/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

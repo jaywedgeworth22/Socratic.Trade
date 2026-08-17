@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseFilingApiCompany,
-  parseFilingApiEarningsCalendar,
-  parseFilingApiInsiderSummary,
   parseRealTimeFinanceNews,
   parseRealTimeFinanceQuote,
   parseSeekingAlphaArticles,
@@ -18,40 +15,6 @@ describe("secXbrlEnrichmentEnabled default", () => {
     expect(secXbrlEnrichmentEnabled()).toBe(true);
     if (prev === undefined) delete process.env.SEC_XBRL_ENRICHMENT_ENABLED;
     else process.env.SEC_XBRL_ENRICHMENT_ENABLED = prev;
-  });
-});
-
-describe("FilingAPI.dev parsers", () => {
-  it("parses company sector/industry", () => {
-    expect(
-      parseFilingApiCompany({
-        ticker: "AAPL",
-        sector: "Technology",
-        industry: "Consumer Electronics",
-        filing_count: 5
-      })
-    ).toEqual({
-      companyName: "AAPL",
-      sector: "Technology",
-      industry: "Consumer Electronics"
-    });
-  });
-
-  it("parses earnings calendar into daysToEarnings", () => {
-    const now = Date.parse("2026-07-26T12:00:00Z");
-    const result = parseFilingApiEarningsCalendar(
-      {
-        earnings: [{ symbol: "AAPL", date: "2026-07-30", hour: "amc" }]
-      },
-      "AAPL",
-      now
-    );
-    expect(result.daysToEarnings).toBe(4);
-  });
-
-  it("maps insider sell_ratio to sentiment", () => {
-    expect(parseFilingApiInsiderSummary({ sell_ratio: 1, signal: "net_selling" }).insiderSentiment).toBe(10);
-    expect(parseFilingApiInsiderSummary({ sell_ratio: 0, signal: "net_buying" }).insiderSentiment).toBe(90);
   });
 });
 

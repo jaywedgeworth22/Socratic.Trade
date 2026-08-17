@@ -191,7 +191,7 @@ export class NasdaqCalendarEnrichmentProvider implements MarketEnrichmentProvide
     if (normalized.length === 0) return result;
 
     // Skip symbols an earlier-registered cascade provider already covered for this field this
-    // cycle — mirrors FilingApiEnrichmentProvider's `context?.coveredFields` short-circuit.
+    // cycle — same `context?.coveredFields` short-circuit the scarce paid lanes use.
     const remaining = new Set<string>();
     for (const symbol of normalized) {
       const covered = context?.coveredFields?.[symbol];

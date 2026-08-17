@@ -1,3 +1,4 @@
+- **[Socratic.Trade][CURSOR] Retire FilingAPI.dev — use ROIC.ai only — IN PROGRESS 2026-08-17 (branch `cursor/retire-filingapi-roic-de61`, closes #2778).** No live HTTP to filingapi.dev. Health lane and cascade registration removed. ROIC + SEC EDGAR unchanged. Do not buy Plus / do not charge Stripe.
 - **[Socratic.Trade][GROK] Strategy-run model slugs + Pinecone lease-lost mislabel — IN PR #2771 2026-08-17 (branch `grok/strategy-run-model-slugs`, issue #2770, auto-merge armed).** Owner screenshot 8:34–8:38am CT: Green failed on OpenRouter `mistralai/mistral-medium-3.5` (invalid; wire slug is `mistral-medium-3-5`) and `gpt-5.4-nano` 400 Provider returned error (slug is correct; OpenAI endpoint status -2 / no `max_completion_tokens`, Azure is healthy). Pinecone + OpenRouter rerank "connection failed" are dispatch-lease-lost during the 13:34Z UptimeRobot blip, not vendor outages. Last-2d Pinecone otherwise is the known WU-fuse park.
 - **[Socratic.Trade][GROK] Flip VECTOR_ASOF_STRICT=on — COMPLETED 2026-08-16 (Infisical prod on; receipt PR #2764).** Was off. Coolify restart finished. Health 200. Live desk still omits asOf.
 - **[Socratic.Trade][GROK] ROIC Individual harvest (breadth then deepen then archive) — COMPLETED/MERGED 2026-08-17 #2763 `d9a7fecb`.**  Local-first persist; latest-first universe; 20q deepen high-interest; archive remaining locally.  Pinecone fuse no longer stops ROIC fetch.
@@ -431,14 +432,13 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Retire FilingAPI.dev — use ROIC.ai only — IN PROGRESS 2026-08-17 (branch `cursor/retire-filingapi-roic-de61`, closes #2778).** No live HTTP to filingapi.dev. Health lane and cascade registration removed. ROIC + SEC EDGAR unchanged. Do not buy Plus / do not charge Stripe.
 - **[Socratic.Trade][CURSOR] Green-Team empty/malformed failover + credits-exhausted hint — IN PROGRESS 2026-08-17 (branch `cursor/green-empty-failover-credits-7003`, issue #2577).** Green=Bull already had empty-content failover when `llmFallbackModels` is set. Adding malformed HTTP-200 failover, implicit rotation-pool fallbacks (cap 2) when Green is rotating and no owner fallbacks, and a credits-exhausted sentence on strategy `run_failed` when the OpenRouter check is below threshold.
 - **2026-08-17 — GROK — IN PROGRESS — Effort-board hygiene + this-session control board.** Zero open PRs on 2026-08-17. Every prior In Progress row below was already merged (PRs #2771/#2741/#2704/#2692/#2659/#2628/#2597/#2581/#2573/#2538/#2536/#2531/#2498/#2490/#2489/#2435/#2433). First lines preserved; rows moved to Completed so effort-issues-sync closes stale `state:in-progress` mirrors.
 - **2026-08-16 — GROK — IN PROGRESS — Review UX: fast approve, live vs proposed price, Retry Red Team, clearer agent controls.** Issue #2752. Worktree `~/apps/trading-grok-review-ux` (remote branch gone; local residue).
 - **2026-08-15 — GROK — IN PROGRESS — Website favicon: cropped offset candlestick ST, transparent.** Issue #2731. Branch `grok/favicon-crop-st` @ `~/apps/trading-grok`.
 - **[Socratic.Trade][GROK] Fix ST Litestream wedge and prefer Pushover over Resend — OPEN 2026-08-14.** Issue #2697.
 - **[Socratic.Trade][MONET] Durable litestream remote-inventory cache (PR #2665 leftover) — IN PROGRESS.** Issue #2694.
-- **[Socratic.Trade][OWNER] FilingAPI Plus checkout.** Stored FILINGAPI key is still 401. Do not charge ST Stripe. Needed for remaining L2/universe ingest after #2741.
-
 ## Deployed
 - **2026-08-05 — GROK — Board hygiene:** moved 3 Active/Planned → Deployed.
 - **[Socratic.Trade][CURSOR] Free-first enrichment cascade + coverage report — Completed 2026-07-27.** Merged #2230 (`c93f1988`) to main; auto-deployed (prod health sha matches). FilingAPI/SEC XBRL default ON/free-first/coverage admin. Superseded closed #2224.
@@ -638,6 +638,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][OWNER] FilingAPI Plus checkout.** SUPERSEDED 2026-08-17 — FilingAPI.dev retired in favor of ROIC.ai + SEC EDGAR. Do not charge ST Stripe. Do not buy Plus. See `cursor/retire-filingapi-roic-de61` / #2778.
 - **2026-08-17 — GROK — BOARD HYGIENE — moved the following verified-merged rows out of In Progress (first lines unchanged).**
 - **[Socratic.Trade][GROK] Litestream L2/L3 + FilingAPI + ROIC earnings universe ingest — COMPLETED (merged) / DEPLOYED 2026-08-16 (PR **#2741**; branch `grok/litestream-filingapi-roic`, issue #2738 closed).**  L1 hole gone (first file `4a86-4aa5`).  L2 still empty at merge time (B2 rate-limited after the delete).  FilingAPI stored key remains 401 — needs Plus checkout.  ROIC retrieval + universe ingest shipped.
 - **2026-08-14 — GROK — COMPLETED (docs in UM #1180) — Backup restore-proof (no ST code).  Litestream daemon+socket healthy (`source=ipc`).  Latest B2 restore FAIL: non-contiguous LTX 43206→43225; last contiguous txid restore fails integrity_check.  Host 6h dump quick_check ok (age 3606s).  #2683/#2685 already merged — no duplicate inventory/IPC work.  Fleet receipt in Usage-Monitor `docs/rollouts/2026-08-14-backup-restore-proof.md`.

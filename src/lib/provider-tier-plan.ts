@@ -496,7 +496,13 @@ export function roicTranscriptQuartersForPlan(tier: string | null | undefined): 
 export function isRetiredMarketDataService(service: string): boolean {
   const id = normalizePlanTierServiceId(service);
   // Keep in sync with retired-direct-vendors + Connections health intentional OFF.
-  return id === "fmp" || id === "quiverquant" || id === "quiver" || id === "unusual_whales";
+  return (
+    id === "fmp" ||
+    id === "quiverquant" ||
+    id === "quiver" ||
+    id === "unusual_whales" ||
+    id === "filingapi"
+  );
 }
 
 /**

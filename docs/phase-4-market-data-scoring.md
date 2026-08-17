@@ -220,8 +220,8 @@ enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeS
   RapidAPI now declare `suppliesFields` so they participate in Wave C. Alpha Vantage RapidAPI
   also supplies NEWS_SENTIMENT when sentiment/headlines remain gaps. Keyless `nasdaq-quote`
   joins the free wave beside Yahoo. ROIC resolves from `ROIC_API_KEY` (profile-first).
-  FilingAPI.dev (`FILINGAPI`) supplies sector/industry/daysToEarnings/insiderSentiment in
-  wave C. SEC XBRL is default ON. Additional RapidAPI scarce lanes: yh-finance-apidojo,
+  FilingAPI.dev is retired (2026-08-17); ROIC.ai covers fundamentals/transcripts and
+  SEC EDGAR covers 10-K/10-Q bodies. SEC XBRL is default ON. Additional RapidAPI scarce lanes: yh-finance-apidojo,
   real-time-finance-data, seeking-alpha-rapidapi.
 - **Enrichment coverage report** — after each cascade run, Admin → Enrichment Coverage
   (`/admin/enrichment-coverage`), `/api/admin/enrichment-coverage`, and ops snapshot
