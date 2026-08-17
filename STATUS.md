@@ -640,6 +640,13 @@ Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-1
 Owner asked for a UX + a11y + parity audit of desktop website, mobile website, and native iOS.  PWA is out of scope except leftover coupling.  Report: `docs/audits/2026-08-17-web-ios-parity.md`.  No product code.  Highest findings: web ignores `?proposal=` / `?symbol=`; iOS ignores `?symbol=`; iOS Activity has no Alert Center so `run_failed` taps land empty; dead `app/mobile/components` tree still in repo.
 
 Branch `cursor/web-ios-parity-audit-e83a`.  Rollout: `docs/rollouts/2026-08-17-web-ios-parity-audit.md`.
+## 2026-08-17 CURSOR — Trading-outcomes audit (report-only)
+
+Read-only audit of macro/regime, Green/Red/Bull, proposal→fill, risk, backtests, benchmarks, slippage, leakage, paper/live pooling, and learning.  No trades.  No money-path edits.
+
+Highest P1s: propose-time regime uses 24h-cached VIX while the vol brake uses live VIX; `compareGreenRedParity` is never called in production; paper lessons pool into live (owner-directed) while Phase 7 still describes a transfer gate; `oosPurgeEmbargo` defaults off and IC sample caps at 500; paper cost default is 1 bps vs OOS 20 bps; #2280 slice 2 (PIT masking) still blocks LLM-in-history eval.
+
+Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-outcomes-audit-c37a`.  Rollout: `docs/rollouts/2026-08-17-trading-outcomes-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
