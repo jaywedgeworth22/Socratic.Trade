@@ -114,3 +114,51 @@ describe("openrouter credit status", () => {
     expect(stale.ok).toBe(true);
   });
 });
+
+describe("formatOpenRouterCreditsExhaustedHint", () => {
+  it("returns undefined when the check is healthy or missing", async () => {
+    const { formatOpenRouterCreditsExhaustedHint } = await import("../src/lib/openrouter-credits");
+    expect(formatOpenRouterCreditsExhaustedHint(null)).toBeUndefined();
+    expect(formatOpenRouterCreditsExhaustedHint(undefined)).toBeUndefined();
+    expect(
+      formatOpenRouterCreditsExhaustedHint({
+        ok: true,
+        remainingUsd: 12,
+        totalUsd: 20,
+        usedUsd: 8,
+        thresholdUsd: 3,
+        checkedAt: "2026-08-17T00:00:00.000Z"
+      })
+    ).toBeUndefined();
+  });
+
+  it("returns undefined on a fail-open read (ok=false must come with a real remaining balance)", async () => {
+    const { formatOpenRouterCreditsExhaustedHint } = await import("../src/lib/openrouter-credits");
+    expect(
+      formatOpenRouterCreditsExhaustedHint({
+        ok: false,
+        remainingUsd: null,
+        totalUsd: null,
+        usedUsd: null,
+        thresholdUsd: 3,
+        checkedAt: "2026-08-17T00:00:00.000Z",
+        error: "credits check HTTP 500"
+      })
+    ).toBeUndefined();
+  });
+
+  it("names the remaining balance and the alert floor when credits are below threshold", async () => {
+    const { formatOpenRouterCreditsExhaustedHint } = await import("../src/lib/openrouter-credits");
+    const hint = formatOpenRouterCreditsExhaustedHint({
+      ok: false,
+      remainingUsd: 0.12,
+      totalUsd: 10,
+      usedUsd: 9.88,
+      thresholdUsd: 3,
+      checkedAt: "2026-08-17T00:00:00.000Z"
+    });
+    expect(hint).toMatch(/OpenRouter credits look exhausted \(\$0\.12 remaining; alert floor \$3\.00\)/);
+    expect(hint).toMatch(/Empty LLM responses are the usual symptom/);
+    expect(hint).toMatch(/Top up OpenRouter/);
+  });
+});

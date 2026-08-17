@@ -253,6 +253,7 @@ describe("resolveModelRotationForRun", () => {
       // Per-team reasoning (2026-07-10): a rotating seat auto-sets the served model's curated
       // recommended effort on the run-scoped override.
       expect(out.llmReasoningEffort).toBeTruthy();
+      expect(out.greenRotationPool).toEqual(pool);
       out.commit(); // commit-late: the representation ledger only grows once the run serves the LLM
     }
   });
@@ -468,6 +469,16 @@ describe("recommendedReasoningEffortForModel (curated rotation efforts)", () => 
       if (reasoningCapabilityForModel(model)) expect(served, model).toBe(recommended);
       else expect(served, model).toBeUndefined();
     }
+  });
+});
+
+describe("implicitGreenRotationFallbacks", () => {
+  it("takes the next two unused pool models after the primary", async () => {
+    const { implicitGreenRotationFallbacks, ROTATION_IMPLICIT_GREEN_FAILOVERS } = await import("../src/lib/model-rotation");
+    expect(ROTATION_IMPLICIT_GREEN_FAILOVERS).toBe(2);
+    expect(implicitGreenRotationFallbacks(["a", "b", "c", "d"], "b")).toEqual(["a", "c"]);
+    expect(implicitGreenRotationFallbacks(["a", "b", "c"], "a", ["c"])).toEqual(["b"]);
+    expect(implicitGreenRotationFallbacks(["a"], "a")).toEqual([]);
   });
 });
 

@@ -120,3 +120,32 @@ export async function getOpenRouterCreditStatus(
     };
   }
 }
+
+/**
+ * Distinct owner-facing hint when a strategy run failed while the cached OpenRouter credits
+ * check is already below threshold.  Empty HTTP-200 bodies are the observed symptom of a
+ * near-zero prepaid balance (issue #2577 / 2026-08-06 Green Team session).  Returns undefined
+ * unless the balance was actually read and is below the floor — a fail-open read error must
+ * never invent a credits cause.
+ */
+export function formatOpenRouterCreditsExhaustedHint(
+  status: OpenRouterCreditStatus | null | undefined
+): string | undefined {
+  if (!status || status.ok) return undefined;
+  if (status.remainingUsd == null || !Number.isFinite(status.remainingUsd)) return undefined;
+  const remaining = status.remainingUsd.toFixed(2);
+  const floor = status.thresholdUsd.toFixed(2);
+  return `OpenRouter credits look exhausted ($${remaining} remaining; alert floor $${floor}).  Empty LLM responses are the usual symptom.  Top up OpenRouter.`;
+}
+
+/** Best-effort: read the cached credits check and format a hint.  Never throws. */
+export async function maybeOpenRouterCreditsExhaustedHint(
+  nowMs: number = Date.now(),
+  fetcher: typeof fetch = fetch
+): Promise<string | undefined> {
+  try {
+    return formatOpenRouterCreditsExhaustedHint(await getOpenRouterCreditStatus(nowMs, fetcher));
+  } catch {
+    return undefined;
+  }
+}

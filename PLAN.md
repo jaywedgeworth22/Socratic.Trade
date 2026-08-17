@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-17 CURSOR — Green-Team empty/malformed failover + credits hint (`cursor/green-empty-failover-credits-7003`, #2577).** Green Team is the Bull proposer; empty HTTP-200 failover already existed when `llmFallbackModels` is set. Close the remaining Aug 6 gaps: malformed HTTP-200 JSON failover, implicit rotation-pool fallbacks (2) when Green is rotating with no owner fallbacks, and a credits-exhausted hint on strategy `run_failed` when the OpenRouter check is below threshold. Rollout: `docs/rollouts/2026-08-17-green-empty-failover-credits.md`.
+
 > **2026-08-17 GROK — strategy-run slugs + lease-lost mislabel (`grok/strategy-run-model-slugs`).**  Wire Mistral Medium as `mistralai/mistral-medium-3-5`.  Attach OpenRouter `require_parameters` + `allow_fallbacks` so GPT-5.4 nano does not 400 on the down OpenAI endpoint.  Stop paging dispatch-lease-lost as Pinecone/rerank connection failures.  Issue #2770.  Rollout: `docs/rollouts/2026-08-17-strategy-run-model-slugs.md`.
 
 

@@ -113,6 +113,25 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
  *  picked (weight 1, never 0). */
 export const ROTATION_UNDERREPRESENTED_WEIGHT = 2;
 export const ROTATION_REPRESENTED_WEIGHT = 1;
+/**
+ * When the Green seat is rotating and the owner has not configured `llmFallbackModels`,
+ * append this many other eligible pool models as implicit failover for empty/malformed
+ * HTTP-200s (issue #2577).  Rotation otherwise serves one model per run, so a glitching
+ * pick used to kill the whole run.  Cap stays small — a credits-exhausted session must
+ * not fan out across the full catalog.
+ */
+export const ROTATION_IMPLICIT_GREEN_FAILOVERS = 2;
+
+/** Other rotation-pool models to try after a rotating Green primary, excluding the pick
+ *  and any owner-configured fallbacks.  Order follows the curated pool (provider-interleaved). */
+export function implicitGreenRotationFallbacks(
+  pool: readonly string[],
+  primary: string,
+  explicit: readonly string[] = []
+): string[] {
+  const taken = new Set([primary, ...explicit].map((m) => m.trim()).filter(Boolean));
+  return pool.filter((model) => !taken.has(model)).slice(0, ROTATION_IMPLICIT_GREEN_FAILOVERS);
+}
 /** Trailing window for representation counts — safely inside the 90-day audit_events retention
  *  (`model_rotation_pick` is not an observability-pruned kind; src/lib/audit-prune.ts). */
 export const ROTATION_REPRESENTATION_WINDOW_DAYS = 30;
@@ -310,6 +329,10 @@ export async function resolveModelRotationForRun(input: {
   redTeamReasoningEffort?: LlmReasoningEffort;
   /** Set when a rotating GREEN/RED seat resolved to "" so the run can show the honest message. */
   emptyReason?: "empty_pool" | "availability_unavailable";
+  /** Eligible Green rotation pool for this user (credential-filtered).  Present only when the
+   *  Green seat is rotating and the pool is non-empty — used to append implicit failover
+   *  models when `llmFallbackModels` is unset (issue #2577). */
+  greenRotationPool?: string[];
   commit: () => void;
 }> {
   const rotateGreen = isModelRotationSentinel(input.policy.llmModel);
@@ -412,6 +435,7 @@ export async function resolveModelRotationForRun(input: {
     }
     return {
       ...out,
+      ...(rotateGreen && pool.length > 0 ? { greenRotationPool: pool } : {}),
       commit: () => {
         for (const runCommit of commits) runCommit();
       }

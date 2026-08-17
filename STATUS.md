@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Green-Team empty/malformed failover + credits hint (#2577)
+
+Aug 6: five Green Team runs died on OpenRouter `Empty response` across rotated models while the credits-low monitor flapped.  Green Team **is** the Bull proposer and already failed over on empty HTTP-200s when `llmFallbackModels` was set (#2313 / 2026-07-31).  Remaining gaps: malformed HTTP-200 JSON did not fail over; a rotating Green seat with no owner fallbacks was a single-model chain; `run_failed` never named a below-threshold OpenRouter balance.
+
+Branch `cursor/green-empty-failover-credits-7003`.  Rollout: `docs/rollouts/2026-08-17-green-empty-failover-credits.md`.
+
 ## 2026-08-17 GROK — Effort-board hygiene
 
 In Progress rebuilt to leftover real work. Verified-merged rows moved to Completed. Landing this mirror so GitHub effort issues close.
