@@ -700,8 +700,8 @@ re-probe while Cboe serves.
 Already closed on this HEAD: T sub-penny 422 (#2751), UND_ERR_SOCKET single-blip halt
 (#2720), RH MCP extra args (#2576), ROIC 714-row crash loop (#2750).
 
-Branch `cursor/brokers-data-cascade-audit-bed0`.  Rollout:
-`docs/rollouts/2026-08-17-brokers-data-cascade-audit.md`.
+Branch `cursor/brokers-data-cascade-audit-bed0`.  PR #2805.
+Rollout: `docs/rollouts/2026-08-17-brokers-data-cascade-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
