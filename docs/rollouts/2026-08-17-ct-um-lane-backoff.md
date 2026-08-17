@@ -44,6 +44,8 @@ when p50 > 4s.  After 15 minutes without a new sample the lane is probed again.
 - `test/api-clients-congress.test.ts`
 - `test/congress-stream.test.ts`
 - `test/alert-center-incident-grouping.test.ts`
+- `test/setup-peer-lane-cleanup.ts` (new; vitest `setupFiles` afterEach)
+- `vitest.config.ts`
 - `docs/usage-monitor-integration.md`
 - `docs/congress-trade-consume.md`
 - `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`
@@ -57,11 +59,19 @@ when p50 > 4s.  After 15 minutes without a new sample the lane is probed again.
   does not page after five reconnects.
 - Alert grouping still falls back to title when `payload.service` is absent so
   RAG / LLM / tier-downgrade producers do not collapse into one row.
+- Peer-lane samples live on `globalThis` and vitest uses `maxWorkers: 1`, so a
+  slow-lane fixture leaked into later files (history, UM flush, health).  The
+  cleanup setup file only imports `peer-lane-backoff` (no DB) and resets after
+  every test.
 
 ## Verification State
 
-Focused vitest on the files above, then `npm run lint`, `npx tsc --noEmit`,
-`npm test`, `npm run build` (recorded in the PR).
+- Focused vitest on the #2550 files plus history / usage-compliance / connection-health
+  after the setupFiles reset.
+- `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` (recorded in the PR).
+- This cloud VM injects provider keys (Massive alt, ROIC, Tiingo, Pushover, SiliconFlow,
+  …).  Those are not part of this change; the suite is run with those names unset so
+  tests that assume a keyless process match CI.
 
 ## Next Steps & Blockers
 

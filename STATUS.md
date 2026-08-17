@@ -960,7 +960,8 @@ Branch `cursor/console-a11y-batch-08ac`.  PR #2795.  Rollout: `docs/rollouts/202
 
 ST consumers of Congress.Trade and Usage-Monitor now widen backoff when those
 lanes are slow (p50 > 2s) and treat SSE flaps as soft.  Console stays up.  No
-CT/UM server changes.
+CT/UM server changes.  Vitest `setupFiles` resets peer-lane samples after each
+test so `maxWorkers: 1` cannot leak a slow p50 into later files.
 
 Branch `cursor/ct-um-lane-backoff-7cf2`.  Rollout: `docs/rollouts/2026-08-17-ct-um-lane-backoff.md`.
 

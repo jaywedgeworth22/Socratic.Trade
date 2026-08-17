@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+const priorReadToken = process.env.USAGE_READ_TOKEN;
+
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-umknobs-${randomUUID()}.db`)}`;
 });
@@ -25,7 +27,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete process.env.USAGE_MONITOR_BASE_URL;
-  delete process.env.USAGE_READ_TOKEN;
+  if (priorReadToken === undefined) delete process.env.USAGE_READ_TOKEN;
+  else process.env.USAGE_READ_TOKEN = priorReadToken;
   const { resetUsageMonitorKnobsCacheForTests } = await import("../src/lib/usage-monitor-knobs");
   const { resetPeerLaneBackoffForTests } = await import("../src/lib/peer-lane-backoff");
   resetUsageMonitorKnobsCacheForTests();
