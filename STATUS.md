@@ -907,6 +907,16 @@ Already closed on this HEAD: T sub-penny 422 (#2751), UND_ERR_SOCKET single-blip
 
 Branch `cursor/brokers-data-cascade-audit-bed0`.  PR #2805.
 Rollout: `docs/rollouts/2026-08-17-brokers-data-cascade-audit.md`.
+## 2026-08-17 CURSOR — Remove leftover installable PWA
+
+Owner never uses the PWA and asked to disable/delete it.  2026-08-16 only
+redirected `/mobile` and left the standalone manifest, `appleWebApp`, and dead
+PWA client in place.  This branch deletes the PWA client, stops advertising an
+installable web app, 410s `/manifest.webmanifest`, unregisters leftover service
+workers, and keeps `/api/mobile/*` + responsive `/console` + native iOS.
+
+Branch `cursor/retire-pwa-72cb`.  Rollout:
+`docs/rollouts/2026-08-17-retire-pwa.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
