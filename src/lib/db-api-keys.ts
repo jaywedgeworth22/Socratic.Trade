@@ -278,7 +278,6 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   fmp: "FMP_API_KEY",
   alphavantage: "ALPHAVANTAGE_API_KEY",
   roic: "ROIC_API_KEY",
-  // Leftover env name only — FilingAPI.dev is retired (2026-08-17). Product code never calls it.
   filingapi: "FILINGAPI",
   marketstack: "MARKETSTACK_API_KEY",
   fred: "FRED_API_KEY",
@@ -400,8 +399,6 @@ export function apiKeyEnvVarForService(service: string): string | undefined {
   if (canonical === "massive" && !process.env.MASSIVE_API_KEY && process.env.MASSIVE_API_KEY_ALT) {
     return "MASSIVE_API_KEY_ALT";
   }
-  // Leftover Infisical/env names still resolve so Connections can show the retired row.
-  // Product code never registers or probes filingapi.
   if (canonical === "filingapi") {
     for (const envVar of ["FILINGAPI", "FILINGAPI_KEY", "FILING_API_KEY"] as const) {
       if ((process.env[envVar] ?? "").trim()) return envVar;

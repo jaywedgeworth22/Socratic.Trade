@@ -310,7 +310,7 @@ export function logApiHealth(opts: {
       }
     })();
 
-    // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales / FilingAPI are PRODUCT-RETIRED direct
+    // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales are PRODUCT-RETIRED direct
     // lanes (see retired-direct-vendors.ts). Admin Connections already renders them as muted OFF
     // rather than red STOPPED; a residual call site that still touches one must not additionally
     // page the operator about a vendor we deliberately stopped using.

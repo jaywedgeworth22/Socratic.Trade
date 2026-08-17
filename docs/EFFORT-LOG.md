@@ -586,6 +586,13 @@ As of 2026-07-08 (assignment-rule update).
 - **2026-08-17 — GROK — IN PROGRESS — Effort-board hygiene + this-session control board.** Zero open PRs on 2026-08-17. Every prior In Progress row below was already merged (PRs #2771/#2741/#2704/#2692/#2659/#2628/#2597/#2581/#2573/#2538/#2536/#2531/#2498/#2490/#2489/#2435/#2433). First lines preserved; rows moved to Completed so effort-issues-sync closes stale `state:in-progress` mirrors.
 - **2026-08-15 — GROK — IN PROGRESS — Website favicon: cropped offset candlestick ST, transparent.** Issue #2731. Cursor PR #2785 (`cursor/favicon-crop-st-e6ee`) owns the crop. Do not steal.
 
+- **[Socratic.Trade][CURSOR] Green-Team empty/malformed failover + credits-exhausted hint — IN PROGRESS 2026-08-17 (branch `cursor/green-empty-failover-credits-7003`, issue #2577).** Green=Bull already had empty-content failover when `llmFallbackModels` is set. Adding malformed HTTP-200 failover, implicit rotation-pool fallbacks (cap 2) when Green is rotating and no owner fallbacks, and a credits-exhausted sentence on strategy `run_failed` when the OpenRouter check is below threshold.
+- **2026-08-17 — GROK — IN PROGRESS — Effort-board hygiene + this-session control board.** Zero open PRs on 2026-08-17. Every prior In Progress row below was already merged (PRs #2771/#2741/#2704/#2692/#2659/#2628/#2597/#2581/#2573/#2538/#2536/#2531/#2498/#2490/#2489/#2435/#2433). First lines preserved; rows moved to Completed so effort-issues-sync closes stale `state:in-progress` mirrors.
+- **2026-08-16 — GROK — IN PROGRESS — Review UX: fast approve, live vs proposed price, Retry Red Team, clearer agent controls.** Issue #2752. Worktree `~/apps/trading-grok-review-ux` (remote branch gone; local residue).
+- **2026-08-15 — GROK — IN PROGRESS — Website favicon: cropped offset candlestick ST, transparent.** Issue #2731. Branch `grok/favicon-crop-st` @ `~/apps/trading-grok`.
+- **[Socratic.Trade][GROK] Fix ST Litestream wedge and prefer Pushover over Resend — OPEN 2026-08-14.** Issue #2697.
+- **[Socratic.Trade][MONET] Durable litestream remote-inventory cache (PR #2665 leftover) — IN PROGRESS.** Issue #2694.
+- **[Socratic.Trade][OWNER] FilingAPI Plus checkout.** Stored FILINGAPI key is still 401. Do not charge ST Stripe. Needed for remaining L2/universe ingest after #2741.
 
 ## Deployed
 - **2026-08-05 — GROK — Board hygiene:** moved 3 Active/Planned → Deployed.

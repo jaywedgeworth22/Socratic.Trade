@@ -157,16 +157,18 @@ credential reserves against one transactional authority.
 **Known gap, updated 2026-08-02** (the original 2026-07-10 version of this note
 said `HARD_DEFAULTS` had "exactly four" entries — that count went stale as
 more providers were added since and is corrected here): `provider-rate-limit.ts`'s
-`HARD_DEFAULTS` pacing map now covers 12 providers — `finnhub`, `alpha-vantage`,
+`HARD_DEFAULTS` pacing map now covers 13 providers — `finnhub`, `alpha-vantage`,
 `yahoo-finance`, `nasdaq-quote`, `twelvedata`, `mboum-finance`, `yahoo-finance15`,
 `alpha-vantage-rapidapi`, `yh-finance-apidojo`, `real-time-finance-data`,
-`seeking-alpha-rapidapi`, and `roic`. FilingAPI.dev was removed 2026-08-17
-(retired; no live HTTP). The SEPARATE `RATE_QUOTAS` windowed-budget map (see the
-RapidAPI section above for why the nine RapidAPI-hosted lanes use their own,
-third, budget mechanism instead) now covers five: `twelvedata`, `tiingo`, `fmp`,
-`roic` (**5/min** free-safe, 2026-08-06 vendor verify — was briefly 200/day then
-300/day invents), `marketstack` (**100 / 30d month** window, not 3/day). For
-`roic` this cap is ACTIVE immediately — see trap #12 above.
+`seeking-alpha-rapidapi`, `filingapi`, and (added 2026-08-02) `roic`. The
+SEPARATE `RATE_QUOTAS` windowed-budget map (see the RapidAPI section above for
+why the nine RapidAPI-hosted lanes use their own, third, budget mechanism
+instead) now covers six: `twelvedata`, `tiingo`, `fmp`, and (added 2026-08-02)
+`filingapi` (45/day), `roic` (**5/min** free-safe, 2026-08-06 vendor verify —
+was briefly 200/day then 300/day invents), `marketstack` (**100 / 30d month**
+window, not 3/day). For `filingapi`/`roic` this cap is ACTIVE immediately —
+see trap #12 above: both providers already called `admitProviderRequests`
+believing a quota existed, so defining one here closes a real enforcement gap.
 `marketstack` is different: `history.ts`'s `fetchMarketstack` doesn't call
 `admitProviderRequests` at all (it goes through `politeFetchJson`, unrelated
 to this module) — the entry defines the correct budget shape for whenever that
@@ -194,7 +196,7 @@ something already handled.
 | Massive → free downgrade (don't) | `MASSIVE_REST_MAX_CALLS_PER_MINUTE=5` |
 | Alpaca SIP feed | `ALPACA_DATA_FEED=sip` |
 | Marketstack Basic ($9.99/mo, 10,000 req/mo) | `PROVIDER_QUOTA_MARKETSTACK_PER_DAY=333` (10,000/30) — raise further on Professional/Business |
-| FilingAPI.dev | Retired 2026-08-17 — do not set `FILINGAPI` or buy Plus. ROIC.ai + SEC EDGAR cover this class. |
+| FilingAPI.dev higher tier (once confirmed) | `PROVIDER_QUOTA_FILINGAPI_PER_DAY=<new cap>` — the built-in 45/day assumes the ~50/day free tier |
 | ROIC.ai confirmed limit / paid tier | `PROVIDER_QUOTA_ROIC_PER_DAY=<confirmed cap>` — the built-in 200/day is a conservative placeholder, not a vendor-confirmed number |
 | tradier / fred / fintechstudios / logodev upgrade | No knob exists yet — set `PROVIDER_RATE_LIMIT_<NAME>_PER_MIN` by hand if 429s show up (see gap note above) |
 
@@ -213,7 +215,7 @@ of raw HTML, not just AI-summarized) plus this repo's own source.
 | **Logo.dev** (`LOGO_DEV_TOKEN`, `LOGO_DEV_SECRET_KEY`) | Ticker/company logo images — `src/lib/ticker-logos.ts:37-70`, `app/api/logos/ticker/route.ts` | **500,000 req/mo free** (Community), commercial use requires a visible link-back; free-tier cap is a **hard stop** — requests fail once exceeded | **Startup $280/yr** (~$23.33/mo effective; no separate monthly price was found on the live page — may be a JS-toggle we didn't render) | Annual-only pricing as fetched | 1,000,000 req/mo, no attribution requirement. Pro ($1,260/yr) adds the Brand API + self-hosting/caching + priority support; unlike free, paid tiers are **soft-enforced** (service keeps running over cap; Logo.dev reaches out about upgrading rather than cutting access) |
 | **Fintech Studios / PowerIntell** (`FINTECH_STUDIOS_API_KEY`, alias `powerintell`) | Enrichment cascade provider — `src/lib/data-providers.ts:768,2810-2828`, `costTier: "paid"`, base `studio.fintechstudios.com/api/v1` | Free plan exists ($0/mo) on the marketing site | **Ambiguous — see trap #10 below.** Self-serve Pro tiers ($20/mo–$120/mo, 2.5K–15K credits, ~20% off annual) are published, but for the consumer **PowerIntell** app, not confirmed as the same product as the `studio.fintechstudios.com/api/v1` endpoint this app actually calls | Pro tier has an annual ~20% discount | Unclear for our integration — the endpoint we call looks institutional; Enterprise (the tier that would plausibly cover bulk API/data-feed access) is contact-sales-only, no published price |
 | **FRED** (`FRED_API_KEY`) | Macro/econ series (rates, CPI, unemployment) driving the Macro tab + market-regime signal — `src/lib/macro.ts`, `src/lib/macro-history.ts` | **Completely free** — sign up at fred.stlouisfed.org for a key, no plan tiers exist at all | n/a — no paid tier exists | n/a | n/a. Fed's own docs state a 429 rate-limit exists but do **not** publish the exact number (see traps #11-12) — the commonly-cited "120 req/min" is third-party, not FRED's own documentation |
-| **FilingAPI.dev** (retired 2026-08-17) | **Do not call.** Leftover Connections/env names stay for archaeology only. ROIC.ai covers fundamentals/transcripts/statements; SEC EDGAR covers 10-K/10-Q bodies. No Plus checkout. | Retired | n/a | n/a | n/a |
+| **FilingAPI.dev** (`FILINGAPI`, aliases `FILINGAPI_KEY`/`FILING_API_KEY`) | Enrichment cascade, wave-C/scarce — company sector/industry, earnings-calendar `daysToEarnings`, insider-sentiment summary — `src/lib/data-providers.ts:1022-1026` (registration), `:5887-5959` (`FilingApiEnrichmentProvider`) | This app's own code comment states **~50 req/day**; not independently vendor-verified against filingapi.dev's own pricing page this pass. **Now actually enforced at 45/day** via `RATE_QUOTAS` in `provider-rate-limit.ts` (added 2026-08-02; see trap #12) | Not vendor-verified | Not vendor-verified | Not vendor-verified — no filingapi.dev pricing page fetch on record in this doc |
 | **ROIC.ai** (`ROIC_API_KEY`) | Enrichment cascade — company profile (sector/industry/dividend yield/short-%-of-float/price) plus best-effort financial ratios (peRatio/pbRatio/eps/ROE/debtToEquity — the ratios endpoint has historically 404'd on free keys, profile alone still fills the rest) — `src/lib/data-providers.ts:3531-3608` (`RoicAiEnrichmentProvider`) | **No published free-tier request cap found.** This app now applies a conservative **200/day placeholder** via `RATE_QUOTAS` (added 2026-08-02; see trap #12) — tighten with `PROVIDER_QUOTA_ROIC_PER_DAY` once the real vendor limit is confirmed | Not vendor-verified | Not vendor-verified | Not vendor-verified — no roic.ai pricing page fetch on record in this doc |
 
 Sources: marketstack.com/pricing + marketstack.com/faq (fetched 2026-07-10, raw
@@ -271,16 +273,14 @@ also fails here, it's the host, not the tool).
     `resolveProviderQuota` returned `undefined` (unlimited) and `admit()` always
     granted the full request — the comment described a budget that did not
     exist. Fixed 2026-08-02 (filingapi 45/day, roic 200/day placeholder pending a
-    confirmed vendor cap). FilingAPI.dev was then retired 2026-08-17 (no live
-    HTTP, no RATE_QUOTAS entry). **Lesson: a call to `admitProviderRequests`/
+    confirmed vendor cap). **Lesson: a call to `admitProviderRequests`/
     `withProviderLimit` is not itself proof a provider is throttled — check
     `RATE_QUOTAS`/`HARD_DEFAULTS` has a matching entry, don't trust the call
     site's comment alone.**
 13. **`TIINGO_API_KEY` (and `TWELVEDATA_API_KEY`) are NOT a live env fallback —
     they are `per-user-only` credential tier** (`db-api-keys.ts` `API_KEY_TIER`;
     tiingo/twelvedata are absent from the `shared-operator-infra` list that
-    Massive/FMP/Finnhub/Marketstack/AlphaVantage/ROIC/FRED all sit in; FilingAPI
-    leftover env names still resolve for Connections archaeology only).
+    Massive/FMP/Finnhub/Marketstack/AlphaVantage/ROIC/FilingAPI/FRED all sit in).
     Setting the env var only reaches `resolveApiKeyWithSource` via the ONE-TIME
     `migrateLocalEnvCredentials` startup migration into the **"local" user's**
     Connections-stored key row — the exact same trap `AGENTS.md`'s "Don't"
