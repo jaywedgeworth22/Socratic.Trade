@@ -8,7 +8,7 @@ fixes.  Pins currently match CTS `v2.5.2`, but ST's pin-check still reads CT
 no-op.  ST trades if CT or UM dies; the three Coolify apps share Hetzner
 fate; CT Senate ingest still needs the Mac.  DealDex is protocol-only.
 
-Branch `cursor/cross-app-coordination-audit-1212`.  Audit:
+PR **#2802**.  Branch `cursor/cross-app-coordination-audit-1212`.  Audit:
 `docs/audits/2026-08-17-cross-app-coordination.md`.  Rollout:
 `docs/rollouts/2026-08-17-cross-app-coordination-audit.md`.
 
