@@ -13,7 +13,8 @@ the monthly pace guard.  Litestream L0–L3/L9 were already advancing; the remai
 healed `compaction failed` line still in the log tail.  Public `/api/health` still listed
 retired FilingAPI as `ok: false`.
 
-Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
+Branch `cursor/pinecone-wu-trial-alerts-c9a3`, PR #2799.  Local gate green
+(lint 0 errors, tsc clean, 6909 tests, next build).  Rollout:
 `docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
 
 ## 2026-08-17 CURSOR — Settings search in the command palette (#2558)

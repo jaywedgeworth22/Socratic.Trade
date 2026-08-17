@@ -62,18 +62,21 @@ Touched files:
 
 ```bash
 cd ~/apps/trading-cursor-pinecone-wu
-./node_modules/.bin/vitest run \
-  test/pinecone-wu-breaker.test.ts \
-  test/pinecone-monthly-pace.test.ts \
-  test/pinecone-trial-window.test.ts \
-  test/runtime-health.test.ts \
-  test/connection-health-routing.test.ts
-# 5 files / 108 passed
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean
+./node_modules/.bin/vitest run
+# 600 files passed / 1 skipped; 6909 tests passed / 51 skipped
+./node_modules/.bin/next build --webpack
+# Next.js 16.3.0 webpack build succeeded
 ```
 
-Live `https://socratictrade.com/api/health` at triage: `ok`, Litestream
-replicating, L0–L3/L9 not degraded, `litestreamCompactionLogFailureCount=0`,
-`filingapi` still listed `ok: false` (this PR drops that row).
+PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2799
+
+Live `https://socratictrade.com/api/health` after the settings-search deploy
+(`5f9b4aaf`, process start 2026-08-17T21:35:38Z): `ok`, Litestream
+`replicating`, L0–L3/L9 not degraded, `litestreamCompactionLogFailureCount=0`.
+Public deps still list `filingapi: { ok: false }` (this PR drops that row)
+and `vix-yahoo` degraded (soft probe; not paged as a hard outage).
 
 ## Next Steps & Blockers
 
