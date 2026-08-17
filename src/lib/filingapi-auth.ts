@@ -49,7 +49,7 @@ export function clearFilingApiKeyRejected(apiKey: string): void {
 }
 
 /** Register / call FilingAPI only when a key is present and not known-dead. */
-export function shouldUseFilingApiKey(apiKey: string | null | undefined): boolean {
+export function shouldUseFilingApiKey(apiKey: string | null | undefined): apiKey is string {
   const key = apiKey?.trim();
   if (!key) return false;
   return !isFilingApiKeyRejected(key);
