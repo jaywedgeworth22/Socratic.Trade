@@ -169,14 +169,13 @@ describe("connection-health alert gate: hard streak required", () => {
     await vi.waitFor(async () => expect(await alertKinds()).toEqual(["congress-trade"]));
   });
 
-  it("REGRESSION GUARD: a real filingapi 401 still alerts", async () => {
-    // SOCRATIC-TRADE-1G. A broken credential fails every call, so it reaches the hard streak too —
-    // and a 401 is not soft-classified, so nothing suppresses it.
+  it("does not alert on filingapi 401 — owner retired the vendor (ROIC.ai only)", async () => {
     const { logApiHealth } = await import("../src/lib/db-health");
     for (let i = 0; i < 5; i++) {
       logApiHealth({ service: "filingapi", ok: false, errorText: "HTTP 401 Unauthorized", keySource: "env" });
     }
-    await vi.waitFor(async () => expect(await alertKinds()).toEqual(["filingapi"]));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await alertKinds()).toEqual([]);
   });
 
   it("quotaResetAt still alerts on the very first row (single 'pool exhausted' signal)", async () => {

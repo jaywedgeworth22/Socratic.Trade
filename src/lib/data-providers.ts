@@ -1106,12 +1106,8 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values. Set SEC_XBRL_ENRICHMENT_ENABLED=0 to disable.
   if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
-  // FilingAPI.dev (FILINGAPI / FILINGAPI_KEY): company sector/industry, earnings calendar,
-  // insider summary — scarce free-tier (50/day) so wave-C only.
-  const filingApi = resolveApiKeyWithSource("filingapi", userId);
-  if (filingApi.key) {
-    providers.push(withHealthLane(new FilingApiEnrichmentProvider(filingApi.key, filingApi.source, userId), filingApi.source));
-  }
+  // FilingAPI.dev is retired (owner 2026-08-17). Earnings/transcripts are ROIC.ai only.
+  // Do not register even if a dead FILINGAPI key is still in Infisical.
   // Wisesheets + SimFin: two new (2026-08-02) free/keyed fundamentals "second opinions" layered
   // on top of FMP/roic/SEC-XBRL above, both key-gated on their own env var (process.env only,
   // mirror QuiverEnrichmentProvider) and both self-contained (no shared provider-rate-limit.ts
@@ -6639,101 +6635,12 @@ export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   readonly quotaScarce = true;
   readonly suppliesFields = ["companyName", "sector", "industry", "daysToEarnings", "insiderSentiment"] as const;
-  private readonly base = "https://filingapi.dev";
-  private readonly scope: CacheScope;
-  private readonly keySource: ApiKeySource;
 
-  constructor(
-    private readonly apiKey: string,
-    keySource: ApiKeySource = "env",
-    private readonly userId?: string
-  ) {
-    this.scope = cacheScopeForKeySource(keySource, userId);
-    this.keySource = keySource;
-  }
+  constructor(_apiKey: string, _keySource: ApiKeySource = "env", _userId?: string) {}
 
-  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
-    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
-    if (normalized.length === 0) return {};
-    const now = Date.now();
-    const consented = hasDataPoolConsent(this.userId ?? "local");
-    const result: Record<string, SymbolEnrichment> = {};
-    const misses: string[] = [];
-    for (const symbol of normalized) {
-      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
-      if (cached) result[symbol] = cached.data;
-      else misses.push(symbol);
-    }
-    if (misses.length === 0) return result;
-
-    const credKey = `${this.keySource}:${this.userId ?? ""}`;
-    // ~50/day free tier — admit at most one symbol-bundle per reservation unit.
-    const allowed = admitProviderRequests(this.name, credKey, misses.length);
-    if (!allowed) return result;
-    const work = misses.slice(0, allowed);
-
-    for (let i = 0; i < work.length; i += CONCURRENCY) {
-      const chunk = work.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (symbol) => {
-          try {
-            const covered = context?.coveredFields?.[symbol];
-            const needCompany =
-              !covered || !covered.has("companyName") || !covered.has("sector") || !covered.has("industry");
-            const needEarnings = !covered || !covered.has("daysToEarnings");
-            const needInsiders = !covered || !covered.has("insiderSentiment");
-            const [companyRes, earningsRes, insiderRes] = await Promise.allSettled([
-              needCompany ? this.getJson(`/v1/company/${encodeURIComponent(symbol)}`) : Promise.resolve(undefined),
-              needEarnings
-                ? this.getJson(`/v1/calendar/earnings?ticker=${encodeURIComponent(symbol)}`)
-                : Promise.resolve(undefined),
-              needInsiders
-                ? this.getJson(`/v1/insiders/${encodeURIComponent(symbol)}/summary?api_key=${encodeURIComponent(this.apiKey)}`)
-                : Promise.resolve(undefined)
-            ]);
-            const merged: SymbolEnrichment = {
-              ...(companyRes.status === "fulfilled" ? parseFilingApiCompany(companyRes.value) : {}),
-              ...(earningsRes.status === "fulfilled"
-                ? parseFilingApiEarningsCalendar(earningsRes.value, symbol, now)
-                : {}),
-              ...(insiderRes.status === "fulfilled" ? parseFilingApiInsiderSummary(insiderRes.value) : {})
-            };
-            if (Object.keys(merged).length > 0) {
-              writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + 6 * 60 * 60_000);
-            }
-            result[symbol] = merged;
-          } catch {
-            result[symbol] = {};
-          }
-        })
-      );
-    }
-    return result;
-  }
-
-  private async getJson(path: string): Promise<unknown> {
-    return withProviderLimit(this.name, async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      try {
-        const res = await fetchWithRetry(
-          `${this.base}${path}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-            headers: {
-              Accept: "application/json",
-              "X-API-Key": this.apiKey
-            }
-          },
-          { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey, retries: 0 }
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-      } finally {
-        clearTimeout(timeout);
-      }
-    });
+  async enrich(_symbols: string[], _context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    // Owner 2026-08-17: FilingAPI is retired. ROIC.ai owns earnings/transcripts.
+    return {};
   }
 }
 

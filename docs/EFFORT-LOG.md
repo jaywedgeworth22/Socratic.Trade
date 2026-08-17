@@ -4,7 +4,7 @@
 - **[FLEET][GROK] ASC EULA + CT version 1.0.0 + Coolify rolling check — COMPLETED 2026-08-16 (branch `grok/asc-eula-100`).**  CT store version is 1.0.0.  Custom EULAs on CT/UM Client/UM Local; ST EULA two-spaced.  Beta review filled.  What's New blocked on first versions.  Coolify already consistent-name + 60s; no B2 delete.
 - **[Socratic.Trade][GROK] Review UX: approve speed + prices + Retry Red Team + agent controls + PWA off — COMPLETED/MERGED 2026-08-16 #2757 `82e74746`.**  Full-universe scan removed from Approve.  Proposed/Now/Target/Delay on website and iOS.  Retry Red Team when critic failed.  State-aware Start/Stop.  `/mobile` redirects to `/console`.
 - **[Socratic.Trade][GROK] Rotation fail-closed + Red timeout + Alpaca penny 422 + RAG ingest unstick — COMPLETED/MERGED 2026-08-16 #2751 `d068d432`.**  Drop known-dead slugs on /models/user timeout.  Red uses Green capturing timeout.  Alpaca >=$1 rounds to $0.01.  ROIC single-flight unioned with #2748 two-pass/fuse.  Worker tick cap 5.
-- **[Socratic.Trade][GROK] ROIC single-flight + L2 compact — COMPLETED/DEPLOYED 2026-08-17 #2750 `1867addd` (live `027b3516` contains it).**  Crash loop stopped.  Health L2+L3 known, tiersDegraded false.  ROIC 608 transcripts / 565 tickers, cursor still walking.  FilingAPI still owner Plus.  #2746 closed.
+- **[Socratic.Trade][GROK] ROIC single-flight + L2 compact — COMPLETED/DEPLOYED 2026-08-17 #2750 `1867addd` (live `027b3516` contains it).**  Crash loop stopped.  Health L2+L3 known, tiersDegraded false.  ROIC 608 transcripts / 565 tickers, cursor still walking.  FilingAPI is retired — ROIC.ai only.  #2746 closed.
 - **[FLEET][GROK] Land leftover open PRs — COMPLETED/MERGED 2026-08-17.** Fleet open PRs now 0. This pass landed ST #2747 #2754 #2755 #2756 #2757 #2758 #2748 #2759 #2744 #2750 #2751 #2763 (plus parallel #2760 #2761) and CT #1886 #1885 #1887 #1890 #1891. UM/fleet/DealDex/Personal/CTS already 0. Auto-deploy on main.
 - **[Socratic.Trade][GROK] Proposer corpus storage design — COMPLETED/MERGED 2026-08-16 #2760 `e979efb3`.** Rev 3 approved.  A (split writer) → B (local hydrate) → Infisical flip.  Full bodies stay local.
 - **[Socratic.Trade][GROK] 48h prod error triage (Pinecone daily write fuse) — COMPLETED 2026-08-16 #2748 `0d2d9efc`.** Full-steam until ~$45, free snap 2026-08-30. Latest-first universe transcripts/filings, then deepen held/watchlist.
@@ -431,13 +431,12 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
-- **[Socratic.Trade][CURSOR] Green-Team empty/malformed failover + credits-exhausted hint — IN PROGRESS 2026-08-17 (branch `cursor/green-empty-failover-credits-7003`, issue #2577).** Green=Bull already had empty-content failover when `llmFallbackModels` is set. Adding malformed HTTP-200 failover, implicit rotation-pool fallbacks (cap 2) when Green is rotating and no owner fallbacks, and a credits-exhausted sentence on strategy `run_failed` when the OpenRouter check is below threshold.
 - **2026-08-17 — GROK — IN PROGRESS — Effort-board hygiene + this-session control board.** Zero open PRs on 2026-08-17. Every prior In Progress row below was already merged (PRs #2771/#2741/#2704/#2692/#2659/#2628/#2597/#2581/#2573/#2538/#2536/#2531/#2498/#2490/#2489/#2435/#2433). First lines preserved; rows moved to Completed so effort-issues-sync closes stale `state:in-progress` mirrors.
 - **2026-08-16 — GROK — IN PROGRESS — Review UX: fast approve, live vs proposed price, Retry Red Team, clearer agent controls.** Issue #2752. Worktree `~/apps/trading-grok-review-ux` (remote branch gone; local residue).
 - **2026-08-15 — GROK — IN PROGRESS — Website favicon: cropped offset candlestick ST, transparent.** Issue #2731. Branch `grok/favicon-crop-st` @ `~/apps/trading-grok`.
 - **[Socratic.Trade][GROK] Fix ST Litestream wedge and prefer Pushover over Resend — OPEN 2026-08-14.** Issue #2697.
 - **[Socratic.Trade][MONET] Durable litestream remote-inventory cache (PR #2665 leftover) — IN PROGRESS.** Issue #2694.
-- **[Socratic.Trade][OWNER] FilingAPI Plus checkout.** Stored FILINGAPI key is still 401. Do not charge ST Stripe. Needed for remaining L2/universe ingest after #2741.
+
 
 ## Deployed
 - **2026-08-05 — GROK — Board hygiene:** moved 3 Active/Planned → Deployed.
@@ -638,6 +637,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **2026-08-17 — GROK — CANCELLED — FilingAPI Plus checkout.** Owner ruling: do not use FilingAPI. Earnings and transcripts are ROIC.ai only. Never ask for a filingapi.dev key or Plus checkout again.
 - **2026-08-17 — GROK — BOARD HYGIENE — moved the following verified-merged rows out of In Progress (first lines unchanged).**
 - **[Socratic.Trade][GROK] Litestream L2/L3 + FilingAPI + ROIC earnings universe ingest — COMPLETED (merged) / DEPLOYED 2026-08-16 (PR **#2741**; branch `grok/litestream-filingapi-roic`, issue #2738 closed).**  L1 hole gone (first file `4a86-4aa5`).  L2 still empty at merge time (B2 rate-limited after the delete).  FilingAPI stored key remains 401 — needs Plus checkout.  ROIC retrieval + universe ingest shipped.
 - **2026-08-14 — GROK — COMPLETED (docs in UM #1180) — Backup restore-proof (no ST code).  Litestream daemon+socket healthy (`source=ipc`).  Latest B2 restore FAIL: non-contiguous LTX 43206→43225; last contiguous txid restore fails integrity_check.  Host 6h dump quick_check ok (age 3606s).  #2683/#2685 already merged — no duplicate inventory/IPC work.  Fleet receipt in Usage-Monitor `docs/rollouts/2026-08-14-backup-restore-proof.md`.
@@ -4176,7 +4176,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Changelog
 
-- 2026-08-17 — GROK: board hygiene. In Progress rebuilt to real leftovers (#2752 Review UX, #2731 favicon, #2697 Litestream wedge, #2694 Monet cache, FilingAPI Plus). Landed-but-still-WIP rows moved to Completed.
+- 2026-08-17 — GROK: owner ruling — do not use FilingAPI. Earnings/transcripts are ROIC.ai only. Dropped the Plus-checkout leftover. Never ask for a filingapi.dev key again.
+- 2026-08-17 — GROK: board hygiene. In Progress rebuilt to real leftovers (#2752 Review UX, #2731 favicon, #2697 Litestream wedge, #2694 Monet cache). Landed-but-still-WIP rows moved to Completed.
 - 2026-07-08 (MONET) - **Assignment rule: agent tags mean active ownership.** Added rule:
   "Never assign an effort to an agent unless that agent is actively working on it." Agent
   tags on Planned rows are only valid if the agent has claimed the work and plans to start
