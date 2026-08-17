@@ -79,7 +79,7 @@ Cascade mechanics (implementation): free-first waves + `quotaScarce` + `supplies
 | `massive` | paid Starter | Unlimited API; 15m delayed quotes | History + short interest + breadth | Not primary real-time quotes |
 | `marketstack` | key | Free ~100/mo | History failover | Scarce — last resort |
 | `tradier` | connected broker | Sandbox vs live | History | Prefer over marketstack when connected |
-| `filingapi` | key | Paid | Profile/calendar/insider | `quotaScarce` |
+| `filingapi` | optional key | Paid if present | Profile/calendar/insider | `quotaScarce`; missing/401 skips (ROIC + EDGAR cover) |
 | `fintechstudios` | key | Paid | News/events | Niche |
 | `marketaux` | key | Free 100/day | News sentiment | Scarce |
 | `wisesheets` / `simfin` | key | Free tiers | SEC-derived fund. second opinion | Behind Yahoo/SEC quality gate |

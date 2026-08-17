@@ -22,6 +22,12 @@ import {
 import { getDb } from "./db";
 import { isIntentionalOffHealthService } from "./retired-direct-vendors";
 import { resolveApiKey } from "./db-api-keys";
+import {
+  clearFilingApiKeyRejected,
+  isFilingApiAuthStatus,
+  isFilingApiKeyRejected,
+  markFilingApiKeyRejected
+} from "./filingapi-auth";
 
 const DEFAULT_REPROBE_INTERVAL_MS = 4 * 60 * 60_000; // 4h (mid of 3–6h)
 const MIN_REPROBE_INTERVAL_MS = 3 * 60 * 60_000;
@@ -320,14 +326,21 @@ export function probeFnForService(service: string): ProbeFn | null {
   if (s === "filingapi") {
     return async () => {
       const key = resolveApiKey("filingapi")?.trim();
-      if (!key) return { ok: false, detail: "no-key" };
+      // Optional lane: missing or known-dead key is a skip, not a health failure.
+      if (!key) return { ok: true, detail: "no-key-skip" };
+      if (isFilingApiKeyRejected(key)) return { ok: true, detail: "unauthorized-skip" };
       const t0 = Date.now();
       const res = await fetch("https://filingapi.dev/v1/company/AAPL", {
         headers: { Accept: "application/json", "X-API-Key": key },
         signal: AbortSignal.timeout(8_000)
       }).catch(() => null);
       if (!res) return { ok: false, detail: "fetch-failed", latencyMs: Date.now() - t0 };
+      if (isFilingApiAuthStatus(res.status)) {
+        markFilingApiKeyRejected(key);
+        return { ok: true, detail: `HTTP ${res.status} skip`, latencyMs: Date.now() - t0 };
+      }
       if (!res.ok) return { ok: false, detail: `HTTP ${res.status}`, latencyMs: Date.now() - t0 };
+      clearFilingApiKeyRejected(key);
       return { ok: true, detail: "AAPL", latencyMs: Date.now() - t0 };
     };
   }

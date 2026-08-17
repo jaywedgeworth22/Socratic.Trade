@@ -16,8 +16,9 @@
 //      a loop that alerted forever about a lane no product code was calling.
 //
 // The discriminating half of this suite is the NEGATIVE side: a genuine outage (repeated hard
-// 5xx / a persistent 401) must still page. Those cases are asserted explicitly below, because a
-// "fix" that silences the noise by silencing everything would be strictly worse than the bug.
+// 5xx) must still page. FilingAPI 401 is an optional-key skip, not an outage — it must not page.
+// Those cases are asserted explicitly below, because a "fix" that silences the noise by silencing
+// everything would be strictly worse than the bug.
 //
 // Hermetic: real module graph against a temp SQLite DB; only the Sentry SDK and `fetch` are stubbed.
 
@@ -182,14 +183,14 @@ describe("connection-health alert gate: hard streak required", () => {
     await vi.waitFor(async () => expect(await alertKinds()).toEqual(["congress-trade"]));
   });
 
-  it("REGRESSION GUARD: a real filingapi 401 still alerts", async () => {
-    // SOCRATIC-TRADE-1G. A broken credential fails every call, so it reaches the hard streak too —
-    // and a 401 is not soft-classified, so nothing suppresses it.
+  it("filingapi 401 is a soft skip and does not alert", async () => {
+    // Optional lane: a dead trial key must not page. ROIC + EDGAR cover the fields.
     const { logApiHealth } = await import("../src/lib/db-health");
     for (let i = 0; i < 5; i++) {
       logApiHealth({ service: "filingapi", ok: false, errorText: "HTTP 401 Unauthorized", keySource: "env" });
     }
-    await vi.waitFor(async () => expect(await alertKinds()).toEqual(["filingapi"]));
+    await settleAlerts();
+    expect(await alertKinds()).toEqual([]);
   });
 
   it("live boot window does not page a hard streak", async () => {

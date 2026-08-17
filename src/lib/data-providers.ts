@@ -45,6 +45,13 @@ import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
 import { resolveQuiverApiKey } from "./quiver-provider";
 import { isDirectVendorAccessAllowed } from "./retired-direct-vendors";
+import {
+  clearFilingApiKeyRejected,
+  isFilingApiAuthStatus,
+  isFilingApiKeyRejected,
+  markFilingApiKeyRejected,
+  shouldUseFilingApiKey
+} from "./filingapi-auth";
 import { NasdaqCalendarEnrichmentProvider } from "./nasdaq-calendar-provider";
 import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wisesheets-provider";
 import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
@@ -1131,10 +1138,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values. Set SEC_XBRL_ENRICHMENT_ENABLED=0 to disable.
   if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
-  // FilingAPI.dev (FILINGAPI / FILINGAPI_KEY): company sector/industry, earnings calendar,
-  // insider summary — scarce free-tier (50/day) so wave-C only.
+  // FilingAPI.dev (FILINGAPI / FILINGAPI_KEY): optional. Missing / known-401 keys skip
+  // the lane; ROIC + SEC EDGAR cover the same fields. A later valid key registers again.
   const filingApi = resolveApiKeyWithSource("filingapi", userId);
-  if (filingApi.key) {
+  if (shouldUseFilingApiKey(filingApi.key)) {
     providers.push(withHealthLane(new FilingApiEnrichmentProvider(filingApi.key, filingApi.source, userId), filingApi.source));
   }
   // Wisesheets + SimFin: two new (2026-08-02) free/keyed fundamentals "second opinions" layered
@@ -6696,6 +6703,9 @@ export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
   async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
+    if (isFilingApiKeyRejected(this.apiKey)) {
+      return Object.fromEntries(normalized.map((symbol) => [symbol, {}]));
+    }
     const now = Date.now();
     const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
@@ -6723,6 +6733,10 @@ export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
               !covered || !covered.has("companyName") || !covered.has("sector") || !covered.has("industry");
             const needEarnings = !covered || !covered.has("daysToEarnings");
             const needInsiders = !covered || !covered.has("insiderSentiment");
+            if (isFilingApiKeyRejected(this.apiKey)) {
+              result[symbol] = {};
+              return;
+            }
             const [companyRes, earningsRes, insiderRes] = await Promise.allSettled([
               needCompany ? this.getJson(`/v1/company/${encodeURIComponent(symbol)}`) : Promise.resolve(undefined),
               needEarnings
@@ -6753,6 +6767,9 @@ export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   private async getJson(path: string): Promise<unknown> {
+    if (isFilingApiKeyRejected(this.apiKey)) {
+      throw new Error("HTTP 401 skip");
+    }
     return withProviderLimit(this.name, async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
@@ -6767,9 +6784,21 @@ export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
               "X-API-Key": this.apiKey
             }
           },
-          { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey, retries: 0 }
+          {
+            service: this.name,
+            keySource: this.keySource,
+            userId: this.userId,
+            apiKey: this.apiKey,
+            retries: 0,
+            softHealthStatuses: [401, 403]
+          }
         );
+        if (isFilingApiAuthStatus(res.status)) {
+          markFilingApiKeyRejected(this.apiKey);
+          throw new Error(`HTTP ${res.status}`);
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        clearFilingApiKeyRejected(this.apiKey);
         return await res.json();
       } finally {
         clearTimeout(timeout);

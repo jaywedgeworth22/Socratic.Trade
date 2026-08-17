@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resetFilingApiAuthStateForTests } from "../src/lib/filingapi-auth";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,7 @@ describe("health-lane-reprobe", () => {
     prevDb = process.env.DATABASE_URL;
     process.env.DATABASE_URL = `file:${join(dir, "test.db")}`;
     process.env.HEALTH_LANE_REPROBE_ENABLED = "on";
+    resetFilingApiAuthStateForTests();
     resetDbForTesting();
   });
 
@@ -168,6 +170,67 @@ describe("health-lane-reprobe", () => {
       expect(seen.some((u) => u.endsWith("/health") || /usage\.jays\.services\/$/.test(u))).toBe(false);
     } finally {
       globalThis.fetch = prevFetch;
+    }
+  });
+
+  it("filingapi probe skips with ok when no key is set", async () => {
+    const prev = process.env.FILINGAPI;
+    const prevKey = process.env.FILINGAPI_KEY;
+    const prevAlt = process.env.FILING_API_KEY;
+    delete process.env.FILINGAPI;
+    delete process.env.FILINGAPI_KEY;
+    delete process.env.FILING_API_KEY;
+    resetFilingApiAuthStateForTests();
+    const seen: string[] = [];
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      seen.push(String(input));
+      return new Response("nope", { status: 500 });
+    }) as typeof fetch;
+    try {
+      const probe = probeFnForService("filingapi");
+      expect(probe).not.toBeNull();
+      const result = await probe!();
+      expect(result.ok).toBe(true);
+      expect(result.detail).toBe("no-key-skip");
+      expect(seen).toEqual([]);
+    } finally {
+      globalThis.fetch = prevFetch;
+      if (prev === undefined) delete process.env.FILINGAPI;
+      else process.env.FILINGAPI = prev;
+      if (prevKey === undefined) delete process.env.FILINGAPI_KEY;
+      else process.env.FILINGAPI_KEY = prevKey;
+      if (prevAlt === undefined) delete process.env.FILING_API_KEY;
+      else process.env.FILING_API_KEY = prevAlt;
+    }
+  });
+
+  it("filingapi probe treats a live 401 as ok skip and does not call again", async () => {
+    const prev = process.env.FILINGAPI;
+    process.env.FILINGAPI = "dead-trial-key";
+    resetFilingApiAuthStateForTests();
+    let hits = 0;
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      hits += 1;
+      expect(String(input)).toContain("filingapi.dev");
+      return new Response("Unauthorized", { status: 401 });
+    }) as typeof fetch;
+    try {
+      const probe = probeFnForService("filingapi")!;
+      const first = await probe();
+      expect(first.ok).toBe(true);
+      expect(first.detail).toMatch(/401/);
+      expect(hits).toBe(1);
+      const second = await probe();
+      expect(second.ok).toBe(true);
+      expect(second.detail).toBe("unauthorized-skip");
+      expect(hits).toBe(1);
+    } finally {
+      globalThis.fetch = prevFetch;
+      resetFilingApiAuthStateForTests();
+      if (prev === undefined) delete process.env.FILINGAPI;
+      else process.env.FILINGAPI = prev;
     }
   });
 });

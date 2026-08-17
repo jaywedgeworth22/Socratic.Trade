@@ -191,7 +191,8 @@ const API_KEY_CATALOG = [
     label: "FilingAPI",
     category: "Market data",
     required: false,
-    unlocks: "Sector/industry, earnings calendar proximity, and insider-sentiment summaries.",
+    unlocks:
+      "Optional. Sector/industry, earnings calendar proximity, and insider-sentiment summaries. Missing or 401 keys skip this lane; ROIC and SEC EDGAR cover the same class. Do not buy Plus here.",
     docsUrl: "https://filingapi.dev"
   },
   {

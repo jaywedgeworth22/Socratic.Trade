@@ -592,7 +592,7 @@ As of 2026-07-08 (assignment-rule update).
 - **2026-08-15 — GROK — IN PROGRESS — Website favicon: cropped offset candlestick ST, transparent.** Issue #2731. Branch `grok/favicon-crop-st` @ `~/apps/trading-grok`.
 - **[Socratic.Trade][GROK] Fix ST Litestream wedge and prefer Pushover over Resend — OPEN 2026-08-14.** Issue #2697.
 - **[Socratic.Trade][MONET] Durable litestream remote-inventory cache (PR #2665 leftover) — IN PROGRESS.** Issue #2694.
-- **[Socratic.Trade][OWNER] FilingAPI Plus checkout.** Stored FILINGAPI key is still 401. Do not charge ST Stripe. Needed for remaining L2/universe ingest after #2741.
+- **[Socratic.Trade][CURSOR] FilingAPI optional key, degrade gracefully — IN PROGRESS 2026-08-17 (branch `cursor/filingapi-soft-skip-de61`, retarget #2778).** Owner reversed #2787 retirement. Keep FilingApiEnrichmentProvider + health lane + matrix. Dead/missing/401 key is a soft skip (no health fail); ROIC + EDGAR cover the class. A later valid key is used again. Do not buy Plus. Do not charge Stripe. Plus-checkout ask is superseded by this degrade path.
 
 ## Deployed
 - **2026-08-05 — GROK — Board hygiene:** moved 3 Active/Planned → Deployed.
@@ -4338,6 +4338,8 @@ As of 2026-07-08 (assignment-rule update).
 
 - 2026-08-17 — GROK: owner ruling — do not use FilingAPI. Earnings/transcripts are ROIC.ai only. Dropped the Plus-checkout leftover. Never ask for a filingapi.dev key again.
 - 2026-08-17 — GROK: board hygiene. In Progress rebuilt to real leftovers (#2752 Review UX, #2731 favicon, #2697 Litestream wedge, #2694 Monet cache). Landed-but-still-WIP rows moved to Completed.
+- 2026-08-17 — CURSOR: retarget FilingAPI Plus checkout (#2778) to optional-key degrade. Owner reversed #2787 retirement. Keep the integration; skip missing/401; no Stripe/Plus.
+- 2026-08-17 — GROK: board hygiene. In Progress rebuilt to real leftovers (#2752 Review UX, #2731 favicon, #2697 Litestream wedge, #2694 Monet cache, FilingAPI Plus). Landed-but-still-WIP rows moved to Completed.
 - 2026-07-08 (MONET) - **Assignment rule: agent tags mean active ownership.** Added rule:
   "Never assign an effort to an agent unless that agent is actively working on it." Agent
   tags on Planned rows are only valid if the agent has claimed the work and plans to start
