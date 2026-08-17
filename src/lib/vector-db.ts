@@ -4,6 +4,7 @@ import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } from "./db-embed-stage";
+import { isProviderDispatchLeaseLostError } from "./db-provider-dispatch";
 import { logApiHealth } from "./db-health";
 import { isLocalDbFaultError, localDbFaultReason, noteLocalDbFault } from "./local-db-fault";
 import {
@@ -1767,6 +1768,15 @@ async function withRagApiHealth<T>(
       } else {
         void localNote;
       }
+      throw error;
+    }
+    // Same class of local-process fault as the SQLite case above: settle lost the
+    // process-local owner token (deploy, restart, or 2-minute lease expiry) AFTER the
+    // vendor call. That is not evidence Pinecone/OpenRouter is down — 2026-08-17 paged
+    // both as "connection failed" during a 1m23s site blip. Leave the provider lane
+    // untouched; the error still propagates so the caller can retry.
+    if (isProviderDispatchLeaseLostError(error)) {
+      markRagSentryCaptured(error);
       throw error;
     }
     // Monthly Pinecone write-unit exhaustion is an EXPECTED limit (soft health row, so the lane

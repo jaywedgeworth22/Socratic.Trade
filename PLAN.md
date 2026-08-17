@@ -1,5 +1,8 @@
 # Active Implementation Plan
 
+> **2026-08-17 GROK — strategy-run slugs + lease-lost mislabel (`grok/strategy-run-model-slugs`).**  Wire Mistral Medium as `mistralai/mistral-medium-3-5`.  Attach OpenRouter `require_parameters` + `allow_fallbacks` so GPT-5.4 nano does not 400 on the down OpenAI endpoint.  Stop paging dispatch-lease-lost as Pinecone/rerank connection failures.  Issue #2770.  Rollout: `docs/rollouts/2026-08-17-strategy-run-model-slugs.md`.
+
+
 > **2026-08-16 GROK — VECTOR_ASOF_STRICT on (`grok/asof-strict-on`).**  Infisical prod flipped `off` → `on`.  Coolify restart finished healthy.  Live desk still omits `asOf`.  Rollout: `docs/rollouts/2026-08-16-asof-strict-on.md`.
 
 > **2026-08-16 GROK — ROIC Individual harvest (`grok/roic-harvest`).**  Use the remaining Individual window for universe breadth plus 20-quarter depth on high-interest names, then archive the rest locally.  Storage follows approved proposer-corpus rev 3 (#2760): extractive highlights in Pinecone, full bodies in `earningscalls_transcripts`.  No second panel.  Rollout: `docs/rollouts/2026-08-16-roic-harvest.md`.

@@ -82,4 +82,14 @@ describe("resolveLlmEndpoint", () => {
     expect(normalizeOpenRouterModelId("gemini-3.5-flash")).toBe("google/gemini-3.5-flash");
     expect(normalizeOpenRouterModelId("google/gemini-3.7-flash")).toBe(OPENROUTER_GEMINI_FLASH);
   });
+
+  it("maps Mistral Medium to the dash OpenRouter slug, never the period form", async () => {
+    const { normalizeOpenRouterModelId } = await import("../src/lib/llm-provider");
+    expect(normalizeOpenRouterModelId("mistral-medium-latest")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistral-medium-3-5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistral-medium-3.5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3.5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3-5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("gpt-5.4-nano")).toBe("openai/gpt-5.4-nano");
+  });
 });
