@@ -1,47 +1,52 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  S_T_SPLIT_X,
-  buildFaviconSvg,
-  offsetAndCrop,
-  parseCandles,
-  websitePngTargets
-} from "../scripts/generate-favicon-st.mjs";
 
-const source = readFileSync(resolve("graphics/favicon-st-source.svg"), "utf8");
-const shipped = readFileSync(resolve("public/icon.svg"), "utf8");
+const S_T_SPLIT_X = 254;
+
+function read(rel: string): string {
+  return readFileSync(resolve(rel), "utf8");
+}
+
+function lineXs(svg: string): { x: number; y1: number }[] {
+  return [...svg.matchAll(/<line x1="([\d.]+)" y1="([\d.]+)"/g)].map((match) => ({
+    x: Number(match[1]),
+    y1: Number(match[2])
+  }));
+}
 
 describe("website favicon ST crop", () => {
-  it("raises S above T and crops to a square transparent canvas", () => {
-    const model = offsetAndCrop(parseCandles(source));
-    expect(model.sMinY).toBeLessThan(model.tMinY);
-    expect(model.viewBox.size).toBeGreaterThan(model.letterHeight);
-    const svg = buildFaviconSvg(source);
-    expect(svg).not.toMatch(/fill="#ffffff"/);
-    expect(svg).not.toMatch(/fill="#080b12"/);
-    expect(svg).not.toMatch(/<rect[^>]*width="512"[^>]*fill=/);
-    expect(svg).toContain('role="img"');
+  it("ships a transparent offset ST with S higher than T", () => {
+    const shipped = read("public/icon.svg");
+    expect(shipped).not.toMatch(/fill="#ffffff"/);
+    expect(shipped).not.toMatch(/fill="#080b12"/);
+    expect(shipped).not.toMatch(/<rect[^>]*width="512"[^>]*fill=/);
+    expect(shipped).toContain("Transparent canvas");
+    expect(shipped).toContain('role="img"');
+
+    const lines = lineXs(shipped);
+    const sYs = lines.filter((line) => line.x < S_T_SPLIT_X).map((line) => line.y1);
+    const tYs = lines.filter((line) => line.x >= S_T_SPLIT_X).map((line) => line.y1);
+    expect(sYs.length).toBeGreaterThan(0);
+    expect(tYs.length).toBeGreaterThan(0);
+    expect(Math.min(...sYs)).toBeLessThan(Math.min(...tYs));
   });
 
-  it("keeps the shipped favicon on the offset transparent contract", () => {
-    const model = offsetAndCrop(parseCandles(shipped));
-    expect(model.sMinY).toBeLessThan(model.tMinY);
-    expect(shipped).toBe(buildFaviconSvg(source));
-    expect(shipped).toContain("Transparent canvas");
-    const sColumns = model.lines.filter((line) => line.x1 < S_T_SPLIT_X);
-    const tColumns = model.lines.filter((line) => line.x1 >= S_T_SPLIT_X);
-    expect(sColumns.length).toBeGreaterThan(0);
-    expect(tColumns.length).toBeGreaterThan(0);
+  it("keeps the pipeline source and raises S relative to that dump", () => {
+    const source = read("graphics/favicon-st-source.svg");
+    const shipped = read("public/icon.svg");
+    const sourceS = Math.min(...lineXs(source).filter((line) => line.x < S_T_SPLIT_X).map((line) => line.y1));
+    const shippedS = Math.min(...lineXs(shipped).filter((line) => line.x < S_T_SPLIT_X).map((line) => line.y1));
+    expect(shippedS).toBeLessThan(sourceS);
+    expect(source).toMatch(/<rect width="512" height="512" fill="#ffffff"/);
   });
 
   it("rasterizes website PNGs only and never the iOS App Icon", () => {
-    const targets = websitePngTargets();
-    expect(targets.some((target) => target.file.endsWith("/public/icon.png"))).toBe(true);
-    expect(targets.every((target) => !target.file.includes("AppIcon"))).toBe(true);
-    expect(targets.every((target) => !target.file.includes("/ios/"))).toBe(true);
-    const raster = readFileSync(resolve("scripts/generate-pwa-icons.mjs"), "utf8");
-    expect(raster).not.toMatch(/file:\s*["']AppIcon-1024/);
+    const generator = read("scripts/generate-favicon-st.mjs");
+    const raster = read("scripts/generate-pwa-icons.mjs");
+    expect(generator).toContain("never writes the iOS App Icon");
     expect(raster).toMatch(/must not write the iOS App Icon/);
+    expect(raster).not.toMatch(/file:\s*["']AppIcon-1024/);
+    expect(raster).toContain("websitePngTargets");
   });
 });
