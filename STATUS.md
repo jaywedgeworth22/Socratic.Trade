@@ -704,6 +704,11 @@ Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.
 
 Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
+## 2026-08-17 CURSOR — Console a11y batch (#2561)
+
+P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.
+
+Branch `cursor/console-a11y-batch-08ac`.  Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.  No trading/money-path changes.
 
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 

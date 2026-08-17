@@ -196,7 +196,7 @@ function TickerRow({ coverage }: { coverage: TickerCoverage }) {
         <SymbolButton symbol={coverage.symbol} />
       </div>
       <div className="min-w-0 flex-1">
-        <Meter value={coverage.chunks} max={maxChunks} />
+        <Meter value={coverage.chunks} max={maxChunks} label={`${coverage.symbol} corpus coverage`} />
         <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
           <span className="font-semibold text-[color:var(--con-fg)]">{coverage.chunks} chunks</span>
           <span>{coverage.filings} filing{coverage.filings !== 1 ? "s" : ""}</span>

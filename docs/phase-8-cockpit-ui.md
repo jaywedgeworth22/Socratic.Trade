@@ -100,6 +100,12 @@
 > objections and override context remain visible. The canonical card owns the explicit
 > verdict status too, preserving “Approved at half size” and “Rejected by Red Team”
 > without restoring duplicate rationale rows.
+>
+> 2026-08-17: console a11y batch (#2561).  Light tonal chip text is validated on the
+> matching soft fill (WCAG AA at 11px/600).  `Sheet`, nav `TabsSheet`, and the scan
+> Columns popover share `useFocusTrap` so only the topmost surface handles Escape.
+> Tooltip explanations are keyboard-reachable and announced via `aria-describedby`.
+> `Meter` accepts an accessible name.  See `docs/rollouts/2026-08-17-console-a11y-batch.md`.
 
 
 This phase restructures the dashboard from a long vertical page into a

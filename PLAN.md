@@ -132,6 +132,7 @@
 > **2026-08-17 CURSOR — Pinecone trial WU + Litestream/FilingAPI alert noise (`cursor/pinecone-wu-trial-alerts-c9a3`).** Merged as #2799 `4980322b`. Standard trial is usage-billed, not the Starter 2M monthly wall. Daily remainder clamp is the follow-up above. Rollout: `docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
 
 > **2026-08-17 CURSOR — Settings search in ⌘K (`cursor/settings-search-palette-6e98`, #2558).** Wire the existing `searchSettings` catalog into the command palette; drop phantom `defaultLandingAccount`. Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
+> **2026-08-17 CURSOR — Console a11y batch (`cursor/console-a11y-batch-08ac`, #2561).** Light chip tokens darkened one step for AA on soft fills; Sheet + TabsSheet + scan Columns popover adopt `useFocusTrap`; tooltip tabIndex/aria-describedby; Meter `label`; dark faint lift; Toggle `label` required. Presentation only — no trading/money-path changes. Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.
 
 > **2026-08-17 CURSOR — FilingAPI optional key, degrade on missing/401 (`cursor/filingapi-soft-skip-de61`, #2778 retarget).** Owner reversed #2787. Keep the filingapi.dev integration. Do not buy Plus / do not charge Stripe. A dead or missing key skips the lane (no health fail); ROIC + EDGAR stay the fallback. A later valid key is used again. Rebased onto `main` `cde3deee` so #2792 is mergeable. Rollout: `docs/rollouts/2026-08-17-filingapi-soft-skip.md`.
 
