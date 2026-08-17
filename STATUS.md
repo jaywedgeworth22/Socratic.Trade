@@ -682,6 +682,15 @@ Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-ou
 ## 2026-08-17 CURSOR — Architecture & backend audit (docs-only)
 
 Read-only audit of framework, API, queues, persistence, caching, concurrency, recovery, and durability against `main` `4980322b`.  No product fixes.  Report: `docs/audits/2026-08-17-architecture-backend.md`.  PR #2807, branch `cursor/architecture-backend-audit-6186`.  Headline: no active P0 in code; new gap is stale `strategy_run_requests` (F3); Litestream L2/L3 wedge remains owner-ops (F1, already tracked).  Rollout: `docs/rollouts/2026-08-17-architecture-backend-audit.md`.
+## 2026-08-17 CURSOR — Security / reliability audit (report-only)
+
+Read-only audit of auth, secrets, tenant isolation, supply chain, PII, Litestream/DR,
+deploy, alerting, fail-open/closed, spend, and SLOs.  Live health 200 on sha `4980322b`;
+Litestream replicating; restore still unproven on B2.  No code changes.
+
+Branch `cursor/security-reliability-audit-d8f6`.  Report:
+`docs/audits/2026-08-17-security-reliability.md`.  Rollout:
+`docs/rollouts/2026-08-17-security-reliability-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
