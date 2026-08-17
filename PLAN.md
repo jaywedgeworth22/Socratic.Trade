@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-17 CURSOR — Deploy freshness + shared-box OCR isolation (`cursor/deploy-freshness-ocr-isolate-d4cf`, #2545).** Standing cron pages when the oldest undeployed main commit is >1h old (silent-freeze class: webhook 200s, health green on old sha).  Isolation script dry-runs a no-restart CPU cap on CT OCR/scan workers.  Remaining constraint: Coolify/CT-repo limits and retry-on-255 are not settable from this repo.  Do not take prod down.  Rollout: `docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
+
 > **2026-08-17 CURSOR — Retire FilingAPI.dev (`cursor/retire-filingapi-roic-de61`, #2778).** Owner has ROIC, not filingapi.dev. Remove live HTTP, health lane, and cascade registration. Keep ROIC + SEC EDGAR. Do not buy Plus / do not charge Stripe. Rollout: `docs/rollouts/2026-08-17-retire-filingapi-roic.md`.
 
 > **2026-08-17 CURSOR — Green-Team empty/malformed failover + credits hint (`cursor/green-empty-failover-credits-7003`, #2577).** Green Team is the Bull proposer; empty HTTP-200 failover already existed when `llmFallbackModels` is set. Close the remaining Aug 6 gaps: malformed HTTP-200 JSON failover, implicit rotation-pool fallbacks (2) when Green is rotating with no owner fallbacks, and a credits-exhausted hint on strategy `run_failed` when the OpenRouter check is below threshold. Rollout: `docs/rollouts/2026-08-17-green-empty-failover-credits.md`.

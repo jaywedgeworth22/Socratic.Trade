@@ -245,6 +245,16 @@ created, and prod silently freezes while merges pile up** — GitHub's hook page
 `bash scripts/verify-deploy-sha.sh` (asserts the live sha CONTAINS your commit). Merge == live;
 the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy claims or manually trigger
 deploys. Rollback to manual: disable auto deploy on the app.
+**Silent-freeze class (2026-08-06, #2545):** Coolify SSH exec streams can die mid-build
+(exit 255) under shared-box load while GitHub webhooks stay 200 and `/api/health` stays
+green on the *old* sha. The standing watchdog is `.github/workflows/deploy-freshness.yml`
+(`scripts/alert-deploy-freshness.sh`) — it pages when the oldest undeployed main commit
+is older than 1h. Do not treat a green health probe as proof the pipeline is moving.
+ST/CT/UM still share the Hetzner box; `scripts/isolate-shared-box-batch.sh` dry-runs a
+`docker update` CPU cap on CT OCR/scan workers (never restarts; never touches ST).
+Durable isolation is a Coolify CPU limit on congress-app or a CT-repo nice/cpuset
+worker — this repo cannot set those. Coolify has no job-level retry-on-255 we can
+configure from here.
 Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md`.
 `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
 protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:

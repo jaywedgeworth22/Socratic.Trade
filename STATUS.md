@@ -1,5 +1,18 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Deploy freshness alert + CT OCR isolation (#2545)
+
+P0 silent-freeze class from 2026-08-06: Coolify SSH exec died mid-build while
+webhooks stayed 200 and `/api/health` stayed green on the old sha.  This branch
+adds a 20-minute freshness cron (oldest undeployed main commit >1h pages
+Sentry / optional `#agent-sync`) and a dry-run-default `docker update` CPU cap
+for CT OCR/scan workers that never restarts and never touches ST.  Remaining
+host constraint: durable isolation is Coolify/CT-repo; this repo cannot set
+those or a Coolify retry-on-255.  Did not touch prod.
+
+Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  Rollout:
+`docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
+
 ## 2026-08-17 CURSOR — Retire FilingAPI.dev; ROIC.ai covers the class (#2778)
 
 Owner has ROIC access and not filingapi.dev.  Prod FilingAPI key is a dead 401; Plus checkout is refused (do not charge ST Stripe).  This branch removes live HTTP to filingapi.dev, the `filingapi` health lane, and cascade registration.  ROIC + SEC EDGAR 10-K/10-Q paths are unchanged.

@@ -40,6 +40,14 @@ Expect: `status: "finished"`, `commit_sha` matches `git rev-parse origin/main`, 
 
 **Zombie alert:** a deployment stuck `in_progress` blocks the queue (`concurrent_builds=1`) -- this has happened before after a mid-clone GitHub blip. Post `#agent-sync` immediately with the deployment id if you can confirm it from the box.
 
+**Silent-freeze watch (#2545):** GitHub webhook 200s + a healthy `/api/health` on an
+*old* sha is the 2026-08-06 class (Coolify SSH exec stream exit 255 under shared-box
+load). Do not wait for a human to notice. The standing cron is
+`.github/workflows/deploy-freshness.yml` (`scripts/alert-deploy-freshness.sh`).
+A failed run means the oldest undeployed main commit is older than 1h --
+investigate the queue; do not hand-trigger. CT OCR isolation (dry-run only unless
+the owner latches apply) is `scripts/isolate-shared-box-batch.sh`.
+
 ## 3. Backup Continuity (Litestream)
 
 Litestream runs IN the Coolify container and IS the DB backup path. The `/api/health` payload already reports its state -- prefer this over trying to inspect R2 directly:

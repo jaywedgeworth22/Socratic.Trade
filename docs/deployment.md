@@ -52,3 +52,45 @@ curl -sS https://socratictrade.com/api/health
 ```
 
 CI: GitHub-hosted `ubuntu-latest` only (no self-hosted Mac/Oracle runner labels).
+
+## Deploy freshness (silent-freeze watch)
+
+`verify-deploy-sha.sh` is the post-merge assertion (polls up to 25 min).  It does
+not watch the pipeline afterwards.  On 2026-08-06 five Coolify deploys died
+mid-build (SSH exec stream exit 255) while webhooks returned 200 and
+`/api/health` stayed green on the old sha for ~14h.
+
+`.github/workflows/deploy-freshness.yml` runs `scripts/alert-deploy-freshness.sh`
+every 20 minutes.  It fails (Sentry fleet-infra + optional `#agent-sync`) when
+the oldest commit on `origin/main` that is not live is older than 1 hour.
+Unreachable health is not this class (UptimeRobot pages site-down).  The
+workflow never deploys and never calls Coolify.
+
+Manual one-shot:
+
+```bash
+bash scripts/alert-deploy-freshness.sh origin/main
+```
+
+## Shared-box OCR isolation
+
+ST, Congress.Trade, and Usage Monitor still share the Hetzner cx43.  CT OCR /
+`scan-cpu-worker` batches on that box were the 2026-08-06 contention correlate.
+
+```bash
+bash scripts/isolate-shared-box-batch.sh                  # dry-run on the host
+ISOLATE_SHARED_BOX_APPLY=1 bash scripts/isolate-shared-box-batch.sh --apply
+```
+
+The script never restarts a container and never matches Socratic.Trade, Coolify,
+or Usage Monitor.  `--apply` requires the env latch.  `docker update` CPU limits
+are ephemeral: the next CT Coolify recreate overwrites them.
+
+**Remaining host constraint (this repo cannot lift it):**
+
+- Durable isolation is a Coolify CPU limit on `congress-app`, a CT-repo
+  nice/cpuset worker, or moving OCR off-box.
+- If OCR is in-process inside `congress-app-live`, this script finds no worker.
+  `--include-app` caps the whole CT app (also caps CT web).
+- Coolify has no job-level retry-on-exit-255 that this repo can set.  Do not
+  take prod down to experiment.
