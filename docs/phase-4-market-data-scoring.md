@@ -90,14 +90,15 @@ a concrete warning naming the ticker.
 **Empty screener is a failure, not "no names today" (2026-08-18):** Interactive
 `GET /api/scan` used to return 200 with `topCandidates: []` when the delayed
 screener produced no allowed-set quotes and the audit seed was missing or older
-than `previousTradingDayStart`. iOS rendered that as "No Candidates" next to
-the watchlist count. A non-empty universe that cannot be priced now throws
-`ScanQuotesUnavailableError` (HTTP 503, `code: scan_quotes_unavailable`). An
-empty universe (no index, no additional symbols, no holdings) still returns
-200 with an explicit warning. When the screener is empty, the quote fallback
-prices the whole allowed set (index members included), not only custom
-tickers. iOS Scan decodes `scannedSymbols` / `returnedQuotes` / `warnings` and
-does not treat watchlist size as the universe.
+than `previousTradingDayStart`. The live cause was `fetchNasdaqScreener` using
+a stub `"Mozilla/5.0"` UA and a bare `fetch` that aborted at 8s (every
+production call since 2026-08-13T22:30Z). The screener now uses `BROWSER_UA` +
+`fetchWithRetry` like nasdaq-quote / nasdaq-calendar. If Nasdaq still fails,
+the quote fallback prices the whole allowed set. A non-empty universe that
+still cannot be priced throws `ScanQuotesUnavailableError` (HTTP 503). An
+empty universe still returns 200 with an explicit warning. iOS Scan decodes
+`scannedSymbols` / `returnedQuotes` / `warnings` and does not treat watchlist
+size as the universe.
 
 **Expanded dynamic universes (2026-06-23):** Base universe selection now covers
 small and broad indexes without sending the whole market to the LLM. Static

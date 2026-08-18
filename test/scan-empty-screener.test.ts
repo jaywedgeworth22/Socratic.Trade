@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { getPolicy, resetDbForTesting, setPolicy, upsertConnectedAccount } from "../src/lib/db";
 import { clearMarketCache, scanMarket, ScanQuotesUnavailableError } from "../src/lib/market";
 import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
+import { BROWSER_UA } from "../src/lib/web-sources/http";
 import { marketScanQuotesFromAudit } from "../src/lib/scan-singleflight";
 import { GET as scanGet } from "../app/api/scan/route";
 
@@ -91,6 +92,55 @@ describe("empty screener + expired seed", () => {
     await expect(scanMarket(["AAPL"], [], undefined, undefined, [], {
       seedEnrichment: expired
     })).rejects.toBeInstanceOf(ScanQuotesUnavailableError);
+  });
+});
+
+describe("fetchNasdaqScreener transport", () => {
+  it("uses BROWSER_UA and fetchWithRetry headers, not the stub Mozilla/5.0 UA", async () => {
+    const seen: Array<{ url: string; userAgent: string | null; origin: string | null; referer: string | null }> = [];
+    vi.stubGlobal("fetch", async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      const headers = new Headers(init?.headers);
+      if (url.includes("api.nasdaq.com")) {
+        seen.push({
+          url,
+          userAgent: headers.get("user-agent") ?? headers.get("User-Agent"),
+          origin: headers.get("origin") ?? headers.get("Origin"),
+          referer: headers.get("referer") ?? headers.get("Referer")
+        });
+        return new Response(
+          JSON.stringify({
+            data: {
+              asof: "2026-08-18",
+              table: {
+                rows: [{
+                  symbol: "AAPL",
+                  name: "Apple Inc",
+                  lastsale: "$210.50",
+                  netchange: "2.5",
+                  pctchange: "1.2%",
+                  marketCap: "3000000000000",
+                  volume: "1000000",
+                  sector: "Technology",
+                  industry: "Consumer Electronics"
+                }]
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const scan = await scanMarket(["AAPL"], []);
+    expect(scan.topCandidates.map((quote) => quote.symbol)).toEqual(["AAPL"]);
+    expect(scan.returnedQuotes).toBeGreaterThan(0);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]?.userAgent).toBe(BROWSER_UA);
+    expect(seen[0]?.userAgent).not.toBe("Mozilla/5.0");
+    expect(seen[0]?.origin).toBe("https://www.nasdaq.com");
+    expect(seen[0]?.referer).toBe("https://www.nasdaq.com/");
   });
 });
 

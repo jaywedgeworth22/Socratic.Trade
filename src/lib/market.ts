@@ -1,6 +1,6 @@
 import { shareScanRefs } from "./congress-share";
 import { congressLongScore, scoreCongressSignal } from "./congress-score";
-import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
+import { fetchWithRetry, getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import type { GroupedDailyBar } from "./market-signals/massive";
 import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
 import type { SymbolWebSignal } from "./web-sources";
@@ -31,6 +31,7 @@ import type {
   UniverseFloor
 } from "./types";
 import { stampFieldObservation } from "./evidence-facts";
+import { BROWSER_UA } from "./web-sources/http";
 
 /**
  * A web signal worth pulling a below-cutoff name into the candidate set for.
@@ -92,6 +93,10 @@ function notableCongressAnalyticsScore(sig?: SymbolWebSignal): number {
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0";
+// Same Chrome desktop UA + Origin/Referer as nasdaq-quote / nasdaq-calendar.
+// The stub "Mozilla/5.0" UA hangs against api.nasdaq.com until the 8s abort
+// (live since 2026-08-13T22:30Z). BROWSER_UA returns 200 on the same host.
+const NASDAQ_SCREENER_UA = BROWSER_UA;
 const DEFAULT_ENRICHMENT_POOL_MULTIPLIER = 5;
 const DEFAULT_ENRICHMENT_POOL_CAP = 500;
 const MAX_ENRICHMENT_POOL_MULTIPLIER = 10;
@@ -1298,14 +1303,20 @@ async function fetchNasdaqScreener(
   else signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
-    const response = await fetch(nasdaqScreenerUrl(exchange), {
-      cache: "no-store",
-      signal: controller.signal,
-      headers: {
-        accept: "application/json",
-        "user-agent": "Mozilla/5.0"
-      }
-    });
+    const response = await fetchWithRetry(
+      nasdaqScreenerUrl(exchange),
+      {
+        cache: "no-store",
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json,text/plain,*/*",
+          "User-Agent": NASDAQ_SCREENER_UA,
+          Origin: "https://www.nasdaq.com",
+          Referer: "https://www.nasdaq.com/"
+        }
+      },
+      { service: "nasdaq-delayed-screener", retries: 1 }
+    );
     if (!response.ok) throw new Error(`Market data request failed with ${response.status}.`);
 
     const payload = await response.json();

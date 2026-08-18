@@ -2,13 +2,13 @@
 
 ## Context & Objective
 
-Jay's iOS Scan (2026-08-18 ~12:03pm CT, market open) showed "0 names · 2 watched" and "No Candidates. The scan returned no ranked names." Snapshot refresh succeeded. `GET /api/scan` returned 200 with `topCandidates: []` and a `generatedAt`. This was not the Green OpenRouter 404. Watchlist is never the scan universe. A provider miss plus an expired audit seed was masquerading as "no names today."
+Jay's iOS Scan (2026-08-18 ~12:03pm CT, market open) showed "0 names · 2 watched" and "No Candidates. The scan returned no ranked names." Snapshot refresh succeeded. `GET /api/scan` returned 200 with `topCandidates: []` and a `generatedAt`. This was not the Green OpenRouter 404. Watchlist is never the scan universe. The live cause is `fetchNasdaqScreener` using a stub `"Mozilla/5.0"` UA and a bare `fetch` with an 8s abort — that path has aborted every production call since 2026-08-13T22:30Z. Other Nasdaq callers already use `BROWSER_UA` + `fetchWithRetry`.
 
 ## Changes Made
 
-A non-empty universe that cannot be priced after the delayed screener, the quote fallback, and a fresh audit seed now throws `ScanQuotesUnavailableError`. `GET /api/scan` returns HTTP 503 with `code: scan_quotes_unavailable`, `scannedSymbols`, `returnedQuotes: 0`, and `warnings`. iOS treats that as a failure banner, not "No Candidates." When the screener is empty, the quote fallback prices the whole allowed set (index members included), not only custom tickers. An actually empty universe still returns 200 with an explicit warning.
+`fetchNasdaqScreener` now matches nasdaq-quote / nasdaq-calendar: `BROWSER_UA` (Chrome 124 desktop), `Origin`/`Referer` for nasdaq.com, and `fetchWithRetry` (one retry on 429 / transient network). Whole-allowed-set Yahoo fallback stays if Nasdaq still fails. A non-empty universe that still cannot be priced after screener + Yahoo + a fresh audit seed throws `ScanQuotesUnavailableError` (HTTP 503) so iOS does not paint "No Candidates" on a 200 empty table. An actually empty universe still returns 200 with an explicit warning. Success is a populated scan, not a prettier empty state.
 
-- `src/lib/market.ts` — `ScanQuotesUnavailableError`; whole-set quote fallback; empty-universe warning
+- `src/lib/market.ts` — `fetchNasdaqScreener` uses `BROWSER_UA` + `fetchWithRetry`; `ScanQuotesUnavailableError` last resort; whole-set Yahoo fallback; empty-universe warning
 - `src/lib/yahoo-finance.ts` — optional batch concurrency for the empty-screener fallback
 - `app/api/scan/route.ts` — 503 structured body for quote-unavailable
 - `app/console/scan/page.tsx` — empty-universe copy (quote miss is now an error)
@@ -28,15 +28,18 @@ A non-empty universe that cannot be priced after the delayed screener, the quote
 ## Verification State
 
 ```bash
-npm run lint          # 0 errors (grandfathered warnings only)
-npx tsc --noEmit      # clean
-npx vitest run test/scan-empty-screener.test.ts test/market-custom-symbol.test.ts \
-  test/market-preselection.test.ts test/market-dynamic-universe.test.ts \
-  test/scan-singleflight.test.ts
-# 28 passed
+git rebase origin/main   # clean onto 6429d984 (#2829)
+npx vitest run test/scan-empty-screener.test.ts test/market-custom-symbol.test.ts
+# 12 passed (includes BROWSER_UA header assertion)
 ```
 
-`xcodebuild` is not available on this VM. Swift decode/copy changed; Mac / TestFlight compile is a follow-up. Full `npm test` on this VM hits unrelated env/network flakes (server-metrics, connection-health, history). Focused scan suites are the contract for this PR.
+Live recorded 2026-08-18 ~2:13pm CT (market open), this VM:
+
+- Nasdaq screener `BROWSER_UA` + Origin/Referer: HTTP 200, **7176** rows, asOf "Last price as of Aug 18, 2026", 3152ms. Sample NVDA/AAPL/GOOGL.
+- Same URL with stub `"Mozilla/5.0"` also 200 / 7176 rows here (2490ms). Production abort-since-2026-08-13 is still the stub-UA + bare-fetch + 8s abort path; this branch no longer uses that path.
+- `scanMarket(SP500_SYMBOLS, [], …, { enrichmentMode: "skip" })`: **498 quotes / 502 scanned / 38 topCandidates**, source `nasdaq-delayed-screener`, 2591ms. First names: MSFT 482.38, JPM 362.64, BRK-B 502.91. Yahoo fallback was not needed.
+
+`xcodebuild` was not run on this Linux VM. Do not treat the iOS decode/copy change as compiled.
 
 PR **#2830**.
 
