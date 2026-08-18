@@ -14,6 +14,15 @@ Trading Ops receipts, same process:
 
 That is a race: 6s (and 8s) `withDeadline` aborts vs a slow in-process loop.  The promise is not cancelled; alpaca-broker still logs ok after the UI has already degraded.
 
+After #2847 (`4abfb7fa`) the request lock was gone: Roth Manual Run once wrote `b3b83913` at 23:13:25Z.  That run sat ~17m with llm=0 and never reached Green.  Live crumbs on the same process:
+
+- `roic-transcript-refresh` in-flight since 23:11:45Z (before the click), RJF 2024Q2→2022Q4
+- embed over-limit 8193 tokens (do not reopen #2840); last embed 23:29:11Z, Pinecone upsert 23:29:26Z 22/22
+- FTS: 78 `ftsMirrorSlice` since the run, 6–13s each
+- Broker: `getEquityQuotes` 6s ×28; alpaca-broker 6.5–7.4s; tradier 6.2–13s
+
+Bounding the FTS tick is not enough if ROIC refresh still owns the loop for the whole run.
+
 ## Changes Made
 
 Investigated first (ops snapshot `asOf` 2026-08-18T22:31:35Z + ASC + code):
@@ -27,14 +36,21 @@ Fix:
 
 - First wait 16s (above live max 14416ms) on dashboard getAccounts, portfolio bundle, Alpaca `getAccount`, `getEquityQuotes`, and option positions.  Retry remains for a hung pending getAccounts/portfolio call.  Credential / 401 throws still fail immediately.  Timeout strings stay honest (`16000+8000ms`).
 - FTS tick budget 2s, max 6 chunks, inner group 1.  Batch helper starts at 1 row.  Planner returns 0 chunks when remaining budget is below expected ms/chunk.
+- Do not start `roic-transcript-refresh` or claim SEC ingest / FTS work while any `strategy_runs` row is `running` or any `strategy_run_requests` row is `queued`/`running`.  An in-flight ROIC walk yields between symbols/periods and pauses (cursor kept) when a run starts.  This is process-wide so one user's Manual Run once is not starved by another user's background RAG.
+- Rebased onto `origin/main` `4abfb7fa` (#2847).
 
 - `src/lib/inflight-deadline.ts`
 - `src/lib/dashboard.ts`
 - `src/lib/alpaca.ts`
 - `src/lib/rag/fts-mirror-bound.ts`
 - `src/lib/db-learning.ts`
+- `src/lib/db-execution.ts`
+- `src/lib/web-sources/roic-transcripts.ts`
+- `src/lib/scheduler.ts`
+- `src/lib/rag/sec-ingest-worker.ts`
 - `test/inflight-deadline.test.ts`
 - `test/sec-ingest-worker.test.ts`
+- `test/roic-transcripts.test.ts`
 - `STATUS.md`
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
@@ -45,9 +61,10 @@ Fix:
 
 - Did not invent a sidecar or bounce Coolify.
 - Did not hide the failure with copy.  Run once still fail-closes if the combined budget expires or the broker throws.
-- Did not touch strategy pick / #2841 / #2840 / #2812.
-- Did not rewrite other long scheduler lanes (`synthetic-stop-monitor` avg 7.2s, `stale-limit-scan` avg 5.9s).  ASC named `ftsMirrorSlice`; that is the ingest pin on this loop.
-- FTS ingest will take more ticks (6 vs 20 chunks).  That is the cost of not pinning Manual Run once.
+- Did not touch strategy pick / #2841 / #2840 / #2812.  Did not reopen the embed-pack / 8193 HOLD.
+- Did not hide the embed "OpenRouter embed connection failed" / 8193 error with copy.
+- Did not rewrite other long scheduler lanes (`synthetic-stop-monitor` avg 7.2s, `stale-limit-scan` avg 5.9s).
+- FTS ingest will take more ticks (6 vs 20 chunks) and ROIC walks will pause mid-universe when a run starts.  That is the cost of letting Green start.
 
 ## Verification State
 

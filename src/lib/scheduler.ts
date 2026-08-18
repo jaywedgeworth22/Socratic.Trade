@@ -24,7 +24,7 @@ import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
-import { markStaleRunningRuns } from "./db-execution";
+import { hasInFlightStrategyWork, markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
@@ -634,7 +634,7 @@ async function tick(): Promise<void> {
   // Prefer this over free EarningsCalls previews when the ROIC individual plan is configured.
   // Holdings → watchlist, last N fiscal quarters, cap ROIC_TRANSCRIPTS_MAX_PER_RUN.
   // Library helpers existed earlier without a scheduler caller — that left zero ROIC saves.
-  if (isRoicTranscriptRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
+  if (isRoicTranscriptRefreshDue() && !hasInFlightStrategyWork() && checkMonthlyLlmSpendCeiling().ok) {
     void journalLane("roic-transcript-refresh", {}, () => refreshRoicTranscriptsIfDue()).catch((err) =>
       console.error("[scheduler] roic transcript refresh error:", err instanceof Error ? err.message : err)
     );

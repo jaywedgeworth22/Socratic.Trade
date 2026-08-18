@@ -680,6 +680,53 @@ describe("embed_queued FTS slice + durable resume", () => {
     expect(SEC_INGEST_TASKS_PER_TICK).toBe(5);
   });
 
+  it("does not claim FTS / ingest work while a strategy run is in flight", async () => {
+    const { insertStrategyRun, hasInFlightStrategyWork, finishStrategyRun } = await import(
+      "../src/lib/db-execution"
+    );
+    const processed: string[] = [];
+    const worker = new SecIngestWorker();
+    worker.processTask = async (task) => {
+      processed.push(task.id);
+    };
+
+    const job = createSecIngestJob({
+      idempotencyKey: `tick-strategy-${randomUUID()}`,
+      corpusRevision: "corp-v1"
+    });
+    transitionSecIngestJob(job.id, "running");
+    enqueueSecIngestTask({
+      jobId: job.id,
+      accession: "0000320193-26-000301",
+      cik: "0000320193",
+      symbol: "RJF",
+      payload: { url: "https://www.sec.gov/x", docType: "10-K", filedAt: "2026-07-15" }
+    });
+
+    const runId = randomUUID();
+    const userId = `sec-yield-${randomUUID()}`;
+    insertStrategyRun(runId, userId);
+    expect(hasInFlightStrategyWork()).toBe(true);
+    await worker.runTick();
+    expect(processed).toHaveLength(0);
+
+    finishStrategyRun(runId, "failed", "test release", userId);
+    expect(hasInFlightStrategyWork()).toBe(false);
+  });
+
+  it("treats a queued Manual Run request as in-flight strategy work", async () => {
+    const { hasInFlightStrategyWork } = await import("../src/lib/db-execution");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `queued-run-${randomUUID()}`;
+    const queued = queueStrategyRunRequest({ userId, manual: true });
+    expect(queued.deduped).toBe(false);
+    expect(hasInFlightStrategyWork()).toBe(true);
+    getDb()
+      .prepare("UPDATE strategy_run_requests SET status = 'failed', finished_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), queued.request.id);
+    expect(hasInFlightStrategyWork()).toBe(false);
+  });
+
   it("defers a daily write-fuse skip instead of throwing capacity-exceeded", async () => {
     const { getSecIngestTask } = await import("../src/lib/db-rag-ingest");
     const { storeDocument } = await import("../src/lib/vector-db");

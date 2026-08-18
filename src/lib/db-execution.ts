@@ -292,6 +292,30 @@ export function insertStrategyRun(id: string, userId: string = "local", connecte
     .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
 }
 
+/**
+ * Live Roth `b3b83913` (2026-08-18): Manual Run once wrote the run row, then sat
+ * llm=0 for ~17m with no gather/Green because `roic-transcript-refresh` and
+ * `ftsMirrorSlice` owned the one Node event loop.  Background RAG is process-wide
+ * (not per-user): any in-flight run or queued/running request on this process
+ * must pause ROIC / FTS so Green can start.
+ */
+export function shouldDeferBackgroundRagForStrategy(input: {
+  strategyWorkInFlight: boolean;
+  force?: boolean;
+}): boolean {
+  return input.strategyWorkInFlight && input.force !== true;
+}
+
+export function hasInFlightStrategyWork(): boolean {
+  const db = getDb();
+  const run = db.prepare("SELECT 1 FROM strategy_runs WHERE status = 'running' LIMIT 1").get();
+  if (run) return true;
+  const request = db
+    .prepare("SELECT 1 FROM strategy_run_requests WHERE status IN ('queued', 'running') LIMIT 1")
+    .get();
+  return Boolean(request);
+}
+
 // 30 min — raised from 10 min after a 2026-07-08 incident: an evening run (id 5d49c9b5) with
 // slow LLM steps (150s+ each observed under load) was still genuinely running past the old 10-min
 // threshold, got marked "crashed" by this sweep at the ~11-minute mark, and then completed 5s later

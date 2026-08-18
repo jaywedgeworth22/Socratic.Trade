@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — Manual Run once starved by ROIC / FTS on the event loop
+
+#2847 is live (`4abfb7fa`).  The request lock is gone: Roth Manual Run once wrote `b3b83913` at 23:13:25Z.  That run sat ~17m with llm=0 and never reached Green.  Not a #2831 miss.  `roic-transcript-refresh` was already in-flight (23:11:45Z, RJF 2024Q2→2022Q4); 78 `ftsMirrorSlice` 6–13s; `getEquityQuotes` 6s ×28; alpaca-broker 6.5–7.4s.  Bounding the FTS tick is not enough if ROIC still owns the loop.
+
+#2848 rebase onto `4abfb7fa`: keep 16s wait-above-p95 and FTS 2s / 1-row bound; **also** skip / pause ROIC and FTS while any `strategy_runs`/`strategy_run_requests` row is queued or running, and yield between ROIC periods.  Do not reopen #2840.  Do not hide the embed 8193 error with copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2812 / strategy picks.
+
+PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 
 #2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Manual Run once did not create a `strategy_run`.  ASC: 0 new Roth rows after 22:06:43Z.  Orphan `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  That leftover request is the lock (`queueStrategyRunRequest` dedupes on `queued`/`running`; the worker never wrote the request terminal).  22:10:15Z `getPortfolioBundle` `8000+7000ms` is a separate slow first-read (#2848), not this lock.
