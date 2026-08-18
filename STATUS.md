@@ -9,7 +9,7 @@ Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-1
 
 Owner: Green failed because models are not available on his OpenRouter account.  False.  Live health ~17:20Z: OpenRouter credits above $3, `tradingLivenessDegraded` true, oldest completed Green ~27h.  Ops snapshot showed rotation already picking `gemini-3.7-flash` / `mistral-medium-3-5` and classifying chat 404 as an account miss.  Alias keep-only filter is a second liar.  Fail-open + family match + honest copy + 404/403 failover.  Keep `__rotate__`.  Do not add OpenRouter dashboard models.  No Stripe/IAP.
 
-Branch `cursor/openrouter-rotation-alias-fb04`.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
+PR **#2829**.  Branch `cursor/openrouter-rotation-alias-fb04`.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
 
 ## 2026-08-18 CURSOR — IRA accounts must not tax-loss harvest
 

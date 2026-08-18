@@ -42,7 +42,19 @@ Touched files:
 
 ## Verification State
 
-Focused vitest on the touched suites, then `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build`.  `xcodebuild` was not run (no `ios/**` product change).
+```bash
+npm run lint          # 0 errors (768 grandfathered warnings)
+npx tsc --noEmit      # clean
+npm test -- test/openrouter-model-availability.test.ts \
+  test/model-rotation.test.ts test/llm-errors.test.ts test/llm-request.test.ts
+                          # 65 passed
+npm test -- test/llm-provider.test.ts test/strategy-llm-failover.test.ts \
+  test/strategy-run-once-async-route.test.ts test/redteam-failure-routing.test.ts
+                          # 32 passed
+npm run build         # Next.js 16.3.1 webpack build clean
+```
+
+Full `npm test` was started and then stopped: unrelated suites hung/failed on this VM's outbound network (SEC company_tickers 404, TwelveData, RAG coverage).  Not a product regression from this PR.  `xcodebuild` was not run (no `ios/**` product change).
 
 ## Next Steps & Blockers
 
