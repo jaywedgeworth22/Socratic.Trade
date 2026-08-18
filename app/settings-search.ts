@@ -347,24 +347,24 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   },
   {
     id: "settings.llmDailyTokenBudget",
-    label: "Daily LLM token cap",
-    synonyms: ["llm budget", "token budget", "daily token ceiling", "TRIGGER_LLM_DAILY_TOKEN_BUDGET"],
+    label: "Daily AI token cap",
+    synonyms: ["llm budget", "AI budget", "token budget", "daily token ceiling", "TRIGGER_LLM_DAILY_TOKEN_BUDGET"],
     scope: "user",
     destination: "settings/llm-budget",
     backingField: "llm_daily_budget.tokenBudget",
     disclosure: "essential",
-    help: "Per-user daily token ceiling for model + retrieval spend. When set, spend skips for the rest of the day.",
+    help: "Daily token limit for model and research spend.  When set, spend pauses for the rest of the day.",
     anchor: "llm-budget"
   },
   {
     id: "settings.llmDailyCostBudget",
-    label: "Daily LLM cost cap",
-    synonyms: ["llm cost cap", "daily usd budget", "cost budget", "TRIGGER_LLM_DAILY_COST_BUDGET_USD"],
+    label: "Daily AI cost cap",
+    synonyms: ["llm cost cap", "AI cost cap", "daily usd budget", "cost budget", "TRIGGER_LLM_DAILY_COST_BUDGET_USD"],
     scope: "user",
     destination: "settings/llm-budget",
     backingField: "llm_daily_budget.costBudgetUsd",
     disclosure: "essential",
-    help: "Per-user daily USD ceiling for model + retrieval spend. When set, spend skips for the rest of the day.",
+    help: "Daily dollar limit for model and research spend.  When set, spend pauses for the rest of the day.",
     anchor: "llm-budget"
   },
   {
@@ -476,7 +476,7 @@ export function settingsDestinationLabel(destination: SettingsDestination): stri
     case "settings/data-privacy":
       return "Settings · Data sources";
     case "settings/llm-budget":
-      return "Settings · LLM budget";
+      return "Settings · AI budget";
     case "settings/presets":
       return "Strategy · Presets";
     case "settings/appearance":

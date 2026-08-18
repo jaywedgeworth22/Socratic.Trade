@@ -72,7 +72,7 @@ private struct ReadinessChecklistHero: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Finish setup to trade")
                             .font(.appTitle3.weight(.bold))
-                        Text("Phone is a control remote — connect an account and symbol universe, then Run Once.")
+                        Text("Connect an account and a symbol universe, then tap Run Once.")
                             .font(.appSubheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -84,7 +84,7 @@ private struct ReadinessChecklistHero: View {
                         done: !needsAccount,
                         title: "Connect a broker account",
                         detail: needsAccount
-                            ? "Link Alpaca or Robinhood in the full desk, then select it here."
+                            ? "Link Alpaca or Robinhood in Account & Settings, then select it here."
                             : (snapshot.readiness.activeConnectedAccount?.label ?? "Account ready")
                     )
                     ChecklistRow(
@@ -512,7 +512,7 @@ private struct DeskShortcutsCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Desk", subtitle: "full surfaces, not just the remote")
+                SectionHeading("Desk", subtitle: "Coach, Scan, Guardrails, and Results")
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     shortcut("Coach", systemImage: "bubble.left.and.bubble.right.fill", tab: .coach)
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)
@@ -1067,7 +1067,6 @@ private struct ConnectedAccountSettingsRow: View {
     }
 }
 
-/// Per-user daily LLM + RAG spend cap.  Stored on the account, not in Infisical.
 struct LlmBudgetSection: View {
     @EnvironmentObject private var store: MobileStore
 
@@ -1083,7 +1082,7 @@ struct LlmBudgetSection: View {
             if isLoading && response == nil {
                 HStack {
                     ProgressView()
-                    Text("loading your daily LLM cap")
+                    Text("loading your daily AI budget")
                         .foregroundStyle(.secondary)
                 }
             } else if let loadError, response == nil {
@@ -1126,9 +1125,9 @@ struct LlmBudgetSection: View {
                 }
             }
         } header: {
-            Text("Daily LLM Budget")
+            Text("Daily AI Budget")
         } footer: {
-            Text("Your own daily ceiling for model + retrieval spend.  This is not an Infisical secret.  When a cap is set, strategy, chat, and RAG skip for the rest of the day instead of overrunning.")
+            Text("Optional daily limit for model and research spend.  Leave a field blank for no cap.  When a cap is set, strategy, chat, and research pause for the rest of the day once spend reaches it.")
         }
         .task { await load() }
     }

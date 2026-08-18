@@ -47,7 +47,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-// ── Source / data-plane feature settings (per-user overrides of Infisical knobs) ─
+// ── Source / data-plane feature settings ────────────────────────────────────
 
 export interface SourceFeatureRow {
   id: string;

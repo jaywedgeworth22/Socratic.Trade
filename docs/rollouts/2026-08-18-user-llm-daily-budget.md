@@ -35,6 +35,7 @@ Per-user RAG rolling-window knobs (`RAG_RUN_BUDGET_ENABLED` / `CEILING` / `WINDO
 - Legacy account tuning still binds when the user setting is unset, so existing policy rows keep working.
 - `TRIGGER_LLM_DAILY_*` remains a retired operator default only — do not put a per-user cap back in Infisical.
 - iOS UI lives in `HomeView.swift` so `project.yml`'s folder source + the committed pbxproj stay in sync without a hand-edit of `.pbxproj`.
+- Owner ruling: no coordinator/owner asides in console or iOS copy.  Labels are product language ("Daily AI Budget").  Infisical / remotes / surfaces stay in the PR and this note only.
 - No Stripe, no IAP, no selling ST.
 - Did not touch reserved PRs #2792 / #2798 / #2800 / #2794.
 

@@ -367,7 +367,7 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     group: "rag",
     label: "Per-run RAG operation budget",
     description:
-      "When on, a rolling-window cap degrades rerank/hybrid after too many embed/rerank calls.  Core dense recall still runs.  Prefer this Settings row over Infisical.",
+      "When on, a rolling-window cap slows extra rerank work after too many calls.  Core search still runs.",
     type: "boolean",
     defaultValue: true
   },

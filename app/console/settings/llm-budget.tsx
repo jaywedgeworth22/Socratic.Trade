@@ -1,8 +1,8 @@
 "use client";
 
-/** Per-user daily LLM + RAG spend cap. Stored in user_settings, not Infisical.
- *  Blank = no user cap. When a cap is set, strategy / chat / RAG skip for the
- *  rest of the day once spend reaches it (fail-closed). */
+/** Per-user daily AI spend cap. Blank = no user cap. When a cap is set,
+ *  strategy, chat, and research skip for the rest of the day once spend
+ *  reaches it. */
 
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleApiError } from "../lib/api";
@@ -22,9 +22,9 @@ function sourceLabel(source: LlmBudgetLimitSource): string {
     case "user":
       return "you";
     case "policy":
-      return "legacy policy";
+      return "account";
     case "env":
-      return "operator default";
+      return "default";
     case "none":
       return "no cap";
     default: {
@@ -55,7 +55,7 @@ export function LlmBudgetCard() {
       setDraft({});
       setLoadError(null);
     } catch (err) {
-      setLoadError(err instanceof ConsoleApiError ? err.message : "Could not load the daily LLM budget.");
+      setLoadError(err instanceof ConsoleApiError ? err.message : "Could not load the daily AI budget.");
     }
   }, []);
 
@@ -92,11 +92,11 @@ export function LlmBudgetCard() {
   };
 
   return (
-    <Card title="Daily LLM Budget" action={<SaveStatus status={saveStatus} />}>
+    <Card title="Daily AI Budget" action={<SaveStatus status={saveStatus} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Your own daily ceiling for model + retrieval spend.  This lives on your account, not in
-        Infisical.  Blank means no user cap.  When a cap is set, strategy, chat, and RAG skip for
-        the rest of the day once spend reaches it — they do not overrun.
+        Optional daily limit for model and research spend on your account.  Leave a field blank for
+        no cap.  When a cap is set, strategy, chat, and research pause for the rest of the day once
+        spend reaches it.
       </p>
 
       {loadError && (
@@ -118,7 +118,7 @@ export function LlmBudgetCard() {
       <div className="grid max-w-lg grid-cols-1 gap-3 sm:grid-cols-2">
         <Field
           label="Daily Token Cap"
-          hint="Positive number.  Blank inherits legacy policy or no cap.  Saves when you click away."
+          hint="Positive number.  Blank means no token cap.  Saves when you click away."
           htmlFor="llm-token-budget"
         >
           <div className="flex items-center gap-2">
@@ -142,7 +142,7 @@ export function LlmBudgetCard() {
         </Field>
         <Field
           label="Daily Cost Cap ($)"
-          hint="Estimated USD.  Blank inherits legacy policy or no cap.  Saves when you click away."
+          hint="Estimated USD.  Blank means no dollar cap.  Saves when you click away."
           htmlFor="llm-cost-budget"
         >
           <div className="flex items-center gap-2">

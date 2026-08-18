@@ -53,7 +53,7 @@ const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
   { id: "delivery", label: "Delivery" },
   { id: "sharing", label: "Sharing" },
   { id: "learning-review", label: "Learning review" },
-  { id: "llm-budget", label: "LLM budget" },
+  { id: "llm-budget", label: "AI budget" },
   { id: "scan-shape", label: "Scan shape" },
   { id: "data-sources", label: "Data sources" },
   { id: "confirmation", label: "Confirmation" },
@@ -697,10 +697,6 @@ function YouCard() {
 }
 
 // ── All accounts: Data sources + per-user feature knobs ──────────────────────
-//
-// Owner 2026-08-06: FMP module toggles stay visible (even if disproportionate for
-// barely-active FMP). SEC / RAG / transcript / web-source knobs that used to be
-// Infisical-only are selectable here (user override → env → default).
 
 const GROUP_ORDER = ["fmp", "sec", "web_sources", "transcripts", "rag", "enrichment"] as const;
 
@@ -781,9 +777,8 @@ function DataSourcesCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Per-user feature knobs for data planes that used to be hidden in Infisical. Values you set here
-        override server env for your account; leave unset to follow env/default. API keys and plan tiers
-        still live on{" "}
+        Turn data features on or off for your account.  Values you set here override the current
+        default; leave a row unset to keep it.  API keys and plan tiers still live on{" "}
         <a href="/console/connections#api-keys" className="font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline">
           Connections
         </a>
@@ -837,7 +832,7 @@ function DataSourcesCard() {
                               : row.source === "server"
                                 ? "Server-level override set by the operator in Admin > Operations"
                                 : row.source === "env"
-                                  ? "Following server Infisical/env"
+                                  ? "Using the server default"
                                   : "Catalog default"
                           }
                         >

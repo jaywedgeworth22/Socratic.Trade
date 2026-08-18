@@ -58,7 +58,7 @@ struct DataSourcesSection: View {
                 Section {
                     Toggle("Show Advanced Knobs", isOn: $showAdvanced)
                 } footer: {
-                    Text("Advanced knobs are operator-facing.  Secrets stay in Infisical; these only change what the desk pulls.")
+                    Text("Advanced rows stay hidden until you turn this on.  These settings only change which data your account uses.")
                 }
             }
         }
