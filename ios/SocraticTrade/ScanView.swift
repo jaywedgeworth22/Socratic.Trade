@@ -56,9 +56,9 @@ struct ScanView: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeading(
                     "Market Scan",
-                    subtitle: scan?.asOf.map { "as of \(AppFormat.dateTime($0))" } ?? "same interactive scan as the web desk"
+                    subtitle: scan?.asOf.map { "as of \(AppFormat.dateTime($0))" } ?? "ranked names for this universe"
                 )
-                Text("Ranked candidates for the current universe.  Watchlist add/remove uses the audited mobile command.  Nothing here places an order.")
+                Text("Ranked candidates for the current universe.  Adding or removing a watchlist name does not place an order.")
                     .font(.appSubheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

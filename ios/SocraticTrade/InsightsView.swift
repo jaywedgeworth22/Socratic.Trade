@@ -50,7 +50,7 @@ struct InsightsView: View {
             insights.append(.init(
                 id: "proposals",
                 title: "\(n) pending proposal\(n == 1 ? "" : "s")",
-                detail: "Review rationale, size, execution environment, and any confirmation in Proposals.",
+                detail: "Review rationale, size, and any confirmation in Proposals.",
                 systemImage: "checklist",
                 tone: .attention
             ))
@@ -61,7 +61,7 @@ struct InsightsView: View {
             insights.append(.init(
                 id: "daily-notional",
                 title: "Daily Opening Notional: \(Int((utilization * 100).rounded()))% used",
-                detail: "\(AppFormat.money(snapshot.dailyStats.notional)) of the owner-set \(AppFormat.money(cap)) daily cap.",
+                detail: "\(AppFormat.money(snapshot.dailyStats.notional)) of the \(AppFormat.money(cap)) daily cap.",
                 systemImage: "gauge.with.dots.needle.50percent",
                 tone: utilization >= 0.8 ? .warning : .neutral
             ))
@@ -116,7 +116,7 @@ private struct InsightsBriefCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Portfolio Brief")
                             .font(.appTitle3.weight(.semibold))
-                        Text("A concise read from the latest backend snapshot")
+                        Text("What’s going on with this account")
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
@@ -195,7 +195,7 @@ private struct InsightsCoachCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading("Ask Coach", subtitle: "a real conversation, not this brief")
-                Text("Coach uses the same backend chat as the web desk.  Ask about a name, a pending proposal, or what the last scan ranked.")
+                Text("Ask about a name, a pending proposal, or what the last scan ranked.")
                     .font(.appSubheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -222,7 +222,7 @@ private struct InsightsActionCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading(
                     "Want a Fresh Cycle?",
-                    subtitle: "Run Once lives on Home so there is a single primary control — not a second copy here."
+                    subtitle: "Run Once is on Home."
                 )
                 Text(
                     snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
@@ -250,10 +250,10 @@ private struct InsightsAuthorityCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Orders Still Go Through the Server", systemImage: "lock.shield.fill")
+                Label("Orders Place Through Your Broker", systemImage: "lock.shield.fill")
                     .font(.appHeadline)
                     .foregroundStyle(AppPalette.accent)
-                Text("This tab summarizes what the server already knows.  Broker credentials, keys, and order placement stay on the server.")
+                Text("Approvals here are real.  Keys stay with your account.")
                     .font(.appSubheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

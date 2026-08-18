@@ -10,6 +10,7 @@ Did not clone locally.  Did not touch healthy in-flight PRs #2792 #2798 #2800 #2
 
 - IRA / Roth tax card matches web N/A: same-account wash sale is not applicable; cross-account replacement reads ignored unless blocked.  Taxable Wash-Sale Guard / Handling (`auto`) never render on an IRA, including when the live card already says Roth IRA in display words.  Taxable accounts still show Wash-Sale Guard.
 - Green / Red Team never show `__rotate__`.  Seat value is lowercase “rotate models” (ordinary words; no underscores; no fallback slug).
+- Swept every user-facing string in `ios/SocraticTrade`: no `/api/policy`, “latest snapshot”, phone-safe, `policy.patch`, console-only, APNs/SSE/sandbox/production-push, or dunder tokens.  Activity “Commands” is “Recent Actions”.  Login / Insights / Coach / Scan / sign-out / errors use ordinary app copy.  Notes for Jay stay in this PR, not the UI.
 - Push Settings footer is “Alerts on.”  Apple / empty-token / sandbox / production jargon is sanitized out of the footer.
 - Guardrails and Account & Settings edit Ask-First ↔ Autopilot and raise / lower / switch dollar ↔ % of NAV caps through existing `policy.patch`.  Autopilot types `AUTOPILOT`.  Live loosening types `CONFIRM` when typed-confirm is on.  No extra real-money scare copy.
 
@@ -28,6 +29,14 @@ Touched files:
 - `ios/SocraticTradeTests/PolicyTighteningTests.swift`
 - `ios/SocraticTradeTests/PushNotificationTests.swift`
 - `ios/SocraticTradeTests/DeskModelsTests.swift`
+- `ios/SocraticTradeTests/UserFacingCopyTests.swift`
+- `ios/SocraticTradeTests/MobileModelsTests.swift`
+- `ios/SocraticTrade/ActivityView.swift`
+- `ios/SocraticTrade/LoginView.swift`
+- `ios/SocraticTrade/CoachView.swift`
+- `ios/SocraticTrade/ScanView.swift`
+- `ios/SocraticTrade/ProposalsView.swift`
+- `ios/SocraticTrade/MobileAPIClient.swift`
 - `ios/CLAUDE.md`
 - `docs/phase-6-customization-risk-notifications.md`
 - `STATUS.md`

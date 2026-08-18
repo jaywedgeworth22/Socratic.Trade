@@ -674,7 +674,7 @@ private struct SnapshotStatusBanner: View {
             } else {
                 Image(systemName: store.isStreamConnected ? "dot.radiowaves.left.and.right" : "arrow.triangle.2.circlepath")
                     .foregroundStyle(store.isStreamConnected ? AppPalette.positive : .secondary)
-                    .accessibilityLabel(store.isStreamConnected ? "Stream connected" : "Reconnecting")
+                    .accessibilityLabel(store.isStreamConnected ? "Live" : "Updating")
             }
             // Keep the circlepath / radio glyph; label is "Market Closed" etc. on every tab.
             Text(AppFormat.marketSessionBannerLabel(snapshot.marketSession))

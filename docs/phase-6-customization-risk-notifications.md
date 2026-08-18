@@ -35,7 +35,9 @@ direction: Ask-First ↔ Autopilot, raise or lower notional, and edit or switch
 the binding % of NAV cap.  Returning to Autopilot types `AUTOPILOT`.  Raising a
 cap or switching modes on a live account types `CONFIRM` when typed-confirm is
 on.  IRA / Roth tax cards show same-account wash sales as not applicable and do
-not render the taxable Wash-Sale Guard as On.
+not render the taxable Wash-Sale Guard as On.  User-facing iOS copy is ordinary
+app language: `__rotate__` reads as lowercase “rotate models”; route names,
+command types, SSE/APNs, and console-only notes stay out of the UI.
 
 Policy enforcement includes:
 

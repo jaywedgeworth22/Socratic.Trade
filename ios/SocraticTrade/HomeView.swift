@@ -84,7 +84,7 @@ private struct ReadinessChecklistHero: View {
                         done: !needsAccount,
                         title: "Connect a broker account",
                         detail: needsAccount
-                            ? "Link Alpaca or Robinhood in Account & Settings, then select it here."
+                            ? "Connect Alpaca or Robinhood in Account & Settings, then select it here."
                             : (snapshot.readiness.activeConnectedAccount?.label ?? "Account ready")
                     )
                     ChecklistRow(
@@ -314,7 +314,7 @@ private struct AgentOverviewCard: View {
 
     private var readinessMessage: String {
         if !snapshot.readiness.hasAccount {
-            return "Connect an account in Socratic.Trade, then select it in Account & Settings before running the agent."
+            return "Connect an account in Account & Settings before running the agent."
         }
         return "Add an index or symbol universe before requesting a strategy run."
     }
@@ -639,7 +639,7 @@ private struct PerformanceOverviewCard: View {
             } else {
                 EmptyStateCard(
                     title: "No performance history",
-                    message: "Performance appears after the selected account has fills or portfolio snapshots.",
+                    message: "Performance appears after the selected account has fills or portfolio history.",
                     systemImage: "chart.xyaxis.line"
                 )
             }
@@ -713,7 +713,7 @@ private struct HomeAttentionCard: View {
                     selectedTab = .markets
                 }
                 AttentionRow(
-                    title: "Commands in flight",
+                    title: "In Progress",
                     value: "\(commandsInFlight)",
                     emphasize: commandsInFlight > 0
                 ) {
@@ -858,7 +858,7 @@ private struct AccountSettingsView: View {
             NavigationLink {
                 GuardrailsView()
             } label: {
-                Label("View Full Policy", systemImage: "shield.checkered")
+                Label("View Guardrails", systemImage: "shield.checkered")
             }
         }
     }
@@ -920,7 +920,7 @@ private struct AccountSettingsView: View {
                 }
             }
         } footer: {
-            Text("Signing out clears the app’s local Socratic.Trade session.  Broker and provider credentials remain on the backend.")
+            Text("Signing out only leaves this phone.  Broker and provider keys stay with your account.")
         }
     }
 
@@ -959,7 +959,7 @@ private struct AccountSettingsView: View {
         } header: {
             Text("Delete Account")
         } footer: {
-            Text("Reviewing is read-only and does not pause the agent.  Final confirmation prepares and deletes this app account, its server-stored secrets, proposals, fills, watchlists, alerts, and learned context.  Provider-side OAuth grants must be revoked separately.")
+            Text("Reviewing is read-only and does not pause the agent.  Final confirmation deletes this app account, saved keys, proposals, fills, watchlists, alerts, and learned context.  Revoke broker logins separately if you want those gone too.")
         }
     }
 
@@ -1066,7 +1066,7 @@ private struct ConnectedAccountSettingsRow: View {
             Button("Use Account", role: .destructive, action: activate)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Switch execution context to \(account.label) (\(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))).  Future approved actions will target this account after backend validation.")
+            Text("Switch to \(account.label) (\(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))).  Approved actions will use this account.")
         }
     }
 

@@ -457,7 +457,7 @@ struct GuardrailEditRows: View {
         } message: {
             Text(customCap?.mode == .percentOfNav
                  ? "Enter a percent of NAV between 0.01 and 100."
-                 : "Enter a dollar amount.  The smallest the server accepts is $1.")
+                 : "Enter a dollar amount of at least $1.")
         }
     }
 
@@ -484,8 +484,8 @@ struct GuardrailEditRows: View {
             .disabled(store.isBusy(operationID) || !store.canSubmit(PolicyTightening.commandType))
             .accessibilityHint(
                 next == PolicyTightening.askFirst
-                    ? "Switches strategy authority from Autopilot to Ask-First"
-                    : "Switches strategy authority from Ask-First to Autopilot"
+                    ? "Switches from Autopilot to Ask-First"
+                    : "Switches from Ask-First to Autopilot"
             )
         } else {
             LabeledContent(

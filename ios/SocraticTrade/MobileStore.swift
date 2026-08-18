@@ -711,7 +711,7 @@ final class MobileStore: ObservableObject {
            !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
             return "Connect an account and configure a symbol universe before running the agent."
         }
-        return "Refresh the latest server state before submitting this action.  Stop remains available."
+        return "Pull to refresh, then try again.  Stop remains available."
     }
 
     private static let protectiveCommands: Set<String> = [

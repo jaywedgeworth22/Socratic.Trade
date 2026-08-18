@@ -100,7 +100,7 @@ struct ProposalsView: View {
                 resetConfirmation()
             }
         } message: { proposal in
-            Text("Type exactly “\(expectedConfirmation(for: proposal))”.  The backend revalidates the proposal and confirmation before placing anything.")
+            Text("Type exactly “\(expectedConfirmation(for: proposal))”.  This places a live order.")
         }
     }
 
@@ -206,7 +206,7 @@ private struct ProposalQueueSummary: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(snapshot.pendingProposals.count) Proposals for Review")
                         .font(.appHeadline)
-                    Text("\(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority)) · backend validation remains final")
+                    Text(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority))
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
