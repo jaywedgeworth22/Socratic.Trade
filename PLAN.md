@@ -1,6 +1,6 @@
 # Active Implementation Plan
 
-> **2026-08-18 CURSOR — Litestream restore drill (`cursor/restore-receipts-followup-2cd9`).** Docs-only pin after #2823 flipped decrypt + R2 retain=1 to VERIFIED (#2822 had merged the stale BLOCKED / NOT VERIFIED rows).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+> **2026-08-18 CURSOR — Litestream restore drill (`cursor/restore-receipts-followup-2cd9`, #2824).** Docs-only pin after #2823 flipped decrypt + R2 retain=1 to VERIFIED (#2822 had merged the stale BLOCKED / NOT VERIFIED rows).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 > **2026-08-18 CURSOR — Pinecone store vs condense (`cursor/pinecone-store-vs-condense-ce2b`).** Report only.  Recommended default is hybrid: processed proposer corpus in Pinecone, full bodies local, hydrate after A+B.  Do not fill Builder with raw 10-K/Q/transcripts.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not raise the 2.5M WU fuse.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.
 
