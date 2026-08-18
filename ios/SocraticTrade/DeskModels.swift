@@ -612,6 +612,36 @@ enum DeskCopy {
         return ("not applicable", cross)
     }
 
+    /// Scan refresh failed.  Do not reuse the workspace "Check your connection" sentence —
+    /// SnapshotScaffold already shows that for a stale snapshot, and Retry there reloads
+    /// the snapshot, not `/api/scan`.
+    static let genericConnectionMessage = "Check your connection and try again."
+    static let scanRefreshing = "Refreshing the scan — this can take up to 45 seconds."
+    static let scanEmptyUniverse =
+        "The scan returned no ranked names.  Confirm the universe on Guardrails, then refresh."
+    static let scanEmptyFilter = "Nothing in this scan matches that filter."
+    static let equityWaitingOnBroker = "waiting on broker"
+    static let portfolioSelectAccount =
+        "Select a connected account or retry when the broker is reachable."
+    static let portfolioBrokerUnreachable =
+        "The broker did not return holdings for this account.  Pull to refresh."
+
+    static func scanRefreshFailed(from message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == genericConnectionMessage {
+            return "Couldn’t refresh the market scan.  Check your connection and try again."
+        }
+        return trimmed
+    }
+
+    static func shouldShowScanEmptyState(hasFilter: Bool, loadFailed: Bool) -> Bool {
+        hasFilter || !loadFailed
+    }
+
+    static func portfolioUnavailableMessage(hasConnectedAccount: Bool) -> String {
+        hasConnectedAccount ? portfolioBrokerUnreachable : portfolioSelectAccount
+    }
+
     /// Authority is Autopilot / Ask-First.  Run state is Running / Paused / Stopped.
     /// Never blend the two — Autopilot can be paused when the market is closed.
     static func authorityVersusRunState(

@@ -133,9 +133,11 @@ struct MobileAPIClient {
     /// Client wait is longer so a late seed/200 is not dropped as a dead table.
     /// A 503 `scan_quotes_unavailable` body still carries scanned/quotes/warnings
     /// so Scan can show the abort instead of "No Candidates."
+    static let marketScanTimeout: TimeInterval = 50
+
     func marketScan() async throws -> MarketScanResponse {
         var req = request(path: "/api/scan")
-        req.timeoutInterval = 50
+        req.timeoutInterval = Self.marketScanTimeout
         let data: Data
         let response: URLResponse
         do {
@@ -157,6 +159,12 @@ struct MobileAPIClient {
         } catch {
             throw MobileAPIError.decoding(error)
         }
+    }
+
+    func marketScanRequest() -> URLRequest {
+        var req = request(path: "/api/scan")
+        req.timeoutInterval = Self.marketScanTimeout
+        return req
     }
 
     func fullPolicy() async throws -> FullPolicy {

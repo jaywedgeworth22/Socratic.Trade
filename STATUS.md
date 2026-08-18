@@ -203,12 +203,15 @@ PR **#2831** was CONFLICTING after #2812 merged (`12e8dcd`).  Rebased `cursor/gr
 
 Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
 ## 2026-08-18 GROK — Live prod triage + Alpaca getAccount cache
+## 2026-08-18 GROK — Week-error expert triage + iOS Scan/Home
 
-Owner: grokbot too slow; troubleshoot the live app.  Ops snapshot 19:56Z: Paper Autopilot 4x Green 400 (terra/luna) with a fake 3-endpoint exhaust; Roth completed 19:43Z with 0 proposals; Scan empty since 08-13; Roth dashboard `getAccounts` 6s timeout (duplicate Alpaca `getAccount`); L2/L3 wedge 13h left as owner-ops.
+Owner: team of experts on all errors last 7d + iOS Scan/Home shots.  Live sha `12e8dcd` (#2812).  Health 200.  Paper Autopilot still degraded (Green 400s).  Scan empty since 8/13.  L2/L3 wedged 13h (owner-ops).
 
-Rematched Cursor **#2831** (Green 400 failover) and **#2830** (Scan Nasdaq UA) onto `main` so verify can land them.  This branch only adds a 15s in-process + in-flight `getAccount` cache so dashboard/strategy `Promise.all` pays for one REST call.
+Sentry 7d: Pinecone terminated 360 (1T), OpenRouter embed 21 (1X), rerank 14 (22), CT SSE 13 (1V), NEW integrity rejection 9 (27 = #2812 remapping thrown batches, not missing key).  Do not mint OpenRouter.
 
-Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollout: `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
+This PR **#2834**: Alpaca getAccount cache + iOS Scan/Home honesty (distinct scan error, no stacked workspace banner, 45s scan timeout, waiting-on-broker equity).  Do not rewrite **#2830** (Scan names) or **#2831** (Green 400).
+
+Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`, `docs/rollouts/2026-08-18-week-error-expert-triage.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

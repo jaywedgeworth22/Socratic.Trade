@@ -224,6 +224,17 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertFalse(text.contains("/api/"), text)
     }
 
+    func testMarketScanRequestOutlastsServerBudget() {
+        let client = MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!)
+        let request = client.marketScanRequest()
+
+        XCTAssertEqual(request.url?.path, "/api/scan")
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertGreaterThan(request.timeoutInterval, 20)
+        XCTAssertGreaterThanOrEqual(request.timeoutInterval, MobileAPIClient.marketScanTimeout)
+        XCTAssertEqual(MobileAPIClient.marketScanTimeout, 50)
+    }
+
     func testEventsRequestUsesSSEAcceptAndLongTimeout() {
         let client = MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!)
         let request = client.eventsRequest()
