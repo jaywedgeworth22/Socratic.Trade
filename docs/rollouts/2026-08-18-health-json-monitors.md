@@ -57,8 +57,21 @@ Touched files:
 
 ## Verification State
 
-Focused tests (commands recorded after they run).  Full lint / tsc / test /
-build before claiming done.
+```bash
+npx vitest run test/health-json-monitors.test.ts test/ops-snapshot.test.ts \
+  test/r2-cold-snapshot.test.ts test/health-route-exposure.test.ts \
+  test/trading-liveness.test.ts
+# 5 files / 53 passed
+
+npm run lint          # 0 errors (767 grandfathered warnings)
+npx tsc --noEmit      # exit 0
+npm run build         # Next.js 16.3.1 webpack, exit 0
+```
+
+Focused health/ops/R2 tests are green.  A full `npm test` in this VM hit
+unrelated env flakes (live SEC/Finnhub 404s, leftover `PUSHOVER_*` /
+`siliconflow` keys in the shell).  Those files were not changed.  CI `verify`
+is the authoritative full-suite gate.
 
 ## Next Steps & Blockers
 
