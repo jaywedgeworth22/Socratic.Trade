@@ -42,6 +42,7 @@ lint: 0 errors (grandfathered warnings only).  tsc clean.  Focused packer + inte
 
 ## Next Steps & Blockers
 
+- Rematched onto `origin/main` `581467e1` after CI went green and GitHub marked the PR DIRTY.  Sole conflict was `docs/phase-7-strategy.md` (kept both stanzas).
 - Land and let auto-deploy pick it up.  Confirm live `rag-embed` `ok=1` on 32-count ingest batches, not only 17–59-token probes.
 - Leave Infisical `VECTOR_EMBED_BATCH_SIZE=32`.
 - Do not reclassify this as an account-miss.  Do not drop rag-embed from health.
