@@ -32,14 +32,16 @@ Touched files:
 ## Verification State
 
 ```bash
+npm run lint          # exit 0 (warnings only)
+npx tsc --noEmit      # exit 0
 npm test -- test/connection-health-routing.test.ts -t "degrades a hard-stopped rag-embed|still 503s on a hard-stopped pinecone|does not fail liveness on a hard-stopped legacy|survives a pinned-but-keyless"
 # 5 passed / 21 skipped
-
 npm test -- test/vector-db-embedding-integrity.test.ts test/rag-multi-query-retrieval.test.ts
 # 27 passed
+npm run build         # exit 0 (Next.js 16.3.1 webpack)
 ```
 
-Four other `connection-health-routing` cases fail on this VM because notify prefers Pushover over Resend (`PUSHOVER` env).  Those are unrelated to rag-embed liveness and were not touched.
+A full `npm test` on this VM also fails unrelated cases: notify prefers Pushover over Resend, leftover SiliconFlow env keys change `embed_revision` to `v1-baai-bge-m3`, and SEC/Yahoo network 404s time out strategy tests.  Those files were not touched.  The rag-embed liveness + isolate cases above are the gate for this change.
 
 ## Next Steps & Blockers
 
