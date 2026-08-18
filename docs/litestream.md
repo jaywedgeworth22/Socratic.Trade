@@ -7,8 +7,8 @@ WAL as LTX files to an S3-compatible object store.
 (`jays-socratic-trade-eu`, endpoint `s3.eu-central-003.backblazeb2.com`) via
 `litestream.coolify.yml` + Infisical `AWS_*`. B2 restore to a host scratch path is
 **VERIFIED** (2026-08-18 UTC).  Cloudflare R2 remains the weekly cold snapshot
-(`cold-snapshots/`), not a second Litestream writer.  Do not delete R2 weeklies
-from this note — retain=1 is **NOT VERIFIED**.  Details:
+(`cold-snapshots/`), not a second Litestream writer.  Weekly retain=1 is
+**VERIFIED** (exactly one `cold-snapshots/` object).  Details:
 `docs/rollouts/2026-08-07-litestream-b2-backup.md` and
 `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
@@ -100,20 +100,22 @@ Point-in-time restore (0.5.x): add `-timestamp 2026-06-21T18:00:00Z` or
 ## Restore verification status (2026-08-18 UTC)
 
 **B2 restore to scratch is VERIFIED.**  ASC ran `litestream restore` on
-`fleet-hetzner-nbg1` to `/data/scratch/socratic-restore-20260818/app.db` (4.9G,
-started 2026-08-18T01:12:26Z, file complete ~01:14Z).  `PRAGMA integrity_check`
-was `ok` (sqlite3 3.46.1, ~4m).  Scratch `max(audit_events.created_at)` was
-2026-08-18T01:12:10.915Z (n=210008) vs a live read-only sample at ~01:11Z of
-2026-08-18T01:11:22.198Z (n=210000) — about 48s newer than that sample / within
-seconds of restore start.  Live volume was not overwritten.  Live stayed HTTP 200.
-No bounce.  No `FORCE_RESTORE`.  No Mac pm2.
+`fleet-hetzner-nbg1` to two scratch paths (both off the live volume):
+`/data/scratch/socratic-restore-20260818/app.db` (started 2026-08-18T01:12:26Z,
+file complete ~01:14Z, 4.9G) and
+`/data/backups/restore-proof/socratic-restore-scratch-20260817/app.db`
+(litestream 0.5.16, 107s, exit 0, 4.9G).  `PRAGMA integrity_check` was `ok`.
+Newest LTX at the second restore: level 0 txid `0000000000080781` @
+2026-08-18T01:14:43Z.  A later live compare (8:19pm CT) is seconds / ~31 rows
+ahead of the scratch, as expected.  Site stayed up.  No bounce.  No
+`FORCE_RESTORE`.  No Mac pm2.
+
+Also **VERIFIED**: decrypt of one stored credential on the scratch (`fred`
+last-4 `6dd4`; do not write plaintext or `ENCRYPTION_KEY`); R2 weekly retain=1
+(exactly one `cold-snapshots/app-2026-08-16.db`).  `R2_ARCHIVE_KEEP_GENERATIONS=2`
+is unused on ST.
 
 Full receipts: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
-
-Still **BLOCKED**: decrypt one stored credential (owner approval; do not take
-`ENCRYPTION_KEY` or ciphertext off the host).  Still **NOT VERIFIED** as retain=1:
-R2 weekly health is ok (`cold-snapshots/app-2026-08-16.db`) but live process env
-is `R2_ARCHIVE_KEEP_GENERATIONS=2` and objects were not deleted.
 
 The 2026-07-01 G9a gap (replicate proven, restore never run) is closed for the B2
 path.  Repeat after a Litestream / `litestream.coolify.yml` version bump.
