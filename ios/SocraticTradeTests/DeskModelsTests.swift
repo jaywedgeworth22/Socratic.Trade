@@ -68,6 +68,34 @@ final class DeskModelsTests: XCTestCase {
             try JSONDecoder().decode(SourceSettingValue.self, from: Data("null".utf8)),
             .none
         )
+        XCTAssertEqual(
+            try JSONDecoder().decode(SourceSettingValue.self, from: Data("12".utf8)).numberValue,
+            12
+        )
+    }
+
+    func testLlmBudgetResponseDecodesNullCaps() throws {
+        let json = Data(#"""
+        {
+          "ok": true,
+          "tokenBudget": null,
+          "costBudgetUsd": 12.5,
+          "effective": {
+            "tokenLimit": null,
+            "costLimitUsd": 12.5,
+            "tokenSource": "none",
+            "costSource": "user"
+          },
+          "today": { "tokens": 800, "costUsd": 1.25 },
+          "enforced": true
+        }
+        """#.utf8)
+        let budget = try JSONDecoder().decode(LlmBudgetResponse.self, from: json)
+        XCTAssertNil(budget.tokenBudget)
+        XCTAssertEqual(budget.costBudgetUsd, 12.5)
+        XCTAssertEqual(budget.today.tokens, 800)
+        XCTAssertTrue(budget.enforced)
+        XCTAssertEqual(budget.effective.costSource, "user")
     }
 
     func testJoinedListAndYesNoAreSentenceCaseValues() {

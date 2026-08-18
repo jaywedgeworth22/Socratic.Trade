@@ -499,6 +499,14 @@ final class MobileStore: ObservableObject {
         try await client.patchSourceFeatures(settings)
     }
 
+    func fetchLlmBudget() async throws -> LlmBudgetResponse {
+        try await client.llmBudget()
+    }
+
+    func patchLlmBudget(_ body: [String: Any]) async throws -> LlmBudgetResponse {
+        try await client.patchLlmBudget(body)
+    }
+
     func loadAccountDeletionPreview() async {
         guard !isDeletingAccount else { return }
         isDeletingAccount = true

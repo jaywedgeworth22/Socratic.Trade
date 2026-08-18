@@ -142,6 +142,14 @@ struct MobileAPIClient {
         return try await sourceFeatures()
     }
 
+    func llmBudget() async throws -> LlmBudgetResponse {
+        try await get("/api/settings/llm-budget")
+    }
+
+    func patchLlmBudget(_ body: [String: Any]) async throws -> LlmBudgetResponse {
+        try await sendJSON("/api/settings/llm-budget", method: "PATCH", body: body)
+    }
+
     /// On-demand single-symbol quote + fundamentals for `SymbolInfoSheet` — GET
     /// `/api/quote?symbol=...`, the same on-demand provider cascade the web console drilldown
     /// falls back to for a symbol outside the last market scan.

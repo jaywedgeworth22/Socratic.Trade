@@ -429,17 +429,15 @@ export interface TuningSettings {
    */
   minProposalScoreThreshold?: number;
   /**
-   * Hard per-user/day LLM + RAG TOKEN ceiling. When today's summed model + retrieval usage reaches
-   * this, the run skips every model/RAG spend for the rest of the day (non-LLM risk maintenance still
-   * runs). `undefined` (blank in the UI) INHERITS the operator env default
-   * `TRIGGER_LLM_DAILY_TOKEN_BUDGET`; an explicit `0` means NO LIMIT (opt out of the default); a
-   * positive value is that ceiling. Modifiable in Settings → Tuning. Enforced at the spend primitives
-   * (`withLlmGeneration`, `retrieveContextDetailed`), so it covers every spend site.
+   * Legacy per-account LLM + RAG TOKEN ceiling. Prefer `user_settings.llm_daily_budget`
+   * (Settings → Daily LLM Budget / `PATCH /api/settings/llm-budget`). When the user setting
+   * is unset, this still binds; then retired env `TRIGGER_LLM_DAILY_TOKEN_BUDGET`.
+   * `undefined` inherits the next tier; explicit `0` means NO LIMIT.
    */
   llmDailyTokenBudget?: number;
   /**
-   * Hard per-user/day LLM + RAG COST ceiling in USD (estimated). Same semantics as
-   * `llmDailyTokenBudget`: `undefined` inherits env `TRIGGER_LLM_DAILY_COST_BUDGET_USD`, `0` = no limit.
+   * Legacy per-account LLM + RAG COST ceiling in USD. Same inheritance as
+   * `llmDailyTokenBudget`; prefer the per-user Settings cap.
    */
   llmDailyCostBudgetUsd?: number;
 
