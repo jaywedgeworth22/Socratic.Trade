@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Blind-spots audit (report-only)
+
+Red-team panel across legal/fintech, product identity, a11y (beyond #2795), i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  Live `gh` snapshot so FilingAPI / Pinecone 2M / PWA / ASOF claims stay current.  Register: `docs/audits/2026-08-17-blind-spots.md`.  Branch `cursor/blind-spots-audit-299e`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
+
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
 Owner: the app thinks monthly Pinecone write units are at the free-tier limit, and Pushover
