@@ -43,11 +43,11 @@ Touched files:
 
 ## Verification State
 
-- `npm run lint` — pending in this rollout until the gate is run.
-- `npx tsc --noEmit` — pending.
-- `npm test` — pending.
-- `npm run build` — pending.
-- `xcodebuild` — **not available** on this VM.
+- `npm run lint` — passed (errors only; existing warning backlog).
+- `npx tsc --noEmit` — passed.
+- `npm test` — started; this VM hung ~20m into the suite after unrelated network/env failures (`sec.gov` 404s, TwelveData, vector-db receipts, server-metrics).  No JS product files changed in this PR.  Killed the hung run.
+- `npm run build` — passed (`next build --webpack`).
+- `xcodebuild` — **not available** on this VM.  First Swift compile is CI / a Mac.
 
 ## Next Steps & Blockers
 

@@ -38,7 +38,7 @@ language only (no remotes/surfaces/`ALLOWED_EMAILS`/Infisical asides).
 
 Owner cut 2026-08-17 ~8:45pm CT.  IRA/Roth Guardrails no longer show “Wash-Sale Guard: On” (same-account N/A; cross-account ignored unless blocked).  Push/Settings copy is ordinary app language.  iOS can go Ask-First ↔ Autopilot and raise/lower or switch dollar ↔ % NAV caps without sending the user to the website.  Typed `AUTOPILOT` / live `CONFIRM` only — no extra real-money scare.  Did not touch reserved PRs.  `xcodebuild` not available on this VM.
 
-Branch `cursor/ios-ux-owner-cut-bdae`.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
+PR **#2825**.  Branch `cursor/ios-ux-owner-cut-bdae`.  lint + tsc + `npm run build` passed.  Full vitest hung on unrelated env/network failures (no JS product files in this PR).  `xcodebuild` not available on this VM.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
 
 ## 2026-08-18 CURSOR — Litestream restore drill (report only)
 
