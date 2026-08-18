@@ -9,6 +9,8 @@ struct ProposalPriceReview: Equatable {
     let quantity: Double?
     let side: String
     let exitPlan: String?
+    let pendingDelayedFallback: Bool
+    let proposalDelayedFallback: Bool
 
     var hasTarget: Bool { target != nil && (target ?? 0) > 0 }
 
@@ -85,6 +87,16 @@ struct ProposalPriceReview: Equatable {
         return "worse by \(amount) since proposed"
     }
 
+    var showsDelayedFallback: Bool {
+        pendingDelayedFallback || proposalDelayedFallback
+    }
+
+    var delayedFallbackStamp: String { "delayed fallback" }
+
+    var delayedFallbackNote: String {
+        "Now price is delayed fallback.  Openings still go through."
+    }
+
     var missingTargetNote: String? {
         guard !hasTarget else { return nil }
         if let exitPlan, !exitPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -104,7 +116,9 @@ struct ProposalPriceReview: Equatable {
             stop: stop,
             quantity: proposal.quantity,
             side: proposal.side,
-            exitPlan: proposal.exitPlan
+            exitPlan: proposal.exitPlan,
+            pendingDelayedFallback: pending.delayedFallback == true,
+            proposalDelayedFallback: proposal.quoteDelayedFallback == true
         )
     }
 

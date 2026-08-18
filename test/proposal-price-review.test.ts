@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   delayAdvantageUsd,
+  delayedFallbackStampLabel,
   nameMovePct,
+  pendingShowsDelayedFallback,
   resolveProposedPrice,
   resolveProposalTarget
 } from "../src/lib/proposal-price-review";
@@ -23,5 +25,12 @@ describe("proposal price review", () => {
     expect(delayAdvantageUsd({ proposed: 200, now: 202.2, quantity: 7, side: "buy" })).toBeCloseTo(-15.4, 5);
     expect(delayAdvantageUsd({ proposed: 100, now: 102, quantity: 4, side: "short" })).toBeCloseTo(8, 5);
     expect(nameMovePct(200, 202.2)).toBeCloseTo(1.1, 5);
+  });
+
+  it("stamps delayed fallback on the approval-card helper", () => {
+    expect(delayedFallbackStampLabel()).toBe("delayed fallback");
+    expect(pendingShowsDelayedFallback({ delayedFallback: true })).toBe(true);
+    expect(pendingShowsDelayedFallback({ proposal: { quoteDelayedFallback: true } })).toBe(true);
+    expect(pendingShowsDelayedFallback({})).toBe(false);
   });
 });

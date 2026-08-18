@@ -309,6 +309,14 @@ Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED 
 One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify restarted Docker, and the boot interlock re-halted Green/Red.  `rag-embed` and `rag-rerank` now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay critical.  A thrown document-embed batch skips that batch and continues later ones; a thrown query embed returns empty retrieval.  Rebased onto `6429d984` (#2800 + #2829 kept).  Did not steal #2792/#2798/#2800/#2794.
 
 PR **#2812**.  Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+## 2026-08-18 CURSOR — Delayed Yahoo fallback stamp; keep trading
+
+Owner: stamp **delayed fallback** on approval cards when quotes are delayed
+Yahoo fallback.  Openings must still go through.  Do not fail-closed.  Do not
+block Green/Red.  Did not steal #2792/#2798/#2800/#2794.  No Stripe.
+
+Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
+`docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

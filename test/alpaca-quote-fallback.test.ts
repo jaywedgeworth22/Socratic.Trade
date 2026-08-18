@@ -20,8 +20,14 @@ describe("fillMissingQuotesWithClose", () => {
     });
     expect(fetched.sort()).toEqual(["LYB", "XOM"]); // AAPL already priced → never fetched
     expect(quotes.AAPL.price).toBe(200); // untouched
-    expect(quotes.XOM).toMatchObject({ price: 110.5, provider: "yahoo-finance-delayed", asOf: "2026-06-24" });
-    expect(quotes.LYB).toMatchObject({ price: 95.25, provider: "yahoo-finance-delayed" });
+    expect(quotes.XOM).toMatchObject({
+      price: 110.5,
+      provider: "yahoo-finance-delayed",
+      asOf: "2026-06-24",
+      delayedFallback: true
+    });
+    expect(quotes.LYB).toMatchObject({ price: 95.25, provider: "yahoo-finance-delayed", delayedFallback: true });
+    expect(quotes.XOM.fetchedAt).toBeTruthy();
   });
 
   it("leaves a symbol unpriced when the fallback returns nothing or a non-positive price", async () => {

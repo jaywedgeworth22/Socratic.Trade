@@ -1149,6 +1149,7 @@ export function mergeQuoteData(
       // the snapshot, not the delayed trade print, and the cascade never re-overwrites them.
       venuePriceAuthoritative: extra.venuePriceAuthoritative ?? quote.venuePriceAuthoritative,
       fetchedAt: extra.fetchedAt ?? quote.fetchedAt,
+      delayedFallback: extra.delayedFallback ?? quote.delayedFallback,
       // Carry synthetic bid/ask flags through from the broker/Yahoo quote. When a side had a real value
       // (usedBid/usedAsk), the flag reflects whether THAT value was synthetic. When the side wasn't
       // provided, the original quote's flag is preserved by the spread operator above.
@@ -1186,6 +1187,7 @@ export function mergeQuoteData(
         asOf: extra?.asOf ?? quote.asOf,
         venuePriceAuthoritative: extra?.venuePriceAuthoritative ?? quote.venuePriceAuthoritative,
         fetchedAt: extra?.fetchedAt ?? quote.fetchedAt,
+        delayedFallback: extra?.delayedFallback ?? quote.delayedFallback,
         syntheticBid: usedBid ? bidSynthetic : quote.syntheticBid,
         syntheticAsk: usedAsk ? askSynthetic : quote.syntheticAsk,
         sources: extra ? refreshSideProvenance(quote.sources, extra) : quote.sources,
@@ -1216,6 +1218,7 @@ export function mergeQuoteData(
       asOf: quote.asOf,
       venuePriceAuthoritative: quote.venuePriceAuthoritative,
       fetchedAt: quote.fetchedAt,
+      delayedFallback: quote.delayedFallback,
       syntheticBid: quote.syntheticBid ?? quote.syntheticSpread ?? false,
       syntheticAsk: quote.syntheticAsk ?? quote.syntheticSpread ?? false,
       // Seed per-side provenance for a NEWLY-added quote too — otherwise a synthetic bid/ask on an

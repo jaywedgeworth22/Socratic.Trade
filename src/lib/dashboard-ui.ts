@@ -33,6 +33,8 @@ const SOURCE_LABELS: Record<string, string> = {
   "yahoo-finance": "Yahoo Finance",
   "yahoo-finance-delayed": "Yahoo Finance Delayed",
   "yahoo-finance-delayed-quotes": "Yahoo Finance Delayed Quotes",
+  "yahoo-finance-batch": "Yahoo Finance Batch",
+  "yahoo-finance-single": "Yahoo Finance Single",
   "yahoo-finance-synthetic": "Yahoo Finance Synthetic",
   "nasdaq-delayed-screener": "NASDAQ Delayed Screener",
   "nasdaq-delayed-screener-universe": "NASDAQ Delayed Screener Universe",

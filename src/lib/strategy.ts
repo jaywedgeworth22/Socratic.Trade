@@ -1,6 +1,7 @@
 export * from "./strategy-execution";
 export * from "./strategy-risk";
 import { fetchFreshQuotesCascade } from "./quotes-cascade";
+import { isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
 import { TradingGraph, GraphContext } from "./orchestration/trading-graph";
 import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { OperationLeaseOwnershipError } from "./operation-lease";
@@ -6952,12 +6953,22 @@ export function enrichOpeningProposal(
 ): TradeProposal {
   if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
   const sym = normalizeSymbol(proposal.symbol);
-  const marketPrice = marketScan.quotesBySymbol[sym]?.price;
+  const scanQuote = marketScan.quotesBySymbol[sym];
+  const marketPrice = scanQuote?.price;
   const refPrice = proposal.referencePrice ?? marketPrice ?? proposal.limitPrice ?? proposal.stopPrice;
   if (refPrice == null || !(refPrice > 0)) return proposal;
   const entryPrice = proposal.limitPrice ?? proposal.stopPrice ?? refPrice;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   let next: TradeProposal = { ...proposal, referencePrice: refPrice };
+  if (isDelayedYahooFallbackQuote(scanQuote) || proposal.quoteDelayedFallback) {
+    next = {
+      ...next,
+      quoteDelayedFallback: true,
+      ...(scanQuote?.provider || proposal.quoteProvider
+        ? { quoteProvider: scanQuote?.provider ?? proposal.quoteProvider }
+        : {})
+    };
+  }
   // Repair-ladder receipt appender: every deterministic correction/fallback below that already
   // discloses itself in free rationale text ALSO records a kind-prefixed, machine-queryable
   // dataAdjustments entry — and the silent edits (wrong-side leg discards, the ATR>beta>flat stop

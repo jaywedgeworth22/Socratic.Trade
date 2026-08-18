@@ -32,6 +32,25 @@ describe("approval quote scan", () => {
     expect(scan.warnings).toEqual([]);
   });
 
+  it("carries delayed Yahoo fallback onto the approval scan quote", () => {
+    const scan = buildApprovalQuoteScan(
+      {
+        XOM: {
+          symbol: "XOM",
+          price: 110.5,
+          provider: "yahoo-finance-delayed",
+          delayedFallback: true,
+          asOf: "2026-08-18T14:40:00.000Z",
+          fetchedAt: "2026-08-18T15:00:00.000Z"
+        }
+      },
+      []
+    );
+    expect(scan.quotesBySymbol.XOM?.delayedFallback).toBe(true);
+    expect(scan.quotesBySymbol.XOM?.provider).toBe("yahoo-finance-delayed");
+    expect(scan.source).toBe("yahoo-finance-delayed");
+  });
+
   it("warns when nothing priced", () => {
     const scan = buildApprovalQuoteScan({}, []);
     expect(scan.returnedQuotes).toBe(0);

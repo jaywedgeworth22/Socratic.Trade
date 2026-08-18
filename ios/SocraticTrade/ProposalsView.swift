@@ -289,6 +289,17 @@ private struct ProposalCard: View {
                     if let delay = priceReview.delayValue {
                         DetailLine(label: "Delay", value: delay)
                     }
+                    if priceReview.showsDelayedFallback {
+                        StatusPill(
+                            priceReview.delayedFallbackStamp,
+                            color: AppPalette.warning,
+                            systemImage: "clock.badge.exclamationmark"
+                        )
+                        Text(priceReview.delayedFallbackNote)
+                            .font(.appCaption)
+                            .foregroundStyle(AppPalette.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let stop = priceReview.stop, stop > 0 {
                         DetailLine(label: "Stop", value: AppFormat.money(stop))
                     }
