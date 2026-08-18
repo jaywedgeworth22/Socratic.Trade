@@ -4,7 +4,7 @@
 
 Owner reversed the #2787 retirement.  Keep the filingapi.dev integration.  Stop using the dead stored `FILINGAPI` key (prod 401).  When the key is missing, invalid, or 401, skip the lane without failing health and fall back to ROIC (and SEC EDGAR for 10-K/10-Q).  A later valid key is used again.  Do not buy FilingAPI Plus.  Do not charge Stripe.  Retarget #2778 from "buy a Plus key" to "optional key, degrade gracefully."
 
-#2787 already merged to `main` as `b4666e74`.  This follow-up reverts that squash and implements the skip.
+#2787 already merged to `main` as `b4666e74`.  This follow-up reverts that squash and implements the skip.  Rebased onto `origin/main` `cde3deee` (2026-08-18) so #2792 is mergeable; #2788 retirement must lose if it conflicts.
 
 ## Changes Made
 
