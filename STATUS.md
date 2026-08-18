@@ -562,11 +562,13 @@ UptimeRobot/Pushover must page on `schedulerStale`, `tradingLiveness.degraded`,
 and `litestreamTiersDegraded` — not on HTTP 200 of `/api/health`.  Those flags
 never 503.  Pinecone / alpaca-broker stay critical.  rag-embed degrade not
 rewritten.  `OPS_DIAGNOSTIC_TOKEN` is required (no `ADMIN_REINDEX_TOKEN`
-fallback); existing prod token works, did not mint a second.  Host proof:
-live process env is `R2_ARCHIVE_KEEP_GENERATIONS=2`.  Code now reads that
-name and caps keep-generations at 1 (free Cloudflare R2).  Did not delete
-live R2 objects (`cold-snapshots/app-2026-08-16.db` stays).  No Coolify
-edits.  Did not steal #2792/#2798/#2800/#2794.
+fallback); existing prod token works, did not mint a second.  Host-verified:
+weekly retain is already 1 (`R2_COLD_SNAPSHOT_DEFAULT_RETAIN=1`,
+`R2_COLD_SNAPSHOT_RETAIN` unset, `cold-snapshots/` has exactly
+`app-2026-08-16.db`).  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused leftover
+(`weekly/` prefix empty) and does not drive weekly retain — left alone.
+Did not delete live R2 objects.  No Coolify edits.  Did not steal
+#2792/#2798/#2800/#2794.
 
 Branch `cursor/health-json-monitors-ac72`.  Runbook:
 `docs/runbooks/uptime-health-json-monitors.md`.  Rollout:
