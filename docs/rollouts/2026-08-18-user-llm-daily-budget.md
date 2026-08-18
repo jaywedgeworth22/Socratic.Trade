@@ -58,9 +58,9 @@ iOS was not compiled here (`xcodebuild` is not available).  Swift decode coverag
 
 ## Next Steps & Blockers
 
-- After merge, set a cap in production Settings (or iOS Account & Settings) and confirm a strategy run / chat skip when today's ledger is at/over the cap.
-- Optional later: drop the retired env fallback entirely once no deployment still relies on `TRIGGER_LLM_DAILY_*`.
-- Mac CI must compile `ios/**` (HomeView.swift change).
+- Merged as #2821 `972e3763`.  iOS `xcodebuild` passed on the PR Mac runner.
+- Optional: set a cap in production Settings and confirm strategy/chat pause when today's ledger is at/over it.
+- Optional later: drop the retired env fallback once no deployment still relies on `TRIGGER_LLM_DAILY_*`.
 
 ## Zero-Code Findings
 
