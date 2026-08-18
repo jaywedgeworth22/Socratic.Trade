@@ -386,6 +386,7 @@ struct PolicyTaxSettings: Decodable {
     let washSaleGuard: Bool?
     let washSaleHandling: String?
     let iraWashSaleHandling: String?
+    let washSaleMinLossUsd: Double?
     let shortTermRatePct: Double?
     let longTermRatePct: Double?
 }

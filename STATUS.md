@@ -224,6 +224,15 @@ Sentry 7d: Pinecone terminated 360 (1T), OpenRouter embed 21 (1X), rerank 14 (22
 Owner follow-up: data cascade + OpenRouter still failing.  #2831's PR-attached `verify` stayed cancelled (dispatch green does not count).  This PR now also carries Green 400 failover and the Nasdaq UA/retry transport so Scan has a universe and the enrichment cascade can run.  Cursor **#2840** still owns embed 8192 pack (32-text / 8193 tok bge-m3 400s).
 
 Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/2026-08-18-openrouter-and-cascade.md`, `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
+## 2026-08-18 CURSOR — IRA Ignore/Block already existed; they were not wired
+
+Owner thought Ignore / Auto / min-loss already did what they asked (Ignore = I don't care; Auto = a factor; a small taxable loss should not lock the Roth).  Those options already exist: `iraWashSaleHandling` Ignore/Disregard vs Block, taxable `washSaleHandling` Auto, and `washSaleMinLossUsd`.  No new enum.
+
+Why it looked like they didn't work: Green on Ignore was still told to note a forfeited deduction and `taxContext` still carried `washSaleRebuyCosts` priced at the raw 24% ST rate (IRA rates are zeroed).  IRA Block fell through to taxable Auto prompt language.  Min-loss was hidden on IRA Guardrails and unused on the IRA buyer path, so a nickle taxable loss could still hard-lock a Roth on Block (and steer Green on Ignore).
+
+Fix uses the existing options only.  Prompt `agentic-strategy@2.13.0`.  IRA blank min-loss floor = $50 (explicit 0 = every loss).
+
+Branch `cursor/ira-wash-sale-factor-a1df`.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

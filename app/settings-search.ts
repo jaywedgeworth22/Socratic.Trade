@@ -263,7 +263,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "tax",
     backingField: "taxSettings.iraWashSaleHandling",
     disclosure: "advanced",
-    help: "Disregard (default) lets an IRA rebuy of a taxable-loss-locked stock proceed, annotated and audited: brokers don't report cross-account IRA wash sales to the IRS, so this is an explicit audit-risk acceptance made on your behalf by default. Block refuses the rebuy instead (a stricter opt-in) — Rev. Rul. 2008-5 permanently destroys the deduction.",
+    help: "Ignore / Disregard (default) does not constrain this IRA — Green is not told to skip. Block refuses a rebuy only when the taxable loss is at or above the minimum-loss floor (blank = $50). Rev. Rul. 2008-5 permanently destroys the deduction if you replace in an IRA; brokers do not report that, so Ignore is an explicit audit-risk acceptance.",
     anchor: "tax"
   },
   // Strategy (account scope)

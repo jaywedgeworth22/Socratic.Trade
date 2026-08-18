@@ -102,7 +102,7 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat, SkippedCandidateReturn } from "./performance";
 import { buildSpyReturnToNowMap } from "./backtest";
 import type { SituationCandidate } from "./experience-memory";
-import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, hasFractionalQuantity, isIraTaxRegime } from "./policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, hasFractionalQuantity, iraWashSaleMinLossUsd, isIraTaxRegime } from "./policy";
 import { currentMarketSession } from "./market-hours";
 import { sessionPhrasingReceipt } from "./proposal-phase-guard";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
@@ -4897,20 +4897,25 @@ async function proposeTrades(input: {
   // stricter opt-in, no longer the default) does the context stay byte-identical (locked names
   // remain a hard no).
   const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
-  // IRA-disregard: when the buyer is an IRA whose owner is on iraWashSaleHandling "disregard"
-  // (the default), the gate PERMITS locked rebuys (annotated + audited). The prompt must know this
-  // or the model, still told "NEVER propose a locked buy", would never surface the very rebuys the
-  // setting exists to allow. IRA detection uses the SAME source-of-truth precedence as the gate
-  // (isIraTaxRegime).
+  // IRA Ignore (iraWashSaleHandling "disregard", the default): the gate permits locked rebuys
+  // and Green must not be steered by the taxable lock list or a fake forfeited-deduction dollar
+  // amount (IRA rates are zero; raw policy ST rate is often still 24%). IRA Block: only material
+  // user-level locks (washSaleMinLossUsd; blank = $50) — this account's own taxSummary.lockedSymbols
+  // is empty because resolveTaxSettings force-offs the per-account guard.
   const iraWashSaleDisregard =
     (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard") === "disregard" &&
     buyerIsIra;
+  const userWashSaleLocks = taxSummary ? getUserWashSaleLockProvenance(input.userId, new Date()) : new Map();
+  const materialIraLockedSymbols = buyerIsIra
+    ? Array.from(userWashSaleLocks.entries())
+        .filter(([, lock]) => (lock.lossUsd ?? 0) >= iraWashSaleMinLossUsd(input.policy.taxSettings))
+        .map(([sym]) => sym)
+    : [];
   const washSaleRebuyCosts = (() => {
-    if (washSaleHandling === "block" || !taxSummary) return undefined;
+    if (buyerIsIra || washSaleHandling === "block" || !taxSummary) return undefined;
     const stRate = input.policy.taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
-    const locks = getUserWashSaleLockProvenance(input.userId, new Date());
-    if (locks.size === 0) return undefined;
-    return Array.from(locks.entries()).map(([sym, lock]) => ({
+    if (userWashSaleLocks.size === 0) return undefined;
+    return Array.from(userWashSaleLocks.entries()).map(([sym, lock]) => ({
       symbol: sym,
       lossAccount: lock.account,
       clearsOn: lock.clearDate.toISOString().slice(0, 10),
@@ -4924,8 +4929,12 @@ async function proposeTrades(input: {
         shortTermRealizedYTD: taxSummary.shortTermRealized,
         longTermRealizedYTD: taxSummary.longTermRealized,
         estimatedTaxLiability: taxSummary.estimatedTaxLiability,
-        washSaleLockedSymbols: taxSummary.lockedSymbols,
-        ...(washSaleHandling !== "block" ? { washSaleHandling } : {}),
+        ...(iraWashSaleDisregard
+          ? {}
+          : {
+              washSaleLockedSymbols: buyerIsIra ? materialIraLockedSymbols : taxSummary.lockedSymbols
+            }),
+        ...(!buyerIsIra && washSaleHandling !== "block" ? { washSaleHandling } : {}),
         ...(iraWashSaleDisregard ? { iraWashSaleDisregard: true } : {}),
         ...(washSaleRebuyCosts ? { washSaleRebuyCosts } : {}),
         ...(buyerIsIra

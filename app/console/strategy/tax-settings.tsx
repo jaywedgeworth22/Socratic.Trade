@@ -160,7 +160,7 @@ export function TaxSettingsCard() {
             <div className="mt-3 max-w-md">
               <Field
                 label="Taxable-loss rebuy inside this IRA"
-                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore/disregard is the default for IRA accounts and lets the buy proceed with the audit note; Block is the stricter optional setting."
+                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore (default) does not constrain this IRA. Block only applies at or above the minimum-loss floor in Tax rules below (blank = $50)."
                 htmlFor="ira-wash-sale"
               >
                 <Select

@@ -231,6 +231,7 @@ final class DeskModelsTests: XCTestCase {
             "washSaleGuard": true,
             "washSaleHandling": "block",
             "iraWashSaleHandling": "disregard",
+            "washSaleMinLossUsd": 50,
             "shortTermRatePct": 24,
             "longTermRatePct": 15
           }
@@ -239,6 +240,7 @@ final class DeskModelsTests: XCTestCase {
         let policy = try JSONDecoder().decode(FullPolicy.self, from: json)
         XCTAssertEqual(policy.taxSettings?.taxationType, "roth_ira")
         XCTAssertEqual(policy.taxSettings?.iraWashSaleHandling, "disregard")
+        XCTAssertEqual(policy.taxSettings?.washSaleMinLossUsd, 50)
         XCTAssertTrue(DeskCopy.isIraTaxation(policy.taxSettings?.taxationType))
     }
 

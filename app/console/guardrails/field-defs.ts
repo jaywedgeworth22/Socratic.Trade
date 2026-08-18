@@ -193,9 +193,9 @@ export const TAX_RULES: FieldDef[] = [
     hint:
       "What happens when this IRA wants to rebuy a stock a TAXABLE account of yours sold at a loss in the last 30 days. " +
       "Under Rev. Rul. 2008-5 that replacement purchase permanently destroys the loss deduction — the IRA never gets a basis adjustment. " +
-      "Disregard (default) lets the buy proceed anyway: brokers do not report cross-account IRA wash sales to the IRS, so in practice the rule only bites under audit — this setting is YOUR explicit acceptance of that audit risk, made on your behalf by default. " +
-      "Block refuses the rebuy in every wash-sale handling mode instead (a stricter opt-in). " +
-      "Disregarded purchases are never silent: each one is annotated \"Wash Sale (Technically, but IRA purchase unreported to IRS)\" on the card and in Activity."
+      "Ignore / Disregard (default) does not constrain this IRA: Green is not told to skip, and the buy proceeds. Brokers do not report cross-account IRA wash sales to the IRS — this is YOUR explicit acceptance of that audit risk. " +
+      "Block refuses a rebuy only when the taxable loss is at or above the minimum-loss floor below (blank = $50). A nickle taxable loss is not a lock. " +
+      "Ignored purchases are never silent: each material one is annotated \"Wash Sale (Technically, but IRA purchase unreported to IRS)\" on the card and in Activity."
   },
   {
     path: "taxSettings.washSaleMinLossUsd",
@@ -204,7 +204,7 @@ export const TAX_RULES: FieldDef[] = [
     optional: true,
     looserWhen: "up",
     hint:
-      "Only losses at least this large trigger the 30-day rebuy lockout; a trivial loss no longer freezes a symbol for a month. Blank (default) = every loss locks. This loosens only THIS APP's guardrail — the IRS applies the wash-sale rule to losses of any size, and the tax report still counts them."
+      "Only losses at least this large trigger the 30-day rebuy lockout; a trivial loss no longer freezes a symbol for a month. On a taxable account, blank = every loss locks. On an IRA buyer, blank = $50 so a nickle taxable loss never hard-locks this IRA (set 0 if you want every loss). This loosens only THIS APP's guardrail — the IRS applies the wash-sale rule to losses of any size, and the tax report still counts them."
   }
 ];
 

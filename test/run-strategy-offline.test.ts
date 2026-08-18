@@ -96,8 +96,10 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
     expect(buildBullSystem({ ...taxBase, washSaleHandling: "block" })).toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
     // IRA-disregard PERMITS the rebuy and takes precedence even when washSaleHandling is "block".
     const iraPrompt = buildBullSystem({ ...taxBase, washSaleHandling: "block", iraWashSaleDisregard: true });
-    expect(iraPrompt).toContain("You MAY propose a BUY of a symbol in `washSaleLockedSymbols`");
-    expect(iraPrompt).toContain("annotated as a technically-forfeited wash sale");
+    expect(iraPrompt).toContain("does not constrain this IRA");
+    expect(iraPrompt).toContain("the owner chose Ignore");
+    expect(iraPrompt).not.toContain("You MAY propose a BUY of a symbol in `washSaleLockedSymbols`");
+    expect(iraPrompt).not.toContain("technically-forfeited");
     expect(iraPrompt).not.toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
     expect(iraPrompt).toContain("Do NOT sell to harvest a tax loss");
     expect(iraPrompt).not.toContain("you trade in a taxable account");
@@ -110,6 +112,8 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
     const iraPrompt = buildBullSystem({ ...taxBase, washSaleHandling: "auto", isIraAccount: true });
     expect(iraPrompt).toContain("this is an IRA");
     expect(iraPrompt).toContain("Do NOT sell to harvest a tax loss");
+    expect(iraPrompt).toContain("IRA wash-sale handling is Block");
+    expect(iraPrompt).not.toContain("YOUR judgment call");
     expect(iraPrompt).not.toContain("you trade in a taxable account");
     expect(iraPrompt).not.toContain("harvestableLosses");
     expect(iraPrompt).not.toContain("positionsNearLongTerm");

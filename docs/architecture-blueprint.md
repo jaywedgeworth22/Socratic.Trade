@@ -363,7 +363,7 @@ The IRS wash-sale rule (IRC Section 1091) prohibits claiming a tax loss on a sec
 
 To mitigate this:
 1. **User-Level Scope**: Wash-sale detection is evaluated at the `userId` level, spanning all connected accounts.
-2. **Wash-Sale Lock**: If a user realizes a loss in *any* taxable account, a 30-day buy lockout is applied to that symbol across *all* of the user's accounts under the same `userId`—specifically blocking purchase in tax-sheltered IRA accounts.
+2. **Wash-Sale Lock**: A taxable-account loss can still appear as a user-level lock.  IRA Ignore (`iraWashSaleHandling: "disregard"`, the default) does not constrain that IRA or Green.  IRA Block refuses a rebuy only when the taxable loss is at or above `washSaleMinLossUsd` (IRA blank = $50).
 3. **Validation Logic**:
    ```typescript
    export function checkCrossAccountWashSale(

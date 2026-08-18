@@ -13,8 +13,9 @@
  *     receipt telemetry (never silent) instead of gating; the old edge-vs-cost veto was removed
  *     because it re-arithmetized the LLM's own outputs rather than adding independent judgment;
  *   - IRA replacement purchases are hard-blocked ONLY when iraWashSaleHandling is explicitly
- *     "block" (Rev. Rul. 2008-5), ignoring override tokens and even the per-account
- *     washSaleGuard flag; the default ("disregard") lets them proceed, annotated + audited;
+ *     "block" AND the taxable loss is at/above washSaleMinLossUsd (blank = $50). A trivial
+ *     taxable loss is not a lock. The default ("disregard" / Ignore) lets material locks
+ *     proceed, annotated + audited, and does not steer Green;
  *   - the override token never weakens an explicit "block" (ignored when handling is "block")
  *     and never bypasses OTHER gates at approval time;
  *   - only the closed escalation allowlist (ask-mode wash sale + time-context gates) can ever
@@ -24,6 +25,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import {
   evaluateTradeProposal,
+  iraWashSaleMinLossUsd,
   washSaleExpectedEdgeUsd,
   washSaleOverrideCostTolerance,
   IRA_WASH_SALE_DISREGARD_NOTE,
@@ -491,6 +493,50 @@ describe("IRA-replacement default disregard — every taxable wash-sale mode", (
     const decision = evaluateTradeProposal(
       buy,
       ctx(policyWith({ taxSettings: taxSettings({ taxationType: "roth_ira", iraWashSaleHandling: "block" }) }))
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("blocked_ira");
+  });
+
+  it("IRA block does not lock a taxable loss below the blank $50 floor", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ taxationType: "roth_ira", iraWashSaleHandling: "block" }) }), {
+        washSaleLocks: locks(10)
+      })
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale).toBeUndefined();
+    expect(decision.reasons).toHaveLength(0);
+  });
+
+  it("IRA blank washSaleMinLossUsd is $50; explicit 0 is every loss", () => {
+    expect(iraWashSaleMinLossUsd(undefined)).toBe(50);
+    expect(iraWashSaleMinLossUsd({})).toBe(50);
+    expect(iraWashSaleMinLossUsd({ washSaleMinLossUsd: 0 })).toBe(0);
+    expect(iraWashSaleMinLossUsd({ washSaleMinLossUsd: 25 })).toBe(25);
+  });
+
+  it("IRA Ignore of a $10 taxable loss is not a lock and is not annotated", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ taxationType: "roth_ira", iraWashSaleHandling: "disregard" }) }), {
+        washSaleLocks: locks(10)
+      })
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale).toBeUndefined();
+  });
+
+  it("IRA block + explicit washSaleMinLossUsd 0 locks a $10 taxable loss", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(
+        policyWith({
+          taxSettings: taxSettings({ taxationType: "roth_ira", iraWashSaleHandling: "block", washSaleMinLossUsd: 0 })
+        }),
+        { washSaleLocks: locks(10) }
+      )
     );
     expect(decision.approved).toBe(false);
     expect(decision.washSale?.outcome).toBe("blocked_ira");
