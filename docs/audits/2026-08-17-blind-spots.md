@@ -45,6 +45,8 @@ Already handled, in flight, or recently closed — do **not** treat these as new
 | ROIC Individual harvest | Live; local-first persist (#2763). |
 | Settings-search catalog unwired | Wired on `main` (#2791 / #2558). |
 | Conventional trading / RAG / security / UX reviews | See `docs/reviews/` (2026-06 through 2026-08-06). |
+| Purchases / Stripe / StoreKit | **Landed on `main` after this register:** #2809.  Confirms ST has no checkout stack (invite-only).  Complements F-PROD-1 / F-LEG-7; does not contradict them. |
+| Cross-app coordination (ST/CT/UM/CTS/DealDex) | **Landed on `main` after this register:** #2802.  Complements F-VEN-3 (shared Hetzner fate). |
 
 ## 3. Live GitHub snapshot (2026-08-17)
 

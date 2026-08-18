@@ -29,6 +29,10 @@ gh pr list --state open --limit 40
 
 Live snapshot taken 2026-08-17 ~23:40Z.  Evidence citations verified against `4980322b` / this branch.
 
+## Rematch (2026-08-18)
+
+Merged `origin/main` (`cbea64a9`, #2809 purchases + #2802 cross-app coordination).  GitHub `mergeable=CONFLICTING` was the union-merge phantom on `STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md` — local `merge-tree` was clean, no `<<<<<<<` markers, no intent clash (three report-only audits each prepended their own Current block).  Restored the blank line after this audit's STATUS/PLAN entries.
+
 ## Next Steps & Blockers
 
 Owner picks from the audit §6 table.  Highest calendar risk: Pinecone trial snap 2026-08-30 + ROIC Individual expiry.  Highest legal gap: clickwrap + in-desk disclaimer (Coach is stricter than Green/Red).  Do not spawn ten fix PRs from this list without an owner cut.
