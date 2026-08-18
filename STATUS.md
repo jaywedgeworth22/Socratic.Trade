@@ -5,10 +5,9 @@
 PR **#2812** was CONFLICTING with `origin/main` (`6429d984`, includes #2800 fuse + #2829 `require_parameters` narrowing).  Rebased `cursor/rag-embed-soft-degrade-ed6d` onto that SHA.  Sole real conflict was `docs/phase-7-strategy.md` — kept both the soft-degrade stanza and main's OpenRouter/`require_parameters` + fuse notes.  `vector-db.ts` auto-merged: `embedDocumentsLaneOrSkip` and #2800 `selectItemsWithinWriteBudget` both remain.  Behavior unchanged: one dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.  Did not "fix" the embed outage.
 
 Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: no xcodebuild.  Full `npm test` still hits leftover SiliconFlow + SEC/Yahoo 404s (untouched).  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
-## 2026-08-18 CURSOR — iOS Scan empty table is a quote miss
 ## 2026-08-18 CURSOR — Nasdaq screener UA + retry so Scan returns names
 
-`fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  iOS `MobileStore` switch is exhaustive for `.scanQuotesUnavailable` (unsigned `xcodebuild` miss); Scan shows the abort warning, not silent No Candidates.  UA/retry path not reverted.  Not #2829.
+`fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  iOS `MobileStore` switch is exhaustive for `.scanQuotesUnavailable` (unsigned `xcodebuild` miss); Scan shows the abort warning, not silent No Candidates.  Rebased onto `origin/main` `7b073b65` (includes #2812 and #2832).  Did not revert #2812 / #2829 / #2800.  Does not block #2831.  UA/retry path not reverted.
 
 PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
 

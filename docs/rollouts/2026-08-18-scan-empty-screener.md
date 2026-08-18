@@ -49,7 +49,7 @@ Live recorded 2026-08-18 (market open), this VM:
 
 Linux VM cannot compile Swift.  Unsigned Mac `xcodebuild` failed on `MobileStore.swift:697` missing `.scanQuotesUnavailable`; that case is now exhaustive.  Mac runner must go green.
 
-PR **#2830**.
+PR **#2830**.  Rebased onto `origin/main` `7b073b65` (includes #2812 `12e8dcd` and #2832).  `git merge-tree --write-tree origin/main HEAD` is clean.  Did not revert #2812 / #2829 / #2800.  Does not block #2831.
 
 ## Next Steps & Blockers
 
