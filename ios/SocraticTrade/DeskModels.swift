@@ -537,11 +537,11 @@ enum DeskCopy {
         return nil
     }
 
-    /// Never show the `__rotate__` seat sentinel.  Owner: "Rotate models" / "(rotate models)".
+    /// Never show the `__rotate__` seat sentinel.  Owner: lowercase "rotate models".
     static func modelSeatValue(_ raw: String?, fallbacks _: [String] = []) -> String {
         let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if isRotationSentinel(trimmed) {
-            return "Rotate models"
+            return "rotate models"
         }
         if trimmed.isEmpty { return "—" }
         return trimmed.lowercased()

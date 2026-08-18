@@ -154,11 +154,11 @@ final class DeskModelsTests: XCTestCase {
     }
 
     func testModelSeatValueNeverShowsTheRotateSentinel() {
-        XCTAssertEqual(DeskCopy.modelSeatValue("__rotate__"), "Rotate models")
-        XCTAssertEqual(DeskCopy.modelSeatValue(" __ROTATE__ "), "Rotate models")
+        XCTAssertEqual(DeskCopy.modelSeatValue("__rotate__"), "rotate models")
+        XCTAssertEqual(DeskCopy.modelSeatValue(" __ROTATE__ "), "rotate models")
         XCTAssertEqual(
             DeskCopy.modelSeatValue("__rotate__", fallbacks: ["google/gemini-3.7-flash"]),
-            "Rotate models"
+            "rotate models"
         )
         XCTAssertEqual(DeskCopy.modelSeatValue("claude-sonnet-5"), "claude-sonnet-5")
         XCTAssertEqual(DeskCopy.modelSeatValue(nil), "—")
