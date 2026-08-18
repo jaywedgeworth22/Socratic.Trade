@@ -414,7 +414,8 @@ export function startScheduler(): void {
 }
 
 async function tick(): Promise<void> {
-  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill.
+  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill,
+  // and close the matching strategy_run_requests row so Manual Run once is not left locked.
   // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
   // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
   try {

@@ -57,6 +57,200 @@ describe("markStaleRunningRuns", () => {
     expect(crashedReceipts(db, userId)).toHaveLength(1);
   });
 
+  function insertOpenRequest(
+    db: typeof import("../src/lib/db"),
+    input: { id: string; userId: string; status?: "queued" | "running"; createdAt?: string }
+  ): void {
+    db.getDb()
+      .prepare(
+        `INSERT INTO strategy_run_requests
+          (id, user_id, manual, status, result, created_at, started_at, finished_at)
+         VALUES (?, ?, 1, ?, NULL, ?, ?, NULL)`
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.status ?? "running",
+        input.createdAt ?? new Date().toISOString(),
+        input.status === "queued" ? null : new Date().toISOString()
+      );
+  }
+
+  it("sweep-fails a stale run and closes its running request so the next Manual Run once is not deduped", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `sweep-lock-user-${randomUUID()}`;
+    const runId = randomUUID();
+
+    db.insertStrategyRun(runId, userId);
+    insertOpenRequest(db, { id: runId, userId, status: "running" });
+
+    const blocked = queueStrategyRunRequest({ userId, manual: true });
+    expect(blocked.deduped).toBe(true);
+    expect(blocked.request.id).toBe(runId);
+
+    const future = Date.now() + 2 * STALE_THRESHOLD_MS;
+    db.markStaleRunningRuns(future);
+
+    const request = db
+      .getDb()
+      .prepare("SELECT status, finished_at FROM strategy_run_requests WHERE id = ?")
+      .get(runId) as { status: string; finished_at: string | null };
+    expect(request.status).toBe("failed");
+    expect(request.finished_at).toBeTruthy();
+
+    const next = queueStrategyRunRequest({ userId, manual: true });
+    expect(next.deduped).toBe(false);
+    expect(next.request.id).not.toBe(runId);
+    expect(next.request.status).toBe("queued");
+  });
+
+  it("heals an already-failed run whose request is still running (live Roth orphan shape)", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `heal-orphan-user-${randomUUID()}`;
+    const runId = randomUUID();
+
+    db.insertStrategyRun(runId, userId);
+    db.finishStrategyRun(
+      runId,
+      "failed",
+      "Process restarted mid-run — marked failed by stale-run sweep (started at 2026-08-18T21:42:29.623Z)",
+      userId
+    );
+    // finishStrategyRun now closes the request; recreate the pre-fix orphan: terminal run,
+    // request still running.  ASC 0e5ccd66: 0 new Roth strategy_runs after 22:06:43Z because
+    // the leftover running request locked every later click.
+    db.getDb()
+      .prepare(
+        `INSERT INTO strategy_run_requests
+          (id, user_id, manual, status, result, created_at, started_at, finished_at)
+         VALUES (?, ?, 1, 'running', NULL, ?, ?, NULL)`
+      )
+      .run(runId, userId, new Date().toISOString(), new Date().toISOString());
+
+    // Next Manual Run once must not wait for a scheduler tick.
+    const next = queueStrategyRunRequest({ userId, manual: true });
+    expect(next.deduped).toBe(false);
+    expect(next.request.id).not.toBe(runId);
+
+    const request = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(runId) as { status: string };
+    expect(request.status).toBe("failed");
+  });
+
+  it("does not close another user's fresh running request when healing an orphan", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userA = `orphan-user-a-${randomUUID()}`;
+    const userB = `live-user-b-${randomUUID()}`;
+    const orphanId = randomUUID();
+    const liveId = randomUUID();
+
+    db.insertStrategyRun(orphanId, userA);
+    db.finishStrategyRun(orphanId, "failed", "stale-run sweep", userA);
+    db.getDb()
+      .prepare(
+        `INSERT INTO strategy_run_requests
+          (id, user_id, manual, status, result, created_at, started_at, finished_at)
+         VALUES (?, ?, 1, 'running', NULL, ?, ?, NULL)`
+      )
+      .run(orphanId, userA, new Date().toISOString(), new Date().toISOString());
+
+    db.insertStrategyRun(liveId, userB);
+    insertOpenRequest(db, { id: liveId, userId: userB, status: "running" });
+
+    db.markStaleRunningRuns(Date.now());
+
+    const orphan = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(orphanId) as { status: string };
+    const live = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(liveId) as { status: string };
+    expect(orphan.status).toBe("failed");
+    expect(live.status).toBe("running");
+    expect(queueStrategyRunRequest({ userId: userA, manual: true }).deduped).toBe(false);
+    expect(queueStrategyRunRequest({ userId: userB, manual: true }).deduped).toBe(true);
+  });
+
+  it("leaves a fresh running run and its request untouched", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `fresh-request-user-${randomUUID()}`;
+    const runId = randomUUID();
+
+    db.insertStrategyRun(runId, userId);
+    insertOpenRequest(db, { id: runId, userId, status: "running" });
+
+    db.markStaleRunningRuns(Date.now());
+
+    const request = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(runId) as { status: string };
+    expect(request.status).toBe("running");
+    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(true);
+  });
+
+  it("finishStrategyRun failed closes the matching running request", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `finish-close-user-${randomUUID()}`;
+    const runId = randomUUID();
+
+    db.insertStrategyRun(runId, userId);
+    insertOpenRequest(db, { id: runId, userId, status: "running" });
+    db.finishStrategyRun(runId, "failed", "LLM threw", userId);
+
+    const request = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(runId) as { status: string };
+    expect(request.status).toBe("failed");
+    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(false);
+  });
+
+  it("sweep-fails a stale running request that has no strategy_runs row", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `stranded-request-user-${randomUUID()}`;
+    const requestId = randomUUID();
+    const createdAt = new Date(Date.now() - 2 * STALE_THRESHOLD_MS).toISOString();
+
+    insertOpenRequest(db, { id: requestId, userId, status: "running", createdAt });
+
+    const next = queueStrategyRunRequest({ userId, manual: true });
+    expect(next.deduped).toBe(false);
+    expect(next.request.id).not.toBe(requestId);
+
+    const request = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(requestId) as { status: string };
+    expect(request.status).toBe("failed");
+  });
+
+  it("leaves a fresh running request with no strategy_runs row alone (worker just claimed)", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `fresh-stranded-user-${randomUUID()}`;
+    const requestId = randomUUID();
+
+    insertOpenRequest(db, { id: requestId, userId, status: "running" });
+
+    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(true);
+    const request = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(requestId) as { status: string };
+    expect(request.status).toBe("running");
+  });
+
   it("leaves a fresh (non-stale) running run untouched", async () => {
     const db = await import("../src/lib/db");
     const userId = `fresh-user-${randomUUID()}`;

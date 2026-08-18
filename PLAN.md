@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-18 CURSOR — sweep-failed request lock (`cursor/sweep-request-orphan-lock-befc`, #2847).** #2845 live; 0 new Roth `strategy_runs` after 22:06:43Z.  Orphan `0e5ccd66` sweep-failed 22:13:05Z (0 LLM) left the request `running`.  Close on sweep / `finishStrategyRun`; heal on tick and on the next click.  Portfolio `8000+7000ms` is a separate lock.  Do not merge / deploy / bounce.  Do not touch #2841.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+
 > **2026-08-18 CURSOR — getAccounts post-deploy timeout (`cursor/getaccounts-post-deploy-timeout-befc`).** Dashboard 6s `getAccounts` race fail-closes Manual Run once via `accountReadiness`.  Paper/Roth are Alpaca REST.  First-call retry + 15s combined budget; do not hide a real broker-down.  Do not bounce Coolify.  Rollout: `docs/rollouts/2026-08-18-getaccounts-post-deploy-timeout.md`.
 
 > **2026-08-18 CURSOR — rag-embed DeepInfra batch-window (`#2840` `5674dfaf` MERGED).** Live 32-text embed POSTs 400 at 8193 tokens on baai/bge-m3 (batch-sum, not one unchunked 10-K).  Hybrid condense-first stayed; token-pack is after that step.  Isolate one over-limit condensed text; do not fail the companions.  Do not flip write-class or prune.  Do not re-clamp the #2800 fuse.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.

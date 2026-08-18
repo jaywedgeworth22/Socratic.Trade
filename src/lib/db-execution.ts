@@ -292,25 +292,6 @@ export function insertStrategyRun(id: string, userId: string = "local", connecte
     .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
 }
 
-/** Terminal statuses for strategy_runs.
- *  - completed: a decision cycle ran (LLM evaluated candidates, even if it proposed nothing)
- *  - skipped_* / skipped: pre-decision gate — no successful evaluation (UX PR-A1)
- *  - failed: hard error
- * Skips must NOT feed trading-liveness "healthy" or auto-tune. */
-export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, summary: string, userId: string = "local"): void {
-  getDb()
-    .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
-    .run(new Date().toISOString(), status, summary, id, userId);
-}
-
-/**
- * Sweep strategy_runs rows left in status='running' after a process crash / kill / unhandled
- * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
- * within STALE_THRESHOLD_MS (default 30 min) is marked failed with a receipted reason — UNLESS it
- * still has recent audit activity (see the in-loop check below), in which case it's left alone.
- *
- * Returns the number of repaired rows for logging/auditing.
- */
 // 30 min — raised from 10 min after a 2026-07-08 incident: an evening run (id 5d49c9b5) with
 // slow LLM steps (150s+ each observed under load) was still genuinely running past the old 10-min
 // threshold, got marked "crashed" by this sweep at the ~11-minute mark, and then completed 5s later
@@ -319,6 +300,146 @@ export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, s
 // normally finishes in ~1-2 min, so this only widens the window for the genuine crash case, it
 // doesn't meaningfully delay detecting an actual stuck/killed process.
 const STALE_RUN_THRESHOLD_MS = 30 * 60_000;
+
+/**
+ * Manual Run once persists `strategy_run_requests.id` and then passes that same UUID to
+ * `runStrategyOnce` as `runId`, so the request row and the `strategy_runs` row share an id.
+ * `queueStrategyRunRequest` refuses a second click while any request for that user is still
+ * `queued` or `running`.  Closing the matching open request here is the write-path coupling:
+ * a terminal run must not leave the request in `running` (the 2026-08-18 Roth orphan
+ * `0e5ccd66` was sweep-failed while its request stayed `running`, so the next Manual Run once
+ * 502'd and wrote no new `strategy_runs` row).
+ *
+ * Kept in this module (getDb-only) so `strategy-run-requests.ts` is not imported — that file
+ * imports `strategy.ts`, which calls `finishStrategyRun`.
+ */
+function closeMatchingStrategyRunRequest(
+  runId: string,
+  requestStatus: "completed" | "failed",
+  summary: string,
+  finishedAt: string,
+): void {
+  getDb()
+    .prepare(
+      `UPDATE strategy_run_requests
+       SET status = ?, result = ?, finished_at = ?
+       WHERE id = ? AND status IN ('queued', 'running')`
+    )
+    .run(
+      requestStatus,
+      JSON.stringify({ runId, status: requestStatus, summary, proposals: [] }),
+      finishedAt,
+      runId
+    );
+}
+
+/**
+ * Close open `strategy_run_requests` whose matching `strategy_runs` row is already
+ * terminal (live Roth `0e5ccd66` after the stale sweep wrote only the run).  Optional
+ * `userId` scopes the heal to one user so Manual Run once can clear that user's lock
+ * on the click without waiting for the next scheduler tick.
+ */
+export function closeOrphanedStrategyRunRequests(nowMs: number = Date.now(), userId?: string): void {
+  const db = getDb();
+  const finishedAt = new Date(nowMs).toISOString();
+  const cutoff = new Date(nowMs - STALE_RUN_THRESHOLD_MS).toISOString();
+
+  // Already-terminal run + still-open request (the live Roth lock after a sweep that only
+  // wrote strategy_runs).  Close immediately; do not wait another 30 minutes.
+  const mismatched = (
+    userId
+      ? db
+          .prepare(
+            `SELECT r.id AS id, s.status AS run_status, s.summary AS run_summary
+             FROM strategy_run_requests r
+             INNER JOIN strategy_runs s ON s.id = r.id
+             WHERE r.user_id = ?
+               AND r.status IN ('queued', 'running')
+               AND s.status != 'running'`
+          )
+          .all(userId)
+      : db
+          .prepare(
+            `SELECT r.id AS id, s.status AS run_status, s.summary AS run_summary
+             FROM strategy_run_requests r
+             INNER JOIN strategy_runs s ON s.id = r.id
+             WHERE r.status IN ('queued', 'running')
+               AND s.status != 'running'`
+          )
+          .all()
+  ) as Array<{ id: string; run_status: string; run_summary: string | null }>;
+  for (const row of mismatched) {
+    const failed = row.run_status === "failed";
+    closeMatchingStrategyRunRequest(
+      row.id,
+      failed ? "failed" : "completed",
+      row.run_summary ?? "Matching strategy run already finished",
+      finishedAt
+    );
+  }
+
+  // Claimed or queued request whose strategy_runs row was never written, older than the same
+  // stale-run window.  Fresh queued rows (the live Manual Run once queue) are left alone.
+  const stranded = (
+    userId
+      ? db
+          .prepare(
+            `SELECT id FROM strategy_run_requests
+             WHERE user_id = ?
+               AND status IN ('queued', 'running')
+               AND created_at < ?
+               AND NOT EXISTS (SELECT 1 FROM strategy_runs WHERE strategy_runs.id = strategy_run_requests.id)`
+          )
+          .all(userId, cutoff)
+      : db
+          .prepare(
+            `SELECT id FROM strategy_run_requests
+             WHERE status IN ('queued', 'running')
+               AND created_at < ?
+               AND NOT EXISTS (SELECT 1 FROM strategy_runs WHERE strategy_runs.id = strategy_run_requests.id)`
+          )
+          .all(cutoff)
+  ) as Array<{ id: string }>;
+  for (const row of stranded) {
+    closeMatchingStrategyRunRequest(
+      row.id,
+      "failed",
+      "No matching strategy run — marked failed by stale-run sweep",
+      finishedAt
+    );
+  }
+}
+
+/** Terminal statuses for strategy_runs.
+ *  - completed: a decision cycle ran (LLM evaluated candidates, even if it proposed nothing)
+ *  - skipped_* / skipped: pre-decision gate — no successful evaluation (UX PR-A1)
+ *  - failed: hard error
+ * Skips must NOT feed trading-liveness "healthy" or auto-tune. */
+export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, summary: string, userId: string = "local"): void {
+  const finishedAt = new Date().toISOString();
+  getDb()
+    .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
+    .run(finishedAt, status, summary, id, userId);
+  closeMatchingStrategyRunRequest(
+    id,
+    status === "failed" ? "failed" : "completed",
+    summary,
+    finishedAt
+  );
+}
+
+/**
+ * Sweep strategy_runs rows left in status='running' after a process crash / kill / unhandled
+ * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
+ * within STALE_THRESHOLD_MS (default 30 min) is marked failed with a receipted reason — UNLESS it
+ * still has recent audit activity (see the in-loop check below), in which case it's left alone.
+ *
+ * Also closes any matching open `strategy_run_requests` row (same UUID) so Manual Run once
+ * is not left locked after the run is marked failed.  A later tick heals already-failed
+ * runs whose request was left `running` by an older process.
+ *
+ * Returns the number of repaired strategy_runs rows for logging/auditing.
+ */
 export function markStaleRunningRuns(now: number = Date.now()): number {
   const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
   const db = getDb();
@@ -345,16 +466,19 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
       .get(row.id, cutoff);
     if (recentActivity) continue;
 
+    const finishedAt = new Date(now).toISOString();
+    const summary = `Process restarted mid-run — marked failed by stale-run sweep (started at ${row.started_at})`;
     const res = db
       .prepare(
-        `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = 'Process restarted mid-run — marked failed by stale-run sweep (started at ' || ? || ')'
+        `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = ?
          WHERE id = ? AND status = 'running'`
       )
-      .run(new Date().toISOString(), row.started_at, row.id);
+      .run(finishedAt, summary, row.id);
     // Only receipt+count rows this sweep actually transitioned. If a concurrent scheduler
     // instance already repaired the row between our SELECT and UPDATE, `changes === 0` — skip
     // it so we don't emit a duplicate `strategy_run_crashed` audit or over-report `count`.
     if (res.changes === 0) continue;
+    closeMatchingStrategyRunRequest(row.id, "failed", summary, finishedAt);
     // `audit` is imported statically from ./db (top of file). The db → db-execution cycle is safe
     // under ESM live bindings because audit is only called here at runtime, never at module init.
     audit(
@@ -366,6 +490,7 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
     );
     count++;
   }
+  closeOrphanedStrategyRunRequests(now);
   return count;
 }
 

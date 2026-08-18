@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 Manual Run once request/run status coupling
+
+`POST /api/strategy/run` writes `strategy_run_requests` first, then `runStrategyOnce` uses that same UUID as `strategy_runs.id`.  `queueStrategyRunRequest` dedupes while any request for that user is `queued` or `running`.  `markStaleRunningRuns` used to fail only the `strategy_runs` row.  After #2845, ASC saw 0 new Roth `strategy_runs` after 22:06:43Z because orphan `0e5ccd66` was sweep-failed at 22:13:05Z (0 LLM) while its request stayed `running`.  The sweep and `finishStrategyRun` now close the matching open request.  The next scheduler tick and the next Manual Run once click both heal an already-terminal run whose request is still open.  Do not hide the lock by ignoring `running`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+
 ## 2026-08-18 rag-embed DeepInfra batch window (ingest)
 
 OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` against 8192 tokens.  A count-only batch of 32 ordinary chunks hit 8193 and 400'd `embed documents` after the 2026-08-18 2:12pm CT deploy.  That is a batch-sum, not one unchunked 10-K.  Hybrid still condenses first (`chunkDocument` 480 / `VECTOR_CONTEXT_MAX_CHARS`); packing is only a batch-window fix after that step.  `storeContexts` packs already-condensed texts under ~7500 `approxTokens` and embeds each group on its own lane.  One over-limit condensed text is isolated as its own POST and cannot skip the companions.  Local store-more is unchanged.  `VECTOR_EMBED_BATCH_SIZE=32` in Infisical is safe.  The #2812 health gate, #2820 producer order, write-class, and #2800 fuse are unchanged.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
