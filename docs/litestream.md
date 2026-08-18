@@ -5,9 +5,12 @@ WAL as LTX files to an S3-compatible object store.
 
 **Production (Coolify, 2026-08-07+):** active replica is **Backblaze B2** EU Central
 (`jays-socratic-trade-eu`, endpoint `s3.eu-central-003.backblazeb2.com`) via
-`litestream.coolify.yml` + Infisical `AWS_*`. Cloudflare R2 holds a **historic** freeze
-until B2 restore is proven — do not delete R2 objects yet. Details:
-`docs/rollouts/2026-08-07-litestream-b2-backup.md`.
+`litestream.coolify.yml` + Infisical `AWS_*`. B2 restore to a host scratch path is
+**VERIFIED** (2026-08-18 UTC).  Cloudflare R2 remains the weekly cold snapshot
+(`cold-snapshots/`), not a second Litestream writer.  Do not delete R2 weeklies
+from this note — retain=1 is **NOT VERIFIED**.  Details:
+`docs/rollouts/2026-08-07-litestream-b2-backup.md` and
+`docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 Local Mac notes below (`litestream.yml` + `scripts/run-litestream.sh`) are optional
 dev/sidecar history; production does **not** use Mac PM2 litestream.
@@ -94,30 +97,35 @@ pm2 restart trading
 Point-in-time restore (0.5.x): add `-timestamp 2026-06-21T18:00:00Z` or
 `-txid <hex>` to the `litestream restore` call.
 
-## Restore verification status (G9a, 2026-07-01)
+## Restore verification status (2026-08-18 UTC)
 
-**Restore has NOT yet been exercised.** Only the *replicate* (write) path has been
-verified live in production — see `docs/rollouts/2026-06-21-litestream-r2-live.md`
-("Verification" section: `litestream databases`/`litestream ltx` confirmed LTX files
-landing in R2, `pm2 show litestream` stable). That note's own follow-ups explicitly
-flagged the gap ("Consider a periodic restore drill") and it was never closed out —
-no rollout note or audit trail records `scripts/litestream-restore.sh` (or the
-underlying `litestream restore`) having actually been run and its output checked
-against `data/app.db`. Replication succeeding is NOT proof restore works: a wrong
-`-config` path, a stale/incompatible LTX generation, or a permissions gap on the R2
-read side would only surface at restore time.
+**B2 restore to scratch is VERIFIED.**  ASC ran `litestream restore` on
+`fleet-hetzner-nbg1` to `/data/scratch/socratic-restore-20260818/app.db` (4.9G,
+started 2026-08-18T01:12:26Z, file complete ~01:14Z).  `PRAGMA integrity_check`
+was `ok` (sqlite3 3.46.1, ~4m).  Scratch `max(audit_events.created_at)` was
+2026-08-18T01:12:10.915Z (n=210008) vs a live read-only sample at ~01:11Z of
+2026-08-18T01:11:22.198Z (n=210000) — about 48s newer than that sample / within
+seconds of restore start.  Live volume was not overwritten.  Live stayed HTTP 200.
+No bounce.  No `FORCE_RESTORE`.  No Mac pm2.
 
-Until a drill is recorded, treat backups as **unverified** for disaster-recovery
-purposes — replicated bytes exist in R2, but the recovery procedure itself is
-untested end-to-end. This finding requires no infra change (the credentials and
-production host are out of reach for a non-production agent); it is an operator
-runbook step that must be performed once from `~/apps/trading-live`.
+Full receipts: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+
+Still **BLOCKED**: decrypt one stored credential (owner approval; do not take
+`ENCRYPTION_KEY` or ciphertext off the host).  Still **NOT VERIFIED** as retain=1:
+R2 weekly health is ok (`cold-snapshots/app-2026-08-16.db`) but live process env
+is `R2_ARCHIVE_KEEP_GENERATIONS=2` and objects were not deleted.
+
+The 2026-07-01 G9a gap (replicate proven, restore never run) is closed for the B2
+path.  Repeat after a Litestream / `litestream.coolify.yml` version bump.
 
 ### Runbook: perform and record a restore drill
 
-Run this periodically (recommend: quarterly, and after any Litestream/litestream.yml
-version bump) from a shell with the production `AWS_*` creds available
-(via `.env.local` or `infisical run`, per `docs/deployment.md`):
+Run this periodically (recommend: quarterly, and after any Litestream / `litestream.coolify.yml`
+version bump).  Production is Coolify on `fleet-hetzner-nbg1`, not Mac pm2.  The 2026-08-18
+drill used host scratch + `litestream restore -config …/litestream.coolify.yml` (creds from
+the running socratic litestream process env, shredded after).  The Mac-oriented script
+below is still valid for a local replica.  Do not `cp` over live `/app/data/app.db` as part
+of a drill.  Do not bounce.  Do not set `FORCE_RESTORE`.
 
 ```bash
 # 1. Restore the latest replica to a scratch path (does NOT touch the live app.db).

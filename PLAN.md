@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-18 CURSOR — Litestream restore drill (`cursor/litestream-restore-drill-2cd9`).** Report only.  Record ASC scratch-only B2 restore receipts.  Do not change product code.  Do not touch live Coolify.  Do not add rolling/zero-downtime.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+
 > **2026-08-18 CURSOR — Pinecone store vs condense (`cursor/pinecone-store-vs-condense-ce2b`).** Report only.  Recommended default is hybrid: processed proposer corpus in Pinecone, full bodies local, hydrate after A+B.  Do not fill Builder with raw 10-K/Q/transcripts.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not raise the 2.5M WU fuse.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.
 
 > **2026-08-17 CURSOR — Blind-spots audit (`cursor/blind-spots-audit-299e`).** Read-only red-team register across legal/fintech, product identity, a11y-beyond-#2795, i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  No production code.  `docs/audits/2026-08-17-blind-spots.md`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
