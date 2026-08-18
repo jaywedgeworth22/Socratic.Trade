@@ -49,7 +49,7 @@ Nothing from this drill remains BLOCKED or NOT VERIFIED.
 - Later live compare at 8:19pm CT: scratch max 01:12:10Z n=210008 vs live 01:19:28Z n=210039.  Seconds / ~31 rows behind.  Expected.
 - RPO looks healthy.
 
-### VERIFIED — decrypt one stored credential
+### VERIFIED — decrypt one stored credential (second ASC pass)
 
 - Path: `src/lib/db-api-keys.ts` `decryptValue` + container Infisical `ENCRYPTION_KEY` (64 hex).  Do not write the key or the plaintext.
 - Scratch row: `user_api_keys.service=fred`, `isEncryptedValue=true`, `enc_len` 122, prefix `ff0` (legacy envelope, not `v1:`).
@@ -73,7 +73,7 @@ Nothing from this drill remains BLOCKED or NOT VERIFIED.
 
 ### Out of scope — Coolify 503 after docs deploys
 
-Separate Coolify 503 ~00:15–00:49Z after docs deploys #2810/#2811 (stop-old-first, Cloudflare no available server).  Recovered sha `23412aff`.  That is not part of the restore proof.
+Separate Coolify 503 ~00:15–00:49Z after docs deploys #2810/#2811 (stop-old-first, Cloudflare no available server).  Recovered sha `23412aff`.  That is not part of the restore proof.  #2822 raced Coolify `watch_paths` (now omit `docs/**`, `STATUS.md`, `PLAN.md`); this follow-up should not rebuild.
 
 ```
 # docs-only; no product-code compile required
