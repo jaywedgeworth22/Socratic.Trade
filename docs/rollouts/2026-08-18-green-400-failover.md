@@ -41,9 +41,14 @@ Touched files:
 ```bash
 # Public catalog still lists terra (so availability alone cannot demote it):
 curl -sS https://openrouter.ai/api/v1/models | python3 -c "import json,sys; ids=[m.get('id','') for m in json.load(sys.stdin).get('data',[])]; print('terra', [i for i in ids if 'terra' in i])"
+# terra ['openai/gpt-5.6-terra-pro', 'openai/gpt-5.6-terra-pro:batch', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-terra:batch']
 
-npm test -- test/llm-request.test.ts test/llm-errors.test.ts \
-  test/model-rotation.test.ts test/strategy-llm-failover.test.ts
+npm test -- test/llm-request.test.ts test/llm-errors.test.ts test/model-rotation.test.ts
+# 65 passed
+npm test -- test/strategy-llm-failover.test.ts
+# 6 passed (includes 400 records N calls + Red still runs)
+npm run lint   # 0 errors, 769 grandfathered warnings
+npx tsc --noEmit  # clean
 ```
 
 Required coverage: (a) 400 is failover-eligible and not a same-model retry; (b) exhausted suffix is empty after 1 stored call and names N after N>1; (c) 400 "Provider returned error" is not an account miss; (d) terra is not first pick when Gemini Flash / Mistral Medium seats remain; (e) a Green 400 records the next stored call and still invokes Red.
