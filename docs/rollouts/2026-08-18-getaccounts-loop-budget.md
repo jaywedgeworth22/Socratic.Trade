@@ -51,7 +51,7 @@ Fix:
 
 ## Verification State
 
-Focused (full suite not re-run):
+Focused after leftover 6s `getEquityQuotes` / 8s `getOptionPositions` waits moved to 16s (full suite not re-run):
 
 ```bash
 npx vitest run test/inflight-deadline.test.ts test/sec-ingest-worker.test.ts test/dashboard-agentic-fallback.test.ts
