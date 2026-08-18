@@ -2,9 +2,9 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
-## 2026-08-18 OpenRouter "No endpoints" 404 is not "not on your account"
+## 2026-08-18 OpenRouter 404s are not "not on your account"
 
-Primary: live #2771 set `require_parameters=true` on every OpenRouter body.  OpenRouter 404s `No endpoints found matching your request` when that filter empties the endpoint set; `allow_fallbacks` does not revive it.  `humanizeLlmError` used to treat any 404 as an account allowlist miss.  `require_parameters` is now only for OpenAI reasoning + `max_completion_tokens`.  The account sentence is only for a real model-not-found / no-access body.  Secondary: `/models/user` family-match + fail-open minus dead slugs.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
+Two live causes, same false sentence.  (1) #2771 `require_parameters=true` 404s `No endpoints found matching your request`.  (2) `normalizeOpenRouterModelId` emitted untilded `-latest` ids that are not in OpenRouter's catalog (live 2026-08-18: aliases are `~author/slug-latest`; dated public ids exist for the current class).  Same class as #2770 period-Mistral.  Wire ids now prefer dated public ids (`anthropic/claude-sonnet-5`, `openai/gpt-5.4-mini`, `deepseek/deepseek-r1`) or the tilde alias when that is the only catalog row (`~moonshotai/kimi-latest`).  Availability treats `~` as optional and matches dated ↔ latest.  Classifier: routing 404 = no compatible endpoint; `model_not_found` = bad slug, not an account-privacy sentence.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
 
 ## 2026-08-18 Pinecone store-more vs condense-first (report)
 

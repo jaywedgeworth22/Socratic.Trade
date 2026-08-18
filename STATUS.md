@@ -7,8 +7,9 @@
 Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
 ## 2026-08-18 CURSOR — OpenRouter rotation alias miss is not "not on your account"
 ## 2026-08-18 CURSOR — OpenRouter "No endpoints" 404 is not "not on your account"
+## 2026-08-18 CURSOR — OpenRouter 404s are not "not on your account"
 
-Owner: Green failed because models are not available on his OpenRouter account.  False.  Primary liar is live #2771 (`require_parameters=true` on every OpenRouter call) + `humanizeLlmError` treating any 404 as an account miss.  `allow_fallbacks` does not revive an empty require_parameters set.  Narrow require_parameters to OpenAI reasoning + `max_completion_tokens`.  404 "No endpoints found matching your request" now says no compatible endpoint.  `/models/user` fail-open is secondary (rotation was already picking slugs).  Keep `__rotate__`.  No dashboard adds.  No Stripe/IAP.  No Coolify body claimed.
+Owner: Green failed because models are not available on his OpenRouter account.  False.  Two live causes, same sentence.  (1) #2771 `require_parameters=true` 404s "No endpoints found matching your request".  (2) `normalizeOpenRouterModelId` dropped OpenRouter's `~` on `-latest` aliases (live catalog 2026-08-18: `~anthropic/claude-sonnet-latest` exists; `anthropic/claude-sonnet-latest` does not).  Same class as #2770.  Prefer dated public ids; matcher treats `~` as optional.  Classifier: routing 404 ≠ account miss; `model_not_found` = bad slug.  Keep `__rotate__`.  No dashboard adds.  No Stripe/IAP.  No Coolify body claimed.
 
 PR **#2829**.  Branch `cursor/openrouter-rotation-alias-fb04`.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
 

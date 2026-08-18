@@ -33,7 +33,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("openrouter");
     expect(endpoint.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(endpoint.key).toBe("sk-or-test-key");
-    expect(endpoint.model).toBe("anthropic/claude-sonnet-latest");
+    expect(endpoint.model).toBe("anthropic/claude-sonnet-5");
     expect(endpoint.transport).toBe("chat-completions");
   });
 
@@ -91,5 +91,51 @@ describe("resolveLlmEndpoint", () => {
     expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3.5")).toBe("mistralai/mistral-medium-3-5");
     expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3-5")).toBe("mistralai/mistral-medium-3-5");
     expect(normalizeOpenRouterModelId("gpt-5.4-nano")).toBe("openai/gpt-5.4-nano");
+  });
+
+  it("emits live OpenRouter public ids, never the untilded -latest 404s", async () => {
+    // Verified GET https://openrouter.ai/api/v1/models 2026-08-18 (413 models).
+    const { normalizeOpenRouterModelId } = await import("../src/lib/llm-provider");
+    const cases: Array<[string, string]> = [
+      ["claude-sonnet-5", "anthropic/claude-sonnet-5"],
+      ["claude-sonnet-latest", "anthropic/claude-sonnet-5"],
+      ["anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-5"],
+      ["~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-5"],
+      ["openrouter/~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-5"],
+      ["claude-haiku-4.5", "anthropic/claude-haiku-4.5"],
+      ["claude-haiku-latest", "anthropic/claude-haiku-4.5"],
+      ["anthropic/claude-haiku-latest", "anthropic/claude-haiku-4.5"],
+      ["~anthropic/claude-haiku-latest", "anthropic/claude-haiku-4.5"],
+      ["claude-opus-5", "anthropic/claude-opus-5"],
+      ["claude-opus-latest", "anthropic/claude-opus-5"],
+      ["anthropic/claude-opus-latest", "anthropic/claude-opus-5"],
+      ["~anthropic/claude-opus-latest", "anthropic/claude-opus-5"],
+      ["claude-fable-5", "anthropic/claude-fable-5"],
+      ["claude-fable-latest", "anthropic/claude-fable-5"],
+      ["anthropic/claude-fable-latest", "anthropic/claude-fable-5"],
+      ["~anthropic/claude-fable-latest", "anthropic/claude-fable-5"],
+      ["grok-4.5", "x-ai/grok-4.5"],
+      ["grok-latest", "x-ai/grok-4.5"],
+      ["x-ai/grok-latest", "x-ai/grok-4.5"],
+      ["~x-ai/grok-latest", "x-ai/grok-4.5"],
+      ["gpt-5.4-mini", "openai/gpt-5.4-mini"],
+      ["gpt-mini-latest", "openai/gpt-5.4-mini"],
+      ["openai/gpt-mini-latest", "openai/gpt-5.4-mini"],
+      ["~openai/gpt-mini-latest", "openai/gpt-5.4-mini"],
+      ["kimi-latest", "~moonshotai/kimi-latest"],
+      ["moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
+      ["~moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
+      ["deepseek-reasoner", "deepseek/deepseek-r1"],
+      ["deepseek/deepseek-reasoner", "deepseek/deepseek-r1"],
+      ["deepseek-r1", "deepseek/deepseek-r1"]
+    ];
+    for (const [input, expected] of cases) {
+      expect(normalizeOpenRouterModelId(input), input).toBe(expected);
+    }
+    expect(normalizeOpenRouterModelId("anthropic/claude-sonnet-latest")).not.toBe("anthropic/claude-sonnet-latest");
+    expect(normalizeOpenRouterModelId("x-ai/grok-latest")).not.toBe("x-ai/grok-latest");
+    expect(normalizeOpenRouterModelId("openai/gpt-mini-latest")).not.toBe("openai/gpt-mini-latest");
+    expect(normalizeOpenRouterModelId("moonshotai/kimi-latest")).not.toBe("moonshotai/kimi-latest");
+    expect(normalizeOpenRouterModelId("deepseek/deepseek-reasoner")).not.toBe("deepseek/deepseek-reasoner");
   });
 });

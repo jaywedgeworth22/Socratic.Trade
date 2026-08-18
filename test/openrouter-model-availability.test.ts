@@ -53,6 +53,25 @@ describe("OpenRouter account model availability", () => {
     expect(isOpenRouterModelAvailable("kimi-latest", versioned)).toBe(false);
   });
 
+  it("treats OpenRouter ~ latest aliases as the same class as dated public ids", () => {
+    const listed = new Set([
+      "~anthropic/claude-sonnet-latest",
+      "~anthropic/claude-haiku-latest",
+      "~x-ai/grok-latest",
+      "~openai/gpt-mini-latest",
+      "~moonshotai/kimi-latest",
+      "deepseek/deepseek-r1"
+    ]);
+    expect(isOpenRouterModelAvailable("claude-sonnet-5", listed)).toBe(true);
+    expect(isOpenRouterModelAvailable("anthropic/claude-sonnet-latest", listed)).toBe(true);
+    expect(isOpenRouterModelAvailable("claude-haiku-4.5", listed)).toBe(true);
+    expect(isOpenRouterModelAvailable("grok-4.5", listed)).toBe(true);
+    expect(isOpenRouterModelAvailable("gpt-5.4-mini", listed)).toBe(true);
+    expect(isOpenRouterModelAvailable("kimi-latest", listed)).toBe(true);
+    expect(isOpenRouterModelAvailable("deepseek-reasoner", listed)).toBe(true);
+    expect(isOpenRouterModelAvailable("claude-fable-5", listed)).toBe(false);
+  });
+
   it("fails closed when the availability endpoint is unavailable", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 503 })));

@@ -48,9 +48,11 @@ describe("humanizeLlmError", () => {
     expect(humanizeLlmError("", { provider: "xai", status: 503 }).toLowerCase()).toContain("temporarily unavailable");
   });
 
-  it("maps 403 to an access/region message and 404 to model-not-available", () => {
+  it("maps 403 to an access/region message and 404 model_not_found to a bad slug", () => {
     expect(humanizeLlmError("forbidden", { provider: "openai", status: 403 }).toLowerCase()).toContain("access");
-    expect(humanizeLlmError("model_not_found", { provider: "openai", status: 404 }).toLowerCase()).toContain("isn't available");
+    const missing = humanizeLlmError("model_not_found", { provider: "openai", status: 404 });
+    expect(missing.toLowerCase()).toContain("isn't valid");
+    expect(missing.toLowerCase()).not.toContain("isn't available on your");
   });
 
   it("does not blame the OpenRouter account for a require_parameters No endpoints 404", () => {
@@ -69,10 +71,12 @@ describe("humanizeLlmError", () => {
     expect(bare.toLowerCase()).not.toContain("openrouter account");
   });
 
-  it("still blames the account on a true model_not_found body", () => {
+  it("treats a true model_not_found as a bad slug, not an account miss", () => {
     const msg = humanizeLlmError("model_not_found", { provider: "openrouter", status: 404 });
-    expect(msg.toLowerCase()).toContain("isn't available on your");
+    expect(msg.toLowerCase()).toContain("isn't valid");
     expect(msg).toContain("OpenRouter");
+    expect(msg.toLowerCase()).not.toContain("isn't available on your");
+    expect(msg.toLowerCase()).not.toContain("openrouter account");
   });
 
   it("maps Anthropic's workspace usage-limit error to a plain-English message (not raw JSON)", () => {

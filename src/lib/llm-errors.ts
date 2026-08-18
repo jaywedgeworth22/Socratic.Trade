@@ -80,7 +80,7 @@ function extractStructuredProviderError(
  *  second pass (e.g. humanizeLlmTransportError re-wrapping an Error whose message was humanized at
  *  the throw site) returns it unchanged instead of stuttering "Gemini error: Gemini error: ...". */
 const ALREADY_HUMANIZED =
-  /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|Moonshot AI \(Kimi\)|OpenRouter|the LLM) error\b|^(?:That model isn't available on your |Couldn't complete this model request\.|.+ had no compatible endpoint for this request\.)/;
+  /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|Moonshot AI \(Kimi\)|OpenRouter|the LLM) error\b|^(?:That model id isn't valid on |That model isn't available on your |Couldn't complete this model request\.|.+ had no compatible endpoint for this request\.)/;
 
 /**
  * Convert a raw LLM error (and optional HTTP status) into a plain-English, actionable message.
@@ -118,9 +118,8 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
   if (status === 404 && noEndpointRouting)
     return `${provider} had no compatible endpoint for this request.  Try again, or choose a different model.`;
 
-  // Only blame the account when chat/completions actually said the model is
-  // missing or forbidden.  A bare 404 is "couldn't complete", not "not on
-  // your account".
+  // A true model_not_found is a bad slug, not an account-privacy miss.
+  // A bare 404 is "couldn't complete", never "isn't available on your account".
   const modelMissingBody = has(
     "model not found",
     "does not exist",
@@ -133,7 +132,7 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
     "no access to the model"
   );
   if ((status === 404 || status === 403) && modelMissingBody)
-    return `That model isn't available on your ${provider} account.  Choose a different model in the picker.`;
+    return `That model id isn't valid on ${provider}.  Choose a different model in the picker.`;
   if (status === 404)
     return `Couldn't complete this model request.  Try again, or choose a different model.`;
 
