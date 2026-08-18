@@ -4,6 +4,8 @@
 
 A hard-stopped `rag-embed` lane 503'd `/api/health`.  Coolify treats that as container death, restarts Docker, and the boot interlock re-halts Green/Red.  One dead embed must degrade that lane only — like OpenRouter credits — without taking down the app, the embed queue, or autonomy.  `pinecone` and `alpaca-broker` stay critical.  Did not steal #2792/#2798/#2800/#2794.
 
+Rebased onto `origin/main` `6429d984` (live SHA that 503s today).  Real conflict was only `docs/phase-7-strategy.md`; kept this stanza plus main's #2829 OpenRouter/`require_parameters` note and #2800 fuse paragraph.  `src/lib/vector-db.ts` auto-merged: `embedDocumentsLaneOrSkip` and `selectItemsWithinWriteBudget` both remain.
+
 ## Changes Made
 
 - `/api/health` no longer adds `rag-embed` / `rag-rerank` to `criticalServices`.  A hard-stopped embed/rerank lane is reported `ok: false` + `degraded: true` and the probe stays HTTP 200.  Pinecone and Alpaca still 503 the probe.
@@ -46,7 +48,7 @@ A full `npm test` on this VM also fails unrelated cases: notify prefers Pushover
 ## Next Steps & Blockers
 
 - Land this PR.  After merge, confirm live `/api/health` stays 200 with a dead embed lane and that Coolify does not restart.
-- No owner action required.  Do not raise the Pinecone WU fuse.  Do not steal the reserved PRs.
+- No owner action required.  Do not raise the Pinecone WU fuse.  Do not steal the reserved PRs.  Do not revert #2800 or #2829.
 
 ## Zero-Code Findings
 

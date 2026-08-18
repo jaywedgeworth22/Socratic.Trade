@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
+
+PR **#2812** was CONFLICTING with `origin/main` (`6429d984`, includes #2800 fuse + #2829 `require_parameters` narrowing).  Rebased `cursor/rag-embed-soft-degrade-ed6d` onto that SHA.  Sole real conflict was `docs/phase-7-strategy.md` — kept both the soft-degrade stanza and main's OpenRouter/`require_parameters` + fuse notes.  `vector-db.ts` auto-merged: `embedDocumentsLaneOrSkip` and #2800 `selectItemsWithinWriteBudget` both remain.  Behavior unchanged: one dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.  Did not "fix" the embed outage.
+
+Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+
 ## 2026-08-18 CURSOR — Pinecone daily-fuse deadlock (rebased onto hybrid)
 
 #2800 rebased onto `origin/main` (`cda485ff`, includes hybrid #2820 `ea68c1fc`).  Verified: the trip was local-MTD remainder math, not the 2.5M fuse and not a spent Standard trial.  Live card was used 0 of 15 estimated WUs, attempted 28, skipped 1.  Local month-to-date WUs (including pre-hybrid full-body writes) were treated as Pinecone's bill; leftover lifetime units collapsed the daily fuse below one document.  Hybrid processed writes stay; write-class stays full-body; prune stays dry-run.  Did not raise a post-trial 2.5M/60k ceiling.
@@ -83,7 +89,7 @@ ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce
 Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 ## 2026-08-18 CURSOR — rag-embed soft-degrade (no 503 / no autonomy halt)
 
-One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify restarted Docker, and the boot interlock re-halted Green/Red.  `rag-embed` and `rag-rerank` now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay critical.  A thrown document-embed batch skips that batch and continues later ones; a thrown query embed returns empty retrieval.  Did not steal #2792/#2798/#2800/#2794.
+One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify restarted Docker, and the boot interlock re-halted Green/Red.  `rag-embed` and `rag-rerank` now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay critical.  A thrown document-embed batch skips that batch and continues later ones; a thrown query embed returns empty retrieval.  Rebased onto `6429d984` (#2800 + #2829 kept).  Did not steal #2792/#2798/#2800/#2794.
 
 PR **#2812**.  Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 
