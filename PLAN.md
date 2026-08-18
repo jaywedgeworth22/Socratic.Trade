@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-18 CURSOR — rag-embed DeepInfra batch-window (`cursor/rag-embed-batch-window-54d7`).** Live 32-text embed POSTs 400 at 8193 tokens on baai/bge-m3.  Pack each request under ~7500 approxTokens; isolate and chunk a single over-limit text.  Leave the #2812 health 503 gate alone.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
+
 > **2026-08-18 CURSOR — rag-embed soft-degrade rebase (`cursor/rag-embed-soft-degrade-ed6d`, #2812).** Rebased onto `origin/main` `6429d984`.  One dead rag-embed must not 503 Docker or halt Green/Red.  Kept #2800 fuse fix and #2829 `require_parameters` narrowing.  Sole conflict was `docs/phase-7-strategy.md`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 
 > **2026-08-18 CURSOR — Pinecone daily-fuse deadlock (`cursor/pinecone-write-deadlock-64c1`, #2800).** Rebased onto main (hybrid #2820 live).  Do not clamp the trial daily fuse to leftover local-MTD remainder (that is the 15-WU / 1-text skip).  Local MTD is not Pinecone's bill — pre-hybrid full-body writes can make it look spent.  Keep Yahoo VIX as failover; do not re-probe it while Cboe is serving.  Do not flip write-class or `--apply` prune.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.

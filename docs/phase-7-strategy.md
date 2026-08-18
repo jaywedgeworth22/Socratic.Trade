@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 rag-embed DeepInfra batch window (ingest)
+
+OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` against 8192 tokens.  A count-only batch of 32 ordinary chunks hit 8193 and 400'd `embed documents` after the 2026-08-18 2:12pm CT deploy.  `embedWithRetry` now packs each POST under ~7500 `approxTokens` (plus a conservative byte cap) and isolates a single over-limit text: split, embed the pieces, mean-pool so the document still lands.  `VECTOR_EMBED_BATCH_SIZE=32` in Infisical is safe.  The #2812 health gate is unchanged — this is the ingest success path, not another 503 demotion.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
+
 ## 2026-08-18 rag-embed soft-degrade (health + store)
 
 A hard-stopped `rag-embed` / `rag-rerank` lane no longer 503s `/api/health`.  Coolify treats a 503 as container death; the restart re-halts autonomy via the boot interlock.  Those lanes now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay the only critical liveness deps.  One dead document-embed batch skips that batch and continues later batches; a thrown query embed returns empty retrieval.  Green/Red already skip RAG on lookup failure and do not halt.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.

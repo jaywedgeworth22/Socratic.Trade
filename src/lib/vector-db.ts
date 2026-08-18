@@ -32,6 +32,13 @@ import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { estimateRagDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled, type RagEmbedRerankProvider } from "./rag-metering";
+import {
+  EMBED_REQUEST_TOKEN_BUDGET,
+  embedRequestFits,
+  meanPoolEmbeddings,
+  packInWindowTexts,
+  splitTextToEmbedWindow
+} from "./rag/embed-request-pack";
 import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
 import { selectItemsWithinWriteBudget } from "./pinecone-write-budget";
 import { pineconeTrialState } from "./pinecone-trial-window";
@@ -2393,7 +2400,6 @@ async function embedWithRetry(
   const siliconflowKey = resolveApiKey("siliconflow", userId);
 
   const isOpenRouter = provider === "openrouter";
-  const isSiliconFlow = provider === "siliconflow";
   const apiKey = isOpenRouter ? (openrouterKey || "") : (siliconflowKey || "");
 
   const useMockClient = !!voyage && typeof voyage.embed === "function";
@@ -2412,72 +2418,129 @@ async function embedWithRetry(
     throw new Error(`${provider} embedding credential is missing or is a mock placeholder.`);
   }
 
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const runCall = async () => {
-        if (useMockClient) {
-          if (leaseGuard?.signal) {
+  const embedOnce = async (texts: string[]): Promise<any> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const runCall = async () => {
+          if (useMockClient) {
+            if (leaseGuard?.signal) {
+              return await voyage.embed({
+                input: texts,
+                model: modelName,
+                inputType: inputType === "document" ? "document" : "query"
+              }, {
+                abortSignal: leaseGuard.signal
+              });
+            }
             return await voyage.embed({
-              input,
+              input: texts,
               model: modelName,
               inputType: inputType === "document" ? "document" : "query"
-            }, {
-              abortSignal: leaseGuard.signal
             });
           }
-          return await voyage.embed({
-            input,
-            model: modelName,
-            inputType: inputType === "document" ? "document" : "query"
+
+          const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : "https://api.siliconflow.cn/v1/embeddings";
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          };
+          const body: Record<string, unknown> = { model: modelName, input: texts };
+          if (isOpenRouter) {
+            // OpenRouter attribution headers + classifier enrichment, matching the search-fusion.ts
+            // OpenRouter embed path. Enrichment never breaks the call — see
+            // applyOpenRouterClassifierEnrichment.
+            headers["HTTP-Referer"] = "https://socratictrade.com";
+            headers["X-Title"] = "Socratic.Trade";
+            applyOpenRouterClassifierEnrichment(body, { userId, service: "rag", feature: "embed" });
+          }
+          const response = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+            signal
           });
-        }
-
-        const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : "https://api.siliconflow.cn/v1/embeddings";
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
+          if (!response.ok) {
+            throw new Error(`Embedding API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
+          }
+          return await response.json();
         };
-        const body: Record<string, unknown> = { model: modelName, input };
-        if (isOpenRouter) {
-          // OpenRouter attribution headers + classifier enrichment, matching the search-fusion.ts
-          // OpenRouter embed path. Enrichment never breaks the call — see
-          // applyOpenRouterClassifierEnrichment.
-          headers["HTTP-Referer"] = "https://socratictrade.com";
-          headers["X-Title"] = "Socratic.Trade";
-          applyOpenRouterClassifierEnrichment(body, { userId, service: "rag", feature: "embed" });
-        }
-        const response = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-          signal
-        });
-        if (!response.ok) {
-          throw new Error(`Embedding API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
-        }
-        const res = await response.json();
-        return res;
-      };
 
-      return await withDurableRagProviderDispatch(
-        provider,
-        source,
-        userId,
-        `embed ${inputType}`,
-        runCall,
-        leaseGuard,
-        { estimatedCostUsd: estimateRagDispatchCost(input, "embed", modelName, provider) }
-      );
-    } catch (error) {
-      if (signal?.aborted) {
-        throw signal.reason instanceof Error ? signal.reason : error;
+        return await withDurableRagProviderDispatch(
+          provider,
+          source,
+          userId,
+          `embed ${inputType}`,
+          runCall,
+          leaseGuard,
+          { estimatedCostUsd: estimateRagDispatchCost(texts, "embed", modelName, provider) }
+        );
+      } catch (error) {
+        if (signal?.aborted) {
+          throw signal.reason instanceof Error ? signal.reason : error;
+        }
+        if (!isRateLimitError(error) || attempt >= attempts) throw error;
+        const delay = retryAfterMs(error, attempt);
+        console.warn(`[vector-db] Embedding rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
+        await sleep(delay, signal);
       }
-      if (!isRateLimitError(error) || attempt >= attempts) throw error;
-      const delay = retryAfterMs(error, attempt);
-      console.warn(`[vector-db] Embedding rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
-      await sleep(delay, signal);
+    }
+  };
+
+  // DeepInfra sums the whole `input[]` against 8192.  Count-only batches (prod
+  // VECTOR_EMBED_BATCH_SIZE=32) 400 at 8193.  Pack under ~7500 and isolate any
+  // single over-limit text so the rest of the lane still embeds.
+  const isolated: Array<{ sourceIndex: number; pieces: string[] }> = [];
+  const batchable: Array<{ text: string; sourceIndex: number }> = [];
+  for (let sourceIndex = 0; sourceIndex < input.length; sourceIndex++) {
+    const text = input[sourceIndex] ?? "";
+    const pieces = splitTextToEmbedWindow(text);
+    if (pieces.length > 1) isolated.push({ sourceIndex, pieces });
+    else batchable.push({ text: pieces[0] ?? text, sourceIndex });
+  }
+  const packed = packInWindowTexts(batchable, { maxCount: embedBatchSize() });
+  const needsSplit = isolated.length > 0 || packed.length > 1;
+  if (!needsSplit) {
+    return embedOnce(input);
+  }
+
+  const embeddings = new Array<number[]>(input.length);
+  let sent = false;
+  const embedGroup = async (texts: string[]): Promise<number[][]> => {
+    if (texts.length === 0) return [];
+    if (!embedRequestFits(texts)) {
+      throw new Error(`embed packer produced an over-budget request (${texts.length} texts, budget ${EMBED_REQUEST_TOKEN_BUDGET})`);
+    }
+    if (sent) await sleep(embedBatchDelayMs(), signal);
+    sent = true;
+    const response = await embedOnce(texts);
+    const validated = validateDocumentEmbeddingBatch(response?.data, texts.length);
+    if (!validated.embeddings) {
+      throw new Error(`Embedding response rejected after window pack (${validated.reason ?? "unknown"})`);
+    }
+    return validated.embeddings;
+  };
+
+  for (const group of packed) {
+    const groupEmbeddings = await embedGroup(group.map((item) => item.text));
+    for (let i = 0; i < group.length; i++) {
+      embeddings[group[i]!.sourceIndex] = groupEmbeddings[i]!;
     }
   }
+  for (const item of isolated) {
+    const pieceRefs = item.pieces.map((text, pieceIndex) => ({ text, sourceIndex: pieceIndex }));
+    const pieceGroups = packInWindowTexts(pieceRefs, { maxCount: embedBatchSize() });
+    const pieceEmbeddings = new Array<number[]>(item.pieces.length);
+    for (const group of pieceGroups) {
+      const groupEmbeddings = await embedGroup(group.map((entry) => entry.text));
+      for (let i = 0; i < group.length; i++) {
+        pieceEmbeddings[group[i]!.sourceIndex] = groupEmbeddings[i]!;
+      }
+    }
+    embeddings[item.sourceIndex] = meanPoolEmbeddings(pieceEmbeddings);
+  }
+  return {
+    data: embeddings.map((embedding, index) => ({ embedding, index }))
+  };
 }
 
 export function embeddingCredentialIsUsable(
