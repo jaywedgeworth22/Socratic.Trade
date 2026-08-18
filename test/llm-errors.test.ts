@@ -55,6 +55,15 @@ describe("humanizeLlmError", () => {
     expect(missing.toLowerCase()).not.toContain("isn't available on your");
   });
 
+  it("does not blame the OpenRouter account for a 400 Provider returned error", () => {
+    const raw = JSON.stringify({ error: { message: "Provider returned error", code: 400 } });
+    const msg = humanizeLlmError(raw, { provider: "openrouter", status: 400 });
+    expect(msg.toLowerCase()).toContain("provider returned error");
+    expect(msg.toLowerCase()).not.toContain("isn't available on your");
+    expect(msg.toLowerCase()).not.toContain("openrouter account");
+    expect(msg).toContain("OpenRouter");
+  });
+
   it("does not blame the OpenRouter account for a require_parameters No endpoints 404", () => {
     const routing = humanizeLlmError("No endpoints found matching your request", { provider: "openrouter", status: 404 });
     expect(routing.toLowerCase()).toContain("no compatible endpoint");

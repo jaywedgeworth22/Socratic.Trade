@@ -6,6 +6,12 @@ This document defines the comprehensive architecture for the AI Trading Strategy
 
 OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` against 8192 tokens.  A count-only batch of 32 ordinary chunks hit 8193 and 400'd `embed documents` after the 2026-08-18 2:12pm CT deploy.  That is a batch-sum, not one unchunked 10-K.  Hybrid still condenses first (`chunkDocument` 480 / `VECTOR_CONTEXT_MAX_CHARS`); packing is only a batch-window fix after that step.  `storeContexts` packs already-condensed texts under ~7500 `approxTokens` and embeds each group on its own lane.  One over-limit condensed text is isolated as its own POST and cannot skip the companions.  Local store-more is unchanged.  `VECTOR_EMBED_BATCH_SIZE=32` in Infisical is safe.  The #2812 health gate, #2820 producer order, write-class, and #2800 fuse are unchanged.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
 
+## 2026-08-18 Green 400 must fail over to the next stored call
+
+#2829 made 404/403 failover-eligible and stopped the account-miss liar.  It left HTTP 400 out.  Live Paper after that deploy (`7f5890a5-bc21-4474-87eb-9b595de04ed1`, sha `6429d984`): Green pick `gpt-5.6-terra` → `openai/gpt-5.6-terra`, OpenRouter 400 "Provider returned error", one `llm_call_latency`, then "Failover chain exhausted (3 Green Team endpoints)".  Red never ran.
+
+`isFailoverLlmStatus` now includes 400 (same-model `isRetryableLlmStatus` still does not).  The exhausted suffix cites stored Green attempts only.  `gpt-5.6-terra` is demoted from first Green pick when Gemini Flash / Mistral Medium class seats remain; those seats lead implicit rotation fallbacks.  A 400 "Provider returned error" is not an account-allowlist miss.  Rebased onto `12e8dcd` (#2812 rag-embed soft-degrade kept).  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
+
 ## 2026-08-18 rag-embed soft-degrade (health + store)
 
 A hard-stopped `rag-embed` / `rag-rerank` lane no longer 503s `/api/health`.  Coolify treats a 503 as container death; the restart re-halts autonomy via the boot interlock.  Those lanes now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay the only critical liveness deps.  One dead document-embed batch skips that batch and continues later batches; a thrown query embed returns empty retrieval.  Green/Red already skip RAG on lookup failure and do not halt.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.

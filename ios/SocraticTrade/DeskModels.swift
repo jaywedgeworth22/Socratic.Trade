@@ -212,6 +212,9 @@ struct MarketScanResponse: Decodable {
     let topCandidates: [ScanCandidate]
     let asOf: String?
     let generatedAt: String?
+    let scannedSymbols: Int?
+    let returnedQuotes: Int?
+    let warnings: [String]
 
     private enum CodingKeys: String, CodingKey {
         case topCandidates
@@ -219,6 +222,9 @@ struct MarketScanResponse: Decodable {
         case generatedAt
         case scannedAt
         case createdAt
+        case scannedSymbols
+        case returnedQuotes
+        case warnings
     }
 
     init(from decoder: Decoder) throws {
@@ -229,6 +235,9 @@ struct MarketScanResponse: Decodable {
             ?? values.decodeIfPresent(String.self, forKey: .scannedAt)
             ?? values.decodeIfPresent(String.self, forKey: .createdAt)
         generatedAt = try values.decodeIfPresent(String.self, forKey: .generatedAt)
+        scannedSymbols = try values.decodeIfPresent(Int.self, forKey: .scannedSymbols)
+        returnedQuotes = try values.decodeIfPresent(Int.self, forKey: .returnedQuotes)
+        warnings = try values.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
 }
 
@@ -592,5 +601,38 @@ enum DeskCopy {
     static func percentPoints(_ value: Double?) -> String {
         guard let value else { return "—" }
         return "\(value.formatted(.number.precision(.fractionLength(0...2))))%"
+    }
+
+    /// Watchlist count is never the scan universe.  "watched" stays watchlist-only.
+    static func scanCountLine(names: Int, scanned: Int?, quotes: Int?, watched: Int) -> String {
+        var parts = ["\(names) names"]
+        if let scanned {
+            parts.append("\(scanned) scanned")
+        }
+        if let quotes {
+            parts.append("\(quotes) quotes")
+        }
+        parts.append("\(watched) watched")
+        return parts.joined(separator: " · ")
+    }
+
+    static let scanUniverseNote =
+        "Ranked candidates for the current universe.  Watchlist names are not the scan universe.  Adding or removing a watchlist name does not place an order."
+
+    static func scanEmptyTitle(hasFilter: Bool) -> String {
+        hasFilter ? "No Matching Names" : "No Candidates"
+    }
+
+    static func scanEmptyMessage(scanned: Int?, quotes: Int?, hasFilter: Bool) -> String {
+        if hasFilter {
+            return "Nothing in this scan matches that filter."
+        }
+        if (scanned ?? 0) == 0 {
+            return "This universe has no symbols.  Choose a base index or add symbols on Guardrails, then refresh."
+        }
+        if (quotes ?? 0) == 0 {
+            return "The scan could not price any names.  Refresh after quotes recover."
+        }
+        return "The scan returned no ranked names.  Refresh after quotes recover."
     }
 }

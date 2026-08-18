@@ -68,11 +68,39 @@ final class UserFacingCopyTests: XCTestCase {
         XCTAssertEqual(PushAlertState.registered(environment: .production).summary, "Alerts on.")
     }
 
-    func testWorkspaceErrorsStayOrdinary() {
+    func testScanCopyDoesNotTreatWatchlistAsTheUniverse() {
+        XCTAssertEqual(
+            DeskCopy.scanCountLine(names: 0, scanned: 503, quotes: 0, watched: 2),
+            "0 names · 503 scanned · 0 quotes · 2 watched"
+        )
+        XCTAssertTrue(DeskCopy.scanUniverseNote.contains("Watchlist names are not the scan universe"))
+        XCTAssertEqual(
+            DeskCopy.scanEmptyMessage(scanned: 0, quotes: 0, hasFilter: false),
+            "This universe has no symbols.  Choose a base index or add symbols on Guardrails, then refresh."
+        )
+        XCTAssertEqual(
+            DeskCopy.scanEmptyMessage(scanned: 503, quotes: 0, hasFilter: false),
+            "The scan could not price any names.  Refresh after quotes recover."
+        )
+        XCTAssertFalse(
+            DeskCopy.scanEmptyMessage(scanned: 505, quotes: 0, hasFilter: false)
+                .localizedCaseInsensitiveContains("Guardrails")
+        )
+        assertOrdinary(DeskCopy.scanUniverseNote)
+        assertOrdinary(DeskCopy.scanCountLine(names: 0, scanned: 503, quotes: 0, watched: 2))
+        assertOrdinary(DeskCopy.scanEmptyMessage(scanned: 503, quotes: 0, hasFilter: false))
+    }
+
+    func testWorkspaceErrorsStayOrdinary() throws {
         assertOrdinary(MobileAPIError.serverError(statusCode: 522, message: nil).errorDescription ?? "")
         assertOrdinary(MobileAPIError.serverError(statusCode: 500, message: nil).errorDescription ?? "")
         assertOrdinary(MobileAPIError.decoding(NSError(domain: "test", code: 1)).errorDescription ?? "")
         assertOrdinary(MobileAPIError.network(NSError(domain: "test", code: 1)).errorDescription ?? "")
+        let scanJSON = Data(#"""
+        {"scannedSymbols":505,"returnedQuotes":0,"warnings":["This operation was aborted"],"topCandidates":[]}
+        """#.utf8)
+        let scan = try JSONDecoder().decode(MarketScanResponse.self, from: scanJSON)
+        assertOrdinary(MobileAPIError.scanQuotesUnavailable(scan).errorDescription ?? "")
         XCTAssertEqual(
             MobileAPIError.serverError(statusCode: 500, message: nil).errorDescription,
             "Something went wrong.  Try again."

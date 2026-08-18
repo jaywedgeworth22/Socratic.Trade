@@ -31,6 +31,7 @@ import { getSymbolLatestPrices } from "./db-fundamentals";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
+import { isUnusableEmptyMarketScan } from "./scan-singleflight";
 import { normalizeSymbol } from "./money";
 import {
   calculatePnl,
@@ -785,13 +786,18 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     : undefined) ?? latestAuditByKind("market_scan", userId);
   
   const standaloneScanPayload = latestScanAudit?.payload as { scan?: MarketScan } | undefined;
-  const standaloneScan = standaloneScanPayload?.scan
+  const standaloneScanRaw = standaloneScanPayload?.scan
     ? { ...standaloneScanPayload.scan, createdAt: latestScanAudit!.createdAt }
     : undefined;
+  // Abort/empty 200s (d0359642: 505 scanned, 0 quotes) must not replace last-good.
+  const standaloneScan = standaloneScanRaw && !isUnusableEmptyMarketScan(standaloneScanRaw)
+    ? standaloneScanRaw
+    : undefined;
 
-  const runScan = latestStrategyRun?.marketScan
+  const runScanRaw = latestStrategyRun?.marketScan
     ? { ...(latestStrategyRun.marketScan as MarketScan), createdAt: latestStrategyRun.createdAt }
     : undefined;
+  const runScan = runScanRaw && !isUnusableEmptyMarketScan(runScanRaw) ? runScanRaw : undefined;
 
   let newestScan = runScan;
   if (standaloneScan) {

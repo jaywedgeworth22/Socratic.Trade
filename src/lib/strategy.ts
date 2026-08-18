@@ -54,7 +54,7 @@ import { derivePromptRagConsumption, type PromptRagCandidate, type PromptRagCons
 import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfrastructureFailure } from "./broker-health";
-import { interactiveStrategyReasoningEffort, isFailoverLlmStatus, isRetryableLlmError, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
+import { greenFailoverExhaustedSuffix, interactiveStrategyReasoningEffort, isFailoverLlmStatus, isRetryableLlmError, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { implicitGreenRotationFallbacks, isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
@@ -5945,6 +5945,9 @@ async function proposeTrades(input: {
   // look like Green never left the first pick.
   let lastBullAttemptProvider = provider;
   let lastBullAttemptModel = model;
+  // Stored Green calls actually issued this run.  The exhausted-chain sentence
+  // may only cite this count — planned-but-uncalled seats are a silent lie.
+  let bullAttemptsStarted = 0;
 
   const bullStepBase = {
     step: "bull" as const,
@@ -6009,6 +6012,7 @@ async function proposeTrades(input: {
           lastBullAttemptProvider = attempt.provider;
           lastBullAttemptModel = attempt.model;
           try {
+            bullAttemptsStarted += 1;
             const bullSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort);
             // Reasoning-class-aware SOFT wall-clock: a thinking-enabled model gets the widened bound.
             // The request is NOT severed at the wall — if it's slow the tick moves on, but the eventual
@@ -6178,9 +6182,7 @@ async function proposeTrades(input: {
     );
   } catch (error) {
     let reason = humanizeLlmTransportError(error, { provider: lastBullAttemptProvider, model: lastBullAttemptModel, stepLabel: "Green Team proposal", timeoutMs: strategyLlmTimeoutMs(lastBullAttemptModel, input.policy.llmReasoningEffort) });
-    if (plannedBullAttempts.length > 1) {
-      reason = `${reason}  Failover chain exhausted (${plannedBullAttempts.length} Green Team endpoints).`;
-    }
+    reason = `${reason}${greenFailoverExhaustedSuffix(bullAttemptsStarted)}`;
     const failedStep: StrategyLlmStep = { ...bullStepBase, status: "failed", reason };
     recordStep(failedStep);
     throw new StrategyLlmStepFailure(reason, llmSteps, error);

@@ -97,6 +97,27 @@ export function resetScanSingleFlightForTests(): void {
   activeScans.clear();
 }
 
+/** Zero-quote abort/empty rows written as `market_scan` (prod d0359642) are
+ *  not last-good.  A 505-symbol universe with 0 quotes is a quote miss, not
+ *  an empty universe and not a ranker-zero day. */
+export function isUnusableEmptyMarketScan(scan: {
+  topCandidates?: unknown;
+  returnedQuotes?: unknown;
+  scannedSymbols?: unknown;
+  quotesBySymbol?: unknown;
+} | null | undefined): boolean {
+  if (!scan) return false;
+  const scanned = typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : 0;
+  const quoted =
+    typeof scan.returnedQuotes === "number"
+      ? scan.returnedQuotes
+      : scan.quotesBySymbol && typeof scan.quotesBySymbol === "object" && !Array.isArray(scan.quotesBySymbol)
+        ? Object.keys(scan.quotesBySymbol).length
+        : 0;
+  const candidates = Array.isArray(scan.topCandidates) ? scan.topCandidates.length : 0;
+  return scanned > 0 && quoted === 0 && candidates === 0;
+}
+
 /**
  * Read the full per-symbol quote map from a persisted market-scan-bearing audit without
  * trusting an older compact prompt snapshot or a malformed audit payload. Accepts either

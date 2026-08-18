@@ -5,12 +5,35 @@
 Live `VECTOR_EMBED_BATCH_SIZE=32` POSTed 32 ingest texts to OpenRouter `baai/bge-m3`.  DeepInfra sums the whole `input[]` against 8192; a batch hit 8193 and 400'd `embed documents` from 19:12:49Z.  That is a batch-sum, not one unchunked 10-K.  #2812 stopped the 503; it did not embed those docs.  Hybrid producer still condenses first (`chunkDocument` 480 / `VECTOR_CONTEXT_MAX_CHARS`); packing is a batch-window fix after that step.  `storeContexts` packs already-condensed texts under ~7500 `approxTokens` and embeds each group on its own lane so one over-limit singleton cannot skip the rest of a count-32 batch.  Local archive / store-more is unchanged.  No second filing chunker.  No extra table vectors.  Did not flip `RAG_PINECONE_WRITE_CLASS` or prune.  Did not re-clamp the #2800 fuse.  Infisical can keep the count at 32.  Did not drop rag-embed from health.
 
 Branch `cursor/rag-embed-batch-window-54d7`.  PR **#2840**.  `verify` failed on `test/query-embedding-cache.test.ts`: the rag-metering mock omitted `approxTokens`, so query-pack threw before `voyage.embed`.  Mock now keeps the real estimator.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.  Linux VM: no xcodebuild.
+## 2026-08-18 CURSOR — Green 400 failover rebased onto #2830 (`13b60747`)
+
+PR **#2831** was CONFLICTING/DIRTY after #2830 merged (`13b60747`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Docs auto-merged.  Did not recreate the PR.  Did not touch #2812 health-gate, #2840 rag-embed chunking, or #2841 notification history.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
+
+## 2026-08-18 CURSOR — Green 400 failover rebased onto #2812 (`12e8dcd`)
+
+PR **#2831** was CONFLICTING after #2812 merged (`12e8dcd`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Sole conflict was `docs/phase-7-strategy.md` — kept both this Green 400 stanza and #2812's rag-embed soft-degrade stanza.  Did not revert #2812 (rag-embed must not 503) or #2829/#2800.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
+
+Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 
-PR **#2812** was CONFLICTING with `origin/main` (`6429d984`, includes #2800 fuse + #2829 `require_parameters` narrowing).  Rebased `cursor/rag-embed-soft-degrade-ed6d` onto that SHA.  Sole real conflict was `docs/phase-7-strategy.md` — kept both the soft-degrade stanza and main's OpenRouter/`require_parameters` + fuse notes.  `vector-db.ts` auto-merged: `embedDocumentsLaneOrSkip` and #2800 `selectItemsWithinWriteBudget` both remain.  Behavior unchanged: one dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.  Did not "fix" the embed outage.
+PR **#2812** MERGED as `12e8dcd`.  One dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.
 
 Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: no xcodebuild.  Full `npm test` still hits leftover SiliconFlow + SEC/Yahoo 404s (untouched).  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+## 2026-08-18 CURSOR — Nasdaq screener UA + retry so Scan returns names
+
+`fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  iOS `MobileStore` switch is exhaustive for `.scanQuotesUnavailable` (unsigned `xcodebuild` miss); Scan shows the abort warning, not silent No Candidates.  Rebased onto `origin/main` `7b073b65` (includes #2812 and #2832).  Did not revert #2812 / #2829 / #2800.  Does not block #2831.  UA/retry path not reverted.
+
+PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
+## 2026-08-18 CURSOR — Green 400 must actually fail over (First Green after #2829)
+
+#2829 is live (`6429d984`) and stopped the account-miss liar on 404.  It did not make Green complete.  Paper `PA33IDTHMFK9` run `7f5890a5-bc21-4474-87eb-9b595de04ed1` (19:33–19:38Z) picked `gpt-5.6-terra` → `openai/gpt-5.6-terra`, HTTP 400 "Provider returned error" (881ms), then claimed "Failover chain exhausted (3 Green Team endpoints)" after ONE stored `llm_call_latency`.  Red `deepseek-reasoner` never ran.  Roth had no `strategy_run` after process start 19:12:31Z.
+
+Root cause: `isFailoverLlmStatus` left 400 out (404/403 only), and the exhausted sentence used planned seats, not stored calls.  Terra is on public `/models` but OpenRouter 400s it; fail-open still lets it win first pick.
+
+Fix: 400 is failover-eligible (not a same-model retry, not an account miss).  Exhausted copy cites stored attempts only.  Terra is demoted from first Green pick when Gemini Flash / Mistral Medium class seats remain; those preferred seats lead implicit fallbacks.  Did not revert #2829 or #2800.  Did not rewrite the 400 sentence.
+
+Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
 
 ## 2026-08-18 CURSOR — Pinecone daily-fuse deadlock (rebased onto hybrid)
 

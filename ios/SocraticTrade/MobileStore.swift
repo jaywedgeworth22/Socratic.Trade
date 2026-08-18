@@ -695,7 +695,7 @@ final class MobileStore: ObservableObject {
     private func shouldReleaseCommandAttempt(after error: Error) -> Bool {
         guard let apiError = error as? MobileAPIError else { return false }
         switch apiError {
-        case .serverError, .unauthorized:
+        case .serverError, .unauthorized, .scanQuotesUnavailable:
             return true
         case .network, .decoding:
             return false

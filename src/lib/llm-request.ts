@@ -490,12 +490,26 @@ export function isRetryableLlmStatus(status: number): boolean {
 
 /**
  * Statuses that should try the NEXT model in a Green/Red failover chain.
- * 404/403 are not transient (`llmFetch` must not retry the same model) but they
- * are worth leaving this model for another in the chain — otherwise implicit
- * rotation fallbacks never run and the run dies on the first miss.
+ * 404/403/400 are not transient (`llmFetch` must not retry the same model) but
+ * they are worth leaving this model for another in the chain — otherwise
+ * implicit rotation fallbacks never run and the run dies on the first miss.
+ * Live 2026-08-18 after #2829: openai/gpt-5.6-terra HTTP 400 "Provider returned
+ * error" still killed Paper after one stored call while the copy claimed 3
+ * Green endpoints.  400 is a provider/routing miss for this seat, not a
+ * retry-the-same-body class and not an account-allowlist miss.
  */
 export function isFailoverLlmStatus(status: number): boolean {
-  return isRetryableLlmStatus(status) || status === 404 || status === 403;
+  return isRetryableLlmStatus(status) || status === 404 || status === 403 || status === 400;
+}
+
+/**
+ * Suffix for a Green chain that actually attempted more than one stored call.
+ * "N endpoints exhausted" is only legal after N attempts (or a documented
+ * skip).  Planned-but-uncalled seats must not inflate the number.
+ */
+export function greenFailoverExhaustedSuffix(attempted: number): string {
+  if (!Number.isFinite(attempted) || attempted <= 1) return "";
+  return `  Failover chain exhausted (${Math.trunc(attempted)} Green Team endpoints).`;
 }
 /** True for timeouts (AbortSignal.timeout → AbortError/TimeoutError) and transient network errors. */
 export function isRetryableLlmError(error: unknown): boolean {
