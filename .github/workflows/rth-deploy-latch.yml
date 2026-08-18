@@ -29,6 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -38,7 +40,12 @@ jobs:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
           SOURCE_COMMIT: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
+          if [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            CHANGED_FILES="$(git diff --name-only --no-renames "$BEFORE_SHA" "$GITHUB_SHA" || true)"
+            export CHANGED_FILES
+          fi
           set +e
           OUT="$(npx --yes tsx scripts/assert-rth-deploy-latch.ts 2>&1)"
           RC=$?
@@ -50,11 +57,11 @@ jobs:
             echo "$OUT"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          if [ "$RC" -ne 0 ] && [ "$RC" -ne 2 ]; then
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 2 ] && [ "$RC" -ne 3 ]; then
             exit "$RC"
           fi
       - name: Comment when Coolify will refuse the image build
-        if: ${{ steps.latch.outputs.rc == '2' }}
+        if: ${{ steps.latch.outputs.rc == '2' || steps.latch.outputs.rc == '3' }}
         env:
           GH_TOKEN: ${{ github.token }}
           SUMMARY: ${{ steps.latch.outputs.summary }}
@@ -62,7 +69,7 @@ jobs:
           gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
             -f body="${SUMMARY}
 
-          Coolify keeps the last healthy container.  The weekday 21:20 UTC drain retries after the cash close, or ship now with HOTFIX=1 / RTH_DEPLOY_OVERRIDE=1."
+          A refused image build must not swap the named container.  Keep consistent-name (no rolling / no dual Litestream writer).  Weekday RTH retries at 21:20 UTC; docs-only / image-noop is skipped on purpose so #2811 cannot 503 origin for ~34 minutes again."
 
   drain:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}

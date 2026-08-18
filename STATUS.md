@@ -600,16 +600,19 @@ Last published coverage (2026-08-16): 608 transcripts / 565 tickers vs a 1,000-i
 
 PR **#2813**.  Branch `cursor/roic-individual-archive-9ad4`.  Rebased onto `d3e2c9ee` (#2892).  Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 ## 2026-08-18 CURSOR — Coolify RTH deploy latch (`HOTFIX=1` escape)
+## 2026-08-18 CURSOR — Coolify RTH latch + skip docs-only rebuilds (#2811 503)
 
-Jay thought weekday RTH deploys were already blocked.  They were not: Coolify
-auto-deploy on `main` was immediate, including market hours
-(`docs/rollouts/2026-07-10-auto-deploy-on.md`).  This branch adds a **build-time**
-latch so weekday regular US equity hours refuse the new image unless `HOTFIX=1`
-or `RTH_DEPLOY_OVERRIDE=1`.  A refused build leaves the last healthy container
-up.  Evenings/weekends/holidays still auto-deploy.  Did not touch
-#2792/#2798/#2800/#2794.
+Jay wanted auto-deploy only outside RTH unless `HOTFIX=1`.  ASC then showed
+socratictrade.com 503 ~7:15–7:49pm CT because Coolify **stop-old-then-start**
+ran a full rebuild for docs-only #2811 (`23412aff`).  Cloudflare `no available
+server`.  `last_restart_at` null.  Consistent container name / no rolling is
+the no-dual-Litestream-writer intent — **kept**.  Latch now also refuses
+image-noop / docs-only **before `npm ci`**.  Desired Coolify order (owner, not
+this agent): build image first, then stop the named container, then start.
+Did not bounce the box.  Did not `FORCE_RESTORE`.  Did not PATCH live Coolify.
+Did not touch #2792/#2798/#2800/#2794.
 
-PR **#2817**.  Branch `cursor/rth-deploy-latch-c039`.  `verify-hosted` green.
+PR **#2817**.  Branch `cursor/rth-deploy-latch-c039`.
 Rollout: `docs/rollouts/2026-08-18-rth-deploy-latch.md`.
 
 ## 2026-08-18 CURSOR — Health JSON monitors + OPS token + R2 retain=1

@@ -29,22 +29,32 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+# Latch BEFORE npm ci.  #2811 (docs-only) still ran a full ~30 min image build
+# after Coolify stopped the named container, so origin 503'd.  A refused
+# build here is seconds, not the Horizon budget.  Do not move this into
+# scripts/coolify-prod-start.sh and do not enable Coolify rolling (two
+# Litestream writers).  SOURCE_COMMIT lets the latch read the commit files
+# plus HOTFIX=1 from the public GitHub API.
+RUN npm install -g tsx@4.23.1
+COPY src/lib/market-hours.ts src/lib/market-hours.ts
+COPY src/lib/market-calendar.ts src/lib/market-calendar.ts
+COPY src/lib/deploy-image-impact.ts src/lib/deploy-image-impact.ts
+COPY src/lib/rth-deploy-latch.ts src/lib/rth-deploy-latch.ts
+COPY scripts/assert-rth-deploy-latch.ts scripts/assert-rth-deploy-latch.ts
+ARG HOTFIX=0
+ARG SOURCE_COMMIT=""
+ARG COOLIFY_COMMIT=""
+ARG COOLIFY_COMMIT_SHA=""
+ENV HOTFIX=${HOTFIX} \
+    SOURCE_COMMIT=${SOURCE_COMMIT} \
+    COOLIFY_COMMIT=${COOLIFY_COMMIT} \
+    COOLIFY_COMMIT_SHA=${COOLIFY_COMMIT_SHA} \
+    NEXT_TELEMETRY_DISABLED=1
+RUN tsx scripts/assert-rth-deploy-latch.ts
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
-# Weekday RTH latch: fail THIS IMAGE BUILD (not the running container) during
-# regular US equity hours unless HOTFIX=1 or RTH_DEPLOY_OVERRIDE=1.  A failed
-# build leaves the last healthy Coolify container up.  Do not move this into
-# scripts/coolify-prod-start.sh -- a runtime refusal would take the site down
-# after the container swap.  SOURCE_COMMIT is optional; when Coolify passes
-# it, the latch can read HOTFIX=1 from the public GitHub commit message.
-ARG HOTFIX=0
-ARG SOURCE_COMMIT=""
-ENV HOTFIX=${HOTFIX} \
-    SOURCE_COMMIT=${SOURCE_COMMIT}
-RUN npx tsx scripts/assert-rth-deploy-latch.ts
 # scripts/eval/* imports test/fixtures (dockerignored). Next typecheck includes
 # **/*.ts and would fail the image build. Drop eval runners before build.
 # --ignore-scripts on prune: avoid re-extracting glibc-2.38 prebuilds.

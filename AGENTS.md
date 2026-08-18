@@ -235,18 +235,24 @@ rollout note).
 dockerfile build pack, SSH deploy-key git source). The old uuid `m1os7ijf31bg3fanil152e4b` and the
 nixpacks note are STALE — the app was recreated during the Oracle migration; API calls against the
 old uuid return a bare `{"message":...}` that is easy to misread as a permissions problem.
-**AUTO-DEPLOY IS ON (owner-directed 2026-07-10), with a weekday RTH latch (2026-08-18):** every
-push to `main` still hits Coolify via the repo webhook to Coolify's **manual webhook endpoint**
-(`https://host.jays.services/webhooks/source/github/events/manual`) — NOT the GitHub-App
-integration; the deploy-key source uses the manual endpoint, which validates an HMAC secret that
-must equal the app's `manual_webhook_secret_github`.  The Dockerfile then refuses the **image
-build** during regular US equity hours (Mon–Fri 09:30–16:00 ET, or until 13:00 ET on NYSE
-early-close days) unless `HOTFIX=1` (Coolify/build-arg env **or** a standalone `HOTFIX=1` token
-in the merge commit message) or `RTH_DEPLOY_OVERRIDE=1` (explicit owner request).  A refused
-build leaves the last healthy container running — do **not** put this check in
-`scripts/coolify-prod-start.sh` (a runtime exit would take the site down after the swap).
-Evenings, weekends, and full-close holidays still auto-deploy.  A weekday 21:20 UTC GitHub
-Action drain retries `origin/main` after the cash close.  **Known failure mode (bit us
+**AUTO-DEPLOY IS ON (owner-directed 2026-07-10), with a weekday RTH + image-noop latch
+(2026-08-18):** every push to `main` still hits Coolify via the repo webhook to Coolify's
+**manual webhook endpoint** (`https://host.jays.services/webhooks/source/github/events/manual`)
+— NOT the GitHub-App integration; the deploy-key source uses the manual endpoint, which
+validates an HMAC secret that must equal the app's `manual_webhook_secret_github`.  The
+Dockerfile refuses the **image build** (before `npm ci`) when (1) it is regular US equity
+hours (Mon–Fri 09:30–16:00 ET, or until 13:00 ET on NYSE early-close days) unless
+`HOTFIX=1` or `RTH_DEPLOY_OVERRIDE=1`, or (2) the commit is docs-only / image-noop (the
+#2811 class: markdown + `docs/**` except `docs/benchmarks`).  Keep
+`is_consistent_container_name_enabled` — do **not** turn on Coolify rolling / zero-downtime
+(two Litestream writers wedge L2).  Desired swap order with that flag: **build the new
+image first, then stop the named container, then start the new one** (one writer; Traefik
+gap is the start period, not the 30-minute build).  Tonight's 503 (~7:15–7:49pm CT,
+`23412aff`) was stop-old-then-build.  Do **not** put this check in
+`scripts/coolify-prod-start.sh`, do **not** `FORCE_RESTORE`, and do **not** bounce the live
+box from an agent.  Evenings, weekends, and full-close holidays still auto-deploy runtime
+changes.  A weekday 21:20 UTC GitHub Action drain retries `origin/main` after the cash
+close when the pending diff is not image-noop.  **Known failure mode (bit us
 2026-08-01/02): if those secrets drift, every main push is answered `Invalid signature`, no
 deployment is ever created, and prod silently freezes while merges pile up** — GitHub's hook
 page still shows green 200s, so check the DELIVERY RESPONSE BODY

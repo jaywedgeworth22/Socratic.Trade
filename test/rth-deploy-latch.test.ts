@@ -3,6 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  ISSUE_2811_DOCS_ONLY_PATHS,
+  isDocsOnlyChange,
+  isImageNoopChange
+} from "../src/lib/deploy-image-impact";
 import { isMarketOpen } from "../src/lib/market-calendar";
 import {
   commitMessageRequestsHotfix,
@@ -10,7 +15,10 @@ import {
   describeRthDeployLatchDecision,
   envFlagEnabled,
   evaluateRthDeployLatch,
+  fetchGithubCommitFiles,
   fetchGithubCommitMessage,
+  latchCommitSha,
+  resolveChangedFilesForLatch,
   resolveCommitMessageForLatch
 } from "../src/lib/rth-deploy-latch";
 
@@ -115,9 +123,9 @@ describe("evaluateRthDeployLatch", () => {
   });
 
   it("describeRthDeployLatchDecision covers every reason", () => {
-    const reasons = ["non-rth", "hotfix", "owner-override", "rth-blocked"] as const;
+    const reasons = ["non-rth", "hotfix", "owner-override", "rth-blocked", "image-noop"] as const;
     for (const reason of reasons) {
-      const allowed = reason !== "rth-blocked";
+      const allowed = reason !== "rth-blocked" && reason !== "image-noop";
       const text = describeRthDeployLatchDecision({
         allowed,
         reason,
@@ -162,6 +170,51 @@ describe("resolveCommitMessageForLatch", () => {
   });
 });
 
+describe("latchCommitSha", () => {
+  it("reads Coolify and GitHub sha aliases", () => {
+    expect(latchCommitSha({ COOLIFY_COMMIT_SHA: "23412aff916ae918287421bac35fd12f8c300f59" })).toBe(
+      "23412aff916ae918287421bac35fd12f8c300f59"
+    );
+    expect(latchCommitSha({ SOURCE_COMMIT: "not-a-sha" })).toBe("");
+  });
+});
+
+describe("fetchGithubCommitFiles", () => {
+  it("maps filenames and refuses a truncated 300-file page", async () => {
+    const files = await fetchGithubCommitFiles(
+      "23412af",
+      "jaywedgeworth22/Socratic.Trade",
+      async () =>
+        new Response(JSON.stringify({ files: ISSUE_2811_DOCS_ONLY_PATHS.map((filename) => ({ filename })) }), {
+          status: 200
+        })
+    );
+    expect(files).toEqual([...ISSUE_2811_DOCS_ONLY_PATHS]);
+
+    const truncated = await fetchGithubCommitFiles(
+      "23412af",
+      "jaywedgeworth22/Socratic.Trade",
+      async () =>
+        new Response(JSON.stringify({ files: Array.from({ length: 300 }, (_, i) => ({ filename: `docs/${i}.md` })) }), {
+          status: 200
+        })
+    );
+    expect(truncated).toBeUndefined();
+  });
+});
+
+describe("resolveChangedFilesForLatch", () => {
+  it("prefers CHANGED_FILES over GitHub", async () => {
+    const files = await resolveChangedFilesForLatch(
+      { CHANGED_FILES: "PLAN.md\nSTATUS.md", SOURCE_COMMIT: "23412af" },
+      async () => {
+        throw new Error("should not fetch");
+      }
+    );
+    expect(files).toEqual(["PLAN.md", "STATUS.md"]);
+  });
+});
+
 describe("fetchGithubCommitMessage", () => {
   it("rejects malformed sha or repo and swallows HTTP failures", async () => {
     expect(await fetchGithubCommitMessage("HEAD", "jaywedgeworth22/Socratic.Trade")).toBeUndefined();
@@ -172,6 +225,18 @@ describe("fetchGithubCommitMessage", () => {
       async () => new Response("nope", { status: 403 })
     );
     expect(failed).toBeUndefined();
+  });
+});
+
+describe("deploy image impact", () => {
+  it("treats #2811 as docs-only and image-noop", () => {
+    expect(isDocsOnlyChange([...ISSUE_2811_DOCS_ONLY_PATHS])).toBe(true);
+    expect(isImageNoopChange([...ISSUE_2811_DOCS_ONLY_PATHS])).toBe(true);
+  });
+
+  it("does not skip a docs/benchmarks change (Next imports those JSON files)", () => {
+    expect(isImageNoopChange(["docs/benchmarks/foo.json"])).toBe(false);
+    expect(isImageNoopChange(["docs/rollouts/x.md", "src/lib/strategy.ts"])).toBe(false);
   });
 });
 
@@ -186,10 +251,42 @@ describe("decideRthDeployLatchFromEnv", () => {
       HOTFIX: "0"
     });
     expect(evening.allowed).toBe(true);
+    const noop = await decideRthDeployLatchFromEnv({
+      RTH_DEPLOY_LATCH_NOW: wednesdayEvening.toISOString(),
+      HOTFIX: "1",
+      CHANGED_FILES: ISSUE_2811_DOCS_ONLY_PATHS.join("\n")
+    });
+    expect(noop).toMatchObject({ allowed: false, reason: "image-noop" });
   });
 });
 
 describe("assert-rth-deploy-latch CLI", () => {
+  it("exits 3 for the #2811 docs-only shape even in the evening with HOTFIX=1", () => {
+    const run = spawnSync(
+      "npx",
+      ["tsx", "scripts/assert-rth-deploy-latch.ts"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RTH_DEPLOY_LATCH_NOW: wednesdayEvening.toISOString(),
+          HOTFIX: "1",
+          CHANGED_FILES: [
+            "PLAN.md",
+            "STATUS.md",
+            "docs/EFFORT-LOG.md",
+            "docs/audits/2026-08-18-pinecone-store-vs-condense.md",
+            "docs/phase-7-strategy.md",
+            "docs/rollouts/2026-08-18-pinecone-store-vs-condense.md"
+          ].join("\n")
+        }
+      }
+    );
+    expect(run.status).toBe(3);
+    expect(run.stderr).toContain("image-noop");
+  });
+
   it("exits 2 during RTH and 0 with HOTFIX=1", () => {
     const run = (env: Record<string, string>) =>
       spawnSync(
@@ -206,14 +303,16 @@ describe("assert-rth-deploy-latch CLI", () => {
       RTH_DEPLOY_LATCH_NOW: wednesdayRth.toISOString(),
       HOTFIX: "",
       RTH_DEPLOY_OVERRIDE: "",
-      COMMIT_MESSAGE: "docs: no hotfix"
+      COMMIT_MESSAGE: "docs: no hotfix",
+      CHANGED_FILES: "src/lib/strategy.ts"
     });
     expect(blocked.status).toBe(2);
     expect(blocked.stderr).toContain("rth-blocked");
 
     const hotfix = run({
       RTH_DEPLOY_LATCH_NOW: wednesdayRth.toISOString(),
-      COMMIT_MESSAGE: "HOTFIX=1 broker 422"
+      COMMIT_MESSAGE: "HOTFIX=1 broker 422",
+      CHANGED_FILES: "src/lib/strategy.ts"
     });
     expect(hotfix.status).toBe(0);
     expect(hotfix.stdout).toContain("hotfix");
@@ -225,8 +324,12 @@ describe("Coolify build-time latch wiring", () => {
     const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");
     const start = readFileSync(join(repoRoot, "scripts/coolify-prod-start.sh"), "utf8");
     expect(dockerfile).toMatch(/assert-rth-deploy-latch\.ts/);
-    expect(dockerfile).toMatch(/npx tsx scripts\/assert-rth-deploy-latch\.ts/);
-    expect(start).not.toMatch(/rth-deploy-latch|assert-rth-deploy-latch/);
+    expect(dockerfile).toMatch(/deploy-image-impact\.ts/);
+    expect(dockerfile).toMatch(/tsx scripts\/assert-rth-deploy-latch\.ts/);
+    expect(dockerfile.indexOf("tsx scripts/assert-rth-deploy-latch.ts"))
+      .toBeLessThan(dockerfile.indexOf("COPY package.json package-lock.json"));
+    expect(start).not.toMatch(/rth-deploy-latch|assert-rth-deploy-latch|FORCE_RESTORE/);
+    expect(dockerfile).not.toMatch(/FORCE_RESTORE/);
     expect(existsSync(join(repoRoot, ".github/workflows/deploy.yml"))).toBe(false);
   });
 });

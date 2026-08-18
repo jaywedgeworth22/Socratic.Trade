@@ -15,16 +15,22 @@ GitHub-App integration alone.  HMAC must match the app's
 `manual_webhook_secret_github`.  Do **not** post deploy claims or manually
 trigger deploys (ANNOUNCE-THEN-DEPLOY is retired).
 
-**Weekday RTH latch:** Coolify still receives the webhook.  The Dockerfile
-refuses the **image build** during regular US equity hours (Mon–Fri
-09:30–16:00 ET, 09:30–13:00 ET on NYSE early-close days) unless `HOTFIX=1`
-(build-arg / Coolify env, or a standalone `HOTFIX=1` token in the merge
-commit message) or `RTH_DEPLOY_OVERRIDE=1` (explicit owner request).  A
-refused build does not swap containers, so the site stays on the last
-healthy image.  Evenings, weekends, and full-close holidays still
-auto-deploy.  Workflow `RTH Deploy Latch` annotates a blocked push and
-retries `origin/main` at 21:20 UTC on weekdays.  Do not add this check to
-`scripts/coolify-prod-start.sh`.
+**Weekday RTH + image-noop latch:** Coolify still receives the webhook.  The
+Dockerfile refuses the **image build before `npm ci`** when:
+
+- it is regular US equity hours (Mon–Fri 09:30–16:00 ET, 09:30–13:00 ET on
+  NYSE early-close days) unless `HOTFIX=1` or `RTH_DEPLOY_OVERRIDE=1`, or
+- the commit cannot change the runtime image (docs-only / dockerignored
+  trees — the #2811 class).  `docs/benchmarks/**` is image-relevant.
+
+A refused build must not swap the named container.  Keep consistent
+container names; do **not** enable rolling / zero-downtime (two Litestream
+writers).  Stop-old-then-start is the swap, **after** the new image exists.
+`last_restart_at` null + Cloudflare `no available server` on 2026-08-17
+~7:15–7:49pm CT was stop-old-then-build for docs-only `23412aff`.  Do not
+add this check to `scripts/coolify-prod-start.sh`.  Do not `FORCE_RESTORE`.
+Do not bounce the live box from an agent.  This repo does not PATCH live
+Coolify.
 
 Canonical detail:
 
@@ -40,11 +46,13 @@ Canonical detail:
    (prefer `gh pr merge <n> --squash --auto`).
 2. GitHub delivers the push to Coolify's manual webhook (HMAC-validated).
 3. Coolify serializes builds (`concurrent_builds` pinned to **1**) and builds
-   with the app's **Dockerfile** pack.  The first post-copy step is
-   `npx tsx scripts/assert-rth-deploy-latch.ts`.  During weekday RTH that
-   step exits 2 unless `HOTFIX=1` / `RTH_DEPLOY_OVERRIDE=1`; Coolify keeps
-   the last healthy container.  Otherwise it finishes the image and starts
-   `scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live`.
+   with the app's **Dockerfile** pack.  The first app step (before `npm ci`)
+   is `tsx scripts/assert-rth-deploy-latch.ts`.  Weekday RTH exits 2 unless
+   `HOTFIX=1` / `RTH_DEPLOY_OVERRIDE=1`.  Docs-only / image-noop exits 3.
+   Either refusal must keep the last healthy named container.  Otherwise it
+   finishes the image, **then** stops the old named container and starts
+   `scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live` (one Litestream
+   writer).
 4. Boot injects Infisical secrets, restores SQLite when the marker-guarded
    bootstrap requires it, and runs Litestream (when R2 is enabled) around Next.js.
 

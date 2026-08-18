@@ -42,6 +42,10 @@ if [ "$LATCH_RC" -eq 2 ]; then
   log "still regular US equity hours; not nudging Coolify"
   exit 0
 fi
+if [ "$LATCH_RC" -eq 3 ]; then
+  log "HEAD is image-noop / docs-only; not nudging Coolify"
+  exit 0
+fi
 if [ "$LATCH_RC" -ne 0 ]; then
   log "error: latch evaluator exited $LATCH_RC"
   exit 1
@@ -81,6 +85,18 @@ fi
 if git merge-base --is-ancestor "$EXPECTED_SHA" "$LIVE_SHA" 2>/dev/null; then
   log "live $LIVE_SHA already contains $EXPECTED_SHA; nothing to drain"
   exit 0
+fi
+PENDING_FILES="$(git diff --name-only --no-renames "$LIVE_SHA" "$EXPECTED_SHA" 2>/dev/null || true)"
+if [ -n "$PENDING_FILES" ]; then
+  set +e
+  NOOP_OUT="$(CHANGED_FILES="$PENDING_FILES" npx --yes tsx scripts/assert-rth-deploy-latch.ts 2>&1)"
+  NOOP_RC=$?
+  set -e
+  if [ "$NOOP_RC" -eq 3 ]; then
+    log "live is behind, but the pending diff is image-noop / docs-only; not nudging Coolify"
+    log "$NOOP_OUT"
+    exit 0
+  fi
 fi
 log "live $LIVE_SHA is behind $EXPECTED_SHA; nudging Coolify"
 

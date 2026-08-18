@@ -1,7 +1,9 @@
 #!/usr/bin/env npx tsx
-// Fail a Coolify image build during weekday US equity RTH unless HOTFIX=1
-// or RTH_DEPLOY_OVERRIDE=1.  Exit 0 = allow, 2 = blocked, 1 = usage error.
-// Invoked from the Dockerfile AFTER `COPY . .` and BEFORE `npm run build`.
+// Fail a Coolify image build when:
+//   exit 2 = weekday US equity RTH without HOTFIX=1 / RTH_DEPLOY_OVERRIDE=1
+//   exit 3 = docs-only / image-noop (would not change the running image)
+// Exit 0 = allow the rebuild.  Exit 1 = usage error.
+// Runs BEFORE npm ci so a no-op like #2811 dies in seconds, not ~30 minutes.
 // Keep this at build time — never call it from coolify-prod-start.sh.
 
 import { execSync } from "node:child_process";
@@ -29,4 +31,4 @@ if (decision.allowed) {
   process.exit(0);
 }
 console.error(line);
-process.exit(2);
+process.exit(decision.reason === "image-noop" ? 3 : 2);
