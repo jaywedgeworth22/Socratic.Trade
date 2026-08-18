@@ -44,6 +44,8 @@ export const PINECONE_MIN_USABLE_TEXTS_PER_DAY = 32;
 /**
  * If the local month counter implies remaining trial dollars at or below this, do not
  * shrink the daily fuse.  That counter is app-recorded estimates, not Pinecone's bill.
+ * Hybrid #2820 (processed writes) did not reset it, so pre-hybrid full-body upserts can
+ * still make the remainder look spent while the Standard trial has credit left.
  */
 export const PINECONE_LOCAL_REMAINING_UNTRUSTED_USD = 1;
 const DAY_MS = 24 * 60 * 60_000;

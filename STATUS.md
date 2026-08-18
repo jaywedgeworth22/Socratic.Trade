@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — Pinecone daily-fuse deadlock (rebased onto hybrid)
+
+#2800 rebased onto `origin/main` (`cda485ff`, includes hybrid #2820 `ea68c1fc`).  Verified: the trip was local-MTD remainder math, not the 2.5M fuse and not a spent Standard trial.  Live card was used 0 of 15 estimated WUs, attempted 28, skipped 1.  Local month-to-date WUs (including pre-hybrid full-body writes) were treated as Pinecone's bill; leftover lifetime units collapsed the daily fuse below one document.  Hybrid processed writes stay; write-class stays full-body; prune stays dry-run.  Did not raise a post-trial 2.5M/60k ceiling.
+
+Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+
 ## 2026-08-18 CURSOR — IRA accounts must not tax-loss harvest
 
 Owner screenshot: Autopilot sold NWG on the Roth with Green rationale "Harvesting unrealized loss… as part of tax loss harvesting strategy."  Roth/Traditional cannot deduct that loss.  Root cause: `taxContext` always included `harvestableLosses`, and Green was told it traded a taxable account whenever any tax block existed.

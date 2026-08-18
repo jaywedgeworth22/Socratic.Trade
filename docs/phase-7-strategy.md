@@ -6,6 +6,8 @@ This document defines the comprehensive architecture for the AI Trading Strategy
 
 Green/Red consume 8/1 chunks and a 24k filings-family budget via `retrieveContextDetailed`.  More raw 10-K/Q/transcript vectors are not better for those decisions.  Operational path is **hybrid**: processed proposer corpus (extractive highlights + form-aware signal sections + speaker-turn slices; latest full call for high-interest names until transcript FTS exists) in Pinecone, full bodies in SQLite/artifacts.  Minimum writer split is landed; `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` until PR B hydrate exists — do not flip the env in this PR.  Live prune is junk/HTML/duplicate/low-value only; useful full-body vectors that are the only copy stay.  Builder is 10 GB / 5M WU with a hard cap.  Full argument: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.  Writer-split design: `docs/designs/2026-08-16-proposer-corpus-storage.md`.  Implementation: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.
 
+The rolling-24h write fuse must not treat local month-to-date WUs as Pinecone's bill.  That remainder clamp produced the 15-WU / 1-text skip (used 0, attempted 28) while the Standard trial still had credit.  Hybrid processed writes continue; do not raise a fake daily/monthly ceiling.  See `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+
 ## 2026-07-13 evidence-contract and learning-boundary update
 
 The implemented decision path now treats evidence routing as a first-class contract:
