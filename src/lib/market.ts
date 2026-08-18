@@ -1039,6 +1039,7 @@ export function mergeQuoteData(
       provider?: string;
       venuePriceAuthoritative?: boolean;
       fetchedAt?: string;
+      delayedFallback?: boolean;
       syntheticSpread?: boolean;
       syntheticBid?: boolean;
       syntheticAsk?: boolean;
