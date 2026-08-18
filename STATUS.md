@@ -3,6 +3,25 @@
 ## 2026-08-17 CURSOR — Blind-spots audit (report-only)
 
 Red-team panel across legal/fintech, product identity, a11y (beyond #2795), i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  Live `gh` snapshot so FilingAPI / Pinecone 2M / PWA / ASOF claims stay current.  Register: `docs/audits/2026-08-17-blind-spots.md`.  Branch `cursor/blind-spots-audit-299e`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
+## 2026-08-17 CURSOR — Purchases / Stripe / StoreKit audit (report only)
+
+Read-only.  ST has no user-facing SKU: no Stripe SDK/routes/webhooks, no StoreKit/IAP, no paywall.  Access is allowlist + mailto.  App Review 3.1.1 PASS (no web checkout inside iOS).  PWA leftover is not a live surface.  No implementation PR — do not invent a money path.  CT already owns fleet Stripe + IAP.
+
+PR **#2809**.  Branch `cursor/purchases-stripe-storekit-audit-f1c0`.  Audit:
+`docs/audits/2026-08-17-purchases-stripe-storekit.md`.  Rollout:
+`docs/rollouts/2026-08-17-purchases-stripe-storekit-audit.md`.
+
+## 2026-08-17 CURSOR — Cross-app coordination audit (report only)
+
+Portfolio audit of ST / CT / UM / CTS / DealDex / fleet protocols.  No code
+fixes.  Pins currently match CTS `v2.5.2`, but ST's pin-check still reads CT
+`app/package.json` dependencies (CT is vendor-only now) so the gate is a
+no-op.  ST trades if CT or UM dies; the three Coolify apps share Hetzner
+fate; CT Senate ingest still needs the Mac.  DealDex is protocol-only.
+
+PR **#2802**.  Branch `cursor/cross-app-coordination-audit-1212`.  Audit:
+`docs/audits/2026-08-17-cross-app-coordination.md`.  Rollout:
+`docs/rollouts/2026-08-17-cross-app-coordination-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 

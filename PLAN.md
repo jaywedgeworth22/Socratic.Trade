@@ -1,6 +1,9 @@
 # Active Implementation Plan
 
 > **2026-08-17 CURSOR — Blind-spots audit (`cursor/blind-spots-audit-299e`).** Read-only red-team register across legal/fintech, product identity, a11y-beyond-#2795, i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  No production code.  `docs/audits/2026-08-17-blind-spots.md`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
+> **2026-08-17 CURSOR — Purchases / Stripe / StoreKit audit (`cursor/purchases-stripe-storekit-audit-f1c0`).** Report only.  ST is invite-only with no checkout stack.  Do not implement Stripe or StoreKit unless the owner decides to sell.  Audit: `docs/audits/2026-08-17-purchases-stripe-storekit.md`.
+
+> **2026-08-17 CURSOR — Cross-app coordination audit (`cursor/cross-app-coordination-audit-1212`).** Report only.  Pins match CTS `v2.5.2`; ST pin-check is a no-op against vendor-era CT.  Independent-failure matrix and P1–P3 portfolio fixes in `docs/audits/2026-08-17-cross-app-coordination.md`.  Do not implement those fixes in this PR.
 
 > **2026-08-17 CURSOR — Pinecone trial WU + Litestream/FilingAPI alert noise (`cursor/pinecone-wu-trial-alerts-c9a3`).** Standard trial is usage-billed, not the Starter 2M monthly wall. Clear/ignore the monthly WU breaker and monthly pace budget while the trial is open. Ignore healed Litestream compaction-fail lines. Omit retired vendors from public `/api/health` dependencies. Do not raise the daily WU fuse. Rollout: `docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
 
