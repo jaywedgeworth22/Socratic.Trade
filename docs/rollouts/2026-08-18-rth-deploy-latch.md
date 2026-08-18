@@ -189,6 +189,8 @@ before these follow-ups (run `32087609316`).  Re-run after this push.
 
 ## Next Steps & Blockers
 
+- Rebased onto `main` after #2824 (restore-drill receipts + live
+  `watch_paths` omit).  No Coolify PATCH.  Do not merge from this agent.
 - Merge this PR outside weekday RTH (this branch touches `app/` + `src/` +
   `Dockerfile`, so `watch_paths` will start a real stop-old-first deploy).
   After the latch is live, later RTH builds refuse unless `HOTFIX=1`.
