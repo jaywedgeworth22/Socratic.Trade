@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { audit, getPolicy, latestAuditByKind, newerAuditEntry } from "@/lib/db";
 import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
-import { mergeGroupedBarData, mergeQuoteData, scanMarket } from "@/lib/market";
+import { isScanQuotesUnavailableError, mergeGroupedBarData, mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
 import { getBrokerGateway } from "@/lib/broker";
 import { fetchRecentGroupedBarsRest } from "@/lib/market-signals/massive";
@@ -119,9 +119,34 @@ export async function GET(request: Request) {
     const message = error instanceof Error ? error.message : "scan failed";
     console.warn("[api/scan] market scan failed", message);
     try {
-      audit("market_scan_failed", { message }, userId);
+      audit(
+        "market_scan_failed",
+        isScanQuotesUnavailableError(error)
+          ? {
+              message,
+              code: error.code,
+              scannedSymbols: error.scannedSymbols,
+              returnedQuotes: error.returnedQuotes,
+              warnings: error.warnings
+            }
+          : { message },
+        userId
+      );
     } catch {
       /* audit is diagnostic only */
+    }
+    if (isScanQuotesUnavailableError(error)) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          scannedSymbols: error.scannedSymbols,
+          returnedQuotes: error.returnedQuotes,
+          warnings: error.warnings,
+          topCandidates: []
+        },
+        { status: 503 }
+      );
     }
     return NextResponse.json({ error: message }, { status: 500 });
   }

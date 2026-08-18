@@ -35,7 +35,10 @@ final class DeskModelsTests: XCTestCase {
             {"symbol":"AAPL","price":210.5,"score":81.2,"intradayChangePct":1.4,"sector":"Technology"},
             {"symbol":"MSFT"}
           ],
-          "asOf":"2026-08-13T15:00:00.000Z"
+          "asOf":"2026-08-13T15:00:00.000Z",
+          "scannedSymbols": 503,
+          "returnedQuotes": 498,
+          "warnings": ["The delayed screener returned no quotes; the quote fallback priced 498 of 503 names."]
         }
         """#.utf8)
         let scan = try JSONDecoder().decode(MarketScanResponse.self, from: json)
@@ -45,6 +48,13 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(scan.topCandidates[1].symbol, "MSFT")
         XCTAssertNil(scan.topCandidates[1].price)
         XCTAssertEqual(scan.asOf, "2026-08-13T15:00:00.000Z")
+        XCTAssertEqual(scan.scannedSymbols, 503)
+        XCTAssertEqual(scan.returnedQuotes, 498)
+        XCTAssertEqual(scan.warnings.count, 1)
+        XCTAssertEqual(
+            DeskCopy.scanCountLine(names: 2, scanned: scan.scannedSymbols, quotes: scan.returnedQuotes, watched: 2),
+            "2 names · 503 scanned · 498 quotes · 2 watched"
+        )
     }
 
     func testChatTurnAndSourceValueDecode() throws {

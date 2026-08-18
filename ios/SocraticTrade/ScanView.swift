@@ -58,13 +58,26 @@ struct ScanView: View {
                     "Market Scan",
                     subtitle: scan?.asOf.map { "as of \(AppFormat.dateTime($0))" } ?? "ranked names for this universe"
                 )
-                Text("Ranked candidates for the current universe.  Adding or removing a watchlist name does not place an order.")
+                Text(DeskCopy.scanUniverseNote)
                     .font(.appSubheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("\(filtered.count) names · \(snapshot.watchlist.count) watched")
+                Text(
+                    DeskCopy.scanCountLine(
+                        names: filtered.count,
+                        scanned: scan?.scannedSymbols,
+                        quotes: scan?.returnedQuotes,
+                        watched: snapshot.watchlist.count
+                    )
+                )
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
+                ForEach(scan?.warnings ?? [], id: \.self) { warning in
+                    Text(warning)
+                        .font(.appCaption)
+                        .foregroundStyle(AppPalette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -95,12 +108,18 @@ struct ScanView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        } else if loadError != nil && scan == nil {
+            // Failure banner already shown.  Do not render "No Candidates" — that
+            // reads as an empty universe when quotes were unavailable.
+            EmptyView()
         } else if filtered.isEmpty {
             EmptyStateCard(
-                title: query.isEmpty ? "No Candidates" : "No Matching Names",
-                message: query.isEmpty
-                    ? "The scan returned no ranked names.  Confirm the universe on Guardrails, then refresh."
-                    : "Nothing in this scan matches that filter.",
+                title: DeskCopy.scanEmptyTitle(hasFilter: !query.isEmpty),
+                message: DeskCopy.scanEmptyMessage(
+                    scanned: scan?.scannedSymbols,
+                    quotes: scan?.returnedQuotes,
+                    hasFilter: !query.isEmpty
+                ),
                 systemImage: "tablecells"
             )
         } else {

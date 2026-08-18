@@ -15,7 +15,7 @@ import {
   normalizeMarketScanCandidateLimit,
   normalizeMarketScanOutlierReserve
 } from "./scan-settings";
-import { fetchYahooFinanceQuote, type YahooFinanceQuote } from "./yahoo-finance";
+import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch, type YahooFinanceQuote } from "./yahoo-finance";
 import type {
   EnrichmentFieldObservations,
   EnrichmentSources,
@@ -221,6 +221,31 @@ function uniqueQuotesBySymbol(quotes: MarketQuote[]): MarketQuote[] {
   });
 }
 
+export const SCAN_QUOTES_UNAVAILABLE_CODE = "scan_quotes_unavailable";
+
+/** Thrown when the live screener and quote fallback both return nothing for a
+ *  non-empty universe and no usable audit seed remains. Callers must not turn
+ *  this into a 200 empty candidate table — that looks like "no names today." */
+export class ScanQuotesUnavailableError extends Error {
+  readonly code = SCAN_QUOTES_UNAVAILABLE_CODE;
+  readonly scannedSymbols: number;
+  readonly returnedQuotes = 0;
+  readonly warnings: string[];
+
+  constructor(input: { scannedSymbols: number; warnings: string[] }) {
+    super(
+      "Quotes were unavailable for this universe.  Refresh after the quote feed recovers, or confirm the universe on Guardrails."
+    );
+    this.name = "ScanQuotesUnavailableError";
+    this.scannedSymbols = input.scannedSymbols;
+    this.warnings = input.warnings;
+  }
+}
+
+export function isScanQuotesUnavailableError(error: unknown): error is ScanQuotesUnavailableError {
+  return error instanceof ScanQuotesUnavailableError;
+}
+
 export async function scanMarket(
   symbols: string[],
   positions: EquityPosition[],
@@ -277,6 +302,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     let quotes: MarketQuote[] = [];
     let cached = false;
     let breadthPct: number | undefined;
+    let quoteFallbackAttempted = false;
     const universeSources = new Set<string>();
 
     try {
@@ -302,16 +328,28 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       dynamicResult.sources.forEach((source) => universeSources.add(source));
       if (dynamicResult.cached) cached = true;
 
-      const returnedSymbols = new Set(quotes.map((quote) => quote.symbol));
-      const customSymbolsMissingFromScreener = Array.from(allowed)
-        .filter((symbol) => !returnedSymbols.has(symbol) && !isIndexMemberSymbol(symbol));
-      if (customSymbolsMissingFromScreener.length > 0) {
-        const quoteOnly = await fetchQuoteOnlyMarketQuotes(customSymbolsMissingFromScreener, positions);
+      if (quotes.length === 0 && allowed.size > 0) {
+        // Screener produced no allowed-set quotes. Price the whole universe from
+        // the quote fallback — not only custom tickers. Index members were
+        // previously skipped here, so an empty screener + expired seed became
+        // a silent empty table.
+        quoteFallbackAttempted = true;
+        const quoteOnly = await fetchAllowedSetMarketQuotes(Array.from(allowed), positions);
         quotes = [...quotes, ...quoteOnly.quotes];
         warnings.push(...quoteOnly.warnings);
-        // The quote-only fallback DISPLAYS these Yahoo quotes; record its provider so MarketScan.source
-        // still lists Yahoo even if enrichment later contributes no accepted field for those rows.
         for (const q of quoteOnly.quotes) if (q.provider) universeSources.add(q.provider);
+      } else {
+        const returnedSymbols = new Set(quotes.map((quote) => quote.symbol));
+        const customSymbolsMissingFromScreener = Array.from(allowed)
+          .filter((symbol) => !returnedSymbols.has(symbol) && !isIndexMemberSymbol(symbol));
+        if (customSymbolsMissingFromScreener.length > 0) {
+          const quoteOnly = await fetchQuoteOnlyMarketQuotes(customSymbolsMissingFromScreener, positions);
+          quotes = [...quotes, ...quoteOnly.quotes];
+          warnings.push(...quoteOnly.warnings);
+          // The quote-only fallback DISPLAYS these Yahoo quotes; record its provider so MarketScan.source
+          // still lists Yahoo even if enrichment later contributes no accepted field for those rows.
+          for (const q of quoteOnly.quotes) if (q.provider) universeSources.add(q.provider);
+        }
       }
       // Market breadth: % of the full screener that's advancing today — a free,
       // market-wide risk-on/risk-off gauge (computed from data we already fetched).
@@ -323,12 +361,31 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       warnings.push(error instanceof Error ? error.message : "Market data request failed.");
     }
 
+    if (quotes.length === 0 && allowed.size > 0 && !quoteFallbackAttempted) {
+      // Fetch throw / empty payload: still try the whole allowed set before seed.
+      const quoteOnly = await fetchAllowedSetMarketQuotes(Array.from(allowed), positions);
+      quotes = [...quotes, ...quoteOnly.quotes];
+      warnings.push(...quoteOnly.warnings);
+      for (const q of quoteOnly.quotes) if (q.provider) universeSources.add(q.provider);
+    }
+
     if (quotes.length === 0 && options?.seedEnrichment) {
       quotes = persistedMarketQuotes(options.seedEnrichment, positions);
       cached = true;
       warnings.push(
         "Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
       );
+    }
+
+    if (quotes.length === 0 && allowed.size === 0) {
+      warnings.push(
+        "This universe has no symbols.  Choose a base index or add symbols on Guardrails."
+      );
+    } else if (quotes.length === 0) {
+      throw new ScanQuotesUnavailableError({
+        scannedSymbols: allowed.size,
+        warnings
+      });
     }
 
     // Universe floor: drop penny/illiquid index + dynamic-universe candidates before ranking. `allowed`
@@ -1362,6 +1419,31 @@ function nasdaqScreenerUrl(exchange?: NasdaqExchange): string {
 
 function normalizeMarketDataSymbol(value: string): string {
   return normalizeSymbol(value).replace(/\//g, "-");
+}
+
+async function fetchAllowedSetMarketQuotes(
+  symbols: string[],
+  positions: EquityPosition[]
+): Promise<{ quotes: MarketQuote[]; warnings: string[] }> {
+  const requested = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+  const bySymbol = await fetchYahooFinanceQuotesBatch(requested, { concurrency: 4 });
+  const quotes: MarketQuote[] = [];
+  const missing: string[] = [];
+  for (const symbol of requested) {
+    const quote = bySymbol.get(symbol);
+    if (quote) quotes.push(toQuoteOnlyMarketQuote(symbol, quote, positions));
+    else missing.push(symbol);
+  }
+  const warnings: string[] = [];
+  if (missing.length > 0) {
+    const chart = await fetchQuoteOnlyMarketQuotes(missing, positions);
+    quotes.push(...chart.quotes);
+    if (requested.length <= 8) warnings.push(...chart.warnings);
+  }
+  warnings.unshift(
+    `The delayed screener returned no quotes; the quote fallback priced ${quotes.length} of ${requested.length} names.`
+  );
+  return { quotes, warnings };
 }
 
 async function fetchQuoteOnlyMarketQuotes(symbols: string[], positions: EquityPosition[]): Promise<{ quotes: MarketQuote[]; warnings: string[] }> {

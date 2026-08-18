@@ -399,8 +399,7 @@ function MarketScanTab({
         </p>
         {scan.topCandidates.length === 0 ? (
           <Empty>
-            The scan ran but returned no candidates — the universe may be empty or no provider returned quotes. Add
-            symbols or choose a base index in Guardrails, then refresh.
+            This universe has no ranked names.  Choose a base index or add symbols on Guardrails, then refresh.
           </Empty>
         ) : (
           <ScanTable scan={scan} />

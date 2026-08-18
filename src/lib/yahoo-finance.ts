@@ -114,77 +114,97 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
   }
 }
 
-export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<Map<string, YahooFinanceQuote>> {
+export async function fetchYahooFinanceQuotesBatch(
+  symbols: string[],
+  options?: { concurrency?: number }
+): Promise<Map<string, YahooFinanceQuote>> {
   const result = new Map<string, YahooFinanceQuote>();
   if (symbols.length === 0) return result;
 
-  // Chunk symbols into groups of 50
   const chunkSize = 50;
+  const chunks: string[][] = [];
   for (let i = 0; i < symbols.length; i += chunkSize) {
-    const chunk = symbols.slice(i, i + chunkSize);
-    const cleanSymbols = chunk.map((s) => encodeURIComponent(s.toUpperCase().trim())).join(",");
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${cleanSymbols}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    try {
-      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
-      clearTimeout(timeout);
-      if (!response.ok) continue;
-      const payload = await response.json() as {
-        quoteResponse?: {
-          result?: Array<{
-            symbol: string;
-            regularMarketPrice?: number;
-            bid?: number;
-            ask?: number;
-            regularMarketPreviousClose?: number;
-            regularMarketVolume?: number;
-            regularMarketTime?: number;
-          }>;
-        };
-      };
-
-      const items = payload?.quoteResponse?.result;
-      if (!items) continue;
-
-      for (const item of items) {
-        if (!item.symbol) continue;
-        const price = Number(item.regularMarketPrice);
-        if (!Number.isFinite(price) || price <= 0) continue;
-        const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
-        // Track each side independently so a one-sided quote keeps its REAL side (a real bid must not
-        // be blanket-tagged synthetic just because the ask had to be derived, and vice versa).
-        const syntheticBid = !(item.bid && item.bid > 0);
-        const syntheticAsk = !(item.ask && item.ask > 0);
-        const hasRealSpread = !syntheticBid && !syntheticAsk;
-        const bid = syntheticBid ? price * 0.999 : Number(item.bid);
-        const ask = syntheticAsk ? price * 1.001 : Number(item.ask);
-        const volume = Number(item.regularMarketVolume ?? 0);
-        const t = Number(item.regularMarketTime);
-        const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
-
-        result.set(item.symbol.toUpperCase().trim(), {
-          price,
-          bid,
-          ask,
-          prevClose,
-          volume,
-          asOf,
-          // Side-specific synthetic flags set EXPLICITLY (true AND false) so a consumer that falls back
-          // to the coarse `syntheticSpread` when a side flag is absent (e.g. market.ts) never mislabels
-          // a real side: a one-sided quote's real side now carries an explicit `false`, so the fallback
-          // only fires for producers that genuinely don't set side flags. `syntheticSpread` stays true
-          // only when BOTH sides were derived (back-compat for any coarse-only consumer).
-          syntheticBid,
-          syntheticAsk,
-          ...(hasRealSpread ? {} : { syntheticSpread: true })
-        });
-      }
-    } catch (err) {
-      clearTimeout(timeout);
-      console.error("[yahoo-finance] batch fetch failed for chunk:", chunk, err);
+    chunks.push(symbols.slice(i, i + chunkSize));
+  }
+  // Default stays serial so existing quote-cascade callers do not suddenly fan out.
+  // Empty-screener fallback passes a small concurrency so a 500-name universe can
+  // still finish inside the interactive scan budget.
+  const concurrency = Math.max(1, Math.min(options?.concurrency ?? 1, 4));
+  for (let i = 0; i < chunks.length; i += concurrency) {
+    const wave = chunks.slice(i, i + concurrency);
+    const maps = await Promise.all(wave.map((chunk) => fetchYahooQuoteChunk(chunk)));
+    for (const map of maps) {
+      for (const [symbol, quote] of map) result.set(symbol, quote);
     }
+  }
+
+  return result;
+}
+
+async function fetchYahooQuoteChunk(chunk: string[]): Promise<Map<string, YahooFinanceQuote>> {
+  const result = new Map<string, YahooFinanceQuote>();
+  const cleanSymbols = chunk.map((s) => encodeURIComponent(s.toUpperCase().trim())).join(",");
+  const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${cleanSymbols}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
+    if (!response.ok) return result;
+    const payload = await response.json() as {
+      quoteResponse?: {
+        result?: Array<{
+          symbol: string;
+          regularMarketPrice?: number;
+          bid?: number;
+          ask?: number;
+          regularMarketPreviousClose?: number;
+          regularMarketVolume?: number;
+          regularMarketTime?: number;
+        }>;
+      };
+    };
+
+    const items = payload?.quoteResponse?.result;
+    if (!items) return result;
+
+    for (const item of items) {
+      if (!item.symbol) continue;
+      const price = Number(item.regularMarketPrice);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
+      // Track each side independently so a one-sided quote keeps its REAL side (a real bid must not
+      // be blanket-tagged synthetic just because the ask had to be derived, and vice versa).
+      const syntheticBid = !(item.bid && item.bid > 0);
+      const syntheticAsk = !(item.ask && item.ask > 0);
+      const hasRealSpread = !syntheticBid && !syntheticAsk;
+      const bid = syntheticBid ? price * 0.999 : Number(item.bid);
+      const ask = syntheticAsk ? price * 1.001 : Number(item.ask);
+      const volume = Number(item.regularMarketVolume ?? 0);
+      const t = Number(item.regularMarketTime);
+      const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+
+      result.set(item.symbol.toUpperCase().trim(), {
+        price,
+        bid,
+        ask,
+        prevClose,
+        volume,
+        asOf,
+        // Side-specific synthetic flags set EXPLICITLY (true AND false) so a consumer that falls back
+        // to the coarse `syntheticSpread` when a side flag is absent (e.g. market.ts) never mislabels
+        // a real side: a one-sided quote's real side now carries an explicit `false`, so the fallback
+        // only fires for producers that genuinely don't set side flags. `syntheticSpread` stays true
+        // only when BOTH sides were derived (back-compat for any coarse-only consumer).
+        syntheticBid,
+        syntheticAsk,
+        ...(hasRealSpread ? {} : { syntheticSpread: true })
+      });
+    }
+  } catch (err) {
+    clearTimeout(timeout);
+    console.error("[yahoo-finance] batch fetch failed for chunk:", chunk, err);
   }
 
   return result;

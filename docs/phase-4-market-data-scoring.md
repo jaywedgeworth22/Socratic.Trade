@@ -87,6 +87,18 @@ Yahoo Finance quote-only row and still runs enrichment/scoring. If a custom
 ticker cannot be priced, Market Scan keeps the rest of the scan usable and shows
 a concrete warning naming the ticker.
 
+**Empty screener is a failure, not "no names today" (2026-08-18):** Interactive
+`GET /api/scan` used to return 200 with `topCandidates: []` when the delayed
+screener produced no allowed-set quotes and the audit seed was missing or older
+than `previousTradingDayStart`. iOS rendered that as "No Candidates" next to
+the watchlist count. A non-empty universe that cannot be priced now throws
+`ScanQuotesUnavailableError` (HTTP 503, `code: scan_quotes_unavailable`). An
+empty universe (no index, no additional symbols, no holdings) still returns
+200 with an explicit warning. When the screener is empty, the quote fallback
+prices the whole allowed set (index members included), not only custom
+tickers. iOS Scan decodes `scannedSymbols` / `returnedQuotes` / `warnings` and
+does not treat watchlist size as the universe.
+
 **Expanded dynamic universes (2026-06-23):** Base universe selection now covers
 small and broad indexes without sending the whole market to the LLM. Static
 embedded lists still cover S&P 500, Nasdaq 100, and Dow 30. Dynamic universes
