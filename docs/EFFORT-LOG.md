@@ -463,7 +463,6 @@ As of 2026-07-08 (assignment-rule update).
 - **[Socratic.Trade][CODEX sublane] RAG structured-vs-narrative routing boundary (branch `codex/rag-data-routing-20260722`, worktree `/Users/jay/.codex/worktrees/rag-data-routing-20260722`, claimed 2026-07-22) — LOCALLY READY.** Typed, fail-closed information-needs contract now keeps current prices, positions, orders, and financial facts deterministic while filings/transcripts/lessons/narrative research alone enter RAG. Focused routing tests 4/4, scoped lint, TypeScript, and diff check green; slow strategy integration verification deferred under host saturation. No provider, corpus, broker, or production writes.
 
 ## In Progress
-- **[Socratic.Trade][CURSOR] rag-embed DeepInfra batch-window 400 — IN PROGRESS 2026-08-18 (branch `cursor/rag-embed-batch-window-54d7`, PR #2840).** Live VECTOR_EMBED_BATCH_SIZE=32 summed ~8193 tokens on OpenRouter baai/bge-m3 and 400'd ingest (batch-sum, not one unchunked 10-K).  Hybrid condense-first stays; pack already-condensed texts after that step.  Isolate one over-limit singleton so the rest of a count-32 batch still upserts.  `verify` miss: query-embed-cache mock omitted `approxTokens`.  Do not invent a second filing chunker.  Do not flip write-class, prune, or re-clamp the #2800 fuse.  Do not touch the #2812 health 503 gate.
 - **2026-08-17 — GROK — IN PROGRESS — Effort-board hygiene + this-session control board.** Zero open PRs on 2026-08-17. Every prior In Progress row below was already merged (PRs #2771/#2741/#2704/#2692/#2659/#2628/#2597/#2581/#2573/#2538/#2536/#2531/#2498/#2490/#2489/#2435/#2433). First lines preserved; rows moved to Completed so effort-issues-sync closes stale `state:in-progress` mirrors.
 - **2026-08-15 — GROK — IN PROGRESS — Website favicon: cropped offset candlestick ST, transparent.** Issue #2731. Cursor PR #2785 (`cursor/favicon-crop-st-e6ee`) owns the crop. Do not steal.
 
@@ -667,6 +666,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CURSOR] rag-embed DeepInfra batch-window 400 — COMPLETED/MERGED 2026-08-18 #2840 `5674dfaf`.** Hybrid condense-first stayed.  Pack after that step.  Isolate one over-limit condensed text so companions still upsert.  Did not flip write-class, prune, or re-clamp the #2800 fuse.
 - **2026-08-16 — GROK — COMPLETED via #2757 — Review UX: fast approve, live vs proposed price, Retry Red Team, clearer agent controls.** Issue #2752 implementation landed. Board leftover closed.
 - **[Socratic.Trade][GROK] Prefer Pushover over Resend — COMPLETED via #2698.** Litestream-wedge remainder is not this lane. Issue #2697 first line preserved historically.
 - **[Socratic.Trade][MONET] Durable litestream remote-inventory cache — COMPLETED.** Issue #2694 closed.
