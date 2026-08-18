@@ -84,6 +84,33 @@ export function applyRotationAvailabilityFailOpen(credentialPool: readonly strin
   return credentialPool.filter((model) => !isDeadOpenRouterRotationModel(model));
 }
 
+/**
+ * Keep catalog models whose `/models/user` row matches (alias/version-aware).
+ * Known-dead slugs stay dropped.  If the allowlist would empty an otherwise
+ * usable credential pool, fail OPEN to that pool minus the dead slugs — a
+ * successful list that omitted `*-latest` aliases must not abort rotation.
+ */
+export function applyRotationUserModelAllowlist(
+  credentialPool: readonly string[],
+  modelIds: ReadonlySet<string>
+): { pool: string[]; skipped: string[]; emptiedByAllowlist: boolean } {
+  const matched: string[] = [];
+  const skipped: string[] = [];
+  for (const model of credentialPool) {
+    if (isDeadOpenRouterRotationModel(model)) {
+      skipped.push(model);
+      continue;
+    }
+    if (isOpenRouterModelAvailable(model, modelIds)) matched.push(model);
+    else skipped.push(model);
+  }
+  const usable = applyRotationAvailabilityFailOpen(credentialPool);
+  if (matched.length === 0 && usable.length > 0) {
+    return { pool: usable, skipped: credentialPool.filter((model) => isDeadOpenRouterRotationModel(model)), emptiedByAllowlist: true };
+  }
+  return { pool: matched, skipped, emptiedByAllowlist: false };
+}
+
 export const MODEL_ROTATION_POOL: readonly string[] = [
   "gpt-5.6-terra",
   "claude-haiku-4.5",
@@ -211,7 +238,6 @@ export interface EligibleRotationPool {
 }
 
 export async function eligibleRotationPool(userId: string): Promise<EligibleRotationPool> {
-  const pool: string[] = [];
   const skipped: string[] = [];
   const isTest = process.env.NODE_ENV === "test";
   const credentialPool: string[] = [];
@@ -245,11 +271,13 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
     };
   }
   if (availability.status === "available") {
-    for (const model of credentialPool) {
-      if (isOpenRouterModelAvailable(model, availability.modelIds)) pool.push(model);
-      else skipped.push(model);
-    }
-    return { pool, skipped, availability: "checked" };
+    const allowlist = applyRotationUserModelAllowlist(credentialPool, availability.modelIds);
+    return {
+      pool: allowlist.pool,
+      skipped: [...skipped, ...allowlist.skipped],
+      availability: "checked",
+      ...(allowlist.emptiedByAllowlist ? { availabilityError: "allowlist_emptied_pool" } : {})
+    };
   }
   return { pool: credentialPool, skipped, availability: "not_checked" };
 }
@@ -419,7 +447,10 @@ export async function resolveModelRotationForRun(input: {
             weight: pick.weight,
             representation: pick.representation,
             poolSize: pool.length,
-            skippedNoCredential: skipped
+            skipped,
+            skippedNoCredential: skipped,
+            availability,
+            availabilityError
           },
           input.userId,
           input.accountId

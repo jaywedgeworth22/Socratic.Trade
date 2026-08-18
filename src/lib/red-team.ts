@@ -24,7 +24,7 @@ import {
   LLM_REQUEST_DEFAULTS,
   llmFetchCapturing,
   resolveReviewerReasoningEffort,
-  isRetryableLlmStatus,
+  isFailoverLlmStatus,
   isRetryableLlmError,
   strategyLlmTimeoutMs
 } from "./llm-request";
@@ -398,7 +398,7 @@ export async function debateProposal(
                 connectedAccountId: policy.connectedAccountId
               });
               const why = humanizeLlmError(rawDetail, { provider: attempt.provider, status: response.status });
-              if (!isLast && isRetryableLlmStatus(response.status)) {
+              if (!isLast && isFailoverLlmStatus(response.status)) {
                 lastError = new Error(why);
                 console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
                 continue;

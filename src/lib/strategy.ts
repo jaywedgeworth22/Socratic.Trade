@@ -54,7 +54,7 @@ import { derivePromptRagConsumption, type PromptRagCandidate, type PromptRagCons
 import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfrastructureFailure } from "./broker-health";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isFailoverLlmStatus, isRetryableLlmError, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { implicitGreenRotationFallbacks, isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
@@ -6041,7 +6041,7 @@ async function proposeTrades(input: {
                 userId: input.userId,
                 connectedAccountId: input.policy.connectedAccountId
               });
-              if (!isLast && isRetryableLlmStatus(response.status)) {
+              if (!isLast && isFailoverLlmStatus(response.status)) {
                 lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
                 audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);

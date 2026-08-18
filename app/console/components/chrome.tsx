@@ -625,7 +625,7 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   // message FIRST, on the server's own string.
   if (m.includes(LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE.toLowerCase())) {
     return {
-      title: "Rotation could not check available models",
+      title: "Rotation Couldn't Check Models",
       detail: message,
       fixHref: "/console/strategy#models",
       fixLabel: "Open Strategy → Models"

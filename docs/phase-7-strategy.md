@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 OpenRouter 404s are not "not on your account"
+
+Coolify 2026-08-18 (sha `cda485ff`): today's Green 404s are valid public slugs `google/gemini-3.7-flash` (86ms) and `mistralai/mistral-medium-3-5` (82ms).  Claude/Grok/Kimi/mini-latest were skipped, not called — tilde restore does not clear today's fails.  Live #2771 set `require_parameters=true` on every OpenRouter body; that empties the endpoint set and 404s models that exist.  Strategy now omits `require_parameters` except the nano `max_completion_tokens` case.  Classifier: bare 404 / “No endpoints found matching your request” is not an account miss; `model_not_found` is a bad slug.  Secondary: dated / `~` wire ids for the skipped seats.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
+
 ## 2026-08-18 Pinecone store-more vs condense-first (report)
 
 Green/Red consume 8/1 chunks and a 24k filings-family budget via `retrieveContextDetailed`.  More raw 10-K/Q/transcript vectors are not better for those decisions.  Operational path is **hybrid**: processed proposer corpus (extractive highlights + form-aware signal sections + speaker-turn slices; latest full call for high-interest names until transcript FTS exists) in Pinecone, full bodies in SQLite/artifacts.  Minimum writer split is landed; `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` until PR B hydrate exists — do not flip the env in this PR.  Live prune is junk/HTML/duplicate/low-value only; useful full-body vectors that are the only copy stay.  Builder is 10 GB / 5M WU with a hard cap.  Full argument: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.  Writer-split design: `docs/designs/2026-08-16-proposer-corpus-storage.md`.  Implementation: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.
