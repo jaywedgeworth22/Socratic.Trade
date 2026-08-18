@@ -200,6 +200,13 @@ struct MobileAPIClient {
         _ = try await successfulResponseData(for: request)
     }
 
+    func acceptAppConsent() async throws {
+        var request = request(path: "/api/mobile/consent", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["accepted": true])
+        _ = try await successfulResponseData(for: request)
+    }
+
     func accountDeletionPreview() async throws -> AccountDeletionRequest {
         let envelope: DeletionRequestEnvelope = try await send(
             request(path: "/api/mobile/account-deletion/request")

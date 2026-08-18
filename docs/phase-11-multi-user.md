@@ -17,7 +17,10 @@ Cloudflare Access email headers are not trusted as app identity. The primary
 operator and configured aliases still map to the legacy `local` dataset; other
 allowed users map to isolated hashed user IDs only when present in
 `ALLOWED_EMAILS`. When auth is not configured locally, development falls back to
-`local`.
+`local`.  The live desk is single-user today, but it stays multi-user-capable
+for friends/family: do not 404 `/welcome`, and do not rewrite the product as
+owner-only forever.  A second allowed email must keep an isolated `u_<hash>`
+dataset (policy, consent, legal notice, profiles).
 
 ## What already exists (foundation)
 - `user_api_keys` table + `getUserApiKey`/`listUserApiKeys`/`upsertUserApiKey`/

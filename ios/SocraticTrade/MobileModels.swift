@@ -114,6 +114,10 @@ struct Readiness: Decodable {
     let selectedAccountNumber: String?
     let activeConnectedAccount: ConnectedAccount?
     let commandBacklog: CommandBacklog
+    /// Missing on older payloads: treat as already accepted so a stale cache cannot lock the desk.
+    let needsAppConsent: Bool?
+
+    var requiresAppConsent: Bool { needsAppConsent == true }
 }
 
 struct CommandBacklog: Decodable {

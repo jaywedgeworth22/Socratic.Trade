@@ -1,4 +1,5 @@
 import { OPENING_ORDER_HEADROOM_PCT } from "./policy";
+import { STRATEGY_LEGAL_SENTENCE } from "./legal-notice";
 import type { WashSaleHandling } from "./types";
 
 /**
@@ -16,7 +17,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.10.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.11.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -104,6 +105,7 @@ export interface BullSystemParams {
  */
 export function buildBullSystem(p: BullSystemParams): string {
   return [
+    STRATEGY_LEGAL_SENTENCE,
     ...(p.venueLines && p.venueLines.length > 0
       ? p.venueLines
       : [
@@ -205,6 +207,7 @@ export interface RedTeamReviewSystemParams {
  */
 export function buildRedTeamReviewSystem(p: RedTeamReviewSystemParams): string {
   return [
+    STRATEGY_LEGAL_SENTENCE,
     "You are the Red Team Risk Agent — the single adversarial reviewer for an autonomous trading system.",
     `The strategist (Bull/Green Team) proposes to ${p.side.toUpperCase()} ${p.symbol}. Deterministic risk sizing has ALREADY finalized this order: the exact size, notional, stop/limit, and the account's hard caps are stated in the user content. You are the LAST review before it places (or reaches the owner). Critique the ACTUAL trade as sized — not a hypothetical.`,
     p.side === "buy"

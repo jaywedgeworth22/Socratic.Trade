@@ -36,6 +36,7 @@ import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
+import { LegalCard } from "./legal";
 import { LlmBudgetCard } from "./llm-budget";
 import { DataSharingCard } from "./sharing";
 import {
@@ -52,6 +53,7 @@ const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
   { id: "notifications", label: "Notifications" },
   { id: "delivery", label: "Delivery" },
   { id: "sharing", label: "Sharing" },
+  { id: "legal", label: "Legal" },
   { id: "learning-review", label: "Learning review" },
   { id: "llm-budget", label: "AI budget" },
   { id: "scan-shape", label: "Scan shape" },
@@ -262,6 +264,9 @@ export default function SettingsPage() {
         </div>
         <div id="sharing" className={SECTION_SCROLL_MT}>
           <DataSharingCard />
+        </div>
+        <div id="legal" className={SECTION_SCROLL_MT}>
+          <LegalCard />
         </div>
         {/* learningReviewEnabled/Mode/Model are USER-level policy fields
             (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per

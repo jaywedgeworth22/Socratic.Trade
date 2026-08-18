@@ -5,11 +5,14 @@ import {
   audit,
   getDataPoolConsent,
   getDb,
+  getLegalNoticeConsent,
   getPolicy,
   getProposal,
   listConnectedAccounts,
+  needsAppConsent,
   setActiveConnectedAccount,
   setDataPoolConsent,
+  setLegalNoticeConsent,
   setPolicy
 } from "./db";
 import { isIndexUniverse, isValidAppSymbol } from "./index-universes";
@@ -592,8 +595,14 @@ function normalizeCommandPayload(commandType: MobileCommandType, rawPayload: unk
       return expectedCurrent ? { patch, expectedCurrent } : { patch };
     }
     case "consent.set":
-      if (typeof payload.accepted !== "boolean") throw new MobileCommandValidationError("accepted must be boolean.");
-      return { accepted: payload.accepted };
+      if (payload.accepted !== true) {
+        throw new MobileCommandValidationError("Accepting the current terms and shared data pool is required.");
+      }
+      return { accepted: true };
+    default: {
+      const _exhaustive: never = commandType;
+      throw new MobileCommandValidationError(`Unsupported command: ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -1023,8 +1032,11 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
         payload.patch as Partial<TradingPolicy>,
         payload.expectedCurrent as Record<string, PolicyPreconditionValue> | undefined
       );
-    case "consent.set":
-      return { ok: true, consent: setDataPoolConsent(command.userId, payload.accepted === true) };
+    case "consent.set": {
+      const legal = setLegalNoticeConsent(command.userId, true);
+      const dataPool = setDataPoolConsent(command.userId, true);
+      return { ok: true, legal, consent: dataPool };
+    }
     case "notification.test":
       return {
         ok: true,
@@ -1034,6 +1046,10 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
           kind: "test"
         })
       };
+    default: {
+      const _exhaustive: never = command.commandType;
+      throw new Error(`Unsupported command: ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -1303,6 +1319,8 @@ export function mobileReadiness(userId: string) {
     selectedAccountNumber: policy.accountNumber ?? null,
     activeConnectedAccount: connectedAccounts.find((account) => account.isActive) ?? null,
     dataPoolConsent: consent,
+    legalNotice: getLegalNoticeConsent(userId),
+    needsAppConsent: needsAppConsent(userId),
     commandBacklog: mobileCommandBacklog()
   };
 }

@@ -77,6 +77,13 @@ struct ContentView: View {
                 .opacity(store.isAuthenticated ? 1 : 0)
                 .allowsHitTesting(store.isAuthenticated)
                 .accessibilityHidden(!store.isAuthenticated)
+                .fullScreenCover(isPresented: Binding(
+                    get: { store.isAuthenticated && store.needsAppConsent },
+                    set: { _ in }
+                )) {
+                    LegalConsentSheet()
+                        .environmentObject(store)
+                }
 
             if showSplash {
                 LaunchStateView()
@@ -184,5 +191,50 @@ private struct LaunchStateView: View {
         // A height of 16-34 is too small for a stacked logo.
         // We allow it to be larger (e.g. 40 to 80).
         return max(40, min(80, (width * 0.88) / aspect))
+    }
+}
+
+/// Blocking first-use clickwrap, compiled in this file so XcodeGen / pbxproj
+/// does not need a new source entry.  Accepting the current version dismisses
+/// it until Terms / data-pool versions bump.  There is no decline path.
+struct LegalConsentSheet: View {
+    @EnvironmentObject private var store: MobileStore
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Not investment advice.  You set authority.")
+                    .font(.appHeadline)
+
+                Text("Socratic Trade is software you configure.  Using the app requires accepting the Terms and Privacy Policy, and contributing general market data — quotes, fundamentals, history, and news — to a shared pool.  Personal account data stays private.")
+                    .font(.appBody)
+                    .foregroundStyle(.secondary)
+
+                Text("You can delete your account yourself in Account & Settings.  Database backups are kept for 7 days.  Fact-level research notes may join a shared research corpus; risk rules and strategy instructions stay private.")
+                    .font(.appBody)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 16) {
+                    Link("Terms", destination: URL(string: "https://socratictrade.com/terms-and-conditions")!)
+                    Link("Privacy", destination: URL(string: "https://socratictrade.com/privacy-policy")!)
+                }
+                .font(.appSubheadline)
+
+                Spacer()
+
+                Button {
+                    Task { await store.acceptAppConsent() }
+                } label: {
+                    Text(store.isAcceptingConsent ? "Saving…" : "Accept & Continue")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.isAcceptingConsent)
+            }
+            .padding(24)
+            .navigationTitle("Terms, Privacy, and Shared Data")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .interactiveDismissDisabled()
     }
 }

@@ -771,6 +771,7 @@ private struct AccountSettingsView: View {
                 GuardrailTighteningSection()
                 LlmBudgetSection()
                 DataSourcesSection()
+                legalSection
                 adminSection
                 sessionSection
                 deletionSection
@@ -895,6 +896,19 @@ private struct AccountSettingsView: View {
             Text(push.state.summary)
         }
         .task { await push.refreshState() }
+    }
+
+    @ViewBuilder
+    private var legalSection: some View {
+        Section {
+            LabeledContent("Notice", value: "Not investment advice.  You set authority.")
+            Link("Terms", destination: URL(string: "https://socratictrade.com/terms-and-conditions")!)
+            Link("Privacy", destination: URL(string: "https://socratictrade.com/privacy-policy")!)
+        } header: {
+            Text("Legal")
+        } footer: {
+            Text("After you accept, this notice stays dismissed until the terms change.  You can delete your account in the section below.")
+        }
     }
 
     private var sessionSection: some View {

@@ -210,8 +210,8 @@ function ShellFrame({ children }: { children: ReactNode }) {
             <>
               <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
               <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
-              {/* Blocking shared-data-pool consent gate — same semantics as the
-                  legacy dashboard gate; renders nothing once answered. */}
+              {/* Blocking legal clickwrap + mandatory data-pool gate.  Accept
+                  dismisses it until either version bumps. */}
               <ConsentGate />
               {/* ⌘K / Ctrl+K command palette — from-anywhere jump to any console screen. */}
               <CommandPalette />

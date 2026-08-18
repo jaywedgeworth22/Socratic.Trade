@@ -24,6 +24,22 @@ lint 0 errors, tsc clean, 278 focused tests pass, `npm run build` clean.
 Owner cut after #2811: condense-first for Pinecone, store-more locally, then prune junk so Green/Red retrieve (scout k=1 / deep k=8 + 24k) sees useful vectors.  Minimum PR A split is on this branch: local-complete FTS + extractive highlights + form-aware signal sections + speaker-turn slices write as their own complete `storeDocument`s.  `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` (not flipped; PR B hydrate is not in this PR).  Safe prune deletes raw-HTML / junk / dupes / low-value only; useful full-body only-copies stay.  2.5M fuse + $45 reserve unchanged.  No Stripe.  Did not retarget #2792 / #2798 / #2800 / #2794.
 
 Branch `cursor/hybrid-and-prune-7f41`.  PR #2820, rebased onto `main` (`522b2454` #2824).  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.  Next: dry-run prune against prod inventory when ready — do not `--apply` yet.  Do not flip write-class until PR B.
+## 2026-08-18 CURSOR — Legal clickwrap + mandatory data-pool + keep multi-user
+
+Owner cut 2026-08-17 items 9–11.  Versioned dismissible legal notice (clickwrap +
+desk sentence + Green/Red prompt).  Data-pool is accept-or-cannot-use; unset users
+do not silently share.  `/welcome` stays on; a second `ALLOWED_EMAILS` address
+stays isolated.  No Stripe/IAP.  PR **#2815**.  Branch `cursor/legal-clickwrap-data-pool-1016`.
+`LegalConsentSheet` is inlined in `SocraticTradeApp.swift` so the committed
+`.pbxproj` compiles it.  Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
+CI green on `1b9e84ca` (iOS + verify-hosted).  User-visible copy is product
+language only (no remotes/surfaces/`ALLOWED_EMAILS`/Infisical asides).
+
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
