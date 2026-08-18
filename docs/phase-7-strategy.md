@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 Pinecone store-more vs condense-first (report)
+
+Green/Red consume 8/1 chunks and a 24k filings-family budget via `retrieveContextDetailed`.  More raw 10-K/Q/transcript vectors are not better for those decisions.  Recommended default is **hybrid**: processed proposer corpus (extractive highlights + signal sections + speaker turns) in Pinecone, full bodies local, hydrate after corpus-storage PR A+B.  Builder is 10 GB / 5M WU with a hard cap.  Do not flip `RAG_PINECONE_WRITE_CLASS` and do not prune the live index in this window.  Full argument: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.  Writer-split design unchanged: `docs/designs/2026-08-16-proposer-corpus-storage.md`.
+
 ## 2026-07-13 evidence-contract and learning-boundary update
 
 The implemented decision path now treats evidence routing as a first-class contract:

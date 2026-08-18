@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
+
+Owner: $230.44 of $300 trial left, 12 days; likely Builder ~Aug 30; keep using Pinecone, do not prune.  Question: is more storage better for Green/Red, or is condensing the corpus?  **Hybrid: condense-first for Pinecone, store-more locally.**  Builder is 10 GB / 5M WU (hard cap), not unlimited raw 10-Ks.  Do not flip write-class.  Do not raise the 2.5M fuse (pacer already ~4.8M/day).  FilingAPI stays #2792.
+
+PR on `cursor/pinecone-store-vs-condense-ce2b`.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.  Rollout: `docs/rollouts/2026-08-18-pinecone-store-vs-condense.md`.
+
 ## 2026-08-17 CURSOR — Blind-spots audit (report-only)
 
 Red-team panel across legal/fintech, product identity, a11y (beyond #2795), i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  Live `gh` snapshot so FilingAPI / Pinecone 2M / PWA / ASOF claims stay current.  Register: `docs/audits/2026-08-17-blind-spots.md`.  Branch `cursor/blind-spots-audit-299e`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
