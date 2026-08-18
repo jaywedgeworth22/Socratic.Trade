@@ -13,7 +13,7 @@ ASC discarded the hung-sidecar / MCP hypothesis.  No Alpaca sidecar.  Gateway is
 
 Fix: first wait 16s (above live max 14s) on getAccounts / portfolio / `getAccount`; shrink FTS tick to 2s / 6 chunks / 1-row first group and do not start a slice that cannot fit the remaining budget.  Do not hide with copy.  Do not bounce Coolify.  Do not merge.  Do not touch #2841 / #2840 / #2812 / strategy logic.
 
-Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
 
 ## 2026-08-18 CURSOR — getAccounts 6s timeout blocks Run once after deploy
 

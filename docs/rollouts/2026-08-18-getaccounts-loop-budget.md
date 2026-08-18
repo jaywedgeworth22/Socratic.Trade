@@ -47,9 +47,14 @@ Focused (full suite not re-run):
 
 ```bash
 npx vitest run test/inflight-deadline.test.ts test/sec-ingest-worker.test.ts test/dashboard-agentic-fallback.test.ts
-npx tsc --noEmit
-npm run lint
+# Test Files  3 passed (3)
+# Tests  43 passed (43)
+
+npx tsc --noEmit   # exit 0
+npm run lint       # 0 errors, grandfathered warnings only
 ```
+
+PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2848
 
 ## Next Steps & Blockers
 
