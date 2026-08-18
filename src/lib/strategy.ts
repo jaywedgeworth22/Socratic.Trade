@@ -113,7 +113,7 @@ import { atr, atrStopPct, sma, type OHLCBar } from "./indicators";
 import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
 import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
-import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
+import { getTaxSummary, getUserWashSaleLockProvenance, overlayAccountTaxationType } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
@@ -4852,8 +4852,21 @@ async function proposeTrades(input: {
   const skippedCounterfactuals = selectBalancedCounterfactuals(
     getSkippedCandidateReturns(currentPrices, input.userId, { ...cfOptions, benchmarkReturnBySnapshotDate: cfBenchmark })
   );
+  const buyerIsIra = isIraTaxRegime(
+    input.activeAccount?.taxationType,
+    input.policy.taxSettings?.taxationType,
+    input.activeAccount?.capabilities?.accountType
+  );
   const taxSummary = input.policy.accountNumber
-    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId, input.prefetched)
+    ? getTaxSummary(
+        input.policy.accountNumber,
+        source,
+        currentPrices,
+        overlayAccountTaxationType(input.policy.taxSettings, input.activeAccount?.taxationType),
+        new Date(),
+        input.userId,
+        input.prefetched
+      )
     : null;
   // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
   // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
@@ -4868,11 +4881,7 @@ async function proposeTrades(input: {
   // (isIraTaxRegime).
   const iraWashSaleDisregard =
     (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard") === "disregard" &&
-    isIraTaxRegime(
-      input.activeAccount?.taxationType,
-      input.policy.taxSettings?.taxationType,
-      input.activeAccount?.capabilities?.accountType
-    );
+    buyerIsIra;
   const washSaleRebuyCosts = (() => {
     if (washSaleHandling === "block" || !taxSummary) return undefined;
     const stRate = input.policy.taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
@@ -4896,16 +4905,20 @@ async function proposeTrades(input: {
         ...(washSaleHandling !== "block" ? { washSaleHandling } : {}),
         ...(iraWashSaleDisregard ? { iraWashSaleDisregard: true } : {}),
         ...(washSaleRebuyCosts ? { washSaleRebuyCosts } : {}),
-        positionsNearLongTerm: taxSummary.openLots
-          .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
-          .map((lot) => ({
-            symbol: lot.symbol,
-            daysToLongTerm: lot.daysToLongTerm,
-            ...(lot.earlyExitTaxPremium != null && lot.earlyExitTaxPremium > 0
-              ? { earlyExitTaxPremium: Math.round(lot.earlyExitTaxPremium) }
-              : {})
-          })),
-        harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
+        ...(buyerIsIra
+          ? {}
+          : {
+              positionsNearLongTerm: taxSummary.openLots
+                .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
+                .map((lot) => ({
+                  symbol: lot.symbol,
+                  daysToLongTerm: lot.daysToLongTerm,
+                  ...(lot.earlyExitTaxPremium != null && lot.earlyExitTaxPremium > 0
+                    ? { earlyExitTaxPremium: Math.round(lot.earlyExitTaxPremium) }
+                    : {})
+                })),
+              harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
+            })
       }
     : null;
   const executionMode = llmExecutionMode(executionState) ?? "no-account";
@@ -4931,6 +4944,7 @@ async function proposeTrades(input: {
     hasTaxContext: taxContext != null,
     washSaleHandling,
     iraWashSaleDisregard,
+    isIraAccount: buyerIsIra,
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
     stopLossPct: input.policy.riskRules.stopLossPct ?? 8,

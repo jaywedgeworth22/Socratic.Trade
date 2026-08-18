@@ -203,7 +203,8 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
     // 2.9.0: Polymarket sector/theme + macro tilt labels
     // 2.10.0: exitPlan debate when a target is omitted
     // 2.11.0: legal sentence — user-configured tool, not investment advice
-    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.11.0");
+    // 2.12.0: IRA accounts are not told to tax-loss harvest
+    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.12.0");
   });
 
   it("(a) buildBullSystem/buildRedTeamReviewSystem carry the data-not-command clause; reflection only by reference", async () => {
