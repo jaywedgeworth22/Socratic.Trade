@@ -9,7 +9,7 @@ Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: 
 
 Coolify SELECT-only sha `cda485ff`.  Jay 12:03 CT = audit `d0359642` 2026-08-18T17:03:07Z: scanned=505 quotes=0 candidates=0 cached=true, abort + empty stale fallback, written as `market_scan` not `_failed`.  Same abort since 2026-08-13T22:30Z.  Last good `2f2a8e11` (515/513/65).  Watchlist XOM+SPCX (2).  Not empty-universe.  Not ranker-zero.  Not #2829.
 
-`fetchNasdaqScreener` now `BROWSER_UA` + `fetchWithRetry`.  Yahoo whole-set fallback.  Abort/0-quotes on a non-empty universe → 503 + `market_scan_failed`.  Empty abort rows are not last-good.  iOS shows 503 warnings + scanned/quotes; no Guardrails blame.  Rebased onto `6429d984` (#2829).  Live S&P skip-enrichment on this VM: 498 quotes / 38 candidates.  `xcodebuild` not run.
+Verified abort cause: `fetchNasdaqScreener` `setTimeout(() => controller.abort(), 8000)` with no reason, left armed through `response.json()` of the 8000-row table.  That is “This operation was aborted”, not the 20s deadline.  Screener still used stub `"Mozilla/5.0"` while nasdaq-quote already used `BROWSER_UA`.  Now `BROWSER_UA` + `fetchWithRetry`, timer cleared on headers, 12s named timeout, Yahoo whole-set, 503 last resort.  Live S&P skip-enrichment on this VM: 498 quotes / 38 candidates.  `xcodebuild` not run.
 
 PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
 

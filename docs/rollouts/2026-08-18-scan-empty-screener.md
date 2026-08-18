@@ -6,7 +6,9 @@ Coolify SELECT-only receipts on sha `cda485ff`.  Jay's 12:03 CT iOS Scan is audi
 
 ## Changes Made
 
-`fetchNasdaqScreener` uses `BROWSER_UA` + `fetchWithRetry`.  Yahoo whole-set fallback if Nasdaq still fails.  Abort / 0-quotes on a non-empty universe is HTTP 503 + `market_scan_failed`, not a silent 200 `market_scan`.  Empty abort rows are not last-good.  iOS decodes the 503 body so warnings + scanned/quotes counts show; copy does not blame Guardrails or the watchlist.
+Verified abort cause: `fetchNasdaqScreener` `setTimeout(() => controller.abort(), 8000)` with no reason, left armed through `response.json()` of the 8000-row table.  `abort()` with no reason is exactly “This operation was aborted.”  The 20s interactive deadline uses a different message (“Interactive market scan deadline exceeded.”).  The screener still sent stub `"Mozilla/5.0"` while nasdaq-quote / nasdaq-calendar already used `BROWSER_UA` because bot UAs hang on api.nasdaq.com (live-verified 2026-08-05).  Coolify fetch+parse of ~7k rows can also land near 8s, so the timer aborted the body.  Last good 2026-08-13T16:15:45Z (513 quotes).
+
+Fix: `BROWSER_UA` + `fetchWithRetry`, clear the timer when headers arrive, 12s named timeout, Yahoo whole-set fallback, 503 + `market_scan_failed` if both fail.  iOS decodes the 503 body (warnings + counts).  Copy does not blame Guardrails.
 
 - `src/lib/market.ts` — `BROWSER_UA` + `fetchWithRetry`; seed only when it actually prices names; 503 last resort
 - `src/lib/scan-singleflight.ts` — `isUnusableEmptyMarketScan` (505 / 0 / 0 is not last-good)
@@ -31,8 +33,8 @@ Coolify SELECT-only receipts on sha `cda485ff`.  Jay's 12:03 CT iOS Scan is audi
 
 ```bash
 git rebase origin/main   # clean onto 6429d984 (#2829)
-npx vitest run test/scan-empty-screener.test.ts test/market-custom-symbol.test.ts
-# 16 passed (abort receipt + BROWSER_UA + 503 market_scan_failed)
+npx vitest run test/scan-empty-screener.test.ts
+# 13 passed (named 12s timeout ≠ generic abort / 20s deadline; body not aborted after headers)
 npx tsc --noEmit  # clean
 ```
 

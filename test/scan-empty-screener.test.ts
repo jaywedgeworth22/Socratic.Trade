@@ -5,7 +5,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { NextResponse } from "next/server";
 import { getPolicy, latestAuditByKind, resetDbForTesting, setPolicy, upsertConnectedAccount } from "../src/lib/db";
 import { isUnusableEmptyMarketScan } from "../src/lib/scan-singleflight";
-import { clearMarketCache, scanMarket, ScanQuotesUnavailableError } from "../src/lib/market";
+import {
+  clearMarketCache,
+  NASDAQ_SCREENER_TIMEOUT_MESSAGE,
+  NASDAQ_SCREENER_TIMEOUT_MS,
+  scanMarket,
+  ScanQuotesUnavailableError
+} from "../src/lib/market";
 import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
 import { BROWSER_UA } from "../src/lib/web-sources/http";
 import { marketScanQuotesFromAudit } from "../src/lib/scan-singleflight";
@@ -22,6 +28,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("empty screener + expired seed", () => {
@@ -196,6 +203,84 @@ describe("fetchNasdaqScreener transport", () => {
     expect(seen[0]?.userAgent).not.toBe("Mozilla/5.0");
     expect(seen[0]?.origin).toBe("https://www.nasdaq.com");
     expect(seen[0]?.referer).toBe("https://www.nasdaq.com/");
+  });
+
+  it("names the screener timeout, not the generic This operation was aborted / 20s deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (!url.includes("api.nasdaq.com")) {
+        return new Response("not found", { status: 404 });
+      }
+      await new Promise((_resolve, reject) => {
+        const fail = () => {
+          reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+        };
+        if (init?.signal?.aborted) fail();
+        else init?.signal?.addEventListener("abort", fail, { once: true });
+      });
+      return new Response("not found", { status: 404 });
+    });
+
+    let caught: unknown;
+    const pending = scanMarket(["AAPL"], [], undefined, undefined, [], { enrichmentMode: "skip" }).then(
+      (scan) => scan,
+      (error: unknown) => {
+        caught = error;
+      }
+    );
+    await vi.advanceTimersByTimeAsync(NASDAQ_SCREENER_TIMEOUT_MS);
+    await pending;
+    expect(caught).toBeInstanceOf(ScanQuotesUnavailableError);
+    const unavailable = caught as ScanQuotesUnavailableError;
+    expect(unavailable.scannedSymbols).toBe(1);
+    expect(unavailable.returnedQuotes).toBe(0);
+    expect(unavailable.warnings.join(" ")).toContain(NASDAQ_SCREENER_TIMEOUT_MESSAGE);
+    expect(unavailable.warnings.join(" ")).not.toMatch(/This operation was aborted/);
+    expect(unavailable.warnings.join(" ")).not.toMatch(/Interactive market scan deadline exceeded/);
+  });
+
+  it("does not abort the 8000-row JSON body after screener headers arrive", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", async (_request: RequestInfo | URL, init?: RequestInit) => {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, NASDAQ_SCREENER_TIMEOUT_MS - 1_000);
+        const fail = () => {
+          clearTimeout(timer);
+          reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+        };
+        if (init?.signal?.aborted) fail();
+        else init?.signal?.addEventListener("abort", fail, { once: true });
+      });
+      return new Response(
+        JSON.stringify({
+          data: {
+            asof: "2026-08-18",
+            table: {
+              rows: [{
+                symbol: "AAPL",
+                name: "Apple Inc",
+                lastsale: "$210.50",
+                netchange: "2.5",
+                pctchange: "1.2%",
+                marketCap: "3000000000000",
+                volume: "1000000",
+                sector: "Technology",
+                industry: "Consumer Electronics"
+              }]
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const pending = scanMarket(["AAPL"], [], undefined, undefined, [], { enrichmentMode: "skip" });
+    await vi.advanceTimersByTimeAsync(NASDAQ_SCREENER_TIMEOUT_MS - 1_000);
+    const scan = await pending;
+    expect(scan.returnedQuotes).toBe(1);
+    expect(scan.topCandidates[0]?.symbol).toBe("AAPL");
+    expect(scan.source).toContain("nasdaq-delayed-screener");
   });
 });
 

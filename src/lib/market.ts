@@ -93,9 +93,18 @@ function notableCongressAnalyticsScore(sig?: SymbolWebSignal): number {
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0";
-// Same Chrome desktop UA + Origin/Referer as nasdaq-quote / nasdaq-calendar.
-// The stub "Mozilla/5.0" UA hangs against api.nasdaq.com until the 8s abort
-// (live since 2026-08-13T22:30Z). BROWSER_UA returns 200 on the same host.
+// Verified abort cause (prod d0359642, every scan since 2026-08-13T22:30Z):
+// fetchNasdaqScreener armed `setTimeout(() => controller.abort(), 8000)` with NO
+// reason and left it armed through `response.json()` of the 8000-row table.
+// abort() with no reason throws "This operation was aborted" — that is NOT the
+// 20s withScanDeadline (that message is "Interactive market scan deadline exceeded.").
+// nasdaq-quote / nasdaq-calendar already use BROWSER_UA because stub / bot UAs
+// hang on api.nasdaq.com (live-verified 2026-08-05). The screener still sent
+// "Mozilla/5.0". Coolify fetch+parse of ~7k rows can also land near 8s, so the
+// timer aborted the body read. Last good: 2026-08-13T16:15:45Z, 513 quotes.
+export const NASDAQ_SCREENER_TIMEOUT_MS = 12_000;
+export const NASDAQ_SCREENER_TIMEOUT_MESSAGE =
+  "Nasdaq delayed screener timed out waiting for api.nasdaq.com.";
 const NASDAQ_SCREENER_UA = BROWSER_UA;
 const DEFAULT_ENRICHMENT_POOL_MULTIPLIER = 5;
 const DEFAULT_ENRICHMENT_POOL_CAP = 500;
@@ -1301,10 +1310,11 @@ async function fetchNasdaqScreener(
   }
 
   const controller = new AbortController();
+  const timeoutError = new Error(NASDAQ_SCREENER_TIMEOUT_MESSAGE);
   const abortFromCaller = () => controller.abort(signal?.reason);
   if (signal?.aborted) abortFromCaller();
   else signal?.addEventListener("abort", abortFromCaller, { once: true });
-  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const timeout = setTimeout(() => controller.abort(timeoutError), NASDAQ_SCREENER_TIMEOUT_MS);
   try {
     const response = await fetchWithRetry(
       nasdaqScreenerUrl(exchange),
@@ -1320,6 +1330,9 @@ async function fetchNasdaqScreener(
       },
       { service: "nasdaq-delayed-screener", retries: 1 }
     );
+    // Headers are in.  Clear the timer before reading the 8000-row body so a
+    // Coolify fetch that lands near the budget cannot abort JSON parse.
+    clearTimeout(timeout);
     if (!response.ok) throw new Error(`Market data request failed with ${response.status}.`);
 
     const payload = await response.json();
@@ -1327,6 +1340,10 @@ async function fetchNasdaqScreener(
     const asOf = typeof payload?.data?.asof === "string" ? payload.data.asof : undefined;
     screenerCache.set(cacheKey, { rows, asOf, expiresAt: expiresAtRespectingMarketClose(new Date(now), ttlMs) });
     return { rows, asOf, cached: false };
+  } catch (error) {
+    const reason = controller.signal.reason;
+    if (reason instanceof Error) throw reason;
+    throw error;
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
