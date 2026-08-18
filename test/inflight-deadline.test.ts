@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GET_ACCOUNTS_FIRST_MS,
   GET_ACCOUNTS_RETRY_MS,
+  ALPACA_ACCOUNT_READ_FIRST_MS,
+  ALPACA_ACCOUNT_READ_RETRY_MS,
   EQUITY_QUOTES_MS,
   OPTION_POSITIONS_MS,
+  alpacaAccountReadBudgetMs,
   awaitWithFirstCallRetry,
   firstOutcomeOf,
   getAccountsTimeoutMessage,
@@ -61,6 +64,11 @@ describe("awaitWithFirstCallRetry", () => {
     expect(GET_ACCOUNTS_FIRST_MS).toBeGreaterThan(14_416);
     expect(EQUITY_QUOTES_MS).toBeGreaterThan(14_416);
     expect(OPTION_POSITIONS_MS).toBeGreaterThan(14_416);
+    expect(alpacaAccountReadBudgetMs()).toEqual({
+      firstMs: ALPACA_ACCOUNT_READ_FIRST_MS,
+      retryMs: ALPACA_ACCOUNT_READ_RETRY_MS
+    });
+    expect(alpacaAccountReadBudgetMs().firstMs).toBeGreaterThan(14_416);
   });
 
   it("uses a fresh retry when the first call stays pending", async () => {

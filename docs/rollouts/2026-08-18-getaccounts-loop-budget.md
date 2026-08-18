@@ -49,6 +49,8 @@ Fix:
 - `src/lib/scheduler.ts`
 - `src/lib/rag/sec-ingest-worker.ts`
 - `test/inflight-deadline.test.ts`
+- `test/alpaca-mcp.test.ts`
+- `test/stale-running-runs.test.ts`
 - `test/sec-ingest-worker.test.ts`
 - `test/roic-transcripts.test.ts`
 - `STATUS.md`
@@ -65,13 +67,15 @@ Fix:
 - Did not hide the embed "OpenRouter embed connection failed" / 8193 error with copy.
 - Did not rewrite other long scheduler lanes (`synthetic-stop-monitor` avg 7.2s, `stale-limit-scan` avg 5.9s).
 - FTS ingest will take more ticks (6 vs 20 chunks) and ROIC walks will pause mid-universe when a run starts.  That is the cost of letting Green start.
+- The getAccount retry test mocks a short first-call budget.  Live `ALPACA_ACCOUNT_READ_FIRST_MS` stays 16s.  Fake-timer + 16s + a never-settling first promise hung verify-hosted 60s.
+- Stale-run sweep compares `started_at` to process boot.  Same-process 30m stall (Roth `b3b83913`, `processStartedAt` 23:10:43Z) is `stalled_no_progress`, not "Process restarted mid-run".
 
 ## Verification State
 
-verify-hosted on `0a1e212e` timed out 60000ms at `test/alpaca-mcp.test.ts:214` (`retries getAccount when the first REST SDK call stays pending`).  The test advanced 5s after `readAccount` first wait moved to 16s, then awaited a still-pending promise under fake timers.  The test now advances `ALPACA_ACCOUNT_READ_FIRST_MS`.  The test is kept.
+verify-hosted: 7010 passed, 1 failed at `test/alpaca-mcp.test.ts:214` (60s).  That test now mocks a short `alpacaAccountReadBudgetMs` and uses real timers.  The test is kept.
 
 ```bash
-npx vitest run test/alpaca-mcp.test.ts test/inflight-deadline.test.ts
+npx vitest run test/alpaca-mcp.test.ts test/inflight-deadline.test.ts test/stale-running-runs.test.ts
 npx tsc --noEmit
 ```
 

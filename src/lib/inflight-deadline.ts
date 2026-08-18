@@ -19,6 +19,12 @@ export const PORTFOLIO_BUNDLE_RETRY_MS = 8_000;
 export const ALPACA_ACCOUNT_READ_FIRST_MS = 16_000;
 export const ALPACA_ACCOUNT_READ_RETRY_MS = 8_000;
 export const ALPACA_MCP_FETCH_MS = 8_000;
+
+/** Live first-wait / retry for Alpaca REST `getAccount`.  Read at call time so tests can
+ *  mock a short budget without changing the 16s production wait. */
+export function alpacaAccountReadBudgetMs(): { firstMs: number; retryMs: number } {
+  return { firstMs: ALPACA_ACCOUNT_READ_FIRST_MS, retryMs: ALPACA_ACCOUNT_READ_RETRY_MS };
+}
 /** Same in-process broker lane as getAccounts.  Live 6s / 8s withDeadline races. */
 export const EQUITY_QUOTES_MS = 16_000;
 export const OPTION_POSITIONS_MS = 16_000;

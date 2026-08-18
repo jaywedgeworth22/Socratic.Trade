@@ -1,8 +1,10 @@
 # Current Handoff
 
-## 2026-08-18 CURSOR — #2848 verify hang in alpaca-mcp getAccount retry
+## 2026-08-18 CURSOR — #2848 verify hang + same-process stall labeled restart
 
-verify-hosted timed out 60000ms at `test/alpaca-mcp.test.ts:214`.  The test still advanced 5s after `readAccount` first wait moved to 16s, then `await`ed a pending promise under fake timers.  Advance the real `ALPACA_ACCOUNT_READ_FIRST_MS` budget.  Do not skip the test.  Live-path ROIC/FTS pause + FTS bound + 16s wait stay.  Do not merge.
+verify-hosted: 7010 passed, 1 failed.  `test/alpaca-mcp.test.ts:214` timed out 60000ms — the 16s live first wait plus a never-settling first `getAccount` hung fake-timer advance.  Mock a short `alpacaAccountReadBudgetMs` in that test only.  Keep the live 16s wait and ROIC/FTS pause.
+
+Same process `4abfb7fa` (`processStartedAt` 23:10:43Z, uptime ~34m) sweep-failed Roth `b3b83913` as "Process restarted mid-run".  That run started at 23:13:25Z on this process and sat llm=0.  Restart only when `started_at` predates boot; a same-process 30m stall is `stalled_no_progress`.  Do not merge.
 
 ## 2026-08-18 CURSOR — Manual Run once starved by ROIC / FTS on the event loop
 

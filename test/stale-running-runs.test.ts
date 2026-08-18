@@ -46,6 +46,8 @@ describe("markStaleRunningRuns", () => {
       .get(runId) as { status: string; summary: string | null };
     expect(row.status).toBe("failed");
     expect(row.summary).toContain("stale-run sweep");
+    expect(row.summary).toContain("stalled with no progress");
+    expect(row.summary).not.toContain("Process restarted mid-run");
 
     const receipts = crashedReceipts(db, userId);
     expect(receipts).toHaveLength(1);
@@ -329,6 +331,37 @@ describe("markStaleRunningRuns", () => {
       .prepare("SELECT status FROM strategy_runs WHERE id = ?")
       .get(runId) as { status: string };
     expect(row.status).toBe("failed");
+    expect(row.summary).toContain("stalled with no progress");
+    expect(row.summary).not.toContain("Process restarted mid-run");
     expect(crashedReceipts(db, userId)).toHaveLength(1);
+    expect(JSON.parse(crashedReceipts(db, userId)[0].payload).reason).toBe("stalled_no_progress");
+  });
+
+  it("does not call a same-process stall a restart (Roth b3b83913 shape)", async () => {
+    const { staleRunningRunSweepCause, staleRunningRunSweepSummary } = await import("../src/lib/db-execution");
+    const processStartedMs = Date.parse("2026-08-18T23:10:43.000Z");
+    const startedAt = "2026-08-18T23:13:25.000Z";
+    expect(staleRunningRunSweepCause(startedAt, processStartedMs)).toBe("stalled_no_progress");
+    expect(staleRunningRunSweepSummary(startedAt, processStartedMs)).toContain("stalled with no progress");
+    expect(staleRunningRunSweepSummary(startedAt, processStartedMs)).not.toContain("Process restarted");
+  });
+
+  it("labels a run that predates this process as a restart leftover", async () => {
+    const db = await import("../src/lib/db");
+    const userId = `prior-process-user-${randomUUID()}`;
+    const runId = randomUUID();
+    const startedAt = new Date(Date.now() - 2 * STALE_THRESHOLD_MS).toISOString();
+
+    db.insertStrategyRun(runId, userId);
+    db.getDb().prepare("UPDATE strategy_runs SET started_at = ? WHERE id = ?").run(startedAt, runId);
+
+    expect(db.markStaleRunningRuns(Date.now())).toBe(1);
+    const row = db
+      .getDb()
+      .prepare("SELECT status, summary FROM strategy_runs WHERE id = ?")
+      .get(runId) as { status: string; summary: string | null };
+    expect(row.status).toBe("failed");
+    expect(row.summary).toContain("Process restarted mid-run");
+    expect(JSON.parse(crashedReceipts(db, userId)[0].payload).reason).toBe("process_restarted_mid_run");
   });
 });
