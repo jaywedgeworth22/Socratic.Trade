@@ -333,6 +333,7 @@ describe("resolveModelRotationForRun", () => {
       });
       expect(out.llmModel).toBeTruthy();
       expect(out.llmModel).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
+      expect(out.llmModel).not.toBe("gpt-5.6-terra");
       expect(pool).toContain(out.llmModel!); // always a concrete eligible model
       expect(out.redTeamLlmModel).toBeUndefined(); // red seat not rotating
       expect(out.redTeamReasoningEffort).toBeUndefined(); // ...so its effort is untouched too
@@ -349,15 +350,17 @@ describe("resolveModelRotationForRun", () => {
     const userId = `rot-weight-${randomUUID()}`;
     const accountId = "acct-weight";
     const { upsertUserApiKey } = await import("../src/lib/db");
-    const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    const { resolveModelRotationForRun, eligibleRotationPool, greenFirstPickPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     const { pool } = await eligibleRotationPool(userId);
-    const n = pool.length;
+    const firstPick = greenFirstPickPool(pool);
+    const n = firstPick.length;
     expect(n).toBeGreaterThanOrEqual(3);
+    expect(firstPick[0]).not.toBe("gpt-5.6-terra");
     // An r on the uniform/weighted boundary: with all-zero stats (uniform weight 2, total 2n) it
-    // lands in pool[0]'s slice (r * 2n < 2 for n >= 3); once pool[0] carries the only committed
-    // pick (weight 1, total 2n - 1) the same r clears pool[0]'s halved slice (r * (2n-1) = 1.5 >= 1)
-    // and lands in pool[1]'s.
+    // lands in firstPick[0]'s slice (r * 2n < 2 for n >= 3); once firstPick[0] carries the only
+    // committed pick (weight 1, total 2n - 1) the same r clears that halved slice
+    // (r * (2n-1) = 1.5 >= 1) and lands in firstPick[1]'s.
     const r = 1.5 / (2 * n - 1);
     const baseline = await resolveModelRotationForRun({
       userId,
@@ -366,8 +369,8 @@ describe("resolveModelRotationForRun", () => {
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
       random: () => r
     });
-    expect(baseline.llmModel).toBe(pool[0]);
-    baseline.commit(); // pool[0] is now the only represented model -> weight 1, everything else 2
+    expect(baseline.llmModel).toBe(firstPick[0]);
+    baseline.commit(); // firstPick[0] is now the only represented model -> weight 1, everything else 2
     const shifted = await resolveModelRotationForRun({
       userId,
       accountId,
@@ -375,8 +378,8 @@ describe("resolveModelRotationForRun", () => {
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
       random: () => r
     });
-    expect(shifted.llmModel).toBe(pool[1]);
-    // Overrepresented is NOT excluded: r = 0 still lands in pool[0]'s (weight-1) slice.
+    expect(shifted.llmModel).toBe(firstPick[1]);
+    // Overrepresented is NOT excluded: r = 0 still lands in firstPick[0]'s (weight-1) slice.
     const still = await resolveModelRotationForRun({
       userId,
       accountId,
@@ -384,7 +387,7 @@ describe("resolveModelRotationForRun", () => {
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
       random: () => 0
     });
-    expect(still.llmModel).toBe(pool[0]);
+    expect(still.llmModel).toBe(firstPick[0]);
   });
 
   it("rotates both seats independently, audits every pick with its weighting receipts, and scopes representation per account", async () => {
@@ -440,8 +443,10 @@ describe("resolveModelRotationForRun", () => {
     }
     // A different account starts from its OWN (empty) representation, independent of acct-A's
     // committed picks: on the uniform/weighted boundary r (see the weighting test above), acct-B
-    // still resolves pool[0] — leaked acct-A history (or leaked red-seat history) would shift it.
-    const r = 1.5 / (2 * pool.length - 1);
+    // still resolves firstPick[0] — leaked acct-A history (or leaked red-seat history) would shift it.
+    const { greenFirstPickPool } = await import("../src/lib/model-rotation");
+    const firstPick = greenFirstPickPool(pool);
+    const r = 1.5 / (2 * firstPick.length - 1);
     const other = await resolveModelRotationForRun({
       userId,
       accountId: "acct-B",
@@ -449,8 +454,8 @@ describe("resolveModelRotationForRun", () => {
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
       random: () => r
     });
-    expect(other.llmModel).toBe(pool[0]);
-    expect(other.llmModel).toBe(out.llmModel); // acct-A's first pick was pool[0] too (r = 0)
+    expect(other.llmModel).toBe(firstPick[0]);
+    expect(other.llmModel).toBe(out.llmModel); // acct-A's first pick was firstPick[0] too (r = 0)
   });
 
   it("fails the rotating seats closed (empty override models, not the sentinel) when no credential resolves at all", async () => {
@@ -499,30 +504,31 @@ describe("resolveModelRotationForRun", () => {
     const userId = `rot-abort-${randomUUID()}`;
     const accountId = "acct-abort";
     const { upsertUserApiKey, getDb } = await import("../src/lib/db");
-    const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    const { resolveModelRotationForRun, eligibleRotationPool, greenFirstPickPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     const { pool } = await eligibleRotationPool(userId);
-    expect(pool.length).toBeGreaterThanOrEqual(3);
-    // Uniform/weighted boundary r (see the weighting test): uniform stats -> pool[0]; after ONE
-    // committed pool[0] pick -> pool[1].
-    const r = 1.5 / (2 * pool.length - 1);
+    const firstPick = greenFirstPickPool(pool);
+    expect(firstPick.length).toBeGreaterThanOrEqual(3);
+    // Uniform/weighted boundary r (see the weighting test): uniform stats -> firstPick[0]; after ONE
+    // committed firstPick[0] pick -> firstPick[1].
+    const r = 1.5 / (2 * firstPick.length - 1);
     const random = () => r;
     // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget).
     const first = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
     // Run 2: the aborted run recorded nothing, so the same rng resolves the SAME model.
     const second = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
-    expect(first.llmModel).toBe(pool[0]);
+    expect(first.llmModel).toBe(firstPick[0]);
     expect(second.llmModel).toBe(first.llmModel);
     const auditCount = () =>
       (getDb()
         .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
         .get(userId) as { n: number }).n;
     expect(auditCount()).toBe(0); // no representation recorded by the aborted runs
-    // Run 2 now actually serves the LLM and commits -> pool[0] is represented (weight halved), so
+    // Run 2 now actually serves the LLM and commits -> firstPick[0] is represented (weight halved), so
     // the same rng shifts run 3 to the next underrepresented model.
     second.commit();
     const third = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
-    expect(third.llmModel).toBe(pool[1]);
+    expect(third.llmModel).toBe(firstPick[1]);
     expect(third.llmModel).not.toBe(first.llmModel);
   });
 });
@@ -565,6 +571,31 @@ describe("implicitGreenRotationFallbacks", () => {
     expect(implicitGreenRotationFallbacks(["a", "b", "c", "d"], "b")).toEqual(["a", "c"]);
     expect(implicitGreenRotationFallbacks(["a", "b", "c"], "a", ["c"])).toEqual(["b"]);
     expect(implicitGreenRotationFallbacks(["a"], "a")).toEqual([]);
+  });
+
+  it("does not pick terra first when Gemini Flash / Mistral Medium seats remain", async () => {
+    const {
+      greenFirstPickPool,
+      implicitGreenRotationFallbacks,
+      MODEL_ROTATION_POOL,
+      weightedRotationPick
+    } = await import("../src/lib/model-rotation");
+    const firstPick = greenFirstPickPool(MODEL_ROTATION_POOL);
+    expect(firstPick).not.toContain("gpt-5.6-terra");
+    expect(firstPick).toContain("gemini-flash-latest");
+    expect(firstPick).toContain("mistral-medium-latest");
+    const counts = new Map(firstPick.map((model) => [model, 0]));
+    for (let i = 0; i < 40; i++) {
+      const pick = weightedRotationPick({ pool: firstPick, counts, random: () => i / 40 });
+      expect(pick?.model).not.toBe("gpt-5.6-terra");
+    }
+    expect(greenFirstPickPool(["gpt-5.6-terra"])).toEqual(["gpt-5.6-terra"]);
+    const fallbacks = implicitGreenRotationFallbacks(MODEL_ROTATION_POOL, "claude-haiku-4.5");
+    expect(fallbacks).toEqual(["gemini-flash-latest", "mistral-medium-latest"]);
+    expect(fallbacks).not.toContain("gpt-5.6-terra");
+    const afterTerra = implicitGreenRotationFallbacks(MODEL_ROTATION_POOL, "gpt-5.6-terra");
+    expect(afterTerra[0]).toBe("gemini-flash-latest");
+    expect(afterTerra[1]).toBe("mistral-medium-latest");
   });
 });
 
