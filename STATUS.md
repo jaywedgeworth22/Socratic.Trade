@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — iOS UX owner cut (rebased onto main)
+
+Rebased #2825 `cursor/ios-ux-owner-cut-bdae` onto `main` (`995b7eee` #2815).  Kept IRA wash-sale N/A, lowercase “rotate models”, full jargon sweep, Ask-First ↔ Autopilot + % NAV caps on device.  Kept #2815 legal clickwrap / Terms+Privacy, #2821 Daily AI Budget, and #2821 Data Sources number rows.  No coordinator notes in the UI.  Did not steal reserved PRs.  Do not merge until GitHub mergeable is CLEAN.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
+
 ## 2026-08-18 CURSOR — Per-user LLM daily budget (Settings + iOS)
 
 **MERGED #2821 `972e3763`.**  Live store is `user_settings.llm_daily_budget` via `GET|PATCH /api/settings/llm-budget`.  Resolution: user setting → legacy `policy.tuning` → retired env `TRIGGER_LLM_DAILY_*`.  Explicit `0` = no cap.  When a cap is set and today's ledger cannot be read, skip LLM/RAG/chat (`ledger_unavailable`).  `RAG_RUN_BUDGET_*` is a Data Sources setting.  System secrets stay Infisical.  Console/iOS copy is product language only.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.

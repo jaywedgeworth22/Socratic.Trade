@@ -61,9 +61,10 @@ Touched files:
 
 ## Next Steps & Blockers
 
+- Rebased onto `main` at `995b7eee` (#2815).  Real conflicts were Data Sources footer, Home checklist, and Login privacy note.  Kept #2815 Terms/Privacy clickwrap and jargon-free session copy; kept #2821 Daily AI Budget and number rows.
 - CI `verify` (JS) plus iOS compile on the Mac runner / TestFlight ship after merge.
 - Reconcile copy with #2814 if that PR is still open at merge time.
-- Do not steal the reserved PRs listed above.
+- Do not steal the reserved PRs listed above.  Do not merge this PR from the agent seat.
 
 ## Zero-Code Findings
 
