@@ -11,8 +11,11 @@
 // Class A ops (create + ~16 parts at 100 MB + complete + list + up to a couple deletes)
 // ≈ 90/month vs the 1M free-tier allowance; storage is retain×DB-size.  The live DB
 // is ~4.2 GB (2026-08-15), so retain is pinned at 1 (~4.2 GB of the 10 GiB free
-// tier).  Four copies would be ~17 GB and trip the 70% guard.  R2_COLD_SNAPSHOT_RETAIN
-// values above 1 are ignored so a leftover env cannot leave the free tier.  A budget guard refuses
+// tier).  Four copies would be ~17 GB and trip the 70% guard.  Live Infisical
+// still ships `R2_ARCHIVE_KEEP_GENERATIONS=2` (host proof 2026-08-18); values
+// above 1 on that name or `R2_COLD_SNAPSHOT_RETAIN` are ignored so leftover env
+// cannot keep two weeklies.  This module does not delete objects already in the
+// bucket; the next successful weekly prune honors the cap.  A budget guard refuses
 // to run at all when the r2-usage monitor's latest ST snapshot shows month-to-date Class A
 // ops above 50% of the free tier. The R2 free-tier kill-switch in r2-usage.ts is untouched
 // (it is gated to litestream's endpoint being R2, which it no longer is).
@@ -56,7 +59,19 @@ export const R2_COLD_SNAPSHOT_PREFIX = "cold-snapshots/";
 export const R2_COLD_SNAPSHOT_UTC_DAY = 0; // Sunday
 export const R2_COLD_SNAPSHOT_UTC_HOUR = 3;
 export const R2_COLD_SNAPSHOT_UTC_MINUTE = 17;
-export const R2_COLD_SNAPSHOT_DEFAULT_RETAIN = 1;
+/**
+ * Weekly R2 keep-count.  Live Infisical still has `R2_ARCHIVE_KEEP_GENERATIONS=2`
+ * (host proof 2026-08-18).  Code caps at 1 so two ~4.7 GB weeklies cannot leave
+ * the Cloudflare free 10 GiB tier.  Do not delete live objects from agents;
+ * the next successful weekly prune honors this cap.
+ */
+export const R2_ARCHIVE_KEEP_GENERATIONS_ENV = "R2_ARCHIVE_KEEP_GENERATIONS";
+export const R2_COLD_SNAPSHOT_RETAIN_ENV = "R2_COLD_SNAPSHOT_RETAIN";
+export const R2_ARCHIVE_KEEP_GENERATIONS_DEFAULT = 1;
+export const R2_COLD_SNAPSHOT_DEFAULT_RETAIN = R2_ARCHIVE_KEEP_GENERATIONS_DEFAULT;
+export const R2_COLD_SNAPSHOT_MAX_RETAIN = 1;
+export const R2_COLD_SNAPSHOT_RETENTION_NOTE =
+  "R2 weekly retain/keep-generations is capped at 1 (Cloudflare free 10 GiB). Live leftover R2_ARCHIVE_KEEP_GENERATIONS=2 is ignored; this process does not delete existing R2 objects.";
 export const R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES = 100 * 1024 * 1024; // 100 MB parts
 /** S3 floor for every part except the last. */
 export const R2_COLD_SNAPSHOT_MIN_PART_BYTES = 5 * 1024 * 1024;
@@ -97,6 +112,9 @@ export interface R2WeeklyHealthStatus {
   ageSeconds: number | null;
   key: string | null;
   reason: "archive_stale" | "archive_not_run" | null;
+  /** Effective keep-count after the free-tier cap (1).  Public so a deploy
+   *  can prove the process is not honoring a leftover `R2_ARCHIVE_KEEP_GENERATIONS=2`. */
+  keepGenerations: number;
 }
 
 /**
@@ -106,23 +124,28 @@ export interface R2WeeklyHealthStatus {
  * (8 days). A failed week does not flip `ok` false while the prior success is
  * still inside that window (observability only; not folded into storageDegraded).
  */
+function r2WeeklyBase(): Pick<R2WeeklyHealthStatus, "keepGenerations"> {
+  return { keepGenerations: resolveR2ArchiveKeepGenerations() };
+}
+
 export function getR2WeeklyHealthStatus(nowMs: number = Date.now()): R2WeeklyHealthStatus {
+  const keep = r2WeeklyBase();
   try {
     const last = getInternalSetting<R2ColdSnapshotLastSuccess>(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY);
     if (!last || typeof last.key !== "string" || !last.key || typeof last.completedAt !== "string") {
-      return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run" };
+      return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run", ...keep };
     }
     const completedMs = Date.parse(last.completedAt);
     if (!Number.isFinite(completedMs)) {
-      return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run" };
+      return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run", ...keep };
     }
     const ageSeconds = Math.max(0, Math.floor((nowMs - completedMs) / 1000));
     if (ageSeconds > R2_ARCHIVE_MAX_AGE_SECONDS) {
-      return { ok: false, ageSeconds, key: last.key, reason: "archive_stale" };
+      return { ok: false, ageSeconds, key: last.key, reason: "archive_stale", ...keep };
     }
-    return { ok: true, ageSeconds, key: last.key, reason: null };
+    return { ok: true, ageSeconds, key: last.key, reason: null, ...keep };
   } catch {
-    return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run" };
+    return { ok: false, ageSeconds: null, key: null, reason: "archive_not_run", ...keep };
   }
 }
 
@@ -142,6 +165,26 @@ export interface R2ColdSnapshotConfig {
   partSizeBytes: number;
 }
 
+export function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Weekly generations to keep.  Live Infisical ships `R2_ARCHIVE_KEEP_GENERATIONS=2`;
+ * the owner cut is 1 on the free R2 tier.  Always clamp to
+ * `R2_COLD_SNAPSHOT_MAX_RETAIN` so leftover env=2 cannot keep two ~4.7 GB weeklies.
+ * This resolver does not delete objects already in the bucket.
+ */
+export function resolveR2ArchiveKeepGenerations(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[R2_ARCHIVE_KEEP_GENERATIONS_ENV] ?? env[R2_COLD_SNAPSHOT_RETAIN_ENV];
+  const requested = parsePositiveInt(raw, R2_ARCHIVE_KEEP_GENERATIONS_DEFAULT);
+  return Math.min(requested, R2_COLD_SNAPSHOT_MAX_RETAIN);
+}
+
 /**
  * Env names follow PR #2584's convention: the R2 credentials preserved when litestream's
  * active replica moved to B2 live as AWS_R2_HISTORIC_* (Infisical + .env.example).
@@ -154,11 +197,7 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
   const region = process.env.AWS_R2_HISTORIC_REGION?.trim() || "auto";
   const accessKeyId = process.env.AWS_R2_HISTORIC_ACCESS_KEY_ID?.trim() ?? "";
   const secretAccessKey = process.env.AWS_R2_HISTORIC_SECRET_ACCESS_KEY?.trim() ?? "";
-  const retainRaw = Number(process.env.R2_COLD_SNAPSHOT_RETAIN ?? "");
-  const requestedRetain =
-    Number.isFinite(retainRaw) && retainRaw >= 1 ? Math.floor(retainRaw) : R2_COLD_SNAPSHOT_DEFAULT_RETAIN;
-  // Free-tier cap: one weekly snapshot.  Env may request more; we never keep more than 1.
-  const retain = Math.min(requestedRetain, R2_COLD_SNAPSHOT_DEFAULT_RETAIN);
+  const retain = resolveR2ArchiveKeepGenerations();
   const partMbRaw = Number(process.env.R2_COLD_SNAPSHOT_PART_MB ?? "");
   const partSizeBytes =
     Number.isFinite(partMbRaw) && partMbRaw * 1024 * 1024 >= R2_COLD_SNAPSHOT_MIN_PART_BYTES

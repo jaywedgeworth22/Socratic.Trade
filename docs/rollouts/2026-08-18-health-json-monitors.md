@@ -19,8 +19,13 @@ tier (retain 1).
   `ADMIN_REINDEX_TOKEN` is not a fallback.  Fetch script matches.
   This environment already has a working prod OPS token (64-char, snapshot
   HTTP 200).  Did not mint or rotate a second token.
-- R2 cold-snapshot retain is capped at 1 (`R2_COLD_SNAPSHOT_RETAIN` > 1 is
-  ignored) so the ~4 GB weekly stays on the Cloudflare R2 free tier.
+- R2 weekly keep-generations is capped at 1.  Live Infisical name is
+  `R2_ARCHIVE_KEEP_GENERATIONS` (host proof: process env is 2).  Code reads
+  that name first, then the older `R2_COLD_SNAPSHOT_RETAIN` alias, then
+  defaults to 1, then `Math.min(..., 1)`.  Public
+  `checks.storage.r2Weekly.keepGenerations` is always the capped value so a
+  deploy can prove leftover env=2 is not honored.  Did not delete live R2
+  objects (`cold-snapshots/app-2026-08-16.db`).  No Coolify/Infisical edits.
 - Runbook: `docs/runbooks/uptime-health-json-monitors.md`.
 
 Touched files:
@@ -77,7 +82,10 @@ is the authoritative full-suite gate.
 
 Owner: create the three UptimeRobot keyword monitors from the runbook and
 point them at Pushover.  Allow 4xx/5xx on those keyword monitors.  Leave the
-HTTP 200 monitor as process-down only.
+HTTP 200 monitor as process-down only.  After merge, confirm
+`checks.storage.r2Weekly.keepGenerations` is 1 while leftover Infisical
+`R2_ARCHIVE_KEEP_GENERATIONS=2` remains (no Coolify edit).  Do not delete
+`cold-snapshots/app-2026-08-16.db` from an agent.
 
 ## Zero-Code Findings
 
@@ -85,5 +93,7 @@ Live `https://socratictrade.com/api/health` was already HTTP 200.  Before this
 PR, `schedulerStale` was omitted when healthy, `tradingLivenessDegraded` was
 omitted when not degraded, and `litestreamTiersDegraded` was already present
 as `false`.  Prod `/api/ops/snapshot` already accepted the cloud
-`OPS_DIAGNOSTIC_TOKEN` (ADMIN unset in this environment).  R2 weekly key
-`cold-snapshots/app-2026-08-16.db` was already a single weekly.
+`OPS_DIAGNOSTIC_TOKEN` (ADMIN unset in this environment).  Host proof: live
+process env is `R2_ARCHIVE_KEEP_GENERATIONS=2`, not 1.  Health `r2Weekly.key`
+is `cold-snapshots/app-2026-08-16.db`.  The first pass only capped
+`R2_COLD_SNAPSHOT_RETAIN`, a name that is not set in production.

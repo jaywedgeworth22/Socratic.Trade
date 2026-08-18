@@ -19,10 +19,14 @@ import {
   nextR2ColdSnapshotDueAt,
   planMultipartParts,
   r2ColdSnapshotClassAPct,
+  resolveR2ArchiveKeepGenerations,
   selectColdSnapshotsToPrune,
+  R2_ARCHIVE_KEEP_GENERATIONS_ENV,
   R2_ARCHIVE_MAX_AGE_SECONDS,
   R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES,
   R2_COLD_SNAPSHOT_DEFAULT_RETAIN,
+  R2_COLD_SNAPSHOT_MAX_RETAIN,
+  R2_COLD_SNAPSHOT_RETAIN_ENV,
   R2_COLD_SNAPSHOT_JOB_TYPE,
   R2_COLD_SNAPSHOT_LAST_FAILURE_KEY,
   R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY,
@@ -43,6 +47,7 @@ const CRED_ENVS = [
   "AWS_R2_HISTORIC_SECRET_ACCESS_KEY",
   "R2_COLD_SNAPSHOT_ENABLED",
   "R2_COLD_SNAPSHOT_RETAIN",
+  "R2_ARCHIVE_KEEP_GENERATIONS",
   "R2_COLD_SNAPSHOT_PART_MB",
 ] as const;
 
@@ -166,7 +171,42 @@ describe("loadR2ColdSnapshotConfig", () => {
     const cfg = loadR2ColdSnapshotConfig();
     expect(cfg.partSizeBytes).toBe(R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES);
     expect(R2_COLD_SNAPSHOT_DEFAULT_RETAIN).toBe(1);
+    expect(R2_COLD_SNAPSHOT_MAX_RETAIN).toBe(1);
     expect(cfg.retain).toBe(1);
+  });
+
+  it("ignores live leftover R2_ARCHIVE_KEEP_GENERATIONS=2 (host proof 2026-08-18)", () => {
+    setCreds();
+    process.env.R2_ARCHIVE_KEEP_GENERATIONS = "2";
+    const cfg = loadR2ColdSnapshotConfig();
+    expect(cfg.retain).toBe(1);
+  });
+});
+
+describe("resolveR2ArchiveKeepGenerations", () => {
+  it("defaults to 1 when neither keep-generations env is set", () => {
+    expect(resolveR2ArchiveKeepGenerations({})).toBe(1);
+  });
+
+  it("caps the live Infisical name at 1", () => {
+    expect(resolveR2ArchiveKeepGenerations({ [R2_ARCHIVE_KEEP_GENERATIONS_ENV]: "2" })).toBe(1);
+  });
+
+  it("caps the older retain name at 1", () => {
+    expect(resolveR2ArchiveKeepGenerations({ [R2_COLD_SNAPSHOT_RETAIN_ENV]: "6" })).toBe(1);
+  });
+
+  it("prefers the live Infisical name when both are set, then still caps at 1", () => {
+    expect(
+      resolveR2ArchiveKeepGenerations({
+        [R2_ARCHIVE_KEEP_GENERATIONS_ENV]: "2",
+        [R2_COLD_SNAPSHOT_RETAIN_ENV]: "9",
+      }),
+    ).toBe(1);
+  });
+
+  it("treats invalid keep-generations as the default of 1", () => {
+    expect(resolveR2ArchiveKeepGenerations({ [R2_ARCHIVE_KEEP_GENERATIONS_ENV]: "nope" })).toBe(1);
   });
 });
 
@@ -470,6 +510,7 @@ describe("getR2WeeklyHealthStatus", () => {
       ageSeconds: null,
       key: null,
       reason: "archive_not_run",
+      keepGenerations: 1,
     });
   });
 
@@ -487,6 +528,7 @@ describe("getR2WeeklyHealthStatus", () => {
       ageSeconds: Math.floor((now - Date.parse(completedAt)) / 1000),
       key: "cold-snapshots/app-2026-08-09.db",
       reason: null,
+      keepGenerations: 1,
     });
     expect(status.ageSeconds!).toBeLessThanOrEqual(R2_ARCHIVE_MAX_AGE_SECONDS);
   });
@@ -524,6 +566,7 @@ describe("getR2WeeklyHealthStatus", () => {
     expect(status.ok).toBe(true);
     expect(status.reason).toBeNull();
     expect(status.key).toBe("cold-snapshots/app-2026-08-09.db");
+    expect(status.keepGenerations).toBe(1);
   });
 
   it("treats a malformed completedAt as archive_not_run", () => {
@@ -537,6 +580,12 @@ describe("getR2WeeklyHealthStatus", () => {
       ageSeconds: null,
       key: null,
       reason: "archive_not_run",
+      keepGenerations: 1,
     });
+  });
+
+  it("still reports keepGenerations=1 when leftover R2_ARCHIVE_KEEP_GENERATIONS=2 is set", () => {
+    process.env.R2_ARCHIVE_KEEP_GENERATIONS = "2";
+    expect(getR2WeeklyHealthStatus(now).keepGenerations).toBe(1);
   });
 });

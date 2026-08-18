@@ -98,9 +98,15 @@ bash scripts/fetch-prod-ops-snapshot.sh
 
 ## R2 weekly retain
 
-The historic R2 cold snapshot keeps **one** weekly (`R2_COLD_SNAPSHOT_DEFAULT_RETAIN = 1`)
-so the ~4 GB DB stays on the Cloudflare R2 free tier (10 GiB).
-`R2_COLD_SNAPSHOT_RETAIN` values above 1 are ignored.
+The historic R2 cold snapshot keeps **one** weekly
+(`R2_ARCHIVE_KEEP_GENERATIONS_DEFAULT = 1`) so the ~4.7 GB DB stays on the
+Cloudflare R2 free tier (10 GiB).  Live process env is still
+`R2_ARCHIVE_KEEP_GENERATIONS=2` (host proof 2026-08-18).  Code ignores that
+leftover 2 and the older `R2_COLD_SNAPSHOT_RETAIN` alias; after deploy,
+`checks.storage.r2Weekly.keepGenerations` is 1.  Health currently reports
+`r2Weekly.key` = `cold-snapshots/app-2026-08-16.db`.  Do not delete live R2
+objects from an agent, and do not edit Coolify/Infisical for this cut — the
+next successful weekly prune honors the cap.
 
 ## Owner dashboard steps (UptimeRobot)
 

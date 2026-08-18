@@ -126,6 +126,7 @@ describe("/api/health exposure", () => {
     expect(r2Weekly).toHaveProperty("ageSeconds");
     expect(r2Weekly).toHaveProperty("key");
     expect(r2Weekly).toHaveProperty("reason");
+    expect(r2Weekly.keepGenerations).toBe(1);
     // Fresh test DB has never run a snapshot → archive_not_run; still must not 503.
     expect(typeof r2Weekly.ok).toBe("boolean");
     expect(r2Weekly.ok === true || r2Weekly.reason === "archive_not_run" || r2Weekly.reason === "archive_stale").toBe(
