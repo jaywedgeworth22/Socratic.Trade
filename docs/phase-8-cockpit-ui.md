@@ -86,6 +86,14 @@
 > A broker cancellation after partial execution is shown as a completed partial execution—not a
 > total rejection—and current partial quantity enters exposure immediately.
 >
+> 2026-08-18: the console mobile tab bar (Safari browser, not PWA) keeps `bottom:0`
+> and does not shift labels into the URL chrome. Browser `padding-bottom` is
+> `calc(env(safe-area-inset-bottom) * 0.22)` so ~78% of the grey-blue band between
+> the tab labels and the floating URL pill is gone; the bar and a `::after`
+> underlay paint solid `--con-surface` so the remaining strip and the area around
+> the URL chrome match the tab strip, not `--con-bg` `#f1f4f6`. Standalone/PWA
+> still uses the full env() pad. See `docs/rollouts/2026-08-18-mobile-tabbar-chrome-gap.md`.
+>
 > 2026-07-14: the decision trace treats the structured Red Team verdict card as the
 > canonical explanation. Exact generic dissent copies and known generated policy
 > wrappers around that same reason are hidden, while genuinely distinct policy
@@ -136,6 +144,12 @@ screen.
 - **Feed tabs (4):** `Activity`, `Runs`, `Notifications`, `Audit` (`FeedTab`
   union, `app/dashboard-client.tsx`). These render in the feed slide-over rather
   than an always-on bottom drawer.
+- **Console mobile tab bar (2026-08-18):** `MobileTabBar` stays `bottom:0`. In a
+  normal Safari tab the safe-area pad is 22% of `env(safe-area-inset-bottom)` so
+  the band above the floating URL chrome shrinks ~78%; a solid `--con-surface`
+  `::after` covers the chrome halo. Do not reintroduce a negative-`bottom` gap
+  shift (that hid labels on 2026-08-05). Installed/standalone still uses the
+  full env() pad for the home indicator.
 
 The `Decision` tab remains the default because the app's core value is showing
 what the agent recommends or decided, not hiding that output in logs.
