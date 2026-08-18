@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-18 CURSOR — Per-user LLM daily budget in Settings/iOS (`cursor/user-llm-daily-budget-a539`).** Live cap is `user_settings.llm_daily_budget`, not Infisical.  Console Settings + iOS Account & Settings edit it.  When set, spend primitives + chat + strategy skip fail-closed (including ledger-unavailable).  `RAG_RUN_BUDGET_*` moved onto Data Sources.  System secrets stay Infisical.  No Stripe / no IAP.  Did not touch #2792/#2798/#2800/#2794.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
+
 > **2026-08-18 CURSOR — Pinecone store vs condense (`cursor/pinecone-store-vs-condense-ce2b`).** Report only.  Recommended default is hybrid: processed proposer corpus in Pinecone, full bodies local, hydrate after A+B.  Do not fill Builder with raw 10-K/Q/transcripts.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not raise the 2.5M WU fuse.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.
 
 > **2026-08-17 CURSOR — Blind-spots audit (`cursor/blind-spots-audit-299e`).** Read-only red-team register across legal/fintech, product identity, a11y-beyond-#2795, i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  No production code.  `docs/audits/2026-08-17-blind-spots.md`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
@@ -1385,9 +1387,8 @@ filling the missing pieces.
 >    5-min TTL, fail-closed → skip LLM, default-OFF). `runStrategyOnce` reserves its worst-case estimate
 >    at the budget gate and releases in the `finally`, so a concurrent same-user run sees the hold and
 >    skips LLM instead of both overshooting. See `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`.
-> 2. **Chat-path spend coverage.** `/api/chat` LLM spend does not route through `withLlmGeneration`, so
->    it is outside the budget gate. If a *total* per-user/day ceiling (strategy + chat) is desired,
->    wire the chat LLM path through the same `assertWithinLlmBudget(userId)` guard.
+> 2. ~~**Chat-path spend coverage.**~~ **DONE.** `/api/chat` calls `isOverLlmBudget(userId)` and
+>    returns 429 when a cap is set and the day is spent (or the ledger cannot be read).
 > 3. **Multi-account budget target.** The ceiling is keyed by `userId`, so it is a per-*user* daily cap
 >    that spans all of that user's accounts, not a per-*account* cap. If a user runs several accounts and
 >    the intent is an independent budget per account, the gate would need to key on the account id (and

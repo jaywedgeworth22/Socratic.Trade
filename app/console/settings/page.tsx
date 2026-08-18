@@ -2,17 +2,17 @@
 
 /** Settings — GLOBAL-ONLY since the 2026-07-10 IA restructure: everything here
  *  is either ALL YOUR ACCOUNTS (event notifications, delivery channels, scan
- *  shape, learning review, typed confirmation, boot behavior — user-level,
- *  overlaid on every account), THIS BROWSER (appearance), OPERATOR (admin
- *  links), REFERENCE (glossary), or DANGER (deletion). Nothing account-scoped
- *  lives here: per-account config (models, prompt, weights) belongs to
- *  Strategy (/console/strategy) and Guardrails (/console/guardrails,
+ *  shape, learning review, daily LLM budget, typed confirmation, boot behavior
+ *  — user-level, overlaid on every account), THIS BROWSER (appearance),
+ *  OPERATOR (admin links), REFERENCE (glossary), or DANGER (deletion). Nothing
+ *  account-scoped lives here: per-account config (models, prompt, weights)
+ *  belongs to Strategy (/console/strategy) and Guardrails (/console/guardrails,
  *  including tax treatment). The one-time-setup half of the old Settings page
  *  — broker connections and API keys — split out to Connections
  *  (/console/connections) in the 2026-07-16 IA restructure; a 3-line hash
  *  safety net below redirects any old #brokers/#api-keys bookmark there.
  *  Sub-sections live in sibling modules (delivery/danger/help/sharing/
- *  learning-review) with their fetch helpers in ./lib. */
+ *  learning-review / llm-budget) with their fetch helpers in ./lib. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -36,6 +36,7 @@ import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
+import { LlmBudgetCard } from "./llm-budget";
 import { DataSharingCard } from "./sharing";
 import {
   fetchSourceFeatures,
@@ -52,6 +53,7 @@ const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
   { id: "delivery", label: "Delivery" },
   { id: "sharing", label: "Sharing" },
   { id: "learning-review", label: "Learning review" },
+  { id: "llm-budget", label: "LLM budget" },
   { id: "scan-shape", label: "Scan shape" },
   { id: "data-sources", label: "Data sources" },
   { id: "confirmation", label: "Confirmation" },
@@ -269,6 +271,9 @@ export default function SettingsPage() {
             /console/approvals link here as "Model settings"). */}
         <div id="learning-review" className={SECTION_SCROLL_MT}>
           <LearningReviewCard />
+        </div>
+        <div id="llm-budget" className={SECTION_SCROLL_MT}>
+          <LlmBudgetCard />
         </div>
         <div id="scan-shape" className={SECTION_SCROLL_MT}>
           <ScanShapeCard />

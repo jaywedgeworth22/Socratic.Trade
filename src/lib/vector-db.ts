@@ -2610,7 +2610,7 @@ export async function rerankMatches(
       { lane: "rag-rerank", provider: rerankProvider }
     );
     meterRerank(query, documents, modelName, userId, provider);
-    recordRagOperation();
+    recordRagOperation(Date.now(), userId);
     
     const data = useMockClient ? (resp.data ?? []) : (isOpenRouter ? (resp.results ?? []) : (resp.data ?? []));
     if (data.length === 0) return rerankableMatches;
@@ -6485,7 +6485,7 @@ export async function retrieveContextDetailed(
   // R16 (2026-07-01 RAG backlog): default-off, very-high-ceiling per-run budget check. When
   // tripped, DEGRADE by skipping rerank/hybrid only — never core dense-cosine recall. A no-op
   // (always false) when RAG_RUN_BUDGET_ENABLED is off, so default behavior is unaffected.
-  const budgetDegraded = shouldDegradeForBudget();
+  const budgetDegraded = shouldDegradeForBudget(Date.now(), userId);
   if (budgetDegraded) {
     void captureRagSentryMessage("warning", "RAG retrieval degraded: per-run budget reached", {
       provider: "voyage",
@@ -6659,7 +6659,7 @@ export async function retrieveContextDetailed(
           throw error;
         }
         meterEmbed([q], activeModel, userId, embedProvider); // count only on a cache MISS; book under the requesting userId
-        recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
+        recordRagOperation(Date.now(), userId); // R16: count this embed call against the per-run budget (no-op unless enabled).
         embedding = response.data?.[0]?.embedding;
       }
       // R2 integrity guard applies to the query embedding too: a malformed vector (wrong dimension,

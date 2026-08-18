@@ -83,6 +83,36 @@ export function patchSourceFeatures(
   });
 }
 
+export type LlmBudgetLimitSource = "user" | "policy" | "env" | "none";
+
+export interface LlmBudgetResponse {
+  ok: boolean;
+  tokenBudget: number | null;
+  costBudgetUsd: number | null;
+  effective: {
+    tokenLimit: number | null;
+    costLimitUsd: number | null;
+    tokenSource: LlmBudgetLimitSource;
+    costSource: LlmBudgetLimitSource;
+  };
+  today: { tokens: number; costUsd: number };
+  enforced: boolean;
+}
+
+export function fetchLlmBudget(): Promise<LlmBudgetResponse> {
+  return request<LlmBudgetResponse>("/api/settings/llm-budget");
+}
+
+export function patchLlmBudget(body: {
+  tokenBudget?: number | null;
+  costBudgetUsd?: number | null;
+}): Promise<LlmBudgetResponse> {
+  return request<LlmBudgetResponse>("/api/settings/llm-budget", {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+}
+
 // ── Broker connections ───────────────────────────────────────────────────────
 
 /** Where the browser must go to start Robinhood OAuth (full-page redirect —

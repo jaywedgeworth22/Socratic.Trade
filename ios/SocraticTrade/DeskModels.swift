@@ -339,6 +339,41 @@ struct SourceFeaturesPatchAck: Decodable {
     let ok: Bool?
 }
 
+struct LlmBudgetToday: Decodable {
+    let tokens: Double
+    let costUsd: Double
+}
+
+struct LlmBudgetEffective: Decodable {
+    let tokenLimit: Double?
+    let costLimitUsd: Double?
+    let tokenSource: String
+    let costSource: String
+}
+
+struct LlmBudgetResponse: Decodable {
+    let tokenBudget: Double?
+    let costBudgetUsd: Double?
+    let effective: LlmBudgetEffective
+    let today: LlmBudgetToday
+    let enforced: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case tokenBudget, costBudgetUsd, effective, today, enforced
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        tokenBudget = try values.decodeIfPresent(Double.self, forKey: .tokenBudget)
+        costBudgetUsd = try values.decodeIfPresent(Double.self, forKey: .costBudgetUsd)
+        effective = try values.decodeIfPresent(LlmBudgetEffective.self, forKey: .effective)
+            ?? LlmBudgetEffective(tokenLimit: nil, costLimitUsd: nil, tokenSource: "none", costSource: "none")
+        today = try values.decodeIfPresent(LlmBudgetToday.self, forKey: .today)
+            ?? LlmBudgetToday(tokens: 0, costUsd: 0)
+        enforced = try values.decodeIfPresent(Bool.self, forKey: .enforced) ?? false
+    }
+}
+
 struct SourceFeaturesResponse: Decodable {
     let settings: [SourceSettingRow]
     let groups: [String: SourceSettingGroupInfo]
@@ -414,6 +449,11 @@ enum SourceSettingValue: Decodable, Equatable {
     var boolValue: Bool {
         if case .bool(let value) = self { return value }
         return false
+    }
+
+    var numberValue: Double? {
+        if case .number(let value) = self { return value }
+        return nil
     }
 
     var displayValue: String {

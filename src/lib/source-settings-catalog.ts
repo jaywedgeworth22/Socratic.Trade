@@ -362,6 +362,36 @@ export const SOURCE_SETTINGS_CATALOG: readonly SourceSettingSpec[] = [
     defaultValue: false,
     advanced: true
   },
+  {
+    id: "RAG_RUN_BUDGET_ENABLED",
+    group: "rag",
+    label: "Per-run RAG operation budget",
+    description:
+      "When on, a rolling-window cap degrades rerank/hybrid after too many embed/rerank calls.  Core dense recall still runs.  Prefer this Settings row over Infisical.",
+    type: "boolean",
+    defaultValue: true
+  },
+  {
+    id: "RAG_RUN_BUDGET_CEILING",
+    group: "rag",
+    label: "RAG operations per window",
+    description: "Embed + rerank calls allowed in the rolling window before retrieval degrades.",
+    type: "number",
+    defaultValue: 5000,
+    min: 1,
+    max: 1_000_000
+  },
+  {
+    id: "RAG_RUN_BUDGET_WINDOW_MS",
+    group: "rag",
+    label: "RAG budget window (ms)",
+    description: "Rolling window for the per-run RAG operation cap.  Default one hour.",
+    type: "number",
+    defaultValue: 3_600_000,
+    min: 1_000,
+    max: 86_400_000,
+    advanced: true
+  },
 
   // ── Transcripts ───────────────────────────────────────────────────────────
   {

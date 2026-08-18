@@ -769,6 +769,7 @@ private struct AccountSettingsView: View {
                 alertsSection
                 policySection
                 GuardrailTighteningSection()
+                LlmBudgetSection()
                 DataSourcesSection()
                 adminSection
                 sessionSection
@@ -1063,5 +1064,128 @@ private struct ConnectedAccountSettingsRow: View {
                 operationID: operationID
             )
         }
+    }
+}
+
+/// Per-user daily LLM + RAG spend cap.  Stored on the account, not in Infisical.
+struct LlmBudgetSection: View {
+    @EnvironmentObject private var store: MobileStore
+
+    @State private var response: LlmBudgetResponse?
+    @State private var tokenText = ""
+    @State private var costText = ""
+    @State private var isLoading = false
+    @State private var isSaving = false
+    @State private var loadError: String?
+
+    var body: some View {
+        Section {
+            if isLoading && response == nil {
+                HStack {
+                    ProgressView()
+                    Text("loading your daily LLM cap")
+                        .foregroundStyle(.secondary)
+                }
+            } else if let loadError, response == nil {
+                Text(loadError)
+                    .foregroundStyle(AppPalette.negative)
+                Button("Retry") { Task { await load() } }
+            } else {
+                LabeledContent("Daily Token Cap") {
+                    TextField("blank = no cap", text: $tokenText)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .disabled(isSaving)
+                        .onSubmit { Task { await commitTokens() } }
+                }
+                LabeledContent("Daily Cost Cap") {
+                    TextField("blank = no cap", text: $costText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .disabled(isSaving)
+                        .onSubmit { Task { await commitCost() } }
+                }
+                if let response {
+                    LabeledContent("Today") {
+                        Text("\(Int(response.today.tokens)) tokens · \(AppFormat.money(response.today.costUsd))")
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Cap") {
+                        Text(response.enforced ? "on" : "no cap")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button("Save Caps") {
+                    Task { await saveBoth() }
+                }
+                .disabled(isSaving)
+                if let loadError, response != nil {
+                    Text(loadError)
+                        .font(.appCaption)
+                        .foregroundStyle(AppPalette.negative)
+                }
+            }
+        } header: {
+            Text("Daily LLM Budget")
+        } footer: {
+            Text("Your own daily ceiling for model + retrieval spend.  This is not an Infisical secret.  When a cap is set, strategy, chat, and RAG skip for the rest of the day instead of overrunning.")
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            apply(try await store.fetchLlmBudget())
+            loadError = nil
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func saveBoth() async {
+        await commitTokens()
+        await commitCost()
+    }
+
+    private func commitTokens() async {
+        await commit(field: "tokenBudget", text: tokenText)
+    }
+
+    private func commitCost() async {
+        await commit(field: "costBudgetUsd", text: costText)
+    }
+
+    private func commit(field: String, text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value: Any
+        if trimmed.isEmpty {
+            value = NSNull()
+        } else if let parsed = Double(trimmed), parsed >= 0 {
+            value = parsed
+        } else {
+            loadError = "Enter a non-negative number, or leave the field blank."
+            return
+        }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            apply(try await store.patchLlmBudget([field: value]))
+            loadError = nil
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func apply(_ next: LlmBudgetResponse) {
+        response = next
+        tokenText = next.tokenBudget.map { formatNumber($0) } ?? ""
+        costText = next.costBudgetUsd.map { formatNumber($0) } ?? ""
+    }
+
+    private func formatNumber(_ value: Double) -> String {
+        if value == floor(value) { return String(Int(value)) }
+        return String(value)
     }
 }

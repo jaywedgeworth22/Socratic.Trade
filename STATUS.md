@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — Per-user LLM daily budget (Settings + iOS)
+
+Owner: cap must be user-settable in console/iOS, not Infisical, and ENFORCE fail-closed when set.  Live store is `user_settings.llm_daily_budget` via `GET|PATCH /api/settings/llm-budget`.  Resolution: user setting → legacy `policy.tuning` → retired env `TRIGGER_LLM_DAILY_*`.  Explicit `0` = no cap.  When a cap is set and today's ledger cannot be read, skip LLM/RAG/chat (`ledger_unavailable`).  `RAG_RUN_BUDGET_*` is now a Data Sources (number + boolean) setting.  System secrets stay Infisical: `ENCRYPTION_KEY`, `AUTH_SECRET`, broker host, `OPS_DIAGNOSTIC_TOKEN`.  Operator monthly `LLM_SPEND_CEILING` and `GEMINI_RPM_LIMIT` stay env/Infisical.  No Stripe / no IAP.  Did not touch #2792/#2798/#2800/#2794.
+
+Branch `cursor/user-llm-daily-budget-a539`.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
+
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
 Owner: $230.44 of $300 trial left, 12 days; likely Builder ~Aug 30; keep using Pinecone, do not prune.  Question: is more storage better for Green/Red, or is condensing the corpus?  **Hybrid: condense-first for Pinecone, store-more locally.**  Builder is 10 GB / 5M WU (hard cap), not unlimited raw 10-Ks.  Do not flip write-class.  Do not raise the 2.5M fuse (pacer already ~4.8M/day).  FilingAPI stays #2792.

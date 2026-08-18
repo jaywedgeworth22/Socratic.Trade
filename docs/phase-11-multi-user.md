@@ -80,6 +80,13 @@ allowed users map to isolated hashed user IDs only when present in
   read only middleware's trusted `x-authenticated-user-email` header. Body/query
   `userId` hints are ignored; local development falls back to `local` only when
   auth is not armed.
+- Per-user daily LLM + RAG spend caps live in `user_settings.llm_daily_budget`
+  (Settings → Daily LLM Budget / iOS Account & Settings / `GET|PATCH
+  /api/settings/llm-budget`).  They are not Infisical secrets.  When a cap is
+  set, strategy, chat, and RAG skip for the rest of the day (fail-closed if
+  today's ledger cannot be read).  Per-user RAG run-budget knobs
+  (`RAG_RUN_BUDGET_*`) are Data Sources settings.  System secrets stay in
+  Infisical (`ENCRYPTION_KEY`, `AUTH_SECRET`, broker host, `OPS_DIAGNOSTIC_TOKEN`).
 - Ops foundation is now scaffolded for hosted/multi-user readiness: Infisical CLI
   wrappers for secret injection, local Gitleaks scanning, Sentry runtime error
   capture, Langfuse LLM traces with redacted summary capture by default, npm
