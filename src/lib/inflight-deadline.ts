@@ -4,11 +4,12 @@
  *
  * ASC + ops (2026-08-18, process 581467e1 / later d4299bec): there is no Alpaca
  * sidecar.  Paper / Roth are REST `alpaca`.  alpaca-broker was 500/500 ok this
- * process, but 191/500 calls were ≥6s (avg ~3.1s, max 14s).  `ftsMirrorSlice`
- * also held the same event loop 6–12s.  The dashboard 6s abort is tighter than
- * live successful broker reads; #2845's 6s+9s / 8s+7s still lost (portfolio
- * `8000+7000ms` at 22:10:15Z).  First wait is above the live 14s max.  A 401 /
- * credential throw still fails immediately (no retry).
+ * process, but 191/500 calls were ≥6s (min 97ms / avg ~3085ms / max 14416ms).
+ * Latest ~4:40pm CT 98–413ms ok; ~30s earlier several ok at 6570–6600ms — the
+ * SDK finished AFTER the 6s `withDeadline` abort.  Same window also aborted
+ * portfolio/positions/orders at 8s and getEquityQuotes at 6s.  `ftsMirrorSlice`
+ * held the same event loop 6–12s.  First wait is above the live 14.4s max.
+ * A 401 / credential throw still fails immediately (no retry).
  */
 
 export const GET_ACCOUNTS_FIRST_MS = 16_000;
@@ -18,6 +19,9 @@ export const PORTFOLIO_BUNDLE_RETRY_MS = 8_000;
 export const ALPACA_ACCOUNT_READ_FIRST_MS = 16_000;
 export const ALPACA_ACCOUNT_READ_RETRY_MS = 8_000;
 export const ALPACA_MCP_FETCH_MS = 8_000;
+/** Same in-process broker lane as getAccounts.  Live 6s / 8s withDeadline races. */
+export const EQUITY_QUOTES_MS = 16_000;
+export const OPTION_POSITIONS_MS = 16_000;
 
 export type SettleKind = "fulfilled" | "rejected" | "pending";
 

@@ -2,9 +2,17 @@
 
 ## Context & Objective
 
-ASC discarded the hung-sidecar / MCP hypothesis.  There is no Alpaca sidecar.  The gateway is in-process on `socratic-app` (live `581467e1`, pid 2701530, started 4:12pm CT).  Paper / Roth are REST `alpaca`, not `alpaca-mcp`.  alpaca-broker was 500/500 ok this process, but 191/500 calls were ≥6s (avg ~3.1s, max 14s).  `ftsMirrorSlice` held the same event loop 6–12s.
+ASC discarded the hung-sidecar / MCP hypothesis.  There is no Alpaca sidecar.  The gateway is in-process on `socratic-app` (live `581467e1`, pid 2701530, started 4:12pm CT).  Paper / Roth are REST `alpaca`, not `alpaca-mcp`.
 
-Manual Run once still fail-closes on `Timed out waiting for gateway.getAccounts after 6000ms`.  That is an app-side deadline on a busy in-process loop, not a missing credential and not a missing sidecar.
+Trading Ops receipts, same process:
+
+- Exact log, 11 times since 4:12pm CT: `gateway.getAccounts timed out after 6000ms — serving degraded snapshot` then `Failed to fetch accounts… 6000ms.`
+- Same window also aborted portfolio/positions/orders at 8s and `getEquityQuotes` at 6s.
+- alpaca-broker 500/500 ok, 0 failures, min 97ms / avg ~3085ms / max 14416ms, 191/500 ≥6000ms.
+- Latest ~4:40pm CT 98–413ms ok; ~30s earlier several ok at 6570–6600ms.  The SDK finished AFTER the 6s abort.
+- Event loop loaded (`ftsMirrorSlice` 6–12s).  `/api/health` 200 but ~4.2s.
+
+That is a race: 6s (and 8s) `withDeadline` aborts vs a slow in-process loop.  The promise is not cancelled; alpaca-broker still logs ok after the UI has already degraded.
 
 ## Changes Made
 
@@ -17,7 +25,7 @@ Investigated first (ops snapshot `asOf` 2026-08-18T22:31:35Z + ASC + code):
 
 Fix:
 
-- First wait 16s (above live max 14s) on dashboard getAccounts, portfolio bundle, and Alpaca `getAccount`.  Retry remains for a hung pending call.  Credential / 401 throws still fail immediately.  Timeout strings stay honest (`16000+8000ms`).
+- First wait 16s (above live max 14416ms) on dashboard getAccounts, portfolio bundle, Alpaca `getAccount`, `getEquityQuotes`, and option positions.  Retry remains for a hung pending getAccounts/portfolio call.  Credential / 401 throws still fail immediately.  Timeout strings stay honest (`16000+8000ms`).
 - FTS tick budget 2s, max 6 chunks, inner group 1.  Batch helper starts at 1 row.  Planner returns 0 chunks when remaining budget is below expected ms/chunk.
 
 - `src/lib/inflight-deadline.ts`

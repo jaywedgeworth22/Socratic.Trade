@@ -9,9 +9,9 @@ Fix closes the matching open request on the sweep and `finishStrategyRun` write 
 PR **#2847**.  Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
 ## 2026-08-18 CURSOR — 6s getAccounts abort vs live p95 + ftsMirrorSlice loop pin
 
-ASC discarded the hung-sidecar / MCP hypothesis.  No Alpaca sidecar.  Gateway is in-process on socratic-app (581467e1, pid 2701530, 4:12pm CT).  Paper/Roth are REST `alpaca`.  alpaca-broker 500/500 ok this process; 191/500 calls ≥6s (avg ~3.1s, max 14s).  `ftsMirrorSlice` 6–12s on the same event loop.  Ops snapshot 22:31:35Z: `dashboard.getAccounts` still `after 6000ms`; after #2845, portfolio still timed out at 22:10:15Z (`8000+7000ms`).  Manual Run fail-closes on that abort, not a missing credential.
+ASC + Trading Ops, same process `581467e1`.  Exact log: `gateway.getAccounts timed out after 6000ms — serving degraded snapshot` then `Failed to fetch accounts… 6000ms` (11 times since 4:12pm CT).  Same window aborted portfolio/positions/orders at 8s and getEquityQuotes at 6s.  alpaca-broker 500/500 ok, 0 failures, min 97ms / avg ~3085ms / max 14416ms, 191/500 ≥6s.  Latest ~4:40pm CT 98–413ms ok; ~30s earlier several ok at 6570–6600ms — the SDK finished AFTER the 6s abort.  `/api/health` 200 at ~4.2s.  Event loop loaded (`ftsMirrorSlice` 6–12s).  No sidecar.
 
-Fix: first wait 16s (above live max 14s) on getAccounts / portfolio / `getAccount`; shrink FTS tick to 2s / 6 chunks / 1-row first group and do not start a slice that cannot fit the remaining budget.  Do not hide with copy.  Do not bounce Coolify.  Do not merge.  Do not touch #2841 / #2840 / #2812 / strategy logic.
+Fix: first wait 16s on getAccounts / portfolio / getAccount / getEquityQuotes / option positions; shrink FTS tick so it cannot pin the 6s race.  Do not hide with copy.  Do not bounce Coolify.  Do not merge.  Do not touch #2841 / #2840 / #2812 / strategy logic.
 
 PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
 

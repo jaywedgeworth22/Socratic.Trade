@@ -2,15 +2,13 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
-<<<<<<< HEAD
 ## 2026-08-18 Manual Run once request/run status coupling
 
 `POST /api/strategy/run` writes `strategy_run_requests` first, then `runStrategyOnce` uses that same UUID as `strategy_runs.id`.  `queueStrategyRunRequest` dedupes while any request for that user is `queued` or `running`.  `markStaleRunningRuns` used to fail only the `strategy_runs` row.  After #2845, ASC saw 0 new Roth `strategy_runs` after 22:06:43Z because orphan `0e5ccd66` was sweep-failed at 22:13:05Z (0 LLM) while its request stayed `running`.  The sweep and `finishStrategyRun` now close the matching open request.  The next scheduler tick and the next Manual Run once click both heal an already-terminal run whose request is still open.  Do not hide the lock by ignoring `running`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
-=======
+
 ## 2026-08-18 getAccounts 6s abort is tighter than live broker + FTS loop
 
 Manual Run once fail-closes on `accountReadiness` when dashboard `getAccounts` / portfolio times out.  ASC 2026-08-18: no Alpaca sidecar; in-process REST; alpaca-broker 500/500 ok with 191/500 ≥6s (max 14s); `ftsMirrorSlice` 6–12s on the same event loop.  #2845's 6s+9s / 8s+7s still lost (`8000+7000ms` at 22:10:15Z).  First wait is 16s.  FTS tick is 2s / 6 chunks / 1-row first group and will not start a slice that cannot fit the remaining budget.  Credential throws still fail immediately.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
->>>>>>> e67a0c7f (fix(broker): raise getAccounts wait above live p95; bound FTS loop pin)
 
 ## 2026-08-18 rag-embed DeepInfra batch window (ingest)
 
