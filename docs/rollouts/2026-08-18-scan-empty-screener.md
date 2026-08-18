@@ -1,17 +1,17 @@
-# 2026-08-18 — iOS Scan empty table is the 8s stub-UA abort
+# 2026-08-18 — Nasdaq screener UA + retry so Scan returns names
 
 ## Context & Objective
 
-Coolify SELECT-only receipts on sha `cda485ff`.  Jay's 12:03 CT iOS Scan is audit `market_scan` `d0359642` at 2026-08-18T17:03:07Z: scannedSymbols=505, quotes=0, candidates=0, cached=true, provider `nasdaq-delayed-screener`.  Warnings: "This operation was aborted"; empty stale-fallback claim; "No candidates in this scan — nothing to cover."  Written as `market_scan`, not `market_scan_failed`.  Same abort + 0 quotes on every scan since 2026-08-13T22:30Z.  Last good: `2f2a8e11` 2026-08-13T16:15:45Z (515 / 513 / 65).  Watchlist is XOM + SPCX (2).  505 is S&P-sized, not the 2 watched names.  Not an empty universe.  Not ranker-zero.  Not #2666.  Not #2829.
+Get Scan to return ranked names again.  Every scan since 2026-08-13T22:30Z had 0 quotes because `fetchNasdaqScreener` still used stub `"Mozilla/5.0"` and an 8s `abort()`.  Last good was 513 quotes.  This is a transport fix, not empty-state copy.
 
 ## Changes Made
 
 Verified abort cause: `fetchNasdaqScreener` `setTimeout(() => controller.abort(), 8000)` with no reason, left armed through `response.json()` of the 8000-row table, UA only `"Mozilla/5.0"`, no Origin/Referer, no `fetchWithRetry`.  Node/undici reports that as “This operation was aborted.”  The 20s interactive deadline uses a different message (“Interactive market scan deadline exceeded.”).  Cache is written only on success, so every scan re-hit and re-aborted.  Sibling nasdaq-calendar + nasdaq-quote already used `BROWSER_UA` + Origin/Referer + `fetchWithRetry({ retries: 1 })` after 2026-08-05 (`docs/rollouts/2026-08-05-soft-health-and-nasdaq-ua.md`).  The screener was never migrated.  `congress-share` `fetchNasdaqScreenerRefs` was the same 8s stub-UA duplicate.
 
-Fix: shared `src/lib/nasdaq-screener-fetch.ts` with `BROWSER_UA` + Origin/Referer + `fetchWithRetry({ retries: 1 })`, 15s named timeout, one abort retry, timer cleared when headers arrive.  Interactive `withScanDeadline` is not attached to the Nasdaq fetch (35s budget covers Yahoo + rank after).  Yahoo-fallback prices the whole allowed set.  Empty `seedEnrichment: {}` no longer 200s `cached=true`.  Both Nasdaq and Yahoo miss → 503 + `market_scan_failed`.  iOS decodes warnings; copy does not blame Guardrails.
+Fix: `fetchNasdaqScreener` in `src/lib/market.ts` now calls `fetchWithRetry` with `BROWSER_UA` + Origin/Referer, matching nasdaq-quote / nasdaq-calendar.  15s timeout, one abort retry.  If Nasdaq still returns 0, Yahoo prices the whole allowed S&P set so ranking still produces names.
 
-- `src/lib/nasdaq-screener-fetch.ts` — shared BROWSER_UA transport (15s, abort retry)
-- `src/lib/market.ts` — uses the helper; ignores interactive abort on the screener; Yahoo whole-set; seed only when it prices names
+- `src/lib/market.ts` — `fetchNasdaqScreener` uses `BROWSER_UA` + Origin/Referer + `fetchWithRetry`; Yahoo whole-set
+- `src/lib/nasdaq-screener-fetch.ts` — shared timeout/UA constants; congress-share uses the same helper
 - `src/lib/congress-share.ts` — `fetchNasdaqScreenerRefs` uses the same helper
 - `src/lib/scan-singleflight.ts` — `isUnusableEmptyMarketScan` (505 / 0 / 0 is not last-good)
 - `src/lib/dashboard.ts` — skip empty abort audits when picking latestScan
@@ -43,7 +43,8 @@ npx tsc --noEmit  # clean
 Live recorded 2026-08-18 (market open), this VM:
 
 - Nasdaq screener `BROWSER_UA` + Origin/Referer: HTTP 200, **7176** rows, asOf "Last price as of Aug 18, 2026".
-- `scanMarket(SP500_SYMBOLS, [], …, { enrichmentMode: "skip" })`: **498 quotes / 502 scanned / 38 topCandidates**, source `nasdaq-delayed-screener`.  Yahoo fallback was not needed.
+- `scanMarket(SP500_SYMBOLS, [], …, { enrichmentMode: "skip" })`: **498 quotes / 502 scanned / 38 topCandidates**, source `nasdaq-delayed-screener`.
+- After inlining `BROWSER_UA` + `fetchWithRetry` in `fetchNasdaqScreener`: `scanMarket([AAPL, MSFT, NVDA, JPM, GOOGL, XOM])` returned **6 quotes / 6 names** (AAPL, GOOGL, JPM, MSFT, XOM, NVDA), source includes `nasdaq-delayed-screener`.  Yahoo fallback was not needed.
 
 `xcodebuild` was not run on this Linux VM.  Do not treat the iOS decode/copy change as compiled.
 

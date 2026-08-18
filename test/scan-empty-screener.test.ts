@@ -356,8 +356,13 @@ describe("fetchNasdaqScreener transport", () => {
   });
 
   it("congress-share and scan share the BROWSER_UA helper, not stub Mozilla/5.0 + 8s abort", () => {
+    const market = readFileSync(join(process.cwd(), "src/lib/market.ts"), "utf8");
     const congress = readFileSync(join(process.cwd(), "src/lib/congress-share.ts"), "utf8");
     const helper = readFileSync(join(process.cwd(), "src/lib/nasdaq-screener-fetch.ts"), "utf8");
+    expect(market).toMatch(/"User-Agent": BROWSER_UA/);
+    expect(market).toContain("fetchWithRetry");
+    expect(market).toContain('Origin: "https://www.nasdaq.com"');
+    expect(market).not.toMatch(/"user-agent": "Mozilla\/5\.0"/);
     expect(congress).toContain("fetchNasdaqScreenerResponse");
     expect(congress).not.toContain('"Mozilla/5.0"');
     expect(congress).not.toMatch(/controller\.abort\(\),\s*8_000/);

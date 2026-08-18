@@ -6,10 +6,9 @@ PR **#2812** was CONFLICTING with `origin/main` (`6429d984`, includes #2800 fuse
 
 Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: no xcodebuild.  Full `npm test` still hits leftover SiliconFlow + SEC/Yahoo 404s (untouched).  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 ## 2026-08-18 CURSOR — iOS Scan empty table is a quote miss
+## 2026-08-18 CURSOR — Nasdaq screener UA + retry so Scan returns names
 
-Coolify SELECT-only sha `cda485ff`.  Jay 12:03 CT = audit `d0359642` 2026-08-18T17:03:07Z: scanned=505 quotes=0 candidates=0 cached=true, abort + empty stale fallback, written as `market_scan` not `_failed`.  Same abort since 2026-08-13T22:30Z.  Last good `2f2a8e11` (515/513/65).  Watchlist XOM+SPCX (2).  Not empty-universe.  Not ranker-zero.  Not #2829.
-
-Verified abort cause: 8s stub-UA abort — `setTimeout(() => controller.abort(), 8000)` with no reason, stub `"Mozilla/5.0"`, no Origin/Referer.  That is “This operation was aborted”, not the 20s deadline.  Shared `BROWSER_UA` helper for scan + `congress-share`, 15s named timeout, one abort retry, Yahoo whole-set, 503 last resort.  Live S&P skip-enrichment on this VM: 498 quotes / 38 candidates.  `xcodebuild` not run.
+`fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  Not an empty-state-copy change.  Not #2829.
 
 PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
 
