@@ -75,17 +75,24 @@ if set, else wait for the next non-RTH push.
 
 ## Verification State
 
-Commands to run after the first push:
-
 ```bash
-npx tsc --noEmit
+./node_modules/.bin/tsc --noEmit
+# exit 0
+
 npm run lint
-npx vitest run test/rth-deploy-latch.test.ts test/sentry-ci-report-workflows.test.ts test/market-hours.test.ts
-npm test
-npm run build
+# exit 0 (errors only; grandfathered warnings unchanged)
+
+./node_modules/.bin/vitest run test/rth-deploy-latch.test.ts \
+  test/sentry-ci-report-workflows.test.ts test/market-hours.test.ts
+# 3 files / 52 passed
 ```
 
-Status recorded in the PR after the gate finishes.
+GitHub Actions `verify-hosted` on this branch completed **success** (run `32087609316`):
+`tsc --noEmit` + full vitest + `next build`.  That is the required merge gate.
+
+A local `npm test` in this Cloud VM also showed unrelated network flakes (SEC
+`company_tickers.json` 404, Alpaca snapshot 404, a few vector-db receipt
+cases).  Those files were not touched.  CI did not reproduce them.
 
 ## Next Steps & Blockers
 

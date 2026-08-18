@@ -609,8 +609,8 @@ or `RTH_DEPLOY_OVERRIDE=1`.  A refused build leaves the last healthy container
 up.  Evenings/weekends/holidays still auto-deploy.  Did not touch
 #2792/#2798/#2800/#2794.
 
-Branch `cursor/rth-deploy-latch-c039`.  Rollout:
-`docs/rollouts/2026-08-18-rth-deploy-latch.md`.
+PR **#2817**.  Branch `cursor/rth-deploy-latch-c039`.  `verify-hosted` green.
+Rollout: `docs/rollouts/2026-08-18-rth-deploy-latch.md`.
 
 ## 2026-08-18 CURSOR — Health JSON monitors + OPS token + R2 retain=1
 
