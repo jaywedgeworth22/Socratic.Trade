@@ -337,8 +337,15 @@ describe("Connection Health & Failure Routing", () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    // Test-only voyage path: only when no openrouter/siliconflow key is present.
+    // Pin Voyage so a leftover env siliconflow/openrouter key cannot steal the lane.
+    delete process.env.SILICONFLOW_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      db.deleteUserApiKey("local", "openrouter");
+      db.deleteUserApiKey("local", "siliconflow");
+    } catch { /* best-effort */ }
     db.upsertUserApiKey("local", "voyage", "voyage-test-key");
+    process.env.RAG_EMBED_PROVIDER = "voyage";
 
     for (let i = 0; i < 5; i++) {
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
