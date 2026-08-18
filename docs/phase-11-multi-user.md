@@ -75,7 +75,9 @@ dataset (policy, consent, legal notice, profiles).
   rows visible for management while failing closed for actual execution readiness
   when OAuth/auth, broker account enumeration, selected-account availability,
   broker `agenticAllowed`, or portfolio/balance reads fail. This applies to
-  Robinhood and Alpaca paths.
+  Robinhood and Alpaca paths.  A single slow or hung first `getAccounts` (common
+  after a container swap) is retried once with a 15s combined budget before that
+  fail-close; a credential / 401 throw still fails immediately.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 - Request-level user resolution now has central helpers,

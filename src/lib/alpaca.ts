@@ -31,6 +31,12 @@ import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } 
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
 import { isTransientNetworkError } from "./network-errors";
+import {
+  ALPACA_ACCOUNT_READ_FIRST_MS,
+  ALPACA_ACCOUNT_READ_RETRY_MS,
+  ALPACA_MCP_FETCH_MS,
+  awaitWithFirstCallRetry
+} from "./inflight-deadline";
 
 /**
  * Fill in a usable price for any symbol the broker didn't quote (>0). Alpaca's latest-quote feed
@@ -285,6 +291,25 @@ class AlpacaBrokerGateway implements BrokerGateway {
     throw lastErr;
   }
 
+  /** Account GET used by getAccounts / getPortfolio.  One fresh retry if the first
+   *  SDK call stays pending (dead keep-alive or post-deploy warmup).  A thrown
+   *  credential / 401 error is not retried here — trackHealth already retries
+   *  UND_ERR_SOCKET. */
+  private async readAccount(): Promise<any> {
+    return awaitWithFirstCallRetry(
+      () => this.trackHealth(() => this.alpaca.getAccount()),
+      {
+        firstMs: ALPACA_ACCOUNT_READ_FIRST_MS,
+        retryMs: ALPACA_ACCOUNT_READ_RETRY_MS,
+        onFinalTimeout: () => {
+          throw new Error(
+            `Timed out waiting for alpaca.getAccount after ${ALPACA_ACCOUNT_READ_FIRST_MS}+${ALPACA_ACCOUNT_READ_RETRY_MS}ms.`
+          );
+        }
+      }
+    );
+  }
+
   private async callMcp<T>(toolName: string, args: Record<string, unknown>, fallbackFn: () => Promise<T>): Promise<T> {
     if (!this.isMcp || !this.mcpUrl) {
       return fallbackFn();
@@ -296,6 +321,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           "content-type": "application/json",
           accept: "application/json"
         },
+        signal: AbortSignal.timeout(ALPACA_MCP_FETCH_MS),
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: crypto.randomUUID(),
@@ -391,7 +417,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     };
 
     return this.callMcp<any>("get_account_info", {}, async () => {
-      const account = await this.trackHealth(() => this.alpaca.getAccount());
+      const account = await this.readAccount();
       return [
         {
           accountNumber: account.account_number,
@@ -417,7 +443,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     return this.callMcp<any>("get_account_info", {}, async () => {
-      const account = await this.trackHealth(() => this.alpaca.getAccount());
+      const account = await this.readAccount();
       // Alpaca API credentials are scoped to exactly one account, so getAccount() always returns THE
       // account these keys belong to. Only flag a GENUINE cross-account mismatch (both numbers present
       // and actually different, ignoring case/whitespace) — a blank configured number or a mere

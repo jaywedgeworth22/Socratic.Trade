@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — getAccounts 6s timeout blocks Run once after deploy
+
+Live after #2831 (`581467e1`, `processStartedAt` 2026-08-18T21:12:26Z): Manual Run once on Paper and Roth showed `Timed out waiting for gateway.getAccounts after 6000ms`.  Ops snapshot 21:37:42Z: both accounts are Alpaca REST (not MCP); no strategy run queued after the swap; `dashboard.getAccounts` recoverable_issue on Roth 21:31:18Z / 21:36:26Z and Paper 21:32:56Z.  Same class already fired before the swap (20:02Z, 20:15Z).  Console Run once preflights `accountReadiness`, which fail-closes on that dashboard 6s race.
+
+Fix: first-call retry + 15s combined budget on the in-flight `getAccounts` / portfolio bundle; Alpaca REST `getAccount` retries a hung first SDK call; MCP fetch aborts at 8s and falls back to REST.  Real 401 / credential throws still fail immediately.  Do not bounce Coolify.  Do not merge from this seat.
+
+Branch `cursor/getaccounts-post-deploy-timeout-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-post-deploy-timeout.md`.
+
 ## 2026-08-18 CURSOR — rag-embed DeepInfra batch-window 400 (hotfix)
 
 Live `VECTOR_EMBED_BATCH_SIZE=32` POSTed 32 ingest texts to OpenRouter `baai/bge-m3`.  DeepInfra sums the whole `input[]` against 8192; a batch hit 8193 and 400'd `embed documents` from 19:12:49Z.  That is a batch-sum, not one unchunked 10-K.  #2812 stopped the 503; it did not embed those docs.  Hybrid producer still condenses first (`chunkDocument` 480 / `VECTOR_CONTEXT_MAX_CHARS`); packing is a batch-window fix after that step.  `storeContexts` packs already-condensed texts under ~7500 `approxTokens` and embeds each group on its own lane so one over-limit singleton cannot skip the rest of a count-32 batch.  Local archive / store-more is unchanged.  No second filing chunker.  No extra table vectors.  Did not flip `RAG_PINECONE_WRITE_CLASS` or prune.  Did not re-clamp the #2800 fuse.  Infisical can keep the count at 32.  Did not drop rag-embed from health.
