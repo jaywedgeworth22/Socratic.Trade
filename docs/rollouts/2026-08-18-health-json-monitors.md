@@ -66,11 +66,11 @@ Touched files:
 npx vitest run test/health-json-monitors.test.ts test/ops-snapshot.test.ts \
   test/r2-cold-snapshot.test.ts test/health-route-exposure.test.ts \
   test/trading-liveness.test.ts
-# 5 files / 53 passed
+# 5 files / 60 passed (7 new keep-generations cases)
 
 npm run lint          # 0 errors (767 grandfathered warnings)
-npx tsc --noEmit      # exit 0
-npm run build         # Next.js 16.3.1 webpack, exit 0
+npx tsc --noEmit      # exit 0 after Record<string, string | undefined> env map
+npm run build         # Next.js 16.3.1 webpack (re-run after keep-generations commit)
 ```
 
 Focused health/ops/R2 tests are green.  A full `npm test` in this VM hit
