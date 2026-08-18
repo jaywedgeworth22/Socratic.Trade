@@ -60,7 +60,9 @@ SILICONFLOW_API_KEY= OPENROUTER_API_KEY= npx vitest run \
                                       # 64/64 pass
 ```
 
-Full `npm test` + `npm run build` still running after this commit.
+`npm run build` — exit 0.
+
+Full `npm test` on this cloud VM still hits live-key noise (TwelveData / Massive / health / monitor).  Isolated RAG + migration files pass.  CI `verify` is the merge gate.
 
 ## Next Steps & Blockers
 
