@@ -87,6 +87,10 @@ export function queueStrategyRunRequest(input: { userId: string; manual?: boolea
         finished_at: string | null;
       }
     | undefined;
+  // Dedupes on any open request for this user.  A sweep-failed strategy_runs row that left
+  // its matching request in `running` used to lock Manual Run once here forever — the close
+  // lives on `finishStrategyRun` / `markStaleRunningRuns` in db-execution.ts, not in this
+  // queue path (do not hide a stuck lock by ignoring `running`).
   if (existing) {
     return { request: rowToRequest(existing), deduped: true };
   }

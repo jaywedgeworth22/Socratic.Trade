@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
+
+#2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Roth orphan `strategy_runs` `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  The 5:14pm CT Run once then 502'd and wrote no new `strategy_runs` row.  Root cause: request id === run id; queue dedupes on any `queued`/`running` request; `markStaleRunningRuns` only wrote `strategy_runs`.  Fix closes the matching open request on the sweep and `finishStrategyRun` write paths, and heals already-terminal runs whose request is still open.  Do not hide the lock with queue-time ignore or error copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2840 / #2812.
+
+Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+
 ## 2026-08-18 CURSOR — getAccounts 6s timeout blocks Run once after deploy
 
 Live after #2831 (`581467e1`, `processStartedAt` 2026-08-18T21:12:26Z): Manual Run once on Paper and Roth showed `Timed out waiting for gateway.getAccounts after 6000ms`.  Ops snapshot 21:37:42Z: both accounts are Alpaca REST (not MCP); no strategy run queued after the swap; `dashboard.getAccounts` recoverable_issue on Roth 21:31:18Z / 21:36:26Z and Paper 21:32:56Z.  Same class already fired before the swap (20:02Z, 20:15Z).  Console Run once preflights `accountReadiness`, which fail-closes on that dashboard 6s race.
