@@ -1,6 +1,8 @@
 # 2026-08-18 — Green 400 must actually fail over
 
-Rebased onto `origin/main` `12e8dcd` after #2812 merged (PR #2831 was CONFLICTING).  Sole conflict: `docs/phase-7-strategy.md`.  Kept #2812 rag-embed soft-degrade (must not 503).  Did not revert #2812/#2829/#2800.  Runtime unchanged: 400 failover-eligible, exhausted suffix counts stored calls, terra not first Green pick.
+Rebased onto `origin/main` `13b60747` after #2830 merged (PR #2831 was CONFLICTING/DIRTY).  Docs auto-merged.  Did not recreate the PR.  Did not touch #2812 health-gate, #2840 rag-embed chunking, or #2841 notification history.  Runtime unchanged: 400 failover-eligible, exhausted suffix counts stored calls, terra not first Green pick.
+
+Earlier rebase onto `12e8dcd` after #2812: sole conflict `docs/phase-7-strategy.md`.  Kept rag-embed soft-degrade (must not 503).
 
 ## Context & Objective
 

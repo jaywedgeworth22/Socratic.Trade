@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — Green 400 failover rebased onto #2830 (`13b60747`)
+
+PR **#2831** was CONFLICTING/DIRTY after #2830 merged (`13b60747`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Docs auto-merged.  Did not recreate the PR.  Did not touch #2812 health-gate, #2840 rag-embed chunking, or #2841 notification history.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
+
 ## 2026-08-18 CURSOR — Green 400 failover rebased onto #2812 (`12e8dcd`)
 
 PR **#2831** was CONFLICTING after #2812 merged (`12e8dcd`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Sole conflict was `docs/phase-7-strategy.md` — kept both this Green 400 stanza and #2812's rag-embed soft-degrade stanza.  Did not revert #2812 (rag-embed must not 503) or #2829/#2800.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
