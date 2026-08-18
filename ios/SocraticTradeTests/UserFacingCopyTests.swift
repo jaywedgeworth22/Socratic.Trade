@@ -91,11 +91,16 @@ final class UserFacingCopyTests: XCTestCase {
         assertOrdinary(DeskCopy.scanEmptyMessage(scanned: 503, quotes: 0, hasFilter: false))
     }
 
-    func testWorkspaceErrorsStayOrdinary() {
+    func testWorkspaceErrorsStayOrdinary() throws {
         assertOrdinary(MobileAPIError.serverError(statusCode: 522, message: nil).errorDescription ?? "")
         assertOrdinary(MobileAPIError.serverError(statusCode: 500, message: nil).errorDescription ?? "")
         assertOrdinary(MobileAPIError.decoding(NSError(domain: "test", code: 1)).errorDescription ?? "")
         assertOrdinary(MobileAPIError.network(NSError(domain: "test", code: 1)).errorDescription ?? "")
+        let scanJSON = Data(#"""
+        {"scannedSymbols":505,"returnedQuotes":0,"warnings":["This operation was aborted"],"topCandidates":[]}
+        """#.utf8)
+        let scan = try JSONDecoder().decode(MarketScanResponse.self, from: scanJSON)
+        assertOrdinary(MobileAPIError.scanQuotesUnavailable(scan).errorDescription ?? "")
         XCTAssertEqual(
             MobileAPIError.serverError(statusCode: 500, message: nil).errorDescription,
             "Something went wrong.  Try again."

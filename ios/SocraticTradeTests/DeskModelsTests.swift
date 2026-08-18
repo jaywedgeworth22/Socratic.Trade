@@ -83,6 +83,25 @@ final class DeskModelsTests: XCTestCase {
         let error = MobileAPIError.scanQuotesUnavailable(scan)
         XCTAssertEqual(error.errorDescription, "This operation was aborted")
         XCTAssertFalse((error.errorDescription ?? "").localizedCaseInsensitiveContains("Guardrails"))
+        XCTAssertFalse((error.errorDescription ?? "").localizedCaseInsensitiveContains("No Candidates"))
+
+        let joinedJSON = Data(#"""
+        {
+          "scannedSymbols": 505,
+          "returnedQuotes": 0,
+          "warnings": [
+            "This operation was aborted",
+            "Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
+          ],
+          "topCandidates": []
+        }
+        """#.utf8)
+        let joinedScan = try JSONDecoder().decode(MarketScanResponse.self, from: joinedJSON)
+        let joined = MobileAPIError.scanQuotesUnavailable(joinedScan)
+        XCTAssertEqual(
+            joined.errorDescription,
+            "This operation was aborted  Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
+        )
     }
 
     func testChatTurnAndSourceValueDecode() throws {

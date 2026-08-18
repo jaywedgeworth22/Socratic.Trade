@@ -23,8 +23,11 @@ enum MobileAPIError: Error, LocalizedError {
             }
             return "Something went wrong.  Try again."
         case .scanQuotesUnavailable(let scan):
-            if let first = scan.warnings.first, !first.isEmpty {
-                return first
+            let reasons = scan.warnings
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !reasons.isEmpty {
+                return reasons.joined(separator: "  ")
             }
             return "Quotes were unavailable for this universe.  Refresh after the quote feed recovers."
         case .network:

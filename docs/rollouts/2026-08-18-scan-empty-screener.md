@@ -18,8 +18,9 @@ Fix: `fetchNasdaqScreener` in `src/lib/market.ts` now calls `fetchWithRetry` wit
 - `src/lib/yahoo-finance.ts` — batch concurrency for the empty-screener fallback
 - `app/api/scan/route.ts` — 503 + `market_scan_failed`; 35s interactive budget
 - `app/console/scan/page.tsx`, `app/console/scan/use-live-scan.ts` — quote-miss copy; 503 warnings
-- `ios/SocraticTrade/MobileAPIClient.swift` — decode 503 `scan_quotes_unavailable`
-- `ios/SocraticTrade/DeskModels.swift`, `ios/SocraticTrade/ScanView.swift` — counts + warnings; no Guardrails blame
+- `ios/SocraticTrade/MobileAPIClient.swift` — decode 503 `scan_quotes_unavailable`; join warnings on `.scanQuotesUnavailable`
+- `ios/SocraticTrade/MobileStore.swift` — exhaustive `MobileAPIError` switch includes `.scanQuotesUnavailable` (unsigned xcodebuild miss)
+- `ios/SocraticTrade/DeskModels.swift`, `ios/SocraticTrade/ScanView.swift` — counts + warnings; no silent No Candidates on quote miss
 - `ios/SocraticTradeTests/DeskModelsTests.swift`, `ios/SocraticTradeTests/UserFacingCopyTests.swift`
 - `test/scan-empty-screener.test.ts`, `test/market-custom-symbol.test.ts`
 - `docs/phase-4-market-data-scoring.md`, `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`
@@ -46,7 +47,7 @@ Live recorded 2026-08-18 (market open), this VM:
 - `scanMarket(SP500_SYMBOLS, [], …, { enrichmentMode: "skip" })`: **498 quotes / 502 scanned / 38 topCandidates**, source `nasdaq-delayed-screener`.
 - After inlining `BROWSER_UA` + `fetchWithRetry` in `fetchNasdaqScreener`: `scanMarket([AAPL, MSFT, NVDA, JPM, GOOGL, XOM])` returned **6 quotes / 6 names** (AAPL, GOOGL, JPM, MSFT, XOM, NVDA), source includes `nasdaq-delayed-screener`.  Yahoo fallback was not needed.
 
-`xcodebuild` was not run on this Linux VM.  Do not treat the iOS decode/copy change as compiled.
+Linux VM cannot compile Swift.  Unsigned Mac `xcodebuild` failed on `MobileStore.swift:697` missing `.scanQuotesUnavailable`; that case is now exhaustive.  Mac runner must go green.
 
 PR **#2830**.
 

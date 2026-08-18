@@ -8,7 +8,7 @@ Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: 
 ## 2026-08-18 CURSOR — iOS Scan empty table is a quote miss
 ## 2026-08-18 CURSOR — Nasdaq screener UA + retry so Scan returns names
 
-`fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  Not an empty-state-copy change.  Not #2829.
+`fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  iOS `MobileStore` switch is exhaustive for `.scanQuotesUnavailable` (unsigned `xcodebuild` miss); Scan shows the abort warning, not silent No Candidates.  UA/retry path not reverted.  Not #2829.
 
 PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
 
