@@ -733,8 +733,11 @@ with the Hetzner servers it monitored.
 3. **Cursor Cloud Secrets** (Dashboard -> Cloud Agents -> Secrets): add `OPS_DIAGNOSTIC_TOKEN` as a
    **Runtime Secret**, scoped to this repo. Value must match production.
 
-The script calls `GET /api/ops/snapshot` (token via `x-ops-token`). See
-`docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`. Rule: `.cursor/rules/ops-diagnostics.mdc`.
+The script calls `GET /api/ops/snapshot` (token via `x-ops-token`).
+`OPS_DIAGNOSTIC_TOKEN` is required in production — `ADMIN_REINDEX_TOKEN` is not a
+fallback.  Do not mint a second token if both envs already share one value.
+See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md` and
+`docs/runbooks/uptime-health-json-monitors.md`.  Rule: `.cursor/rules/ops-diagnostics.mdc`.
 
 ## iOS agent build loop (owner 2026-08-13)
 

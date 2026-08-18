@@ -159,13 +159,14 @@ describe("loadR2ColdSnapshotConfig", () => {
     expect(cfg.disabledReason).toBe("kill_switch");
   });
 
-  it("clamps part size to the 5 MB S3 floor and honors retain override", () => {
+  it("clamps part size to the 5 MB S3 floor and caps retain at 1 (free-tier)", () => {
     setCreds();
     process.env.R2_COLD_SNAPSHOT_PART_MB = "1"; // below the floor → default
     process.env.R2_COLD_SNAPSHOT_RETAIN = "6";
     const cfg = loadR2ColdSnapshotConfig();
     expect(cfg.partSizeBytes).toBe(R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES);
-    expect(cfg.retain).toBe(6);
+    expect(R2_COLD_SNAPSHOT_DEFAULT_RETAIN).toBe(1);
+    expect(cfg.retain).toBe(1);
   });
 });
 

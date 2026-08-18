@@ -9,14 +9,27 @@ beforeAll(() => {
 });
 
 describe("ops auth", () => {
-  it("prefers OPS_DIAGNOSTIC_TOKEN exclusively over legacy admin token", () => {
+  it("accepts only OPS_DIAGNOSTIC_TOKEN and never falls back to ADMIN_REINDEX_TOKEN", () => {
     process.env.OPS_DIAGNOSTIC_TOKEN = "ops-only";
     process.env.ADMIN_REINDEX_TOKEN = "legacy-admin";
     expect(opsDiagnosticSecrets()).toEqual(["ops-only"]);
     delete process.env.OPS_DIAGNOSTIC_TOKEN;
-    expect(opsDiagnosticSecrets()).toEqual(["legacy-admin"]);
+    expect(opsDiagnosticSecrets()).toEqual([]);
     delete process.env.ADMIN_REINDEX_TOKEN;
     expect(opsDiagnosticSecrets()).toEqual([]);
+  });
+
+  it("rejects a request that presents only ADMIN_REINDEX_TOKEN", async () => {
+    delete process.env.OPS_DIAGNOSTIC_TOKEN;
+    process.env.ADMIN_REINDEX_TOKEN = "legacy-admin";
+    const { GET } = await import("../app/api/ops/snapshot/route");
+    const response = await GET(
+      new Request("http://localhost/api/ops/snapshot", {
+        headers: { "x-ops-token": "legacy-admin", "x-admin-token": "legacy-admin" }
+      })
+    );
+    expect(response.status).toBe(401);
+    delete process.env.ADMIN_REINDEX_TOKEN;
   });
 });
 

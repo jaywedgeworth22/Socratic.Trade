@@ -26,7 +26,7 @@ OPS_SNAPSHOT_OUT=/tmp/ops-snapshot.json bash scripts/fetch-prod-ops-snapshot.sh
    - Scope: this repository (or team)
    - Value: **must match** production `OPS_DIAGNOSTIC_TOKEN`
 
-Legacy fallback: `ADMIN_REINDEX_TOKEN` works if set in both places.
+`ADMIN_REINDEX_TOKEN` is not a fallback.  Production must set `OPS_DIAGNOSTIC_TOKEN`.  Do not mint a second token if both envs already share one value.
 
 ## How to use the response
 

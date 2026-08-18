@@ -71,6 +71,51 @@ export interface TradingLivenessSummary {
 }
 
 /**
+ * Public `/api/health` aggregate.  Always emitted so UptimeRobot/Pushover can key
+ * on `tradingLiveness.degraded` (count) without the object disappearing when
+ * every account is halted.  Never includes user/account identity.
+ */
+export interface PublicTradingLiveness {
+  activeAccounts: number;
+  autopilotAccounts: number;
+  runningAskFirstAccounts: number;
+  /** Count of degraded active-autonomy accounts.  Keyword monitors use the sibling
+   *  `tradingLivenessDegraded` boolean; JSON-path monitors use this number `> 0`. */
+  degraded: number;
+  oldestCompletedRunAgeSeconds: number | null;
+  marketOpen: boolean;
+}
+
+export function toPublicTradingLiveness(
+  summary: TradingLivenessSummary | null,
+  now: number = Date.now()
+): PublicTradingLiveness {
+  if (!summary) {
+    return {
+      activeAccounts: 0,
+      autopilotAccounts: 0,
+      runningAskFirstAccounts: 0,
+      degraded: 0,
+      oldestCompletedRunAgeSeconds: null,
+      marketOpen: isMarketOpen(new Date(now))
+    };
+  }
+  const degradedCount = summary.accounts.filter((a) => a.degraded).length;
+  const oldestCompletedRunAgeSeconds = summary.accounts.reduce<number | null>((oldest, a) => {
+    if (a.lastCompletedRunAgeSeconds === null) return oldest;
+    return oldest === null ? a.lastCompletedRunAgeSeconds : Math.max(oldest, a.lastCompletedRunAgeSeconds);
+  }, null);
+  return {
+    activeAccounts: summary.accounts.length,
+    autopilotAccounts: summary.accounts.filter((a) => a.strategyAuthority === "decide").length,
+    runningAskFirstAccounts: summary.accounts.filter((a) => a.strategyAuthority !== "decide").length,
+    degraded: degradedCount,
+    oldestCompletedRunAgeSeconds,
+    marketOpen: summary.marketOpen
+  };
+}
+
+/**
  * Compute the liveness dimension for one (userId, connectedAccountId). Read-only against
  * strategy_runs; the caller decides what "active autonomy" means (this function doesn't check
  * systemState itself, so it can also be reused for diagnostics on a halted account).

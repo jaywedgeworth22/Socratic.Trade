@@ -10,9 +10,9 @@
 // Budget stance: stays reliably far under the R2 free tier. One weekly run costs ~20
 // Class A ops (create + ~16 parts at 100 MB + complete + list + up to a couple deletes)
 // ≈ 90/month vs the 1M free-tier allowance; storage is retain×DB-size.  The live DB
-// is ~4.2 GB (2026-08-15), so default retain is 1 (~4.2 GB of the 10 GiB free
-// tier).  Four copies would be ~17 GB and trip the 70% guard.  Override with
-// R2_COLD_SNAPSHOT_RETAIN only when the file is small enough.  A budget guard refuses
+// is ~4.2 GB (2026-08-15), so retain is pinned at 1 (~4.2 GB of the 10 GiB free
+// tier).  Four copies would be ~17 GB and trip the 70% guard.  R2_COLD_SNAPSHOT_RETAIN
+// values above 1 are ignored so a leftover env cannot leave the free tier.  A budget guard refuses
 // to run at all when the r2-usage monitor's latest ST snapshot shows month-to-date Class A
 // ops above 50% of the free tier. The R2 free-tier kill-switch in r2-usage.ts is untouched
 // (it is gated to litestream's endpoint being R2, which it no longer is).
@@ -155,7 +155,10 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
   const accessKeyId = process.env.AWS_R2_HISTORIC_ACCESS_KEY_ID?.trim() ?? "";
   const secretAccessKey = process.env.AWS_R2_HISTORIC_SECRET_ACCESS_KEY?.trim() ?? "";
   const retainRaw = Number(process.env.R2_COLD_SNAPSHOT_RETAIN ?? "");
-  const retain = Number.isFinite(retainRaw) && retainRaw >= 1 ? Math.floor(retainRaw) : R2_COLD_SNAPSHOT_DEFAULT_RETAIN;
+  const requestedRetain =
+    Number.isFinite(retainRaw) && retainRaw >= 1 ? Math.floor(retainRaw) : R2_COLD_SNAPSHOT_DEFAULT_RETAIN;
+  // Free-tier cap: one weekly snapshot.  Env may request more; we never keep more than 1.
+  const retain = Math.min(requestedRetain, R2_COLD_SNAPSHOT_DEFAULT_RETAIN);
   const partMbRaw = Number(process.env.R2_COLD_SNAPSHOT_PART_MB ?? "");
   const partSizeBytes =
     Number.isFinite(partMbRaw) && partMbRaw * 1024 * 1024 >= R2_COLD_SNAPSHOT_MIN_PART_BYTES

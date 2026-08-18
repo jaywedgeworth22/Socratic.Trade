@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /**
  * Token-gated operational snapshot for remote diagnostics (Cursor cloud agent, curl, uptime
  * monitors). Does not require an OAuth session — middleware treats `/api/ops/*` as public and
- * this handler enforces `OPS_DIAGNOSTIC_TOKEN` (or legacy `ADMIN_REINDEX_TOKEN`).
+ * this handler enforces `OPS_DIAGNOSTIC_TOKEN` only (`ADMIN_REINDEX_TOKEN` is not a fallback).
  *
  * Headers: `x-ops-token: <secret>` OR `Authorization: Bearer <secret>`
  *

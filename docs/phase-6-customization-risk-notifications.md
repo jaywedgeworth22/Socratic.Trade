@@ -56,6 +56,14 @@ Policy enforcement includes:
 - take-profit protection for adding to extended winners
 - trailing stop enforcement via the synthetic-stops engine (`src/lib/synthetic-stops.ts`)
 
+## External health paging (2026-08-18)
+
+`/api/health` HTTP 200/503 is process liveness only (DB + pinecone /
+alpaca-broker hard-stops).  UptimeRobot/Pushover must page on JSON
+`schedulerStale`, `tradingLiveness.degraded`, and `litestreamTiersDegraded`
+instead of treating those flags as 503.  Runbook:
+`docs/runbooks/uptime-health-json-monitors.md`.
+
 ## Notifications
 
 Supported events:
