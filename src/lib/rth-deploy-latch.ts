@@ -99,7 +99,9 @@ export async function fetchGithubCommitMessage(
   }
 }
 
-function latchNowFromEnv(env: NodeJS.ProcessEnv): Date {
+export type RthDeployLatchEnv = Record<string, string | undefined>;
+
+function latchNowFromEnv(env: RthDeployLatchEnv): Date {
   const raw = env.RTH_DEPLOY_LATCH_NOW?.trim();
   if (!raw) return new Date();
   const parsed = new Date(raw);
@@ -110,7 +112,7 @@ function latchNowFromEnv(env: NodeJS.ProcessEnv): Date {
 }
 
 export async function resolveCommitMessageForLatch(
-  env: NodeJS.ProcessEnv,
+  env: RthDeployLatchEnv,
   readGitLog?: () => string | undefined,
   fetchImpl: typeof fetch = fetch
 ): Promise<string | undefined> {
@@ -126,7 +128,7 @@ export async function resolveCommitMessageForLatch(
 }
 
 export async function decideRthDeployLatchFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: RthDeployLatchEnv = process.env,
   readGitLog?: () => string | undefined,
   fetchImpl: typeof fetch = fetch
 ): Promise<RthDeployLatchDecision> {

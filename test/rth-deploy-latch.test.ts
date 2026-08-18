@@ -191,7 +191,7 @@ describe("decideRthDeployLatchFromEnv", () => {
 
 describe("assert-rth-deploy-latch CLI", () => {
   it("exits 2 during RTH and 0 with HOTFIX=1", () => {
-    const run = (env: NodeJS.ProcessEnv) =>
+    const run = (env: Record<string, string>) =>
       spawnSync(
         "npx",
         ["tsx", "scripts/assert-rth-deploy-latch.ts"],
