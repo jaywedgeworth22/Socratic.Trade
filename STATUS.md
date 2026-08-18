@@ -8,6 +8,16 @@
 ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
 
 Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+## 2026-08-18 CURSOR — Paper/live pooling truth + paper cost = OOS 20 bps
+
+Owner cut 2026-08-17: paper→live pooling stays.  Delete the leftover 20-paper+5-live transfer
+gate from current-truth docs.  Paper execution-cost default rises from 1 bp to the shared
+`OOS_ROUND_TRIP_COST_BPS` / `PAPER_DEFAULT_BASE_SLIPPAGE_BPS` (20).  No `autoApplyWeights`.
+Code already had no 20+5 evaluator (`learning-transfer.ts` deleted 2026-07-23).
+
+PR **#2819**.  Branch `cursor/paper-live-docs-cost-68d3`.  Rollout:
+`docs/rollouts/2026-08-18-paper-live-pooling-cost.md`.  Did not touch #2792/#2798/#2800/#2794.
+lint 0 errors, tsc clean, 278 focused tests pass, `npm run build` clean.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

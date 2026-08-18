@@ -349,7 +349,7 @@ export function recordFillFromProposal(input: {
         // be), or `filterStopPlansByLiveBasis` discards the plan as stale on the very next run
         // (Codex review, PR #1371). No prior position (fresh open) reduces to `basePrice` unchanged.
         // Deliberately `basePrice`, NOT `price` — `price` is net of the paper execution-cost model
-        // (source: "paper" gets ~1bp of synthetic slippage deducted for learning/P&L purposes), but
+        // (source: "paper" gets the OOS 20 bps synthetic slippage deducted for learning/P&L), but
         // the BROKER's own reported `position.averageCost` reflects the raw fill, not our synthetic
         // cost deduction. Using the cost-adjusted `price` here made a paper fill's plan basis drift a
         // fraction of a cent from what the live-basis filter compares against next run, tripping its
