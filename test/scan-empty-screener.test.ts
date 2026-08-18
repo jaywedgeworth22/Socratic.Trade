@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
-import { getPolicy, resetDbForTesting, setPolicy, upsertConnectedAccount } from "../src/lib/db";
+import { getPolicy, latestAuditByKind, resetDbForTesting, setPolicy, upsertConnectedAccount } from "../src/lib/db";
+import { isUnusableEmptyMarketScan } from "../src/lib/scan-singleflight";
 import { clearMarketCache, scanMarket, ScanQuotesUnavailableError } from "../src/lib/market";
 import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
 import { BROWSER_UA } from "../src/lib/web-sources/http";
@@ -38,7 +39,7 @@ describe("empty screener + expired seed", () => {
   it("Yahoo-fallbacks the whole allowed set, including index members, when the screener is empty", async () => {
     stubFetches({ nasdaqRows: [], yahoo: "aapl" });
 
-    const scan = await scanMarket(["AAPL"], []);
+    const scan = await scanMarket(["AAPL"], [], undefined, undefined, [], { enrichmentMode: "skip" });
     expect(scan.returnedQuotes).toBe(1);
     expect(scan.topCandidates.map((quote) => quote.symbol)).toEqual(["AAPL"]);
     expect(scan.quotesBySymbol.AAPL?.price).toBe(210.5);
@@ -50,6 +51,7 @@ describe("empty screener + expired seed", () => {
     stubFetches({ nasdaqRows: [], yahoo: "miss" });
 
     const scan = await scanMarket(["AAPL"], [], undefined, undefined, [], {
+      enrichmentMode: "skip",
       seedEnrichment: {
         AAPL: {
           symbol: "AAPL",
@@ -77,6 +79,59 @@ describe("empty screener + expired seed", () => {
     expect(scan.topCandidates).toEqual([]);
     expect(scan.returnedQuotes).toBe(0);
     expect(scan.warnings.join(" ")).toMatch(/universe has no symbols/i);
+  });
+
+  it("does not treat a 505-symbol abort as an empty universe or last-good", () => {
+    expect(isUnusableEmptyMarketScan({
+      scannedSymbols: 505,
+      returnedQuotes: 0,
+      topCandidates: [],
+      quotesBySymbol: {}
+    })).toBe(true);
+    expect(isUnusableEmptyMarketScan({
+      scannedSymbols: 0,
+      returnedQuotes: 0,
+      topCandidates: []
+    })).toBe(false);
+    expect(isUnusableEmptyMarketScan({
+      scannedSymbols: 515,
+      returnedQuotes: 513,
+      topCandidates: [{ symbol: "AAPL" }]
+    })).toBe(false);
+  });
+
+  it("throws on Nasdaq abort + empty seed for a non-empty universe, not 200 empty", async () => {
+    const universe = ["AAPL", "MSFT", "NVDA", "XOM", "JPM"];
+    stubFetches({ nasdaqRows: [], yahoo: "miss", nasdaqAbort: true });
+
+    await expect(scanMarket(universe, [], undefined, undefined, [], { enrichmentMode: "skip" })).rejects.toMatchObject({
+      name: "ScanQuotesUnavailableError",
+      scannedSymbols: 5,
+      returnedQuotes: 0
+    });
+    try {
+      await scanMarket(universe, [], undefined, undefined, [], { enrichmentMode: "skip" });
+      throw new Error("expected ScanQuotesUnavailableError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ScanQuotesUnavailableError);
+      const unavailable = error as ScanQuotesUnavailableError;
+      expect(unavailable.scannedSymbols).toBe(5);
+      expect(unavailable.warnings.join(" ")).toMatch(/aborted/i);
+      expect(unavailable.warnings.join(" ")).not.toMatch(/universe has no symbols/i);
+      expect(unavailable.warnings.join(" ")).not.toMatch(/Guardrails/i);
+      expect(unavailable.message).not.toMatch(/Guardrails/i);
+    }
+  });
+
+  it("Yahoo-fallbacks the whole allowed set after a Nasdaq abort", async () => {
+    stubFetches({ nasdaqRows: [], yahoo: "aapl", nasdaqAbort: true });
+
+    const scan = await scanMarket(["AAPL"], [], undefined, undefined, [], { enrichmentMode: "skip" });
+    expect(scan.returnedQuotes).toBe(1);
+    expect(scan.topCandidates.map((quote) => quote.symbol)).toEqual(["AAPL"]);
+    expect(scan.source).toContain("yahoo-finance");
+    expect(scan.warnings.join(" ")).toMatch(/aborted/i);
+    expect(scan.warnings.join(" ")).toMatch(/quote fallback priced 1 of 1/);
   });
 
   it("treats an expired audit seed as missing and still refuses a silent empty table", async () => {
@@ -133,7 +188,7 @@ describe("fetchNasdaqScreener transport", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const scan = await scanMarket(["AAPL"], []);
+    const scan = await scanMarket(["AAPL"], [], undefined, undefined, [], { enrichmentMode: "skip" });
     expect(scan.topCandidates.map((quote) => quote.symbol)).toEqual(["AAPL"]);
     expect(scan.returnedQuotes).toBeGreaterThan(0);
     expect(seen.length).toBeGreaterThan(0);
@@ -184,13 +239,56 @@ describe("GET /api/scan empty-screener contract", () => {
     expect(body.scannedSymbols).toBeGreaterThan(0);
     expect(body.topCandidates).toEqual([]);
     expect(body.error).toMatch(/Quotes were unavailable/);
+    expect(body.error).not.toMatch(/Guardrails/);
+    const failed = latestAuditByKind("market_scan_failed", userId);
+    expect(failed).toBeTruthy();
+    expect(latestAuditByKind("market_scan", userId)).toBeUndefined();
+  });
+
+  it("writes market_scan_failed on Nasdaq abort, not a silent market_scan", async () => {
+    stubFetches({ nasdaqRows: [], yahoo: "miss", nasdaqAbort: true });
+    const { userId } = resolveRequestUserFromEmail("scan-abort@example.com");
+    upsertConnectedAccount({
+      id: `scan-abort-${userId}`,
+      userId,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Scan abort test",
+      isActive: true
+    });
+    const policy = getPolicy(userId);
+    setPolicy({
+      ...policy,
+      includedIndices: [],
+      additionalSymbols: ["AAPL", "MSFT", "NVDA", "XOM", "SPCX"],
+      blocklist: []
+    }, userId);
+
+    const res = await scanGet(
+      new Request("https://trading.example.com/api/scan", {
+        headers: { [AUTHENTICATED_EMAIL_HEADER]: "scan-abort@example.com" }
+      })
+    );
+    expect(res.status).toBe(503);
+    const body = await res.json() as { warnings?: string[]; scannedSymbols?: number };
+    expect(body.scannedSymbols).toBe(5);
+    expect(body.warnings?.join(" ") ?? "").toMatch(/aborted/i);
+    expect(body.warnings?.join(" ") ?? "").not.toMatch(/universe has no symbols/i);
+    expect(latestAuditByKind("market_scan_failed", userId)?.kind).toBe("market_scan_failed");
+    expect(latestAuditByKind("market_scan", userId)).toBeUndefined();
   });
 });
 
-function stubFetches(input: { nasdaqRows: unknown[]; yahoo: "miss" | "aapl" }): void {
+function stubFetches(input: { nasdaqRows: unknown[]; yahoo: "miss" | "aapl"; nasdaqAbort?: boolean }): void {
   vi.stubGlobal("fetch", async (request: RequestInfo | URL) => {
     const url = String(request);
     if (url.includes("api.nasdaq.com")) {
+      if (input.nasdaqAbort) {
+        const error = new Error("This operation was aborted");
+        error.name = "AbortError";
+        throw error;
+      }
       return new Response(
         JSON.stringify({ data: { asof: "2026-08-18", table: { rows: input.nasdaqRows } } }),
         { status: 200, headers: { "content-type": "application/json" } }

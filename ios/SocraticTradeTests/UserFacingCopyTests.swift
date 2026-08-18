@@ -80,7 +80,11 @@ final class UserFacingCopyTests: XCTestCase {
         )
         XCTAssertEqual(
             DeskCopy.scanEmptyMessage(scanned: 503, quotes: 0, hasFilter: false),
-            "The scan could not price any names.  Refresh after quotes recover, or confirm the universe on Guardrails."
+            "The scan could not price any names.  Refresh after quotes recover."
+        )
+        XCTAssertFalse(
+            DeskCopy.scanEmptyMessage(scanned: 505, quotes: 0, hasFilter: false)
+                .localizedCaseInsensitiveContains("Guardrails")
         )
         assertOrdinary(DeskCopy.scanUniverseNote)
         assertOrdinary(DeskCopy.scanCountLine(names: 0, scanned: 503, quotes: 0, watched: 2))

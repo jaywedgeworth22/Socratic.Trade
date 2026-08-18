@@ -7,7 +7,9 @@ PR **#2812** was CONFLICTING with `origin/main` (`6429d984`, includes #2800 fuse
 Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: no xcodebuild.  Full `npm test` still hits leftover SiliconFlow + SEC/Yahoo 404s (untouched).  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 ## 2026-08-18 CURSOR — iOS Scan empty table is a quote miss
 
-Owner iOS Scan at market open (2026-08-18 ~12:03pm CT) showed "0 names · 2 watched" and "No Candidates" after `GET /api/scan` 200 with `topCandidates: []`.  Live cause: `fetchNasdaqScreener` stub `"Mozilla/5.0"` UA + bare 8s abort (every prod call since 2026-08-13T22:30Z).  Now `BROWSER_UA` + `fetchWithRetry`.  Yahoo whole-set fallback if Nasdaq still fails.  503 only as last resort.  Rebased clean onto `origin/main` (`6429d984` #2829).  Live skip-enrichment S&P 500 scan on this VM: 498 quotes / 38 candidates from `nasdaq-delayed-screener`.  `xcodebuild` not run.
+Coolify SELECT-only sha `cda485ff`.  Jay 12:03 CT = audit `d0359642` 2026-08-18T17:03:07Z: scanned=505 quotes=0 candidates=0 cached=true, abort + empty stale fallback, written as `market_scan` not `_failed`.  Same abort since 2026-08-13T22:30Z.  Last good `2f2a8e11` (515/513/65).  Watchlist XOM+SPCX (2).  Not empty-universe.  Not ranker-zero.  Not #2829.
+
+`fetchNasdaqScreener` now `BROWSER_UA` + `fetchWithRetry`.  Yahoo whole-set fallback.  Abort/0-quotes on a non-empty universe → 503 + `market_scan_failed`.  Empty abort rows are not last-good.  iOS shows 503 warnings + scanned/quotes; no Guardrails blame.  Rebased onto `6429d984` (#2829).  Live S&P skip-enrichment on this VM: 498 quotes / 38 candidates.  `xcodebuild` not run.
 
 PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
 

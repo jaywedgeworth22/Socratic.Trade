@@ -5,6 +5,7 @@ import Security
 enum MobileAPIError: Error, LocalizedError {
     case unauthorized(statusCode: Int)
     case serverError(statusCode: Int, message: String?)
+    case scanQuotesUnavailable(MarketScanResponse)
     case network(Error)
     case decoding(Error)
 
@@ -21,6 +22,11 @@ enum MobileAPIError: Error, LocalizedError {
                 return message
             }
             return "Something went wrong.  Try again."
+        case .scanQuotesUnavailable(let scan):
+            if let first = scan.warnings.first, !first.isEmpty {
+                return first
+            }
+            return "Quotes were unavailable for this universe.  Refresh after the quote feed recovers."
         case .network:
             return "Check your connection and try again."
         case .decoding:
@@ -121,8 +127,32 @@ struct MobileAPIClient {
     }
 
     /// Interactive market scan — GET `/api/scan`.  The server budget is 20s.
+    /// A 503 `scan_quotes_unavailable` body still carries scanned/quotes/warnings
+    /// so Scan can show the abort instead of "No Candidates."
     func marketScan() async throws -> MarketScanResponse {
-        try await get("/api/scan", retries: 0, timeout: 25)
+        var req = request(path: "/api/scan")
+        req.timeoutInterval = 25
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MobileAPIError.network(error)
+        }
+        if let http = response as? HTTPURLResponse, http.statusCode == 503 {
+            if let failed = try? JSONDecoder().decode(MarketScanResponse.self, from: data),
+               (failed.scannedSymbols ?? 0) > 0 || !failed.warnings.isEmpty {
+                throw MobileAPIError.scanQuotesUnavailable(failed)
+            }
+        }
+        try Self.requireSuccess(response, body: data)
+        do {
+            return try JSONDecoder().decode(MarketScanResponse.self, from: data)
+        } catch {
+            throw MobileAPIError.decoding(error)
+        }
     }
 
     func fullPolicy() async throws -> FullPolicy {

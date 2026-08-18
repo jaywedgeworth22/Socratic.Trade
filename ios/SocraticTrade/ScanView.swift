@@ -108,9 +108,10 @@ struct ScanView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        } else if loadError != nil && scan == nil {
-            // Failure banner already shown.  Do not render "No Candidates" — that
-            // reads as an empty universe when quotes were unavailable.
+        } else if loadError != nil && filtered.isEmpty {
+            // Failure banner + header counts/warnings already shown.  Do not
+            // render "No Candidates" — that reads as an empty universe when
+            // quotes were aborted (prod d0359642: 505 scanned, 0 quotes).
             EmptyView()
         } else if filtered.isEmpty {
             EmptyStateCard(
@@ -141,6 +142,11 @@ struct ScanView: View {
         do {
             scan = try await store.fetchMarketScan()
             loadError = nil
+        } catch let error as MobileAPIError {
+            if case .scanQuotesUnavailable(let failed) = error {
+                scan = failed
+            }
+            loadError = error.localizedDescription
         } catch {
             loadError = error.localizedDescription
         }

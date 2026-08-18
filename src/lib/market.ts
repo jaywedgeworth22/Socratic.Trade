@@ -239,7 +239,7 @@ export class ScanQuotesUnavailableError extends Error {
 
   constructor(input: { scannedSymbols: number; warnings: string[] }) {
     super(
-      "Quotes were unavailable for this universe.  Refresh after the quote feed recovers, or confirm the universe on Guardrails."
+      "Quotes were unavailable for this universe.  Refresh after the quote feed recovers."
     );
     this.name = "ScanQuotesUnavailableError";
     this.scannedSymbols = input.scannedSymbols;
@@ -375,11 +375,14 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     }
 
     if (quotes.length === 0 && options?.seedEnrichment) {
-      quotes = persistedMarketQuotes(options.seedEnrichment, positions);
-      cached = true;
-      warnings.push(
-        "Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
-      );
+      const seeded = persistedMarketQuotes(options.seedEnrichment, positions);
+      if (seeded.length > 0) {
+        quotes = seeded;
+        cached = true;
+        warnings.push(
+          "Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
+        );
+      }
     }
 
     if (quotes.length === 0 && allowed.size === 0) {

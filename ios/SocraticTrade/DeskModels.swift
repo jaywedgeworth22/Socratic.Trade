@@ -631,8 +631,8 @@ enum DeskCopy {
             return "This universe has no symbols.  Choose a base index or add symbols on Guardrails, then refresh."
         }
         if (quotes ?? 0) == 0 {
-            return "The scan could not price any names.  Refresh after quotes recover, or confirm the universe on Guardrails."
+            return "The scan could not price any names.  Refresh after quotes recover."
         }
-        return "The scan returned no ranked names.  Confirm the universe on Guardrails, then refresh."
+        return "The scan returned no ranked names.  Refresh after quotes recover."
     }
 }

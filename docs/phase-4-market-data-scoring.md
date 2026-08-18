@@ -87,18 +87,23 @@ Yahoo Finance quote-only row and still runs enrichment/scoring. If a custom
 ticker cannot be priced, Market Scan keeps the rest of the scan usable and shows
 a concrete warning naming the ticker.
 
-**Empty screener is a failure, not "no names today" (2026-08-18):** Interactive
-`GET /api/scan` used to return 200 with `topCandidates: []` when the delayed
-screener produced no allowed-set quotes and the audit seed was missing or older
-than `previousTradingDayStart`. The live cause was `fetchNasdaqScreener` using
-a stub `"Mozilla/5.0"` UA and a bare `fetch` that aborted at 8s (every
-production call since 2026-08-13T22:30Z). The screener now uses `BROWSER_UA` +
-`fetchWithRetry` like nasdaq-quote / nasdaq-calendar. If Nasdaq still fails,
-the quote fallback prices the whole allowed set. A non-empty universe that
-still cannot be priced throws `ScanQuotesUnavailableError` (HTTP 503). An
-empty universe still returns 200 with an explicit warning. iOS Scan decodes
-`scannedSymbols` / `returnedQuotes` / `warnings` and does not treat watchlist
-size as the universe.
+**Empty screener is a failure, not "no names today" (2026-08-18):** Coolify
+SELECT-only receipts on sha `cda485ff`: Jay's 12:03 CT iOS hit is audit
+`market_scan` `d0359642` at 2026-08-18T17:03:07Z — `scannedSymbols=505`
+`quotes=0` `candidates=0` `cached=true`, provider `nasdaq-delayed-screener`,
+warnings include "This operation was aborted" plus an empty stale-fallback
+claim.  Written as `market_scan`, not `market_scan_failed` (last `_failed`
+was Jul 14).  Same abort + 0 quotes on every scan since 2026-08-13T22:30Z.
+Last good: `2f2a8e11` 2026-08-13T16:15:45Z (515 scanned / 513 quotes / 65
+candidates).  Watchlist is XOM + SPCX (2); 505 is S&P-sized, not watched
+names.  This is not an empty universe and not ranker-zero.
+
+`fetchNasdaqScreener` now uses `BROWSER_UA` + `fetchWithRetry`.  If Nasdaq
+still fails, Yahoo prices the whole allowed set.  A non-empty universe that
+still cannot be priced throws `ScanQuotesUnavailableError` (HTTP 503) and
+writes `market_scan_failed`.  An empty abort row is not last-good.  iOS Scan
+decodes 503 warnings + scanned/quotes counts and does not blame Guardrails
+or the watchlist.
 
 **Expanded dynamic universes (2026-06-23):** Base universe selection now covers
 small and broad indexes without sending the whole market to the LLM. Static

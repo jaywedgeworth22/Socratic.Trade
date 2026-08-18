@@ -399,7 +399,11 @@ function MarketScanTab({
         </p>
         {scan.topCandidates.length === 0 ? (
           <Empty>
-            This universe has no ranked names.  Choose a base index or add symbols on Guardrails, then refresh.
+            {(scan.scannedSymbols ?? 0) > 0 && (scan.returnedQuotes ?? 0) === 0
+              ? "The scan could not price any names.  Refresh after quotes recover."
+              : (scan.scannedSymbols ?? 0) === 0
+                ? "This universe has no symbols.  Choose a base index or add symbols on Guardrails, then refresh."
+                : "The scan returned no ranked names.  Refresh after quotes recover."}
           </Empty>
         ) : (
           <ScanTable scan={scan} />

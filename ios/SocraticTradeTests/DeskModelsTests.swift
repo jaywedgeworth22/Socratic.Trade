@@ -57,6 +57,34 @@ final class DeskModelsTests: XCTestCase {
         )
     }
 
+    func testScanQuotesUnavailable503DecodesAbortReceipt() throws {
+        let json = Data(#"""
+        {
+          "error": "Quotes were unavailable for this universe.  Refresh after the quote feed recovers.",
+          "code": "scan_quotes_unavailable",
+          "scannedSymbols": 505,
+          "returnedQuotes": 0,
+          "warnings": [
+            "This operation was aborted",
+            "Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
+          ],
+          "topCandidates": []
+        }
+        """#.utf8)
+        let scan = try JSONDecoder().decode(MarketScanResponse.self, from: json)
+        XCTAssertEqual(scan.scannedSymbols, 505)
+        XCTAssertEqual(scan.returnedQuotes, 0)
+        XCTAssertEqual(scan.topCandidates.count, 0)
+        XCTAssertEqual(scan.warnings.first, "This operation was aborted")
+        XCTAssertEqual(
+            DeskCopy.scanCountLine(names: 0, scanned: scan.scannedSymbols, quotes: scan.returnedQuotes, watched: 2),
+            "0 names · 505 scanned · 0 quotes · 2 watched"
+        )
+        let error = MobileAPIError.scanQuotesUnavailable(scan)
+        XCTAssertEqual(error.errorDescription, "This operation was aborted")
+        XCTAssertFalse((error.errorDescription ?? "").localizedCaseInsensitiveContains("Guardrails"))
+    }
+
     func testChatTurnAndSourceValueDecode() throws {
         let turn = try JSONDecoder().decode(
             ChatTurn.self,
