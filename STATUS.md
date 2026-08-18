@@ -5,6 +5,11 @@
 Owner: cap must be user-settable in console/iOS, not Infisical, and ENFORCE fail-closed when set.  Live store is `user_settings.llm_daily_budget` via `GET|PATCH /api/settings/llm-budget`.  Resolution: user setting → legacy `policy.tuning` → retired env `TRIGGER_LLM_DAILY_*`.  Explicit `0` = no cap.  When a cap is set and today's ledger cannot be read, skip LLM/RAG/chat (`ledger_unavailable`).  `RAG_RUN_BUDGET_*` is now a Data Sources (number + boolean) setting.  System secrets stay Infisical: `ENCRYPTION_KEY`, `AUTH_SECRET`, broker host, `OPS_DIAGNOSTIC_TOKEN`.  Operator monthly `LLM_SPEND_CEILING` and `GEMINI_RPM_LIMIT` stay env/Infisical.  No Stripe / no IAP.  Did not touch #2792/#2798/#2800/#2794.
 
 Branch `cursor/user-llm-daily-budget-a539`.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

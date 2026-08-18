@@ -1,4 +1,5 @@
 - **[Socratic.Trade][CURSOR] Per-user LLM daily budget in console/iOS — IN PROGRESS 2026-08-18 (branch `cursor/user-llm-daily-budget-a539`).** User-settable token/USD cap on Settings + iOS Account & Settings (`user_settings.llm_daily_budget`).  Fail-closed skip when set.  `RAG_RUN_BUDGET_*` off Infisical onto Data Sources.  System secrets stay Infisical.  No Stripe/IAP.  Not stealing #2792/#2798/#2800/#2794.
+- **[Socratic.Trade][CURSOR] Litestream restore drill (scratch only) — COMPLETED/MERGED 2026-08-18 #2823 `55a8613d` (follow-up #2824 `cursor/restore-receipts-followup-2cd9`).** #2822 had merged stale BLOCKED / NOT VERIFIED rows; #2823 flipped decrypt (`fred` last-4 `6dd4`) and R2 weekly retain=1 to VERIFIED.  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md`.  No product code.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 - **[Socratic.Trade][CURSOR] Pinecone store-more vs condense-first — IN PROGRESS 2026-08-18 (branch `cursor/pinecone-store-vs-condense-ce2b`).** Report only.  Hybrid recommendation: condense-first operational index, store-more locally.  Builder 10 GB is a hard cap; do not fill with raw 10-Ks.  Do not flip write-class; do not prune; do not raise the 2.5M fuse.  FilingAPI stays #2792.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.
 - **[Socratic.Trade][CURSOR] Blind-spots audit (legal/DX/a11y/i18n/vendor/docs) — IN PROGRESS 2026-08-17 (branch `cursor/blind-spots-audit-299e`).** Read-only register `docs/audits/2026-08-17-blind-spots.md`.  Checked live issues/PRs.  Report-only PR.  Did not implement fixes.
 - **[Socratic.Trade][CURSOR] Purchases / Stripe / StoreKit end-to-end audit — IN PR #2809 2026-08-17 (branch `cursor/purchases-stripe-storekit-audit-f1c0`).** Report only.  No Stripe/StoreKit stack on ST; invite-only allowlist.  App Review 3.1.1 PASS.  No implementation PR.  Audit: `docs/audits/2026-08-17-purchases-stripe-storekit.md`.
@@ -430,7 +431,9 @@ As of 2026-07-08 (assignment-rule update).
 - **P0 Security (5) — COMPLETED 2026-08-05 (GROK + prior CURSOR).** P0-1 rate-limit chat/scan, P0-2 RH OAuth encrypt, P0-3 timing-safe admin already on main (CURSOR 2026-07-06). P0-4 audit chain + P0-5 decryptValue reject plaintext: branch `grok/p0-security-p1-mechanical`. Was: ~~rate-limit… reject plaintext keys (S).~~
 - **P1 Mechanical fixes (9) — MOSTLY COMPLETED 2026-08-05 (GROK hygiene).** P1-1/2 fills+proposals batching, P1-3 feed cap, P1-4 sqlite pragmas, P1-5 socratic receipt, P1-6 crashed-run sweep, P1-7 due_jobs already on main. Residual: P1-8 agent-not-running receipts, P1-9 money-path fault-injection suite. Was: ~~collapse redundant… fault-injection tests (M).~~
 - **P2 Ops (9):** verify drawdown kill-switch (S), verify correlation gate (S), Litestream
-  restore verification (S), account-deletion table sync test (S), disk/WAL monitoring (S),
+  restore verification (S) **done 2026-08-18 scratch-only** (see
+  `docs/rollouts/2026-08-17-litestream-restore-drill.md`; decrypt last-4 VERIFIED;
+  R2 weekly retain=1 VERIFIED), account-deletion table sync test (S), disk/WAL monitoring (S),
   automated restore drill (M), Mac sleep keep-awake (S), account-deletion Pinecone propagation
   (S), Playwright .next/cache CI step (S).
 - **P3 Observability (4):** Langfuse prompt-version + Bear-veto stamps (M), audit trail
