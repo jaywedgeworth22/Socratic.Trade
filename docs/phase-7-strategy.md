@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 rag-embed DeepInfra batch window (ingest)
+
+OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` against 8192 tokens.  A count-only batch of 32 ordinary chunks hit 8193 and 400'd `embed documents` after the 2026-08-18 2:12pm CT deploy.  That is a batch-sum, not one unchunked 10-K.  Hybrid still condenses first (`chunkDocument` 480 / `VECTOR_CONTEXT_MAX_CHARS`); packing is only a batch-window fix after that step.  `storeContexts` packs already-condensed texts under ~7500 `approxTokens` and embeds each group on its own lane.  One over-limit condensed text is isolated as its own POST and cannot skip the companions.  Local store-more is unchanged.  `VECTOR_EMBED_BATCH_SIZE=32` in Infisical is safe.  The #2812 health gate, #2820 producer order, write-class, and #2800 fuse are unchanged.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
+
 ## 2026-08-18 Green 400 must fail over to the next stored call
 
 #2829 made 404/403 failover-eligible and stopped the account-miss liar.  It left HTTP 400 out.  Live Paper after that deploy (`7f5890a5-bc21-4474-87eb-9b595de04ed1`, sha `6429d984`): Green pick `gpt-5.6-terra` → `openai/gpt-5.6-terra`, OpenRouter 400 "Provider returned error", one `llm_call_latency`, then "Failover chain exhausted (3 Green Team endpoints)".  Red never ran.
