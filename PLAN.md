@@ -1,6 +1,8 @@
 # Active Implementation Plan
 
 > **2026-08-18 CURSOR — Litestream restore drill (`cursor/restore-receipts-followup-2cd9`, #2824).** Docs-only pin after #2823 flipped decrypt + R2 retain=1 to VERIFIED (#2822 had merged the stale BLOCKED / NOT VERIFIED rows).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+> **2026-08-18 CURSOR — Paper/live pooling truth + paper cost = OOS 20 bps (`cursor/paper-live-docs-cost-68d3`).** Owner cut 2026-08-17: paper→live pooling stays; delete the leftover 20-paper+5-live transfer gate from current-truth docs. Paper execution-cost default rises from 1 bp to the shared `OOS_ROUND_TRIP_COST_BPS` / `PAPER_DEFAULT_BASE_SLIPPAGE_BPS` (20). No `autoApplyWeights`. No Stripe. Did not touch #2792/#2798/#2800/#2794. Rollout: `docs/rollouts/2026-08-18-paper-live-pooling-cost.md`.
+
 
 > **2026-08-18 CURSOR — Pinecone store vs condense (`cursor/pinecone-store-vs-condense-ce2b`).** Report only.  Recommended default is hybrid: processed proposer corpus in Pinecone, full bodies local, hydrate after A+B.  Do not fill Builder with raw 10-K/Q/transcripts.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not raise the 2.5M WU fuse.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.
 
@@ -684,10 +686,11 @@ Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected
 > field-level provenance/freshness/failures and upstream-family arbitration; exact candidate
 > enforcement; immutable Green/Red evidence parity; point-in-time RAG, prompt-data containment and
 > global context budgets; account-scoped relational/vector learning with independently validated
-> paper-to-live transfer; source coverage, shadow ablation and outcome-linked value telemetry; and
+> paper-to-live transfer (later deleted; pooling is current retrieval); source coverage, shadow
+> ablation and outcome-linked value telemetry; and
 > the same evidence contract for strategy review, learning review, Framework, and Coach. Remove the
 > product Test Account and purge its simulated outcomes, while retaining real broker paper accounts
-> only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
+> (pooling, not a 20+5 transfer gate). Add GPT-5.6 Luna/Terra/Sol plus role-specific
 > effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
 > custom IDs. Implementation, current-main reconciliation, and the full verification gate are
 > complete; PR #1544 merged as `60703dfe` and that exact release is healthy in production. See

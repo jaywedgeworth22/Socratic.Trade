@@ -20,8 +20,9 @@ The implemented decision path now treats evidence routing as a first-class contr
   instruction-like external text is quarantined as data;
 - realized and skipped outcomes join to decision-time source ablations, producing explicitly
   observational source-value telemetry; and
-- relational/vector account-derived learning is exact-account scoped. Broker-paper lessons transfer
-  only after independent live corroboration; the product Test Account is removed and purged.
+- structured lessons (`learned_context` + lesson vectors) are per-user and pool paper and live
+  closed lots across the owner's connected accounts. There is no 20-paper+5-live transfer gate;
+  paper trains live. The product Test Account is removed and purged.
 
 See `docs/reviews/2026-07-13-decision-evidence-architecture.md` for the source-by-source audit,
 invariants, and residual gaps.
@@ -546,9 +547,11 @@ conviction sizing multiplier — de-risking persistent over-confidence. Reduce-o
 composes as a reduction feeding the existing conviction cap.
 
 #### E.4 Execution cost on protective exits (Workstream B — correctness fix, ON)
-The paper/test execution-cost model now also debits EXIT fills booked by `synthetic-stops.ts` and
+The paper execution-cost model now also debits EXIT fills booked by `synthetic-stops.ts` and
 `order-replacement.ts` (previously they inserted raw-price exits with no cost), so the learning loop's
-realized edge is net-of-cost on both legs — not just entries.
+realized edge is net-of-cost on both legs — not just entries. The default paper floor is the same
+20 bps constant as OOS walk-forward (`OOS_ROUND_TRIP_COST_BPS` / `PAPER_DEFAULT_BASE_SLIPPAGE_BPS`);
+paper trains live, so a 1 bp paper default was dishonest.
 
 #### E.5 Unified learning-mutation ledger + admin revert (follow-on P0-4 — ledger ALWAYS-ON, revert admin-only)
 Every autonomous learning mutation now lands in ONE canonical append-only ledger (`learning_mutations`
