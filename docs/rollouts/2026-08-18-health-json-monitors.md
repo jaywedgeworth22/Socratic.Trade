@@ -70,7 +70,7 @@ npx vitest run test/health-json-monitors.test.ts test/ops-snapshot.test.ts \
 
 npm run lint          # 0 errors (767 grandfathered warnings)
 npx tsc --noEmit      # exit 0 after Record<string, string | undefined> env map
-npm run build         # Next.js 16.3.1 webpack (re-run after keep-generations commit)
+npm run build         # Next.js 16.3.1 webpack, exit 0 after keep-generations commit
 ```
 
 Focused health/ops/R2 tests are green.  A full `npm test` in this VM hit
