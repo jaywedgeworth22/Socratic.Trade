@@ -178,7 +178,7 @@ export function parsePositiveInt(raw: string | undefined, fallback: number): num
  * This resolver does not delete objects already in the bucket.
  */
 export function resolveR2ArchiveKeepGenerations(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): number {
   const raw = env[R2_ARCHIVE_KEEP_GENERATIONS_ENV] ?? env[R2_COLD_SNAPSHOT_RETAIN_ENV];
   const requested = parsePositiveInt(raw, R2_ARCHIVE_KEEP_GENERATIONS_DEFAULT);
