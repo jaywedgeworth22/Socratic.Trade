@@ -49,7 +49,18 @@ Touched files:
 
 ## Verification State
 
-Commands run after the implementation commit.
+```
+npm run lint            # exit 0 (warnings only; no new errors)
+./node_modules/.bin/tsc --noEmit   # exit 0
+./node_modules/.bin/vitest run test/notification-history.test.ts \
+  test/notification-lifecycle.test.ts test/alert-center-incident-grouping.test.ts \
+  test/alert-mutes.test.ts test/notify.test.ts test/notify-push-sanitize.test.ts \
+  test/notification-status-truth.test.ts test/policy-notification-events.test.ts
+  # 8 files / 73 passed
+npm run build           # Next.js 16.3.1 webpack, exit 0
+```
+
+Full `npm test` on this Linux VM hits leftover Yahoo/SEC/Alpaca 404s and strategy timeouts (untouched here; same residue noted on #2812).  No Mac pool; `xcodebuild` skipped.
 
 ## Next Steps & Blockers
 
