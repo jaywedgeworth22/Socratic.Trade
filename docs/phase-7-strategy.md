@@ -4,7 +4,7 @@ This document defines the comprehensive architecture for the AI Trading Strategy
 
 ## 2026-08-18 Manual Run once request/run status coupling
 
-`POST /api/strategy/run` writes `strategy_run_requests` first, then `runStrategyOnce` uses that same UUID as `strategy_runs.id`.  `queueStrategyRunRequest` dedupes while any request for that user is `queued` or `running`.  `markStaleRunningRuns` used to fail only the `strategy_runs` row.  After a process swap the worker never marked the request, so a sweep-failed orphan (Roth `0e5ccd66` at 22:13:05Z) left Manual Run once locked.  The sweep and `finishStrategyRun` now close the matching open request on the same write path.  A later scheduler tick also heals an already-terminal run whose request is still open.  Do not hide the lock by ignoring `running` at queue time.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+`POST /api/strategy/run` writes `strategy_run_requests` first, then `runStrategyOnce` uses that same UUID as `strategy_runs.id`.  `queueStrategyRunRequest` dedupes while any request for that user is `queued` or `running`.  `markStaleRunningRuns` used to fail only the `strategy_runs` row.  After #2845, ASC saw 0 new Roth `strategy_runs` after 22:06:43Z because orphan `0e5ccd66` was sweep-failed at 22:13:05Z (0 LLM) while its request stayed `running`.  The sweep and `finishStrategyRun` now close the matching open request.  The next scheduler tick and the next Manual Run once click both heal an already-terminal run whose request is still open.  Do not hide the lock by ignoring `running`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
 
 ## 2026-08-18 rag-embed DeepInfra batch window (ingest)
 

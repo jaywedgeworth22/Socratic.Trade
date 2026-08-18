@@ -119,7 +119,8 @@ describe("markStaleRunningRuns", () => {
       userId
     );
     // finishStrategyRun now closes the request; recreate the pre-fix orphan: terminal run,
-    // request still running.
+    // request still running.  ASC 0e5ccd66: 0 new Roth strategy_runs after 22:06:43Z because
+    // the leftover running request locked every later click.
     db.getDb()
       .prepare(
         `INSERT INTO strategy_run_requests
@@ -128,16 +129,16 @@ describe("markStaleRunningRuns", () => {
       )
       .run(runId, userId, new Date().toISOString(), new Date().toISOString());
 
-    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(true);
-
-    expect(db.markStaleRunningRuns(Date.now())).toBe(0);
+    // Next Manual Run once must not wait for a scheduler tick.
+    const next = queueStrategyRunRequest({ userId, manual: true });
+    expect(next.deduped).toBe(false);
+    expect(next.request.id).not.toBe(runId);
 
     const request = db
       .getDb()
       .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
       .get(runId) as { status: string };
     expect(request.status).toBe("failed");
-    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(false);
   });
 
   it("does not close another user's fresh running request when healing an orphan", async () => {

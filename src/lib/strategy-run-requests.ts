@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { getDb } from "./db";
+import { closeOrphanedStrategyRunRequests } from "./db-execution";
 import { runStrategyOnce, type StrategyResult } from "./strategy";
 
 export type StrategyRunRequestStatus = "queued" | "running" | "completed" | "failed";
@@ -66,6 +67,10 @@ export function getStrategyRunRequest(runId: string, userId: string): StrategyRu
 }
 
 export function queueStrategyRunRequest(input: { userId: string; manual?: boolean }): QueueResult {
+  // Live 0e5ccd66: strategy_runs was already sweep-failed; the request stayed running.
+  // Heal this user first so the next Manual Run once click is not deduped onto the orphan.
+  // A genuinely running request (matching strategy_runs still running) is left alone.
+  closeOrphanedStrategyRunRequests(Date.now(), input.userId);
   const db = getDb();
   const existing = db
     .prepare(
@@ -87,10 +92,8 @@ export function queueStrategyRunRequest(input: { userId: string; manual?: boolea
         finished_at: string | null;
       }
     | undefined;
-  // Dedupes on any open request for this user.  A sweep-failed strategy_runs row that left
-  // its matching request in `running` used to lock Manual Run once here forever — the close
-  // lives on `finishStrategyRun` / `markStaleRunningRuns` in db-execution.ts, not in this
-  // queue path (do not hide a stuck lock by ignoring `running`).
+  // Dedupes on any remaining open request for this user.  Do not ignore `running` here —
+  // a live overlapping run must still serialize.  Sweep-failed orphans are closed above.
   if (existing) {
     return { request: rowToRequest(existing), deduped: true };
   }

@@ -1,6 +1,6 @@
 # Active Implementation Plan
 
-> **2026-08-18 CURSOR — sweep-failed request lock (`cursor/sweep-request-orphan-lock-befc`).** Sweep-failed Roth orphan `0e5ccd66` left `strategy_run_requests.status=running`, so the next Manual Run once 502'd with no new run row.  Close the matching request on the sweep / `finishStrategyRun` write path; heal already-terminal mismatches on the next scheduler tick.  Do not ignore `running` at queue time.  Do not merge / deploy / bounce Coolify.  Do not touch #2841.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+> **2026-08-18 CURSOR — sweep-failed request lock (`cursor/sweep-request-orphan-lock-befc`, #2847).** #2845 live; 0 new Roth `strategy_runs` after 22:06:43Z.  Orphan `0e5ccd66` sweep-failed 22:13:05Z (0 LLM) left the request `running`.  Close on sweep / `finishStrategyRun`; heal on tick and on the next click.  Portfolio `8000+7000ms` is a separate lock.  Do not merge / deploy / bounce.  Do not touch #2841.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
 
 > **2026-08-18 CURSOR — getAccounts post-deploy timeout (`cursor/getaccounts-post-deploy-timeout-befc`).** Dashboard 6s `getAccounts` race fail-closes Manual Run once via `accountReadiness`.  Paper/Roth are Alpaca REST.  First-call retry + 15s combined budget; do not hide a real broker-down.  Do not bounce Coolify.  Rollout: `docs/rollouts/2026-08-18-getaccounts-post-deploy-timeout.md`.
 

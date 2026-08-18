@@ -2,9 +2,11 @@
 
 ## Context & Objective
 
-#2845 is already merged and live (`d4299bec`).  After that deploy, Roth `strategy_runs` `0e5ccd66-8a1b-467f-a5f1-0aa9bd8a77f4` was stale-swept **failed** at `2026-08-18T22:13:05Z` (0 LLM; summary `Process restarted mid-run — marked failed by stale-run sweep (started at 2026-08-18T21:42:29.623Z)`).  Its `strategy_run_requests` row stayed `status=running`.  A 5:14pm CT Manual Run once then returned 502 and wrote no new `strategy_runs` row.  Trading Ops will not click again until that lock is gone.
+#2845 is already merged and live (`d4299bec`).  After that deploy, Manual Run once did **not** create a `strategy_run`.  ASC: 0 new Roth rows after 22:06:43Z.  Roth orphan `0e5ccd66-8a1b-467f-a5f1-0aa9bd8a77f4` was stale-swept **failed** at `2026-08-18T22:13:05Z` (0 LLM; summary `Process restarted mid-run — marked failed by stale-run sweep (started at 2026-08-18T21:42:29.623Z)`).  Its `strategy_run_requests` row stayed `status=running`.  Trading Ops believes that leftover request is the lock.
 
-This change couples request status to the run write path so a sweep-failed orphan cannot leave the next Manual Run once blocked.
+The same window also logged `getPortfolioBundle` timeout `8000+7000ms` at 22:10:15Z.  That is a separate slow first-read after the swap (#2848).  This PR only closes the request/run status lock.
+
+This change couples request status to the run write path, and heals a leftover running request on the next click, so a sweep-failed orphan cannot leave Manual Run once blocked.
 
 ## Changes Made
 
@@ -17,7 +19,8 @@ The 5:17pm CT 503 "no available server" then 200 on the same sha `d4299bec` / `p
 Fix (write-path coupling, not queue-time hide):
 
 - After a sweep successfully fails a `strategy_runs` row, close the matching open request (`queued`/`running` → `failed`) with the same sweep summary.
-- On the same sweep tick, close any open request whose matching `strategy_runs` row is already terminal.  That is what clears live `0e5ccd66` after merge without requiring another click.  The scheduler already runs `markStaleRunningRuns` every 60s before the leader gate.
+- On the same sweep tick, close any open request whose matching `strategy_runs` row is already terminal.  The scheduler already runs `markStaleRunningRuns` every 60s before the leader gate.
+- `queueStrategyRunRequest` also heals **this user** before the dedupe read, so the next Manual Run once click is not blocked waiting for that tick (live `0e5ccd66` shape).
 - `finishStrategyRun` also closes a matching open request (`failed` → request `failed`; skip/completed → request `completed`), covering worker death after the run row is finished.
 - A `queued`/`running` request older than the 30-minute stale window with **no** `strategy_runs` row is marked failed.  Fresh queued rows (the live queue) are left alone.
 
@@ -36,7 +39,7 @@ Do not import `strategy-run-requests.ts` from `db-execution.ts` (cycle: requests
 ## Decisions & Trade-offs
 
 - Root-caused from the live orphan + the request/run id share + queue dedupe.  Did not guess a missing-credential or #2845 regression into the patch.
-- Did not make `queueStrategyRunRequest` ignore a `running` request.  That would hide the failure and leave the orphan row lying.
+- Did not make `queueStrategyRunRequest` ignore a `running` request whose matching run is still running.  That would hide a live overlap.  A request whose matching run is already failed is closed, then a new request is inserted.
 - Did not add UI error copy or owner notes.  Multi-user: each user's open request is independent; user A's orphan does not block user B; heal only closes the mismatched request id.
 - Heal of already-terminal mismatches is immediate (no second 30-minute wait).  That is the live lock.
 - Did not merge, deploy, or bounce Coolify.  Did not touch #2841, #2840, #2812, or strategy picks.
@@ -59,7 +62,7 @@ PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2847
 
 ## Next Steps & Blockers
 
-- Do not merge from this seat.  After merge, the next scheduler tick closes live `0e5ccd66` without a click.
+- Do not merge from this seat.  After merge, the next scheduler tick **or** the next Manual Run once click closes live `0e5ccd66`.
 - Do not bounce Coolify to clear the lock.
 - #2841 stays held.
 

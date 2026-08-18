@@ -333,22 +333,41 @@ function closeMatchingStrategyRunRequest(
     );
 }
 
-function closeOrphanedStrategyRunRequests(nowMs: number): void {
+/**
+ * Close open `strategy_run_requests` whose matching `strategy_runs` row is already
+ * terminal (live Roth `0e5ccd66` after the stale sweep wrote only the run).  Optional
+ * `userId` scopes the heal to one user so Manual Run once can clear that user's lock
+ * on the click without waiting for the next scheduler tick.
+ */
+export function closeOrphanedStrategyRunRequests(nowMs: number = Date.now(), userId?: string): void {
   const db = getDb();
   const finishedAt = new Date(nowMs).toISOString();
   const cutoff = new Date(nowMs - STALE_RUN_THRESHOLD_MS).toISOString();
 
   // Already-terminal run + still-open request (the live Roth lock after a sweep that only
   // wrote strategy_runs).  Close immediately; do not wait another 30 minutes.
-  const mismatched = db
-    .prepare(
-      `SELECT r.id AS id, s.status AS run_status, s.summary AS run_summary
-       FROM strategy_run_requests r
-       INNER JOIN strategy_runs s ON s.id = r.id
-       WHERE r.status IN ('queued', 'running')
-         AND s.status != 'running'`
-    )
-    .all() as Array<{ id: string; run_status: string; run_summary: string | null }>;
+  const mismatched = (
+    userId
+      ? db
+          .prepare(
+            `SELECT r.id AS id, s.status AS run_status, s.summary AS run_summary
+             FROM strategy_run_requests r
+             INNER JOIN strategy_runs s ON s.id = r.id
+             WHERE r.user_id = ?
+               AND r.status IN ('queued', 'running')
+               AND s.status != 'running'`
+          )
+          .all(userId)
+      : db
+          .prepare(
+            `SELECT r.id AS id, s.status AS run_status, s.summary AS run_summary
+             FROM strategy_run_requests r
+             INNER JOIN strategy_runs s ON s.id = r.id
+             WHERE r.status IN ('queued', 'running')
+               AND s.status != 'running'`
+          )
+          .all()
+  ) as Array<{ id: string; run_status: string; run_summary: string | null }>;
   for (const row of mismatched) {
     const failed = row.run_status === "failed";
     closeMatchingStrategyRunRequest(
@@ -361,14 +380,26 @@ function closeOrphanedStrategyRunRequests(nowMs: number): void {
 
   // Claimed or queued request whose strategy_runs row was never written, older than the same
   // stale-run window.  Fresh queued rows (the live Manual Run once queue) are left alone.
-  const stranded = db
-    .prepare(
-      `SELECT id FROM strategy_run_requests
-       WHERE status IN ('queued', 'running')
-         AND created_at < ?
-         AND NOT EXISTS (SELECT 1 FROM strategy_runs WHERE strategy_runs.id = strategy_run_requests.id)`
-    )
-    .all(cutoff) as Array<{ id: string }>;
+  const stranded = (
+    userId
+      ? db
+          .prepare(
+            `SELECT id FROM strategy_run_requests
+             WHERE user_id = ?
+               AND status IN ('queued', 'running')
+               AND created_at < ?
+               AND NOT EXISTS (SELECT 1 FROM strategy_runs WHERE strategy_runs.id = strategy_run_requests.id)`
+          )
+          .all(userId, cutoff)
+      : db
+          .prepare(
+            `SELECT id FROM strategy_run_requests
+             WHERE status IN ('queued', 'running')
+               AND created_at < ?
+               AND NOT EXISTS (SELECT 1 FROM strategy_runs WHERE strategy_runs.id = strategy_run_requests.id)`
+          )
+          .all(cutoff)
+  ) as Array<{ id: string }>;
   for (const row of stranded) {
     closeMatchingStrategyRunRequest(
       row.id,

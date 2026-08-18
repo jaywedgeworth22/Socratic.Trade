@@ -2,7 +2,9 @@
 
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 
-#2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Roth orphan `strategy_runs` `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  The 5:14pm CT Run once then 502'd and wrote no new `strategy_runs` row.  Root cause: request id === run id; queue dedupes on any `queued`/`running` request; `markStaleRunningRuns` only wrote `strategy_runs`.  Fix closes the matching open request on the sweep and `finishStrategyRun` write paths, and heals already-terminal runs whose request is still open.  Do not hide the lock with queue-time ignore or error copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2840 / #2812.
+#2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Manual Run once did not create a `strategy_run`.  ASC: 0 new Roth rows after 22:06:43Z.  Orphan `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  That leftover request is the lock (`queueStrategyRunRequest` dedupes on `queued`/`running`; the worker never wrote the request terminal).  22:10:15Z `getPortfolioBundle` `8000+7000ms` is a separate slow first-read (#2848), not this lock.
+
+Fix closes the matching open request on the sweep and `finishStrategyRun` write paths, heals already-terminal mismatches on the next tick, and heals this user's orphan on the next Manual Run once click.  Do not hide the lock by ignoring `running`.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2840 / #2812.
 
 PR **#2847**.  Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
 
