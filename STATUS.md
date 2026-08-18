@@ -4,7 +4,7 @@
 
 PR **#2812** was CONFLICTING with `origin/main` (`6429d984`, includes #2800 fuse + #2829 `require_parameters` narrowing).  Rebased `cursor/rag-embed-soft-degrade-ed6d` onto that SHA.  Sole real conflict was `docs/phase-7-strategy.md` — kept both the soft-degrade stanza and main's OpenRouter/`require_parameters` + fuse notes.  `vector-db.ts` auto-merged: `embedDocumentsLaneOrSkip` and #2800 `selectItemsWithinWriteBudget` both remain.  Behavior unchanged: one dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.  Did not "fix" the embed outage.
 
-Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: no xcodebuild.  Full `npm test` still hits leftover SiliconFlow + SEC/Yahoo 404s (untouched).  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 
 ## 2026-08-18 CURSOR — Pinecone daily-fuse deadlock (rebased onto hybrid)
 
