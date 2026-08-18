@@ -52,6 +52,7 @@ npx vitest run test/stale-running-runs.test.ts
 
 npx tsc --noEmit   # exit 0
 npm run lint       # 0 errors, grandfathered warnings only
+npm run build      # Next.js 16.3.1 compiled successfully
 ```
 
 PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2847
