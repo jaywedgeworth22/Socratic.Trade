@@ -4,7 +4,7 @@
 
 ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, live volume untouched, live HTTP 200.  **VERIFIED:** B2 restore to scratch (4.9G), `PRAGMA integrity_check` ok, audit max ~48s newer than the live sample, one Socratic Litestream writer, host 6h local backups.  **BLOCKED:** decrypt one stored credential (no `ENCRYPTION_KEY` / ciphertext off host).  **NOT VERIFIED** as retain=1: R2 weekly ok but `R2_ARCHIVE_KEEP_GENERATIONS=2`.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
 
-Branch `cursor/litestream-restore-drill-2cd9`.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+PR **#2822**.  Branch `cursor/litestream-restore-drill-2cd9`.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
