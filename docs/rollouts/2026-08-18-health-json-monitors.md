@@ -69,11 +69,11 @@ Touched files:
 npx vitest run test/health-json-monitors.test.ts test/ops-snapshot.test.ts \
   test/r2-cold-snapshot.test.ts test/health-route-exposure.test.ts \
   test/trading-liveness.test.ts
-# re-run after decoupling unused R2_ARCHIVE_KEEP_GENERATIONS
+# 5 files / 54 passed after decoupling unused R2_ARCHIVE_KEEP_GENERATIONS
 
-npm run lint          # 0 errors (grandfathered warnings only)
-npx tsc --noEmit      # re-run after decoupling
-npm run build         # re-run after decoupling
+npm run lint          # 0 errors (767 grandfathered warnings)
+npx tsc --noEmit      # exit 0
+npm run build         # Next.js 16.3.1 webpack, exit 0 after decoupling
 ```
 
 Focused health/ops/R2 tests are green.  A full `npm test` in this VM hit
