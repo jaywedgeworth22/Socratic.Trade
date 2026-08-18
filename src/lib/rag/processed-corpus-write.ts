@@ -1,6 +1,7 @@
 // Small complete storeDocument calls for the processed operational index.
 // Never truncate a full-body commit — producers pass a capped signal slice.
 
+import type { VectorStoreLeaseGuard } from "../vector-db";
 import { chunkDocument, type ChunkInput, type DocumentChunk } from "./chunk";
 import {
   groupChunksByItemCode,
@@ -19,6 +20,7 @@ export interface ProcessedSignalWriteInput {
   url?: string;
   chunks: readonly DocumentChunk[];
   userId?: string;
+  leaseGuard?: VectorStoreLeaseGuard;
 }
 
 export interface ProcessedSignalWriteResult {
@@ -74,7 +76,11 @@ export async function storeSignalSectionDocuments(
   storeDocument: (
     doc: ChunkInput & { symbol?: string },
     userId?: string,
-    options?: { documentKey?: string; parserRevision?: string }
+    options?: {
+      documentKey?: string;
+      parserRevision?: string;
+      leaseGuard?: VectorStoreLeaseGuard;
+    }
   ) => Promise<{ attempted: number; indexed: number; error?: string; documentComplete?: boolean }>
 ): Promise<ProcessedSignalWriteResult> {
   const docs = buildSignalSectionDocuments(input);
@@ -88,7 +94,8 @@ export async function storeSignalSectionDocuments(
   for (const doc of docs) {
     const stored = await storeDocument(doc, input.userId ?? "local", {
       documentKey: doc.documentKey,
-      parserRevision: "sec-signal-section-v1"
+      parserRevision: "sec-signal-section-v1",
+      ...(input.leaseGuard ? { leaseGuard: input.leaseGuard } : {})
     });
     result.documents += 1;
     result.documentKeys.push(doc.documentKey);

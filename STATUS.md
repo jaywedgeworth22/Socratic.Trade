@@ -9,7 +9,7 @@ Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED 
 
 Owner cut after #2811: condense-first for Pinecone, store-more locally, then prune junk so Green/Red retrieve (scout k=1 / deep k=8 + 24k) sees useful vectors.  Minimum PR A split is on this branch: local-complete FTS + extractive highlights + form-aware signal sections + speaker-turn slices write as their own complete `storeDocument`s.  `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` (not flipped; PR B hydrate is not in this PR).  Safe prune deletes raw-HTML / junk / dupes / low-value only; useful full-body only-copies stay.  2.5M fuse + $45 reserve unchanged.  No Stripe.  Did not retarget #2792 / #2798 / #2800 / #2794.
 
-Branch `cursor/hybrid-and-prune-7f41`.  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.
+Branch `cursor/hybrid-and-prune-7f41`.  PR #2820.  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.  Next: full vitest + Next build, then dry-run prune against prod inventory before `--apply`.  Do not flip write-class until PR B.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

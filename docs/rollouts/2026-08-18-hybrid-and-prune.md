@@ -14,6 +14,7 @@ Owner cut after the #2811 store-vs-condense audit: condense-first for the Pineco
 - `corpus-reembed` treats a highlight+signal commit as accession coverage so leftover FTS body rows are not re-uploaded.
 - `ingested_accessions` gains `pinecone_write_class` + `pinecone_vector_count` (migration 84).
 - Safe prune planner + `npx tsx scripts/prune-operational-index.ts` (dry-run default; live delete needs `--apply --confirm=prune-operational-junk`).
+- Signal-section writes now carry the shared RAG lease guard.  Filing tests route mocks by document class so processed abstracts/sections cannot consume the full-body receipt.
 
 Touched files:
 
@@ -47,14 +48,17 @@ Touched files:
 ## Verification State
 
 ```
-npm run lint
-npx tsc --noEmit
-npx vitest run test/pinecone-write-class.test.ts test/operational-index-prune.test.ts
-npm test
-npm run build
+npm run lint                          # exit 0
+npx tsc --noEmit                      # clean
+npx vitest run test/sec-filings.test.ts test/pinecone-write-class.test.ts test/operational-index-prune.test.ts
+                                      # 60/60 pass
+SILICONFLOW_API_KEY= OPENROUTER_API_KEY= npx vitest run \
+  test/sec-ingest-worker.test.ts test/sec8k-full-body.test.ts \
+  test/pinecone-wu-breaker.test.ts test/corpus-reembed.test.ts
+                                      # 64/64 pass
 ```
 
-Fill in after the gate runs.
+Full `npm test` + `npm run build` still running after this commit.
 
 ## Next Steps & Blockers
 

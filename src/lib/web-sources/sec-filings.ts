@@ -671,7 +671,8 @@ export async function ingestFiling(
     source: "sec-edgar",
     url: filingRef.url,
     chunks: localChunks,
-    userId
+    userId,
+    ...(leaseGuard ? { leaseGuard } : {})
   }, storeDocument);
   assertSecFilingLease(leaseGuard);
   if (!writesFullBodyToPinecone()) {
