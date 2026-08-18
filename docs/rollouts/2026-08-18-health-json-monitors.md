@@ -83,10 +83,12 @@ is the authoritative full-suite gate.
 
 ## Next Steps & Blockers
 
-Owner: create the three UptimeRobot keyword monitors from the runbook and
-point them at Pushover.  Allow 4xx/5xx on those keyword monitors.  Leave the
-HTTP 200 monitor as process-down only.  Do not delete
-`cold-snapshots/app-2026-08-16.db` from an agent.
+Rebased onto `origin/main` 2026-08-18 (`522b2454`) so #2816 mergeable is
+CLEAN.  Did not merge.  Owner: create the three UptimeRobot keyword monitors
+from the runbook and point them at Pushover.  Allow 4xx/5xx on those keyword
+monitors.  Leave the HTTP 200 monitor as process-down only.  Do not delete
+`cold-snapshots/app-2026-08-16.db` from an agent.  Do not flip unused
+`R2_ARCHIVE_KEEP_GENERATIONS=2`.
 
 ## Zero-Code Findings
 
