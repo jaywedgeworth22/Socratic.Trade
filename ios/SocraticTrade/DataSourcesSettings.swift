@@ -16,7 +16,7 @@ struct DataSourcesSection: View {
                 Section("Data Sources") {
                     HStack {
                         ProgressView()
-                        Text("loading knobs the server already exposes")
+                        Text("Loading data sources…")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -56,7 +56,7 @@ struct DataSourcesSection: View {
                     }
                 }
                 Section {
-                    Toggle("Show Advanced Knobs", isOn: $showAdvanced)
+                    Toggle("Show Advanced Options", isOn: $showAdvanced)
                 } footer: {
                     Text("Advanced rows stay hidden until you turn this on.  These settings only change which data your account uses.")
                 }

@@ -49,7 +49,7 @@ ios/
     ├── DeepLink.swift                  # Universal-link + push tap routing
     ├── PushNotifications.swift         # APNs register / tap
     ├── OrderCancel.swift               # Working-order cancel helpers
-    ├── PolicyTightening.swift          # Tighten-only policy patch
+    ├── PolicyTightening.swift          # Ask-First ↔ Autopilot + raise/lower caps
     ├── AppComponents.swift             # Shared rows / chrome
     ├── AppTypography.swift             # Type ramp
     ├── CandleWordmarkView.swift        # Brand wordmark

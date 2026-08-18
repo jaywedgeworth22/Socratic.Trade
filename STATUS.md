@@ -34,6 +34,11 @@ stays isolated.  No Stripe/IAP.  PR **#2815**.  Branch `cursor/legal-clickwrap-d
 `.pbxproj` compiles it.  Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
 CI green on `1b9e84ca` (iOS + verify-hosted).  User-visible copy is product
 language only (no remotes/surfaces/`ALLOWED_EMAILS`/Infisical asides).
+## 2026-08-18 CURSOR — iOS UX owner cut (IRA wash-sale, copy, bidirectional caps)
+
+Owner cut 2026-08-17 ~8:45pm CT.  IRA/Roth Guardrails no longer show “Wash-Sale Guard: On” (same-account N/A; cross-account ignored unless blocked).  Push/Settings copy is ordinary app language.  iOS can go Ask-First ↔ Autopilot and raise/lower or switch dollar ↔ % NAV caps without sending the user to the website.  Typed `AUTOPILOT` / live `CONFIRM` only — no extra real-money scare.  Did not touch reserved PRs.  `xcodebuild` not available on this VM.
+
+Branch `cursor/ios-ux-owner-cut-bdae`.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
 
 ## 2026-08-18 CURSOR — Litestream restore drill (report only)
 

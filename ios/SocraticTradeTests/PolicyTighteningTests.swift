@@ -1,18 +1,59 @@
 import XCTest
 @testable import SocraticTrade
 
-/// Tighten-only is the whole safety property of the phone's guardrail controls, so it is a pure
-/// function tested directly: no proposed value may ever be looser than what the snapshot says
-/// the policy is today.
+/// Bidirectional authority + cap edits.  Tightening stays one tap; loosening is a typed
+/// confirm on live accounts.  Percent-of-NAV caps are editable on the phone.
 final class PolicyTighteningTests: XCTestCase {
-    func testOnlyAutopilotHasSomewhereTighterToGo() {
-        XCTAssertEqual(PolicyTightening.tightenedAuthority(current: "decide"), "propose")
-        XCTAssertEqual(PolicyTightening.tightenedAuthority(current: " DECIDE "), "propose")
-        // Already Ask-First: nothing to offer.  Loosening back to Autopilot is console-only.
-        XCTAssertNil(PolicyTightening.tightenedAuthority(current: "propose"))
-        XCTAssertNil(PolicyTightening.tightenedAuthority(current: nil))
-        XCTAssertNil(PolicyTightening.tightenedAuthority(current: ""))
-        XCTAssertNil(PolicyTightening.tightenedAuthority(current: "something-new"))
+    func testAuthorityGoesBothDirections() {
+        XCTAssertEqual(PolicyTightening.counterpartAuthority(current: "decide"), "propose")
+        XCTAssertEqual(PolicyTightening.counterpartAuthority(current: " DECIDE "), "propose")
+        XCTAssertEqual(PolicyTightening.counterpartAuthority(current: "propose"), "decide")
+        XCTAssertEqual(PolicyTightening.counterpartAuthority(current: " PROPOSE "), "decide")
+        XCTAssertNil(PolicyTightening.counterpartAuthority(current: nil))
+        XCTAssertNil(PolicyTightening.counterpartAuthority(current: ""))
+        XCTAssertNil(PolicyTightening.counterpartAuthority(current: "something-new"))
+        XCTAssertTrue(PolicyTightening.isLooseningAuthority(from: "propose", to: "decide"))
+        XCTAssertFalse(PolicyTightening.isLooseningAuthority(from: "decide", to: "propose"))
+        XCTAssertTrue(PolicyTightening.needsAutopilotPhrase(to: "decide"))
+        XCTAssertFalse(PolicyTightening.needsAutopilotPhrase(to: "propose"))
+    }
+
+    func testTypedConfirmMatchesLiveLooseningRules() {
+        XCTAssertTrue(
+            PolicyTightening.needsTypedConfirm(
+                isLiveAccount: true,
+                requireTypedConfirmation: true,
+                isLoosening: true
+            )
+        )
+        XCTAssertFalse(
+            PolicyTightening.needsTypedConfirm(
+                isLiveAccount: true,
+                requireTypedConfirmation: true,
+                isLoosening: false
+            )
+        )
+        XCTAssertFalse(
+            PolicyTightening.needsTypedConfirm(
+                isLiveAccount: false,
+                requireTypedConfirmation: true,
+                isLoosening: true
+            )
+        )
+        XCTAssertFalse(
+            PolicyTightening.needsTypedConfirm(
+                isLiveAccount: true,
+                requireTypedConfirmation: false,
+                isLoosening: true
+            )
+        )
+        XCTAssertTrue(
+            PolicyTightening.needsTypedConfirm(
+                isLiveAccount: true,
+                requireTypedConfirmation: nil,
+                isLoosening: true
+            )
+        )
     }
 
     func testCapReductionsAreStrictlyLowerAndRespectTheServerFloor() {
@@ -20,12 +61,10 @@ final class PolicyTighteningTests: XCTestCase {
             PolicyTightening.tightenedCap(current: 2500, competingPercentCap: nil, fraction: 0.5),
             1250
         )
-        // Rounds DOWN, so rounding can never produce a value above the request.
         XCTAssertEqual(
             PolicyTightening.tightenedCap(current: 999, competingPercentCap: nil, fraction: 0.75),
             749
         )
-        // Server floor is 1 (numericFields: ["maxOrderNotional", 1, 100_000]).
         XCTAssertNil(PolicyTightening.tightenedCap(current: 1.2, competingPercentCap: nil, fraction: 0.25))
         XCTAssertNil(PolicyTightening.tightenedCap(current: 1, competingPercentCap: nil, fraction: 0.5))
     }
@@ -43,64 +82,95 @@ final class PolicyTighteningTests: XCTestCase {
         }
     }
 
-    func testUnknownOrPercentBasedCapsOfferNothing() {
-        // No value in the snapshot: "lower than unknown" is not a claim this app can make.
+    func testPercentBasedCapsAreEditableOnThePhone() throws {
         XCTAssertNil(PolicyTightening.tightenedCap(current: nil, competingPercentCap: nil, fraction: 0.5))
         XCTAssertTrue(PolicyTightening.tightenedCapOptions(current: nil, competingPercentCap: nil).isEmpty)
-        // A stored percent-of-NAV cap makes the notional/percent pair exclusive server-side
-        // (normalizeExclusivePolicyCaps): sending a notional would DELETE the percent cap and
-        // change which rule binds — possibly a loosening.  Console owns that switch.
+        // Legacy helper still refuses a notional reduction while a percent cap binds.
         XCTAssertNil(PolicyTightening.tightenedCap(current: 2500, competingPercentCap: 5, fraction: 0.5))
-        XCTAssertTrue(PolicyTightening.tightenedCapOptions(current: 2500, competingPercentCap: 5).isEmpty)
-        XCTAssertNil(PolicyTightening.tightenedCap(current: .nan, competingPercentCap: nil, fraction: 0.5))
-        XCTAssertNil(PolicyTightening.tightenedCap(current: .infinity, competingPercentCap: nil, fraction: 0.5))
+
+        let percentBased = try snapshotPolicy(
+            #"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":2500,"maxOrderPctOfNav":5}"#
+        )
+        XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.bindingMode(in: percentBased), .percentOfNav)
+        XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.displayValue(in: percentBased), "5% of NAV")
+        let options = PolicyTightening.capOptions(for: .maxOrderNotional, in: percentBased)
+        XCTAssertFalse(options.isEmpty)
+        XCTAssertTrue(options.contains { $0.mode == .percentOfNav && $0.value == 2 && !$0.isLoosening })
+        XCTAssertTrue(options.contains { $0.mode == .percentOfNav && $0.value == 10 && $0.isLoosening })
+        XCTAssertTrue(options.contains { $0.mode == .notional && $0.switchesMode })
+        XCTAssertFalse(PolicyTightening.Cap.maxOrderNotional.displayValue(in: percentBased).contains("console"))
+    }
+
+    func testUnsetCapsOfferPresetsInsteadOfSendingTheUserAway() throws {
+        let unset = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide"}"#)
+        XCTAssertEqual(PolicyTightening.Cap.maxDailyNotional.displayValue(in: unset), "not set")
+        let options = PolicyTightening.capOptions(for: .maxDailyNotional, in: unset)
+        XCTAssertTrue(options.contains { $0.mode == .notional && $0.value == 2500 && !$0.isLoosening })
+        XCTAssertTrue(options.contains { $0.mode == .percentOfNav && $0.value == 5 && !$0.isLoosening })
     }
 
     func testOptionsAreOrderedMildestFirstAndDeduplicated() {
         XCTAssertEqual(PolicyTightening.tightenedCapOptions(current: 2000, competingPercentCap: nil), [1500, 1000, 500])
-        // Small caps collapse to fewer distinct whole-dollar values; no duplicates survive
-        // (a $2 cap rounds 75% and 50% to the same $1, and 25% falls under the floor).
         XCTAssertEqual(PolicyTightening.tightenedCapOptions(current: 2, competingPercentCap: nil), [1])
     }
 
-    /// The offered value is absolute and `policy.patch` is queued, so the tap-time re-check is
-    /// what stops a menu built against an older, larger cap from RAISING a cap that dropped in
-    /// the meantime.  The server enforces no direction.
+    func testNotionalMenuIncludesRaisesAndPercentSwitch() throws {
+        let policy = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":10000}"#)
+        let options = PolicyTightening.capOptions(for: .maxOrderNotional, in: policy)
+        XCTAssertTrue(options.contains { $0.mode == .notional && $0.value == 7500 && !$0.isLoosening })
+        XCTAssertTrue(options.contains { $0.mode == .notional && $0.value == 12500 && $0.isLoosening })
+        XCTAssertTrue(options.contains { $0.mode == .percentOfNav && $0.switchesMode && $0.isLoosening })
+        XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.bindingMode(in: policy), .notional)
+    }
+
     func testAStaleOptionIsRefusedOnceTheCapHasMovedUnderIt() throws {
         let policy = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":10000}"#)
 
-        // Built when the cap was $10,000 and still a tightening.
         XCTAssertTrue(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: policy))
 
-        // The console (or an earlier queued tighten) has since dropped it to $1,000: re-sending
-        // the $7,500 option would raise it.
         let lowered = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":1000}"#)
         XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: lowered))
-        // Equal value is not a tightening either — it would spend a command to change nothing.
         XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 1000, in: lowered))
         XCTAssertTrue(PolicyTightening.isStillATightening(.maxOrderNotional, value: 750, in: lowered))
 
-        // The cap became percent-of-NAV based, or vanished, while the menu was open.
         let percentBased = try snapshotPolicy(
             #"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":10000,"maxOrderPctOfNav":5}"#
         )
         XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: percentBased))
+        XCTAssertTrue(
+            PolicyTightening.isStillExpected(
+                .maxOrderNotional,
+                expectedMode: .percentOfNav,
+                expectedValue: 5,
+                in: percentBased
+            )
+        )
         let unset = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide"}"#)
         XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: unset))
-        // No snapshot at all cannot answer "lower than what?".
         XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: nil))
 
-        // Caps are checked independently — a daily-cap option is judged against the daily cap.
         let both = try snapshotPolicy(
             #"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":1000,"maxDailyNotional":10000}"#
         )
         XCTAssertFalse(PolicyTightening.isStillATightening(.maxOrderNotional, value: 7500, in: both))
         XCTAssertTrue(PolicyTightening.isStillATightening(.maxDailyNotional, value: 7500, in: both))
 
-        // Every value the menu builder offers passes its own re-check against the same policy.
         for value in PolicyTightening.tightenedCapOptions(current: 10000, competingPercentCap: nil) {
             XCTAssertTrue(PolicyTightening.isStillATightening(.maxOrderNotional, value: value, in: policy))
         }
+    }
+
+    func testCustomAmountParsingAndLoosening() throws {
+        XCTAssertEqual(PolicyTightening.parsedCustomValue("$1,250", mode: .notional), 1250)
+        XCTAssertEqual(PolicyTightening.parsedCustomValue("7.5%", mode: .percentOfNav), 7.5)
+        XCTAssertNil(PolicyTightening.parsedCustomValue("0", mode: .notional))
+        XCTAssertNil(PolicyTightening.parsedCustomValue("0", mode: .percentOfNav))
+        XCTAssertNil(PolicyTightening.parsedCustomValue("150", mode: .percentOfNav))
+
+        let policy = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxDailyNotional":10000}"#)
+        XCTAssertTrue(PolicyTightening.isLooseningCustom(.maxDailyNotional, mode: .notional, value: 20000, in: policy))
+        XCTAssertFalse(PolicyTightening.isLooseningCustom(.maxDailyNotional, mode: .notional, value: 5000, in: policy))
+        XCTAssertTrue(PolicyTightening.isLooseningCustom(.maxDailyNotional, mode: .percentOfNav, value: 10, in: policy))
     }
 
     private func snapshotPolicy(_ policyJSON: String) throws -> PolicySummary {
@@ -122,42 +192,49 @@ final class PolicyTighteningTests: XCTestCase {
     }
 
     func testPayloadsMatchTheServerPolicyPatchContract() {
-        let authority = PolicyTightening.authorityPayload()
-        let patch = try? XCTUnwrap(authority["patch"] as? [String: Any])
-        XCTAssertEqual(patch?["strategyAuthority"] as? String, "propose")
+        let askFirst = PolicyTightening.authorityPayload()
+        let askFirstPatch = try? XCTUnwrap(askFirst["patch"] as? [String: Any])
+        XCTAssertEqual(askFirstPatch?["strategyAuthority"] as? String, "propose")
+
+        let autopilot = PolicyTightening.authorityPayload(to: PolicyTightening.autopilot, current: PolicyTightening.askFirst)
+        let autopilotPatch = try? XCTUnwrap(autopilot["patch"] as? [String: Any])
+        XCTAssertEqual(autopilotPatch?["strategyAuthority"] as? String, "decide")
+        let autopilotGuard = try? XCTUnwrap(autopilot["expectedCurrent"] as? [String: Any])
+        XCTAssertEqual(autopilotGuard?["strategyAuthority"] as? String, "propose")
 
         let capPayload = PolicyTightening.capPayload(.maxDailyNotional, value: 1250, current: 10000)
         let capPatch = try? XCTUnwrap(capPayload["patch"] as? [String: Any])
         XCTAssertEqual(capPatch?["maxDailyNotional"] as? Double, 1250)
-        // Field names are the server's own TradingPolicy keys, not app-invented aliases.
         XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.rawValue, "maxOrderNotional")
         XCTAssertEqual(PolicyTightening.Cap.maxDailyNotional.rawValue, "maxDailyNotional")
+
+        let percentPayload = PolicyTightening.capPayload(
+            .maxOrderNotional,
+            mode: .percentOfNav,
+            value: 10,
+            expectedMode: .percentOfNav,
+            expectedValue: 5
+        )
+        let percentPatch = try? XCTUnwrap(percentPayload["patch"] as? [String: Any])
+        XCTAssertEqual(percentPatch?["maxOrderPctOfNav"] as? Double, 10)
+        let percentGuard = try? XCTUnwrap(percentPayload["expectedCurrent"] as? [String: Any])
+        XCTAssertEqual(percentGuard?["maxOrderPctOfNav"] as? Double, 5)
     }
 
-    /// The phone's tap-time re-check cannot see the queue: `policy.patch` executes later, and the
-    /// server enforces no direction.  Every payload therefore carries `expectedCurrent` — the
-    /// values this phone read — so the server refuses the patch if they moved in the meantime.
-    /// Without these keys the "These controls only tighten" footer would be a claim the app
-    /// cannot keep.
     func testEveryPayloadCarriesTheExpectedCurrentPrecondition() throws {
         let authority = PolicyTightening.authorityPayload()
         let authorityGuard = try XCTUnwrap(authority["expectedCurrent"] as? [String: Any])
-        // The only authority value that offers the row at all.
         XCTAssertEqual(authorityGuard["strategyAuthority"] as? String, PolicyTightening.autopilot)
         XCTAssertEqual(authorityGuard.count, 1)
 
         let capPayload = PolicyTightening.capPayload(.maxDailyNotional, value: 1250, current: 10000)
         let capGuard = try XCTUnwrap(capPayload["expectedCurrent"] as? [String: Any])
-        // Guards exactly the field being patched, with the value the snapshot reported.
         XCTAssertEqual(capGuard["maxDailyNotional"] as? Double, 10000)
         XCTAssertEqual(capGuard.count, 1)
 
-        // No snapshot value means no expectation was ever read, so none is asserted.  An unset cap
-        // offers no reduction in the first place, so this payload is not reachable from the UI.
         XCTAssertNil(PolicyTightening.capPayload(.maxOrderNotional, value: 1250, current: nil)["expectedCurrent"])
         XCTAssertNil(PolicyTightening.capPayload(.maxOrderNotional, value: 1250, current: Double.nan)["expectedCurrent"])
 
-        // The whole payload must survive JSON encoding — it is submitted through JSONSerialization.
         let encoded = try JSONSerialization.data(withJSONObject: capPayload, options: [.sortedKeys])
         let decoded = try XCTUnwrap(
             JSONSerialization.jsonObject(with: encoded) as? [String: [String: Double]]
@@ -166,8 +243,6 @@ final class PolicyTighteningTests: XCTestCase {
         XCTAssertEqual(decoded["expectedCurrent"]?["maxDailyNotional"], 10000)
     }
 
-    /// The precondition is only as good as the value it carries, so it comes from the SAME
-    /// snapshot read the tap-time re-check uses.
     func testThePreconditionCarriesTheCapTheRecheckJustApproved() throws {
         let policy = try snapshotPolicy(#"{"systemState":"active","strategyAuthority":"decide","maxOrderNotional":10000}"#)
         let current = try XCTUnwrap(PolicyTightening.Cap.maxOrderNotional.currentValue(in: policy))
@@ -186,18 +261,13 @@ final class PolicyTighteningTests: XCTestCase {
         XCTAssertEqual(PolicyTightening.Cap.maxDailyNotional.currentValue(in: snapshot.policy), 10000)
         XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.competingPercentCap(in: snapshot.policy), 5)
         XCTAssertNil(PolicyTightening.Cap.maxDailyNotional.competingPercentCap(in: snapshot.policy))
-        // maxOrderNotional carries a competing percent cap here, so only the daily cap is offerable.
-        XCTAssertTrue(
-            PolicyTightening.tightenedCapOptions(
-                current: PolicyTightening.Cap.maxOrderNotional.currentValue(in: snapshot.policy),
-                competingPercentCap: PolicyTightening.Cap.maxOrderNotional.competingPercentCap(in: snapshot.policy)
-            ).isEmpty
+        XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.bindingMode(in: snapshot.policy), .percentOfNav)
+        XCTAssertEqual(PolicyTightening.Cap.maxDailyNotional.bindingMode(in: snapshot.policy), .notional)
+        XCTAssertFalse(
+            PolicyTightening.capOptions(for: .maxOrderNotional, in: snapshot.policy).isEmpty
         )
         XCTAssertFalse(
-            PolicyTightening.tightenedCapOptions(
-                current: PolicyTightening.Cap.maxDailyNotional.currentValue(in: snapshot.policy),
-                competingPercentCap: PolicyTightening.Cap.maxDailyNotional.competingPercentCap(in: snapshot.policy)
-            ).isEmpty
+            PolicyTightening.capOptions(for: .maxDailyNotional, in: snapshot.policy).isEmpty
         )
     }
 

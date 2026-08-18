@@ -329,6 +329,7 @@ struct PolicyTaxSettings: Decodable {
     let taxationType: String?
     let washSaleGuard: Bool?
     let washSaleHandling: String?
+    let iraWashSaleHandling: String?
     let shortTermRatePct: Double?
     let longTermRatePct: Double?
 }
@@ -493,6 +494,35 @@ enum SourceSettingGroupOrder {
 // MARK: - Shared display helpers
 
 enum DeskCopy {
+    /// Roth / traditional IRA — same-account wash sales have no taxable loss deduction.
+    static func isIraTaxation(_ raw: String?) -> Bool {
+        switch raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "roth_ira", "traditional_ira": return true
+        default: return false
+        }
+    }
+
+    /// Connected-account taxation wins, then capability account type, then policy tax settings.
+    static func resolvedTaxationType(
+        accountTaxation: String?,
+        capabilityType: String?,
+        policyTaxation: String?
+    ) -> String? {
+        let candidates = [accountTaxation, capabilityType, policyTaxation]
+        for raw in candidates {
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
+    }
+
+    /// Same-account IRA wash sales are N/A.  Cross-account replacement is ignored unless blocked.
+    static func iraWashSaleRows(handling: String?) -> (sameAccount: String, crossAccount: String) {
+        let normalized = handling?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cross = normalized == "block" ? "blocked" : "ignored"
+        return ("not applicable", cross)
+    }
+
     /// Authority is Autopilot / Ask-First.  Run state is Running / Paused / Stopped.
     /// Never blend the two — Autopilot can be paused when the market is closed.
     static func authorityVersusRunState(

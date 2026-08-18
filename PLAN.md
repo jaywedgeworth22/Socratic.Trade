@@ -1,6 +1,8 @@
 # Active Implementation Plan
 
 > **2026-08-18 CURSOR — Per-user LLM daily budget in Settings/iOS — MERGED #2821 `972e3763`.** Live cap is `user_settings.llm_daily_budget`.  When set, spend primitives + chat + strategy skip fail-closed.  `RAG_RUN_BUDGET_*` is a Data Sources setting.  System secrets stay Infisical.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
+> **2026-08-18 CURSOR — iOS UX owner cut (`cursor/ios-ux-owner-cut-bdae`).** IRA wash-sale N/A on iOS; ordinary push/settings copy; Ask-First ↔ Autopilot and raise/lower caps on the phone.  Did not steal #2792 #2798 #2800 #2794 #2812 #2816 #2818 #2819 #2820 #2814.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
+
 > **2026-08-18 CURSOR — Litestream restore drill (`cursor/restore-receipts-followup-2cd9`, #2824).** Docs-only pin after #2823 flipped decrypt + R2 retain=1 to VERIFIED (#2822 had merged the stale BLOCKED / NOT VERIFIED rows).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 > **2026-08-18 CURSOR — Paper/live pooling truth + paper cost = OOS 20 bps (`cursor/paper-live-docs-cost-68d3`).** Owner cut 2026-08-17: paper→live pooling stays; delete the leftover 20-paper+5-live transfer gate from current-truth docs. Paper execution-cost default rises from 1 bp to the shared `OOS_ROUND_TRIP_COST_BPS` / `PAPER_DEFAULT_BASE_SLIPPAGE_BPS` (20). No `autoApplyWeights`. No Stripe. Did not touch #2792/#2798/#2800/#2794. Rollout: `docs/rollouts/2026-08-18-paper-live-pooling-cost.md`.
 

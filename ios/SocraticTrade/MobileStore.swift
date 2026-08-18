@@ -704,7 +704,7 @@ final class MobileStore: ObservableObject {
 
     private func unavailableMessage(for commandType: String) -> String {
         if !serverAdvertises(commandType) {
-            return "This server build does not offer \(AppFormat.commandLabel(commandType)).  Use the web console for it."
+            return "This version cannot run \(AppFormat.commandLabel(commandType)) yet."
         }
         if Self.readinessDependentCommands.contains(commandType),
            let snapshot,

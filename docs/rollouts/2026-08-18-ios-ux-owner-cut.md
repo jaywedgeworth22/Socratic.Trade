@@ -1,0 +1,60 @@
+# 2026-08-18 — iOS UX owner cut (IRA wash-sale, ordinary copy, bidirectional caps)
+
+## Context & Objective
+
+Owner cut 2026-08-17 ~8:45pm CT: Roth/IRA Guardrails must not show “Wash-Sale Guard: On”; Settings must not talk like a ticket (APNs / production push / `policy.patch` / console-only); iOS must set Ask-First **and** return to Autopilot, and raise **or** lower caps, without sending the user to the website.
+
+Did not clone locally.  Did not touch healthy in-flight PRs #2792 #2798 #2800 #2794 #2812 #2816 #2818 #2819 #2820 #2814.  Layered on #2814’s “no owner-note UI” intent (Home / Insights / Data Sources copy) rather than fighting that PR.
+
+## Changes Made
+
+- IRA / Roth tax card matches web N/A: same-account wash sale is not applicable; cross-account replacement reads ignored unless blocked.  Taxable accounts still show Wash-Sale Guard.
+- Push Settings footer is “Alerts on.”  Apple / empty-token / sandbox / production jargon is sanitized out of the footer.
+- Guardrails and Account & Settings edit Ask-First ↔ Autopilot and raise / lower / switch dollar ↔ % of NAV caps through existing `policy.patch`.  Autopilot types `AUTOPILOT`.  Live loosening types `CONFIRM` when typed-confirm is on.  No extra real-money scare copy.
+
+Touched files:
+
+- `ios/SocraticTrade/PolicyTightening.swift`
+- `ios/SocraticTrade/GuardrailsView.swift`
+- `ios/SocraticTrade/PushNotifications.swift`
+- `ios/SocraticTrade/DeskModels.swift`
+- `ios/SocraticTrade/MobileModels.swift`
+- `ios/SocraticTrade/HomeView.swift`
+- `ios/SocraticTrade/DataSourcesSettings.swift`
+- `ios/SocraticTrade/InsightsView.swift`
+- `ios/SocraticTrade/MobileStore.swift`
+- `ios/SocraticTrade/AppComponents.swift`
+- `ios/SocraticTradeTests/PolicyTighteningTests.swift`
+- `ios/SocraticTradeTests/PushNotificationTests.swift`
+- `ios/SocraticTradeTests/DeskModelsTests.swift`
+- `ios/CLAUDE.md`
+- `docs/phase-6-customization-risk-notifications.md`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/EFFORT-LOG.md`
+- `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`
+
+## Decisions & Trade-offs
+
+- Did not rebuild Strategy / Macro / Connections.  Universe edits still live on Strategy; the copy no longer says “desktop console only.”
+- Did not add `iraWashSaleHandling` to the mobile `policy.patch` allowlist.  Display matches web; toggling Block vs Ignore on an IRA remains the existing policy PUT on web.
+- #2814 is still open and also edits Home / Insights / Guardrails / Data Sources.  This PR changes those same user-visible strings to satisfy the later owner cut.  Merge may need a text reconcile, not a behavior fight.
+- This Cloud VM has no Xcode.  `xcodebuild` could not run.  Swift tests are added; first compile will be CI / a Mac.
+
+## Verification State
+
+- `npm run lint` — pending in this rollout until the gate is run.
+- `npx tsc --noEmit` — pending.
+- `npm test` — pending.
+- `npm run build` — pending.
+- `xcodebuild` — **not available** on this VM.
+
+## Next Steps & Blockers
+
+- CI `verify` (JS) plus iOS compile on the Mac runner / TestFlight ship after merge.
+- Reconcile copy with #2814 if that PR is still open at merge time.
+- Do not steal the reserved PRs listed above.
+
+## Zero-Code Findings
+
+None.  This is an implementation PR.

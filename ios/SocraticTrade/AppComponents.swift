@@ -32,8 +32,7 @@ enum AppFormat {
         "watchlist.remove": "Remove from Watchlist",
         "alert.create": "Create Alert",
         "alert.delete": "Delete Alert",
-        // Neutral wording on purpose: the phone only tightens, but the same command type
-        // arrives from the web console in either direction, and Activity shows both.
+        // Neutral wording: the phone now edits in either direction, and Activity shows both.
         "policy.patch": "Policy Change"
     ]
 

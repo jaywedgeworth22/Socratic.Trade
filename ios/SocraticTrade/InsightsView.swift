@@ -250,10 +250,10 @@ private struct InsightsAuthorityCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Backend Remains Authoritative", systemImage: "lock.shield.fill")
+                Label("Orders Still Go Through the Server", systemImage: "lock.shield.fill")
                     .font(.appHeadline)
                     .foregroundStyle(AppPalette.accent)
-                Text("This tab summarizes server-returned facts.  Broker credentials, provider keys, policy checks, proposal validation, and order placement never move onto the phone.")
+                Text("This tab summarizes what the server already knows.  Broker credentials, keys, and order placement stay on the server.")
                     .font(.appSubheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

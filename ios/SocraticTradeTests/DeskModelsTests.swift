@@ -98,6 +98,52 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(budget.effective.costSource, "user")
     }
 
+    func testIraWashSaleCopyMatchesWebNA() {
+        XCTAssertTrue(DeskCopy.isIraTaxation("roth_ira"))
+        XCTAssertTrue(DeskCopy.isIraTaxation(" traditional_ira "))
+        XCTAssertFalse(DeskCopy.isIraTaxation("taxable"))
+        XCTAssertFalse(DeskCopy.isIraTaxation("brokerage"))
+
+        XCTAssertEqual(
+            DeskCopy.resolvedTaxationType(
+                accountTaxation: "roth_ira",
+                capabilityType: "brokerage",
+                policyTaxation: "taxable"
+            ),
+            "roth_ira"
+        )
+
+        let disregarded = DeskCopy.iraWashSaleRows(handling: "disregard")
+        XCTAssertEqual(disregarded.sameAccount, "not applicable")
+        XCTAssertEqual(disregarded.crossAccount, "ignored")
+
+        let blocked = DeskCopy.iraWashSaleRows(handling: "block")
+        XCTAssertEqual(blocked.sameAccount, "not applicable")
+        XCTAssertEqual(blocked.crossAccount, "blocked")
+
+        let missing = DeskCopy.iraWashSaleRows(handling: nil)
+        XCTAssertEqual(missing.crossAccount, "ignored")
+    }
+
+    func testFullPolicyDecodesIraWashSaleHandling() throws {
+        let json = Data(#"""
+        {
+          "taxSettings": {
+            "taxationType": "roth_ira",
+            "washSaleGuard": true,
+            "washSaleHandling": "block",
+            "iraWashSaleHandling": "disregard",
+            "shortTermRatePct": 24,
+            "longTermRatePct": 15
+          }
+        }
+        """#.utf8)
+        let policy = try JSONDecoder().decode(FullPolicy.self, from: json)
+        XCTAssertEqual(policy.taxSettings?.taxationType, "roth_ira")
+        XCTAssertEqual(policy.taxSettings?.iraWashSaleHandling, "disregard")
+        XCTAssertTrue(DeskCopy.isIraTaxation(policy.taxSettings?.taxationType))
+    }
+
     func testJoinedListAndYesNoAreSentenceCaseValues() {
         XCTAssertEqual(DeskCopy.joinedList(["QQQ", "SPY"]), "QQQ, SPY")
         XCTAssertEqual(DeskCopy.joinedList([]), "none")

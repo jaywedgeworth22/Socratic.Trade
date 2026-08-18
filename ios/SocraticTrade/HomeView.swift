@@ -91,7 +91,7 @@ private struct ReadinessChecklistHero: View {
                         done: !needsUniverse,
                         title: "Add a symbol universe",
                         detail: needsUniverse
-                            ? "In Socratic.Trade console → Strategy, include an index or symbols."
+                            ? "Include an index or symbols on the Strategy page."
                             : "Universe ready for strategy runs"
                     )
                 }
@@ -106,7 +106,7 @@ private struct ReadinessChecklistHero: View {
                     .buttonStyle(.borderedProminent)
                     .tint(AppPalette.accent)
                 } else if needsUniverse {
-                    Text("Open the desktop console to edit Strategy universe (indices + extra symbols), then pull to refresh here.")
+                    Text("Add an index or extra symbols on the Strategy page, then pull to refresh here.")
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -852,8 +852,8 @@ private struct AccountSettingsView: View {
         Section("Current Policy") {
             LabeledContent("Authority", value: AppFormat.strategyAuthorityValue(store.snapshot?.policy.strategyAuthority))
             LabeledContent("Horizon", value: AppFormat.policyHorizonValue(store.snapshot?.policy.holdingHorizon))
-            LabeledContent("Max Order", value: AppFormat.money(store.snapshot?.policy.maxOrderNotional))
-            LabeledContent("Daily Cap", value: AppFormat.money(store.snapshot?.policy.maxDailyNotional))
+            LabeledContent("Max Order", value: PolicyTightening.Cap.maxOrderNotional.displayValue(in: store.snapshot?.policy))
+            LabeledContent("Daily Cap", value: PolicyTightening.Cap.maxDailyNotional.displayValue(in: store.snapshot?.policy))
             LabeledContent("Daily Orders", value: store.snapshot?.policy.maxDailyOrders.map(String.init) ?? "—")
             NavigationLink {
                 GuardrailsView()

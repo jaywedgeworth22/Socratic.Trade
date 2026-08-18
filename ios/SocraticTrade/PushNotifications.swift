@@ -195,12 +195,29 @@ enum PushAlertState: Equatable {
         case .denied:
             return "Blocked in iOS Settings.  Alerts stay off until notifications are allowed for Socratic Trade."
         case .awaitingToken:
-            return "Allowed.  Waiting for Apple to issue this device a push token."
-        case .registered(let environment):
-            return "On — registered with Apple's \(environment.rawValue) push service."
+            return "Allowed.  Finishing setup…"
+        case .registered:
+            return "Alerts on."
         case .failed(let message):
-            return "Not working: \(message)"
+            return Self.failureSummary(message)
         }
+    }
+
+    /// Settings copy stays ordinary app language.  Apple / token errors stay out of the footer.
+    static func failureSummary(_ message: String) -> String {
+        let lower = message.lowercased()
+        let looksLikeAppleJargon =
+            lower.contains("apns")
+            || lower.contains("aps-environment")
+            || lower.contains("device token")
+            || lower.contains("sandbox")
+            || lower.contains("production")
+            || lower.contains("empty")
+            || lower.contains("baddevicetoken")
+        if looksLikeAppleJargon || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Alerts are off.  Try again, or check Notifications in iOS Settings."
+        }
+        return "Alerts are off.  Try again."
     }
 
     /// True only when a token is registered with the server.  Anything else must not be
@@ -324,7 +341,7 @@ final class PushNotificationCoordinator: NSObject, ObservableObject {
                 bundleId: Bundle.main.bundleIdentifier
             )
         else {
-            state = .failed("Apple returned an empty device token.")
+            state = .failed("empty device token")
             return
         }
         Task { await upload(registration) }
