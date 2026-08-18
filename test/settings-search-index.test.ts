@@ -75,6 +75,7 @@ describe("settings search index (PR #3)", () => {
       "confirmation",
       "notifications",
       "sharing",
+      "legal",
       "learning-review",
       "llm-budget",
       "boot",
