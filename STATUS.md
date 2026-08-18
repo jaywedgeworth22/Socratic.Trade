@@ -9,7 +9,7 @@ Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: 
 
 Owner iOS Scan at market open (2026-08-18 ~12:03pm CT) showed "0 names · 2 watched" and "No Candidates" after `GET /api/scan` 200 with `topCandidates: []`.  Not the Green OpenRouter 404.  Watchlist is never the universe.  Empty delayed screener + missing/expired audit seed now throws `ScanQuotesUnavailableError` (HTTP 503) instead of a silent empty table.  Quote fallback prices the whole allowed set.  iOS decodes `scannedSymbols` / `returnedQuotes` / `warnings`.  `xcodebuild` not on this VM.
 
-Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
+PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
 
 ## 2026-08-18 CURSOR — Pinecone daily-fuse deadlock (rebased onto hybrid)
 

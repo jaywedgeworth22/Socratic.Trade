@@ -28,13 +28,17 @@ A non-empty universe that cannot be priced after the delayed screener, the quote
 ## Verification State
 
 ```bash
-npx vitest run test/scan-empty-screener.test.ts test/market-custom-symbol.test.ts test/market-preselection.test.ts test/market-dynamic-universe.test.ts test/scan-singleflight.test.ts
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean
+npx vitest run test/scan-empty-screener.test.ts test/market-custom-symbol.test.ts \
+  test/market-preselection.test.ts test/market-dynamic-universe.test.ts \
+  test/scan-singleflight.test.ts
 # 28 passed
-npx tsc --noEmit
-npm run lint
 ```
 
-`xcodebuild` is not available on this VM. Swift decode/copy changed; Mac / TestFlight compile is a follow-up.
+`xcodebuild` is not available on this VM. Swift decode/copy changed; Mac / TestFlight compile is a follow-up. Full `npm test` on this VM hits unrelated env/network flakes (server-metrics, connection-health, history). Focused scan suites are the contract for this PR.
+
+PR **#2830**.
 
 ## Next Steps & Blockers
 
