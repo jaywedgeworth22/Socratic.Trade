@@ -60,6 +60,8 @@ Touched files:
 - Did not steal #2792 / #2798 / #2800 / #2794 (FilingAPI, alert-noise, Pinecone
   WU deadlock, iOS readiness).
 - Did not change rag-embed criticality.
+- Did not treat unused leftover `R2_ARCHIVE_KEEP_GENERATIONS=2` as a weekly
+  retain bug after host proof showed it only applies to empty `weekly/`.
 
 ## Verification State
 
