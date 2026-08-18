@@ -213,6 +213,52 @@ describe("roic-transcripts", () => {
     expect(shouldDeferBackgroundRagForStrategy({ strategyWorkInFlight: true, force: true })).toBe(false);
   });
 
+  it("plans skip-covered for cached latest and full local depth without a list", async () => {
+    const { planRoicSymbolWork } = await import("../src/lib/web-sources/roic-transcripts");
+    expect(
+      planRoicSymbolWork({
+        phase: "latest",
+        depth: 20,
+        localPeriods: [{ year: 2026, quarter: 2 }],
+        cachedIndex: null
+      })
+    ).toEqual({ action: "skip-covered", coveredCount: 1, reason: "latest-cached" });
+    expect(
+      planRoicSymbolWork({
+        phase: "archive",
+        depth: 20,
+        localPeriods: Array.from({ length: 20 }, (_, i) => ({
+          year: 2021 + Math.floor(i / 4),
+          quarter: (i % 4) + 1
+        })),
+        cachedIndex: null
+      }).action
+    ).toBe("skip-covered");
+    expect(
+      planRoicSymbolWork({
+        phase: "archive",
+        depth: 20,
+        localPeriods: [{ year: 2026, quarter: 2 }],
+        cachedIndex: [
+          { year: 2026, quarter: 2 },
+          { year: 2026, quarter: 1 }
+        ]
+      })
+    ).toEqual({
+      action: "fetch-gaps",
+      needsList: false,
+      periods: [{ year: 2026, quarter: 1 }]
+    });
+    expect(
+      planRoicSymbolWork({
+        phase: "archive",
+        depth: 20,
+        localPeriods: [{ year: 2026, quarter: 2 }],
+        cachedIndex: null
+      })
+    ).toEqual({ action: "fetch-gaps", needsList: true, periods: [] });
+  });
+
   it("writes full-body only for the newest high-interest call", async () => {
     const { roicPineconeWriteClass } = await import("../src/lib/web-sources/roic-transcripts");
     const highInterest = new Set(["AAPL", "MSFT"]);

@@ -117,6 +117,8 @@ describe("ops diagnostic snapshot", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.users.some((u: { userId: string }) => u.userId === userId)).toBe(true);
+    expect(body.roicArchive).toBeTruthy();
+    expect(typeof body.roicArchive.transcriptsWithContent).toBe("number");
 
     delete process.env.OPS_DIAGNOSTIC_TOKEN;
   });

@@ -44,7 +44,7 @@ Full `land.sh` gate (tsc → test → build) runs at land time.
 
 ## Next Steps & Blockers
 
-- Land this branch; Coolify auto-deploys on merge.  Confirm one `roic-transcript-refresh` walk and growing `earningscalls_transcripts` / accession counts.
+- Landed #2763.  Follow-up: skip cached re-lists and write `data/roic-artifacts` — `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 - Watch ticker breadth leave USB/SHEL/OXY.
 - FilingAPI still owner Plus — not this PR.
 - PR A (split writer) + PR B (hydrate) still required before flipping the global write class for filings.

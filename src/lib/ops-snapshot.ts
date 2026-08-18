@@ -16,6 +16,7 @@ import { isLiveOrderState } from "./broker-side";
 import type { EquityOrder } from "./types";
 import { statSync, statfsSync, readdirSync } from "fs";
 import { dirname, join } from "path";
+import { summarizeRoicArchiveCoverage } from "./web-sources/roic-transcripts";
 
 function getLitestreamLastSyncAge(dbPath: string): number | null {
   const litestreamDir = `${dbPath}-litestream`;
@@ -127,10 +128,28 @@ export interface OpsUserSnapshot {
   recentAudit: OpsAuditRow[];
 }
 
+export interface OpsRoicArchiveCoverage {
+  transcriptsWithContent: number;
+  symbolsWithContent: number;
+  symbolsAtDepth: number;
+  symbolsPartial: number;
+  artifactFiles: number;
+  archiveDepth: number;
+  cursorPhase: string | null;
+  cursorRemaining: number;
+  lastCompleteAt: string | null;
+  lastAttemptAt: string | null;
+  universeSize: number;
+  universeUncovered: number;
+  thinSymbols: Array<{ symbol: string; count: number }>;
+}
+
 export interface OpsSnapshot {
   asOf: string;
   schedulerLastTick: string | null;
   schedulerAgeSeconds: number | null;
+  /** ROIC Individual local archive (SQLite + artifacts).  No vendor HTTP. */
+  roicArchive?: OpsRoicArchiveCoverage | null;
   dependencies?: Record<string, { ok: boolean; reason?: string | null; lastFailure?: string | null }>;
   storage?: Record<string, any> | null;
   /** Last CascadingEnrichmentProvider coverage summary (filled / source / missing), if any scan has run. */
@@ -503,6 +522,13 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     enrichmentCoverage = null;
   }
 
+  let roicArchive: OpsRoicArchiveCoverage | null = null;
+  try {
+    roicArchive = summarizeRoicArchiveCoverage();
+  } catch {
+    roicArchive = null;
+  }
+
   return {
     asOf: new Date().toISOString(),
     schedulerLastTick: lastTick ?? null,
@@ -510,6 +536,7 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     dependencies,
     storage,
     enrichmentCoverage,
+    roicArchive,
     taskJournal: getTaskJournalSummary(new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString()),
     pineconeIngest,
     users

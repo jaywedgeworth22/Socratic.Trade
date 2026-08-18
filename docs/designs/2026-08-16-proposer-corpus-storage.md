@@ -718,7 +718,7 @@ Resolved since rev 1 (no longer open): scout stub (KD 6); Item 8 default (KD 7);
 - `src/lib/rag/demand-first-symbols.ts` — holdings-first rank
 - `src/lib/rag/fts-mirror-bound.ts` — 20 chunks / 6s; 933-chunk incident
 - `src/lib/web-sources/sec-filings.ts` — one-funnel ingest, `sortBreadthFirst` deepen
-- `src/lib/web-sources/roic-transcripts.ts` — `roleOfSpeaker`, latest-then-deepen, no body FTS
+- `src/lib/web-sources/roic-transcripts.ts` — `roleOfSpeaker`, latest-then-deepen-then-archive; skip-if-cached; `data/roic-artifacts` sidecar
 - `src/lib/web-sources/sec8k.ts` — `WEB_SOURCE_SEC8K_FULL_BODY` default off
 - `src/lib/web-sources/fmp-transcripts.ts` — full-body, no abstract; not the live budget
 - `src/lib/vector-db.ts` — `storeDocument` completeness, WU ×2 managed, retrieve gate, parent flag
@@ -734,3 +734,4 @@ Resolved since rev 1 (no longer open): scout stub (KD 6); Item 8 default (KD 7);
 - 2026-08-16 — Initial draft.
 - 2026-08-16 rev 2 — Addressed design review + adversarial memo: storage as binding constraint; retracted FTS-as-recall; split writer + hydrate checklist; Pinecone-first retrieve; `corpus-reembed` guard; real signal matcher; collapsed PR plan to beat Aug 30; WU range not 175-as-large; dual-identity resolver; ledger columns in the producer PR; 8-K default-off; FMP off the critical path; assembler double-print rule; configured vs effective trial fuse; 1,200-char scout stub as a Key Decision; killed Pass C.
 - 2026-08-16 rev 3 — One flip sequence: **A → B → Infisical flip**.  `hydrateAccession` is local-only (no EDGAR under the strategy lock); Coach/sheet `resolveFilingBody` may refetch.  `persistLocalComplete` pins FTS `accession` to the bare SEC key so section occurrences GLOB-join.
+- 2026-08-18 — ROIC Individual archive writes `data/roic-artifacts/{SYM}/` beside `earningscalls_transcripts`.  Cached list/body never re-hit ROIC.  Renew-vs-expire remains an owner call.
