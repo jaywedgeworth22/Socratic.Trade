@@ -633,11 +633,6 @@ Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
 
 Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
 
-## 2026-08-17 CURSOR — Retire FilingAPI.dev; ROIC.ai covers the class (#2778)
-
-Owner has ROIC access and not filingapi.dev.  Prod FilingAPI key is a dead 401; Plus checkout is refused (do not charge ST Stripe).  This branch removes live HTTP to filingapi.dev, the `filingapi` health lane, and cascade registration.  ROIC + SEC EDGAR 10-K/10-Q paths are unchanged.
-
-Branch `cursor/retire-filingapi-roic-de61`.  Rollout: `docs/rollouts/2026-08-17-retire-filingapi-roic.md`.
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 
 Owner reversed the #2787 retirement.  Keep `FilingApiEnrichmentProvider`, the `filingapi` health lane, and the capability-matrix entry.  Stop using the dead stored `FILINGAPI` key (prod 401): missing / invalid / 401 is a soft skip, health stays green, ROIC + SEC EDGAR cover the fields.  A later valid key is used again.  Do not buy Plus.  Do not charge Stripe.
