@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — #2848 verify hang in alpaca-mcp getAccount retry
+
+verify-hosted timed out 60000ms at `test/alpaca-mcp.test.ts:214`.  The test still advanced 5s after `readAccount` first wait moved to 16s, then `await`ed a pending promise under fake timers.  Advance the real `ALPACA_ACCOUNT_READ_FIRST_MS` budget.  Do not skip the test.  Live-path ROIC/FTS pause + FTS bound + 16s wait stay.  Do not merge.
+
 ## 2026-08-18 CURSOR — Manual Run once starved by ROIC / FTS on the event loop
 
 #2847 is live (`4abfb7fa`).  The request lock is gone: Roth Manual Run once wrote `b3b83913` at 23:13:25Z.  That run sat ~17m with llm=0 and never reached Green.  Not a #2831 miss.  `roic-transcript-refresh` was already in-flight (23:11:45Z, RJF 2024Q2→2022Q4); 78 `ftsMirrorSlice` 6–13s; `getEquityQuotes` 6s ×28; alpaca-broker 6.5–7.4s.  Bounding the FTS tick is not enough if ROIC still owns the loop.

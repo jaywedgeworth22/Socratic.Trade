@@ -68,14 +68,11 @@ Fix:
 
 ## Verification State
 
-Focused after rebase onto `4abfb7fa` + ROIC/FTS pause (full suite not re-run):
+verify-hosted on `0a1e212e` timed out 60000ms at `test/alpaca-mcp.test.ts:214` (`retries getAccount when the first REST SDK call stays pending`).  The test advanced 5s after `readAccount` first wait moved to 16s, then awaited a still-pending promise under fake timers.  The test now advances `ALPACA_ACCOUNT_READ_FIRST_MS`.  The test is kept.
 
 ```bash
-npx vitest run test/inflight-deadline.test.ts test/sec-ingest-worker.test.ts test/roic-transcripts.test.ts test/dashboard-agentic-fallback.test.ts test/stale-running-runs.test.ts
-# Test Files  5 passed (5)
-# Tests  71 passed (71)
-
-npx tsc --noEmit   # exit 0
+npx vitest run test/alpaca-mcp.test.ts test/inflight-deadline.test.ts
+npx tsc --noEmit
 ```
 
 PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2848

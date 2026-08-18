@@ -215,6 +215,7 @@ describe("Alpaca MCP gateway adapter", () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", async () => new Response(null, { status: 500 }));
 
+    const { ALPACA_ACCOUNT_READ_FIRST_MS } = await import("../src/lib/inflight-deadline");
     const { getAlpacaGateway } = await import("../src/lib/alpaca");
     const gateway = getAlpacaGateway("local");
     let calls = 0;
@@ -230,12 +231,17 @@ describe("Alpaca MCP gateway adapter", () => {
       });
     };
 
-    const pending = gateway.getAccounts();
-    await vi.advanceTimersByTimeAsync(5_000);
-    const accounts = await pending;
-    expect(accounts[0]?.accountNumber).toBe("RETRY_ACC");
-    expect(calls).toBe(2);
-    vi.useRealTimers();
+    try {
+      const pending = gateway.getAccounts();
+      // First wait is 16s (above live alpaca-broker max 14416ms).  Advancing 5s
+      // leaves readAccount pending and hangs vitest's 60s test timeout.
+      await vi.advanceTimersByTimeAsync(ALPACA_ACCOUNT_READ_FIRST_MS);
+      const accounts = await pending;
+      expect(accounts[0]?.accountNumber).toBe("RETRY_ACC");
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("passes an abort signal on MCP fetch so a hung sidecar can fall back to REST", async () => {

@@ -1,6 +1,6 @@
 # Active Implementation Plan
 
-> **2026-08-18 CURSOR — getAccounts loop budget + ROIC/FTS yield (`cursor/getaccounts-loop-budget-befc`, #2848).** Rebased onto `4abfb7fa` (#2847 live).  Roth `b3b83913` wrote at 23:13:25Z then sat llm=0 ~17m; ROIC refresh since 23:11:45Z + 78 FTS slices owned the loop.  Keep 16s wait + FTS 2s/1-row; pause ROIC/FTS while a run is in flight.  Do not reopen #2840.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+> **2026-08-18 CURSOR — getAccounts loop budget + ROIC/FTS yield (`cursor/getaccounts-loop-budget-befc`, #2848).** VERIFY_FAIL: alpaca-mcp getAccount retry test hung at 5s vs 16s first wait.  Advance `ALPACA_ACCOUNT_READ_FIRST_MS`.  Keep ROIC/FTS pause + 16s wait.  Do not skip the test.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
 
 > **2026-08-18 CURSOR — sweep-failed request lock (`#2847` `4abfb7fa` MERGED).** Leftover `running` request after sweep-failed `0e5ccd66` no longer locks Manual Run once.  Roth wrote `b3b83913` at 23:13:25Z.  Follow-up starvation is #2848.
 
