@@ -37,8 +37,8 @@ export function LegalCard() {
 
   const acceptedLabel =
     legal?.accepted && legal.acceptedAt
-      ? `Accepted version ${legal.version} on ${new Date(legal.acceptedAt).toLocaleString()}.`
-      : "Not yet accepted — the first-use notice will ask once, then stay dismissed until the terms version changes.";
+      ? `Accepted on ${new Date(legal.acceptedAt).toLocaleString()}.`
+      : "Not yet accepted.  You will be asked once the next time you open the app.";
 
   return (
     <Card title="Legal">
@@ -61,8 +61,8 @@ export function LegalCard() {
         <a href={LEGAL_PRIVACY_PATH} className="underline underline-offset-2">
           Privacy
         </a>
-        .  Account deletion is self-serve under Danger below.  Friends or family on{" "}
-        <code className="font-mono">ALLOWED_EMAILS</code> stay isolated.
+        .  You can delete your account under Danger below.  Each signed-in account stays private
+        to that person.
       </p>
     </Card>
   );

@@ -66,8 +66,8 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
     title: "6. Data retention",
     body: [
       "We retain account, connection, and audit data for as long as your account is active and as needed to comply with legal obligations, resolve disputes, and enforce agreements.",
-      "Production database backups (Litestream snapshots) are retained for 7 days, then expire.  Deleting your account removes in-app rows; residual backup copies fall out of that window.",
-      "You can delete your account yourself in Settings → Danger using the typed confirmation.  That flow permanently fences the prior identity and erases app-side data and server-stored secrets for the signed-in account.  Broker positions and provider OAuth grants are not closed or revoked by the app."
+      "Database backups are kept for 7 days, then deleted.  Deleting your account removes this account's app data; leftover backup copies expire at the end of that window.",
+      "You can delete your account yourself in Settings → Danger using the typed confirmation.  That permanently removes this account's app data and stored secrets.  Open positions at your broker and sign-in connections with other services are not closed or revoked by this app."
     ]
   },
   {
@@ -82,8 +82,8 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
     title: "8. Shared market-data pool and research corpus",
     body: [
       "Using the app requires contributing general market data — quotes, fundamentals, price history, and news pulled through your keys or broker — to a shared pool that other accepted users can read.  Personal account data (positions, orders, balances, P&L, credentials, watchlists, and strategy settings) is never pooled.",
-      "A shared research corpus (RAG) may include fact-tier learnings you contribute when that switch is on.  Risk rules and strategy directives stay in your private confirmation queue and are never written to the shared corpus.",
-      "A second allowed user (for example a friend or family email on ALLOWED_EMAILS) receives an isolated account.  Their positions, orders, credentials, and private settings are not visible to you, and yours are not visible to them."
+      "A shared research corpus may include fact-level notes you choose to contribute.  Risk rules and strategy instructions stay private and are never written to the shared corpus.",
+      "If more than one person uses the service, each account is private.  Positions, orders, credentials, and private settings are not visible across accounts."
     ]
   },
   {

@@ -65,6 +65,11 @@ sentence (`agentic-strategy@2.11.0`).
 - **`/welcome` stays reachable** by default (`landingPageEnabled` unset → true).
   Isolation for a second `ALLOWED_EMAILS` address is tested, not removed.
 - No Stripe / IAP / paywall.
+- **User-visible copy is product language only.**  Owner ruling 2026-08-18: no
+  coordinator/owner asides in iOS or console UI (no remotes, surfaces,
+  Infisical, owner cuts, `ALLOWED_EMAILS`, or other-agent notes).  Isolation
+  and backup TTL stay in Privacy as ordinary sentences.  Code comments and
+  this rollout may still name the internals.
 
 ## Verification State
 

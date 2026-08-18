@@ -907,7 +907,7 @@ private struct AccountSettingsView: View {
         } header: {
             Text("Legal")
         } footer: {
-            Text("Acceptance is versioned.  After you accept, this notice does not reappear until the terms change.  Account deletion is self-serve in the section below.  A second allowed email stays isolated.")
+            Text("After you accept, this notice stays dismissed until the terms change.  You can delete your account in the section below.")
         }
     }
 

@@ -118,9 +118,9 @@ export function ConsentGate() {
             stays private.
           </p>
           <p>
-            You can delete your account yourself in Settings.  Database backups are retained for{" "}
-            {BACKUP_RETENTION_DAYS} days.  Fact-tier research may join the shared RAG corpus; risk
-            and strategy directives do not.
+            You can delete your account yourself in Settings.  Database backups are kept for{" "}
+            {BACKUP_RETENTION_DAYS} days.  Fact-level research notes may join a shared research
+            corpus; risk rules and strategy instructions stay private.
           </p>
         </div>
 

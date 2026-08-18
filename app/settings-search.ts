@@ -336,7 +336,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   {
     id: "settings.dataPool",
     label: "Shared market-data pool",
-    synonyms: ["data pool", "consent", "sharing", "market data pool", "rag corpus"],
+    synonyms: ["data pool", "consent", "sharing", "market data pool", "research corpus"],
     scope: "user",
     destination: "settings/data-privacy",
     legacySection: "data",
@@ -348,13 +348,13 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   {
     id: "settings.legalNotice",
     label: "Legal notice",
-    synonyms: ["terms", "privacy", "disclaimer", "clickwrap", "not investment advice"],
+    synonyms: ["terms", "privacy", "disclaimer", "not investment advice"],
     scope: "user",
     destination: "settings/data-privacy",
     legacySection: "data",
     backingField: "legalNoticeConsent",
     disclosure: "advanced",
-    help: "Versioned terms and privacy acceptance.  Dismissed after accept until the version bumps.",
+    help: "Terms and privacy you accepted.  You will be asked again only if they change.",
     anchor: "legal"
   },
   {

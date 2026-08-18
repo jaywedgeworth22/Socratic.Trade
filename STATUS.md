@@ -32,7 +32,8 @@ do not silently share.  `/welcome` stays on; a second `ALLOWED_EMAILS` address
 stays isolated.  No Stripe/IAP.  PR **#2815**.  Branch `cursor/legal-clickwrap-data-pool-1016`.
 `LegalConsentSheet` is inlined in `SocraticTradeApp.swift` so the committed
 `.pbxproj` compiles it.  Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
-CI green on `1b9e84ca` (iOS + verify-hosted).
+CI green on `1b9e84ca` (iOS + verify-hosted).  User-visible copy is product
+language only (no remotes/surfaces/`ALLOWED_EMAILS`/Infisical asides).
 
 ## 2026-08-18 CURSOR — Litestream restore drill (report only)
 

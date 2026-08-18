@@ -111,7 +111,7 @@ export function DataSharingCard() {
       ? "Loading current state…"
       : poolAccepted
         ? "Required — general market data (quotes, fundamentals, history, news) you pull through your own keys or broker is pooled with other users who accepted the same terms.  Personal account data is never pooled."
-        : "Required to use the app.  Accept the first-use notice to contribute and read the shared general-market-data pool.";
+        : "Required to use the app.  Accept the terms notice to contribute and read the shared market-data pool.";
 
   return (
     <Card title="Data sharing">
