@@ -68,19 +68,27 @@ sentence (`agentic-strategy@2.11.0`).
 
 ## Verification State
 
-Commands run after the first push (see follow-up commit if anything failed):
+Local (this Cloud VM):
 
 ```
-npm run lint
-npx tsc --noEmit
-npx vitest run test/data-pool-consent.test.ts test/legal-notice-consent.test.ts test/per-user-policy-isolation.test.ts test/strategy-prompt-safety.test.ts test/dormant-features.test.ts test/settings-tree-scope.test.ts test/settings-search-index.test.ts
-npm test
-npm run build
+npm run lint                 # 0 errors (grandfathered warnings)
+npx tsc --noEmit             # pass
+npx vitest run test/data-pool-consent.test.ts test/legal-notice-consent.test.ts \
+  test/per-user-policy-isolation.test.ts test/strategy-prompt-safety.test.ts \
+  test/dormant-features.test.ts test/settings-tree-scope.test.ts \
+  test/settings-search-index.test.ts
+# 7 files / 32 tests pass
+npm run build                # pass; /welcome is a static route
 ```
 
-iOS was edited; this Cloud VM cannot run `xcodebuild`.  First CI iOS job failed
-because a new `LegalConsentSheet.swift` was not in the committed `.pbxproj`.
-The sheet is now inlined in `SocraticTradeApp.swift`.
+CI on `1b9e84ca` (after inlining the iOS sheet + merging `origin/main`):
+
+- iOS unsigned `xcodebuild`: pass — https://github.com/jaywedgeworth22/Socratic.Trade/actions/runs/32089276473
+- `verify-hosted` (lint + tsc + full vitest + next build): pass — https://github.com/jaywedgeworth22/Socratic.Trade/actions/runs/32089276341
+
+First CI iOS job on `d9ee5cc9` failed because a new `LegalConsentSheet.swift` was
+not in the committed `.pbxproj`.  The sheet is now inlined in
+`SocraticTradeApp.swift`.
 
 ## Next Steps & Blockers
 
