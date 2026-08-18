@@ -275,6 +275,11 @@ Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/20
 Owner: min-loss should be optional, and Auto must be a choosable IRA option (not only Ignore vs Block).  `iraWashSaleHandling` is now `block | auto | disregard`.  Blank `washSaleMinLossUsd` means every loss is in play (no hidden $50 IRA default).  Ignore does not steer Green.  Auto proceeds and Green weighs priced lock costs.  Block refuses.
 
 Prompt `agentic-strategy@2.14.0`.  Branch `cursor/ira-wash-sale-factor-a1df`.  PR #2842.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
+## 2026-08-18 CURSOR — notification history + web/iOS inbox parity
+
+Jay needs later notifications, not only a disappearing toast.  Website already had Activity Alert Center (`notification_events` + ack).  iOS had APNs banners and no inbox.  This branch adds a header inbox + unread badges on web, puts the same last-100 history on the mobile snapshot, and shows it on iOS Activity (time, title/body, read / Mark as Read).  Separate from #2831/#2812/#2830/#2800.  Opening the PR, not merging.
+
+Branch `cursor/notification-history-parity-4bbc`.  Rollout: `docs/rollouts/2026-08-18-notification-history-parity.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

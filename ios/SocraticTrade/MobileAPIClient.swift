@@ -242,6 +242,15 @@ struct MobileAPIClient {
         _ = try await successfulResponseData(for: request)
     }
 
+    func acknowledgeNotifications(ids: [String]) async throws -> Int {
+        let envelope: AcknowledgeNotificationsResponse = try await sendJSON(
+            "/api/notifications/ack",
+            method: "POST",
+            body: ["ids": ids]
+        )
+        return envelope.acknowledged
+    }
+
     func acceptAppConsent() async throws {
         var request = request(path: "/api/mobile/consent", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
@@ -463,6 +472,10 @@ struct MobileAPIClient {
 struct AppleLoginResponse: Decodable {
     let success: Bool
     let email: String?
+}
+
+private struct AcknowledgeNotificationsResponse: Decodable {
+    let acknowledged: Int
 }
 
 private struct WebAuthExchangeResponse: Decodable {

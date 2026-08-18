@@ -61,7 +61,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .home: return "Live thesis, actions, and agent controls."
         case .proposals: return "Trade proposals awaiting your judgment."
         case .markets: return "Holdings, orders, watchlist, and price alerts."
-        case .activity: return "Everything the agent did, newest first."
+        case .activity: return "Notifications, fills, and what the agent did."
         case .insights: return "Status brief and attention items."
         case .coach: return "Ask the desk — a real Coach conversation."
         case .scan: return "Ranked names with watchlist actions."
@@ -151,6 +151,10 @@ struct MobileControlView: View {
         store.snapshot?.pendingProposals.count ?? 0
     }
 
+    private var unreadNotificationCount: Int {
+        store.snapshot?.unreadNotificationCount ?? 0
+    }
+
     /// Programmatic jumps (e.g. Home's "Review Proposals") can target a screen the
     /// owner unpinned from the bar. Rerouting those into the More stack keeps every
     /// jump landing on a real screen instead of a selection with no matching tab.
@@ -198,6 +202,7 @@ struct MobileControlView: View {
                 Tab(AppTab.activity.title, systemImage: AppTab.activity.systemImage, value: AppTab.activity) {
                     NavigationStack { destination(for: .activity) }
                 }
+                .badge(unreadNotificationCount)
             }
             if tabPreferences.isPinned(.insights) {
                 Tab(AppTab.insights.title, systemImage: AppTab.insights.systemImage, value: AppTab.insights) {
@@ -229,7 +234,8 @@ struct MobileControlView: View {
                 NavigationStack(path: $morePath) {
                     MoreView(
                         tabPreferences: tabPreferences,
-                        pendingProposalCount: pendingProposalCount
+                        pendingProposalCount: pendingProposalCount,
+                        unreadNotificationCount: unreadNotificationCount
                     )
                     .navigationDestination(for: AppTab.self) { tab in
                         destination(for: tab)
@@ -328,6 +334,7 @@ extension Notification.Name {
 private struct MoreView: View {
     @ObservedObject var tabPreferences: TabPreferences
     let pendingProposalCount: Int
+    let unreadNotificationCount: Int
 
     var body: some View {
         List {
@@ -365,6 +372,14 @@ private struct MoreView: View {
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(AppPalette.negative, in: Capsule())
+                            }
+                            if tab == .activity && unreadNotificationCount > 0 {
+                                Text("\(unreadNotificationCount)")
+                                    .font(.appCaption2.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(AppPalette.accent, in: Capsule())
                             }
                         }
                         Text(tab.detail)

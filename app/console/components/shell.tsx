@@ -38,7 +38,10 @@ import { HeaderLogo } from "../ui/header-logo";
 import { WORDMARK_AR } from "../ui/candle-ticker";
 import { getIntroPhase, subscribeIntroPhase, type IntroPhase } from "../ui/intro-bus";
 import { DesktopRail, MobileTabBar } from "./nav";
+import { NotificationInbox } from "./notification-inbox";
 import { Btn } from "../ui/primitives";
+import { unreadNotificationCount } from "@/lib/notification-history";
+import { activeConnectedAccount } from "../lib/derive";
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
   return (
@@ -206,13 +209,21 @@ function ShellFrame({ children }: { children: ReactNode }) {
             </div>
           ) : null}
           <div className="mx-auto flex w-full max-w-[1400px] flex-1">
-            {snapshot ? <DesktopRail pendingCount={snapshot.pendingProposals.length} /> : null}
+            {snapshot ? (
+              <DesktopRail
+                pendingCount={snapshot.pendingProposals.length}
+                unreadCount={unreadNotificationCount(snapshot.notifications ?? [], activeConnectedAccount(snapshot)?.id)}
+              />
+            ) : null}
             <main id="console-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
           </div>
           {snapshot ? (
             <>
               <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} online={online} />
-              <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
+              <MobileTabBar
+                pendingCount={snapshot.pendingProposals.length}
+                unreadCount={unreadNotificationCount(snapshot.notifications ?? [], activeConnectedAccount(snapshot)?.id)}
+              />
               {/* Blocking legal clickwrap + mandatory data-pool gate.  Accept
                   dismisses it until either version bumps. */}
               <ConsentGate />
@@ -405,6 +416,7 @@ function ChromeBar({
         {/* Always visible (PR-E3): touch users have no ⌘K chord; icon-only on
             phones (kbd hidden below sm) so the bar still prioritizes scope + STOP. */}
         <CommandPaletteTrigger />
+        <NotificationInbox snapshot={snapshot} />
         <UserMenu snapshot={snapshot} theme={theme} setTheme={setTheme} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />

@@ -37,6 +37,11 @@ function badgeTitle(proposals: number): string {
   return "";
 }
 
+function unreadTitle(unread: number): string {
+  if (unread > 0) return `${unread} unread notification${unread === 1 ? "" : "s"}`;
+  return "";
+}
+
 interface Destination {
   href: string;
   label: string;
@@ -105,7 +110,7 @@ export function groupedDestinations(destinations: Destination[]): { label: strin
   return groups;
 }
 
-export function DesktopRail({ pendingCount }: { pendingCount: number }) {
+export function DesktopRail({ pendingCount, unreadCount = 0 }: { pendingCount: number; unreadCount?: number }) {
   const pathname = usePathname() ?? "";
   const guardNav = useNavDirtyGuard();
   return (
@@ -131,6 +136,11 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
                 {d.href === "/console/approvals" && pendingCount > 0 && (
                   <span className="con-badge" title={badgeTitle(pendingCount)}>
                     {pendingCount}
+                  </span>
+                )}
+                {d.href === "/console/activity" && unreadCount > 0 && (
+                  <span className="con-badge" title={unreadTitle(unreadCount)}>
+                    {unreadCount}
                   </span>
                 )}
               </Link>
@@ -177,6 +187,7 @@ function TabsSheet({
   guardNav,
   tabs,
   pendingCount,
+  unreadCount = 0,
   barHeight,
   sheetId
 }: {
@@ -186,6 +197,7 @@ function TabsSheet({
   guardNav: (event: { preventDefault: () => void } | undefined, href: string) => boolean;
   tabs: MobileTabsState;
   pendingCount: number;
+  unreadCount?: number;
   barHeight: number;
   sheetId: string;
 }) {
@@ -323,6 +335,11 @@ function TabsSheet({
                             {pendingCount}
                           </span>
                         )}
+                        {d.href === "/console/activity" && unreadCount > 0 && (
+                          <span className="con-badge" title={unreadTitle(unreadCount)}>
+                            {unreadCount}
+                          </span>
+                        )}
                       </Link>
                       <button
                         type="button"
@@ -359,7 +376,7 @@ function TabsSheet({
  * env(safe-area-inset-bottom) padding (see .con-tabbar in console.css); the solid
  * near-opaque background stays so page content never ghosts through. */
 
-export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
+export function MobileTabBar({ pendingCount, unreadCount = 0 }: { pendingCount: number; unreadCount?: number }) {
   const pathname = usePathname() ?? "";
   const moreSheetId = useId();
   const [tabsOpen, setTabsOpen] = useState(false);
@@ -438,6 +455,11 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                       {pendingCount}
                     </span>
                   )}
+                  {d.href === "/console/activity" && unreadCount > 0 && (
+                    <span className="con-badge absolute -right-2.5 -top-1" title={unreadTitle(unreadCount)}>
+                      {unreadCount}
+                    </span>
+                  )}
                 </span>
                 {d.label}
               </Link>
@@ -474,6 +496,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
         guardNav={guardNav}
         tabs={tabsState}
         pendingCount={pendingCount}
+        unreadCount={unreadCount}
         barHeight={barOffset}
         sheetId={moreSheetId}
       />

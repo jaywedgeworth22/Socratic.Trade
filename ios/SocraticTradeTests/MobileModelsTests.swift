@@ -25,6 +25,12 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertNil(snapshot.latestScan)
         XCTAssertEqual(snapshot.notifications.first?.type, "run_failed")
         XCTAssertNil(snapshot.notifications.first?.acknowledgedAt)
+        XCTAssertEqual(snapshot.notifications.first?.title, "Strategy Run Failed")
+        XCTAssertEqual(snapshot.notifications.first?.body, "Sent")
+        XCTAssertEqual(snapshot.notifications.first?.read, false)
+        XCTAssertEqual(snapshot.unreadNotificationCount, 1)
+        XCTAssertEqual(snapshot.inScopeNotifications(activeAccountId: "account-1").count, 1)
+        XCTAssertTrue(snapshot.inScopeNotifications(activeAccountId: "other").isEmpty)
     }
 
     func testSnapshotDecodesCompactLatestScan() throws {
@@ -62,6 +68,12 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.latestScan?.returnedQuotes, 5069)
         XCTAssertEqual(snapshot.latestScan?.asOf, "2026-08-18T19:25:13.000Z")
         XCTAssertTrue(snapshot.latestScan?.hasUsableUniverse == true)
+    }
+
+    func testSnapshotDecodesWithoutNotificationsAsEmptyInbox() throws {
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        XCTAssertTrue(snapshot.notifications.isEmpty)
+        XCTAssertEqual(snapshot.unreadNotificationCount, 0)
     }
 
     func testDeletionPreviewMatchesReadOnlyServerContract() throws {
@@ -526,8 +538,8 @@ final class MobileModelsTests: XCTestCase {
       "connectedAccounts":[{"id":"account-1","label":"Brokerage","broker":"robinhood","environment":"live","accountNumber":"account-number","isActive":true,"capabilities":{"equityTrading":true,"shortSelling":false,"optionsTrading":true,"optionsLevel":2,"marginEnabled":true,"accountType":"brokerage"}}],
       "watchlist":[{"symbol":"MSFT","addedAt":"2026-07-20T12:00:00.000Z"}],
       "alerts":[{"id":"alert-1","symbol":"AAPL","op":">","price":200,"note":"Breakout","status":"triggered","createdAt":"2026-07-20T12:00:00.000Z","triggeredAt":"2026-07-21T15:00:00.000Z","triggeredPrice":205}],
-      "recentCommands":[{"id":"command-1","commandType":"strategy.run_once","status":"succeeded","error":null,"createdAt":"2026-07-21T17:30:00.000Z","queuedAt":"2026-07-21T17:30:00.000Z","startedAt":"2026-07-21T17:30:01.000Z","finishedAt":"2026-07-21T17:31:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}],
-      "notifications":[{"id":"n-1","type":"run_failed","title":"Strategy Run Failed","createdAt":"2026-07-21T17:29:00.000Z","status":"sent","acknowledgedAt":null,"connectedAccountId":"account-1"}]
+      "notifications":[{"id":"note-1","createdAt":"2026-07-21T17:32:00.000Z","type":"run_failed","title":"Strategy Run Failed","body":"Sent","read":false,"status":"sent","acknowledgedAt":null,"connectedAccountId":"account-1","accountLabel":"Brokerage"}],
+      "recentCommands":[{"id":"command-1","commandType":"strategy.run_once","status":"succeeded","error":null,"createdAt":"2026-07-21T17:30:00.000Z","queuedAt":"2026-07-21T17:30:00.000Z","startedAt":"2026-07-21T17:30:01.000Z","finishedAt":"2026-07-21T17:31:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}]
     }
     """#
 }

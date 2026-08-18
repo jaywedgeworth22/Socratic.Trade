@@ -5,7 +5,7 @@
  *  events, grouped chronologically. Uses only what the snapshot actually
  *  provides — no invented data. */
 
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { FillEvent, RecentProposal, StrategyRunRow } from "@/lib/types";
 import { OPS_AUDIT_KINDS, type UnifiedActivitySubEvent } from "@/lib/dashboard-feed";
 import type { UnifiedActivityGroup } from "../../dashboard-types";
@@ -35,6 +35,12 @@ const TAB_IDS = TABS.map((t) => t.id);
 export default function ActivityPage() {
   const { snapshot } = useConsoleData();
   const [tab, setTab] = useState<Tab>("all");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("tab") === "alerts") {
+      setTab("alerts");
+    }
+  }, []);
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   if (!snapshot) return null;
 
