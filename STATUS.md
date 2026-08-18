@@ -276,8 +276,9 @@ Owner: min-loss should be optional, and Auto must be a choosable IRA option (not
 
 Prompt `agentic-strategy@2.14.0`.  Branch `cursor/ira-wash-sale-factor-a1df`.  PR #2842.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
 ## 2026-08-18 CURSOR — notification history + web/iOS inbox parity
+## 2026-08-18 CURSOR — notification history rebased onto main (#2830)
 
-Jay needs later notifications, not only a disappearing toast.  Website already had Activity Alert Center (`notification_events` + ack).  iOS had APNs banners and no inbox.  This branch adds a header inbox + unread badges on web, puts the same last-100 history on the mobile snapshot, and shows it on iOS Activity (time, title/body, read / Mark as Read).  Separate from #2831/#2812/#2830/#2800.  Opening the PR, not merging.
+PR **#2841** was CONFLICTING/DIRTY against `origin/main` after #2830 (`13b60747`) and docs #2832.  Rebased `cursor/notification-history-parity-4bbc` onto that SHA.  Sole conflict: `ios/SocraticTradeTests/UserFacingCopyTests.swift` — kept #2830 `testScanCopyDoesNotTreatWatchlistAsTheUniverse` and this PR's `testNotificationHistoryCopyStaysOrdinary`.  Silent auto-merge also duplicated `acknowledgeNotifications` in `MobileStore.swift`; dropped the extra copy.  History work unchanged: shared `notification_events`, website bell inbox, iOS Activity Notifications, last 100, ack via `POST /api/notifications/ack`.  Did not touch #2831/#2812/#2840, trading, broker, OpenRouter, RAG, or the health gate.  Not merging.  Not deploying.
 
 Branch `cursor/notification-history-parity-4bbc`.  Rollout: `docs/rollouts/2026-08-18-notification-history-parity.md`.
 

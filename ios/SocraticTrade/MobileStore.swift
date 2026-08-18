@@ -555,18 +555,6 @@ final class MobileStore: ObservableObject {
         }
     }
 
-    func acknowledgeNotifications(ids: [String]) async {
-        let unique = Array(Set(ids.filter { !$0.isEmpty }))
-        guard !unique.isEmpty else { return }
-        do {
-            _ = try await client.acknowledgeNotifications(ids: unique)
-            error = nil
-            await load()
-        } catch {
-            applyAuthAwareError(error)
-        }
-    }
-
     func loadAccountDeletionPreview() async {
         guard !isDeletingAccount else { return }
         isDeletingAccount = true

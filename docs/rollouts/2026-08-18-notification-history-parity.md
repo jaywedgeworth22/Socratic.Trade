@@ -62,10 +62,16 @@ npm run build           # Next.js 16.3.1 webpack, exit 0
 
 Full `npm test` on this Linux VM hits leftover Yahoo/SEC/Alpaca 404s and strategy timeouts (untouched here; same residue noted on #2812).  No Mac pool; `xcodebuild` skipped.
 
+## Rebase onto origin/main (2026-08-18)
+
+`origin/main` moved to `13b60747` (#2830 Nasdaq UA + retry, plus docs #2832).  This branch rebased onto that SHA.  Sole conflict: `ios/SocraticTradeTests/UserFacingCopyTests.swift` — kept both #2830 `testScanCopyDoesNotTreatWatchlistAsTheUniverse` and this PR's `testNotificationHistoryCopyStaysOrdinary`.  Git auto-merged `MobileStore.swift` without a conflict marker but left two identical `acknowledgeNotifications` methods; the extra copy was removed so iOS still compiles.  #2830 `scanQuotesUnavailable` exhaustive switch and `nasdaq-screener-fetch` UA/retry were not reverted.
+
+Did not recreate the PR.  Did not merge.  Did not deploy.  Did not touch #2831, #2812, #2840, trading, broker, OpenRouter, RAG, or the health gate.
+
 ## Next Steps & Blockers
 
+- Done when GitHub reports #2841 MERGEABLE.  Leave auto-merge as Jay left it.
 - ASC TestFlight after merge if iOS changed (no Mac pool on this account; `xcodebuild` skipped).
-- Do not merge during a window that needs origin up.
 - Left gaps listed in the PR body (channel prefs, mute on iOS, full Strategy page on iOS).
 
 ## Zero-Code Findings
