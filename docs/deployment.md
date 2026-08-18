@@ -11,13 +11,25 @@ in historical rollouts as archival, not live targets.
 **Auto-deploy:** every push to `main` triggers Coolify via the repo webhook to
 Coolify's **manual** GitHub webhook endpoint
 (`https://host.jays.services/webhooks/source/github/events/manual`), not the
-GitHub-App integration alone. HMAC must match the app's
-`manual_webhook_secret_github`. Merge == live; do **not** post deploy claims or
-manually trigger deploys (ANNOUNCE-THEN-DEPLOY is retired).
+GitHub-App integration alone.  HMAC must match the app's
+`manual_webhook_secret_github`.  Do **not** post deploy claims or manually
+trigger deploys (ANNOUNCE-THEN-DEPLOY is retired).
+
+**Weekday RTH latch:** Coolify still receives the webhook.  The Dockerfile
+refuses the **image build** during regular US equity hours (Mon–Fri
+09:30–16:00 ET, 09:30–13:00 ET on NYSE early-close days) unless `HOTFIX=1`
+(build-arg / Coolify env, or a standalone `HOTFIX=1` token in the merge
+commit message) or `RTH_DEPLOY_OVERRIDE=1` (explicit owner request).  A
+refused build does not swap containers, so the site stays on the last
+healthy image.  Evenings, weekends, and full-close holidays still
+auto-deploy.  Workflow `RTH Deploy Latch` annotates a blocked push and
+retries `origin/main` at 21:20 UTC on weekdays.  Do not add this check to
+`scripts/coolify-prod-start.sh`.
 
 Canonical detail:
 
 - `docs/rollouts/2026-07-10-auto-deploy-on.md`
+- `docs/rollouts/2026-08-18-rth-deploy-latch.md` (weekday RTH build latch)
 - `docs/rollouts/2026-08-07-hetzner-fleet-cutover.md` (and ops follow-up notes)
 - `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md` (webhook signature drift)
 - `AGENTS.md` → production / Coolify stanzas
@@ -27,9 +39,12 @@ Canonical detail:
 1. A pull request passes the required `verify` check and merges to `main`
    (prefer `gh pr merge <n> --squash --auto`).
 2. GitHub delivers the push to Coolify's manual webhook (HMAC-validated).
-3. Coolify serializes builds (`concurrent_builds` pinned to **1**), builds with
-   the app's **Dockerfile** pack, and starts `scripts/coolify-prod-start.sh`
-   with `DB_BOOTSTRAP=live`.
+3. Coolify serializes builds (`concurrent_builds` pinned to **1**) and builds
+   with the app's **Dockerfile** pack.  The first post-copy step is
+   `npx tsx scripts/assert-rth-deploy-latch.ts`.  During weekday RTH that
+   step exits 2 unless `HOTFIX=1` / `RTH_DEPLOY_OVERRIDE=1`; Coolify keeps
+   the last healthy container.  Otherwise it finishes the image and starts
+   `scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live`.
 4. Boot injects Infisical secrets, restores SQLite when the marker-guarded
    bootstrap requires it, and runs Litestream (when R2 is enabled) around Next.js.
 

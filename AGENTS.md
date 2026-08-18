@@ -45,11 +45,14 @@ Before every commit/push to the GitHub repo, you MUST update the following:
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"
    means merged to `main`. **As of 2026-07-10, merging to `main` AUTO-DEPLOYS to production**
-   (owner-directed): Coolify auto-deploys `socratic-trade-prod` on every push to `main`, so
-   "Completed (merged)" and "Deployed to production" now collapse — there is no separate manual deploy
-   step. The old **ANNOUNCE-THEN-DEPLOY** protocol is **RETIRED**: do NOT post deploy claims or manually
-   trigger Coolify deploys. Mechanism, verification, and rollback:
-   `docs/rollouts/2026-07-10-auto-deploy-on.md`; canonical protocol detail in
+   (owner-directed), **with a weekday RTH latch as of 2026-08-18**: Coolify still receives every
+   `main` push, but weekday regular US equity hours refuse the image build unless `HOTFIX=1` or
+   `RTH_DEPLOY_OVERRIDE=1`.  Evenings/weekends still go live.  A refused build keeps the last
+   healthy container.  "Completed (merged)" and "Deployed to production" still collapse after
+   the close (or immediately on hotfix).  The old **ANNOUNCE-THEN-DEPLOY** protocol is
+   **RETIRED**: do NOT post deploy claims or manually trigger Coolify deploys.  Mechanism:
+   `docs/rollouts/2026-07-10-auto-deploy-on.md` and
+   `docs/rollouts/2026-08-18-rth-deploy-latch.md`; canonical protocol detail in
    `/Users/jay/apps/AGENT-SYNC.md`.
 3. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
 4. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
@@ -232,31 +235,40 @@ rollout note).
 dockerfile build pack, SSH deploy-key git source). The old uuid `m1os7ijf31bg3fanil152e4b` and the
 nixpacks note are STALE — the app was recreated during the Oracle migration; API calls against the
 old uuid return a bare `{"message":...}` that is easy to misread as a permissions problem.
-**AUTO-DEPLOY IS ON (owner-directed 2026-07-10): every push to `main` auto-deploys** via the
-repo's GitHub webhook to Coolify's **manual webhook endpoint**
+**AUTO-DEPLOY IS ON (owner-directed 2026-07-10), with a weekday RTH latch (2026-08-18):** every
+push to `main` still hits Coolify via the repo webhook to Coolify's **manual webhook endpoint**
 (`https://host.jays.services/webhooks/source/github/events/manual`) — NOT the GitHub-App
 integration; the deploy-key source uses the manual endpoint, which validates an HMAC secret that
-must equal the app's `manual_webhook_secret_github`. **Known failure mode (bit us 2026-08-01/02):
-if those secrets drift, every main push is answered `Invalid signature`, no deployment is ever
-created, and prod silently freezes while merges pile up** — GitHub's hook page still shows green
-200s, so check the DELIVERY RESPONSE BODY (`gh api .../hooks/<id>/deliveries/<id>` →
-`.response.payload`), not the status code. Repair recipe + receipts:
-`docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`. Verify any deploy landed with
-`bash scripts/verify-deploy-sha.sh` (asserts the live sha CONTAINS your commit). Merge == live;
-the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy claims or manually trigger
-deploys. Rollback to manual: disable auto deploy on the app.
+must equal the app's `manual_webhook_secret_github`.  The Dockerfile then refuses the **image
+build** during regular US equity hours (Mon–Fri 09:30–16:00 ET, or until 13:00 ET on NYSE
+early-close days) unless `HOTFIX=1` (Coolify/build-arg env **or** a standalone `HOTFIX=1` token
+in the merge commit message) or `RTH_DEPLOY_OVERRIDE=1` (explicit owner request).  A refused
+build leaves the last healthy container running — do **not** put this check in
+`scripts/coolify-prod-start.sh` (a runtime exit would take the site down after the swap).
+Evenings, weekends, and full-close holidays still auto-deploy.  A weekday 21:20 UTC GitHub
+Action drain retries `origin/main` after the cash close.  **Known failure mode (bit us
+2026-08-01/02): if those secrets drift, every main push is answered `Invalid signature`, no
+deployment is ever created, and prod silently freezes while merges pile up** — GitHub's hook
+page still shows green 200s, so check the DELIVERY RESPONSE BODY
+(`gh api .../hooks/<id>/deliveries/<id>` → `.response.payload`), not the status code.  Repair
+recipe + receipts: `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`.  Verify any
+deploy landed with `bash scripts/verify-deploy-sha.sh` (asserts the live sha CONTAINS your
+commit).  Merge == queued-for-live during weekday RTH, and live after the close (or immediately
+with `HOTFIX=1`); the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy claims
+or manually trigger deploys.  Rollback to manual: disable auto deploy on the app.
 **Silent-freeze class (2026-08-06, #2545):** Coolify SSH exec streams can die mid-build
 (exit 255) under shared-box load while GitHub webhooks stay 200 and `/api/health` stays
-green on the *old* sha. The standing watchdog is `.github/workflows/deploy-freshness.yml`
+green on the *old* sha.  The standing watchdog is `.github/workflows/deploy-freshness.yml`
 (`scripts/alert-deploy-freshness.sh`) — it pages when the oldest undeployed main commit
-is older than 1h. Do not treat a green health probe as proof the pipeline is moving.
+is older than 1h.  Do not treat a green health probe as proof the pipeline is moving.
 ST/CT/UM still share the Hetzner box; `scripts/isolate-shared-box-batch.sh` dry-runs a
 `docker update` CPU cap on CT OCR/scan workers (never restarts; never touches ST).
 Default cap is **5.0 of 8 vCPUs** (as high as is reasonably advisable: above the
-2.83 unconstrained OCR peak, 3 cores left for Coolify/ST/UM). Durable isolation is
+2.83 unconstrained OCR peak, 3 cores left for Coolify/ST/UM).  Durable isolation is
 `cpus: '5.0'` on CT `scan-cpu-worker` (compose today is still 2.0) — this repo
-cannot set that. Coolify has no job-level retry-on-255 we can configure from here.
-Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md`.
+cannot set that.  Coolify has no job-level retry-on-255 we can configure from here.
+Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md` and
+`docs/rollouts/2026-08-18-rth-deploy-latch.md`.
 `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
 protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:
 `scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned

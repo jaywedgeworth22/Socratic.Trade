@@ -25,7 +25,8 @@ name: Sentry CI Report
 #   Auto-merge PRs, Auto-merge congress-trading-shared PRs, CI, Cleanup Actions Caches,
 #   Codex Autofix, Effort Issues Sync, iOS build (Mac runner),
 #   iOS TestFlight ship (Mac runner), merge-shepherd,
-#   Shared package pin check, Playwright Smoke, Security, Deploy freshness
+#   Shared package pin check, Playwright Smoke, Security, Deploy freshness,
+#   RTH Deploy Latch
 # Reusable-only `_merge-shepherd-impl` executes inside `merge-shepherd` and has no independent
 # workflow_run event; the caller's completion is the observable run.
 #
@@ -38,6 +39,7 @@ name: Sentry CI Report
 #   Playwright Smoke         -> "17 9 * * *"  (e2e.yml nightly)
 #   Shared package pin check -> "0 13 * * 1"  (shared-package-pin-check.yml)
 #   Deploy freshness         -> "13,33,53 * * * *"  (deploy-freshness.yml)
+#   RTH Deploy Latch         -> "20 21 * * 1-5" (rth-deploy-latch.yml weekday after-close drain)
 
 on:
   workflow_run:
@@ -55,6 +57,7 @@ on:
       - Playwright Smoke
       - Security
       - Deploy freshness
+      - RTH Deploy Latch
     types: [completed]
 
 permissions:

@@ -34,6 +34,17 @@ RUN npm ci
 
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Weekday RTH latch: fail THIS IMAGE BUILD (not the running container) during
+# regular US equity hours unless HOTFIX=1 or RTH_DEPLOY_OVERRIDE=1.  A failed
+# build leaves the last healthy Coolify container up.  Do not move this into
+# scripts/coolify-prod-start.sh -- a runtime refusal would take the site down
+# after the container swap.  SOURCE_COMMIT is optional; when Coolify passes
+# it, the latch can read HOTFIX=1 from the public GitHub commit message.
+ARG HOTFIX=0
+ARG SOURCE_COMMIT=""
+ENV HOTFIX=${HOTFIX} \
+    SOURCE_COMMIT=${SOURCE_COMMIT}
+RUN npx tsx scripts/assert-rth-deploy-latch.ts
 # scripts/eval/* imports test/fixtures (dockerignored). Next typecheck includes
 # **/*.ts and would fail the image build. Drop eval runners before build.
 # --ignore-scripts on prune: avoid re-extracting glibc-2.38 prebuilds.
