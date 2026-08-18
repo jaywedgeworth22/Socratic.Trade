@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +13,11 @@ import {
   scanMarket,
   ScanQuotesUnavailableError
 } from "../src/lib/market";
+import {
+  fetchNasdaqScreenerResponse,
+  NASDAQ_SCREENER_ATTEMPTS,
+  NASDAQ_SCREENER_HEADERS
+} from "../src/lib/nasdaq-screener-fetch";
 import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
 import { BROWSER_UA } from "../src/lib/web-sources/http";
 import { marketScanQuotesFromAudit } from "../src/lib/scan-singleflight";
@@ -52,6 +58,19 @@ describe("empty screener + expired seed", () => {
     expect(scan.quotesBySymbol.AAPL?.price).toBe(210.5);
     expect(scan.source).toContain("yahoo-finance");
     expect(scan.warnings.join(" ")).toMatch(/quote fallback priced 1 of 1/);
+  });
+
+  it("does not 200 cached=true from an empty seedEnrichment object", async () => {
+    stubFetches({ nasdaqRows: [], yahoo: "miss" });
+
+    await expect(scanMarket(["AAPL", "MSFT"], [], undefined, undefined, [], {
+      enrichmentMode: "skip",
+      seedEnrichment: {}
+    })).rejects.toMatchObject({
+      name: "ScanQuotesUnavailableError",
+      scannedSymbols: 2,
+      returnedQuotes: 0
+    });
   });
 
   it("keeps a fresh audit seed when the screener and quote fallback both miss", async () => {
@@ -229,7 +248,7 @@ describe("fetchNasdaqScreener transport", () => {
         caught = error;
       }
     );
-    await vi.advanceTimersByTimeAsync(NASDAQ_SCREENER_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(NASDAQ_SCREENER_TIMEOUT_MS * NASDAQ_SCREENER_ATTEMPTS);
     await pending;
     expect(caught).toBeInstanceOf(ScanQuotesUnavailableError);
     const unavailable = caught as ScanQuotesUnavailableError;
@@ -281,6 +300,94 @@ describe("fetchNasdaqScreener transport", () => {
     expect(scan.returnedQuotes).toBe(1);
     expect(scan.topCandidates[0]?.symbol).toBe("AAPL");
     expect(scan.source).toContain("nasdaq-delayed-screener");
+  });
+
+  it("retries one 8s-style AbortError and returns names on the BROWSER_UA attempt", async () => {
+    vi.useFakeTimers();
+    let nasdaqCalls = 0;
+    vi.stubGlobal("fetch", async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (!url.includes("api.nasdaq.com")) {
+        return new Response("not found", { status: 404 });
+      }
+      nasdaqCalls += 1;
+      const headers = new Headers(init?.headers);
+      expect(headers.get("user-agent")).toBe(BROWSER_UA);
+      expect(headers.get("origin")).toBe("https://www.nasdaq.com");
+      if (nasdaqCalls === 1) {
+        await new Promise((_resolve, reject) => {
+          const fail = () => {
+            reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+          };
+          if (init?.signal?.aborted) fail();
+          else init?.signal?.addEventListener("abort", fail, { once: true });
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          data: {
+            asof: "2026-08-18",
+            table: {
+              rows: [{
+                symbol: "AAPL",
+                name: "Apple Inc",
+                lastsale: "$210.50",
+                netchange: "2.5",
+                pctchange: "1.2%",
+                marketCap: "3000000000000",
+                volume: "1000000",
+                sector: "Technology",
+                industry: "Consumer Electronics"
+              }]
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const pending = scanMarket(["AAPL"], [], undefined, undefined, [], { enrichmentMode: "skip" });
+    await vi.advanceTimersByTimeAsync(NASDAQ_SCREENER_TIMEOUT_MS);
+    const scan = await pending;
+    expect(nasdaqCalls).toBe(2);
+    expect(scan.returnedQuotes).toBe(1);
+    expect(scan.topCandidates[0]?.symbol).toBe("AAPL");
+    expect(scan.source).toContain("nasdaq-delayed-screener");
+  });
+
+  it("congress-share and scan share the BROWSER_UA helper, not stub Mozilla/5.0 + 8s abort", () => {
+    const congress = readFileSync(join(process.cwd(), "src/lib/congress-share.ts"), "utf8");
+    const helper = readFileSync(join(process.cwd(), "src/lib/nasdaq-screener-fetch.ts"), "utf8");
+    expect(congress).toContain("fetchNasdaqScreenerResponse");
+    expect(congress).not.toContain('"Mozilla/5.0"');
+    expect(congress).not.toMatch(/controller\.abort\(\),\s*8_000/);
+    expect(helper).toContain("BROWSER_UA");
+    expect(helper).toContain("fetchWithRetry");
+    expect(NASDAQ_SCREENER_HEADERS["User-Agent"]).toBe(BROWSER_UA);
+    expect(NASDAQ_SCREENER_TIMEOUT_MS).toBeGreaterThan(8_000);
+  });
+
+  it("fetchNasdaqScreenerResponse retries abort once at the transport layer", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    vi.stubGlobal("fetch", async (_request: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise((_resolve, reject) => {
+          const fail = () => {
+            reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+          };
+          if (init?.signal?.aborted) fail();
+          else init?.signal?.addEventListener("abort", fail, { once: true });
+        });
+      }
+      return new Response(JSON.stringify({ data: { table: { rows: [] } } }), { status: 200 });
+    });
+    const pending = fetchNasdaqScreenerResponse("nasdaq-delayed-screener");
+    await vi.advanceTimersByTimeAsync(NASDAQ_SCREENER_TIMEOUT_MS);
+    const response = await pending;
+    expect(response.ok).toBe(true);
+    expect(calls).toBe(2);
   });
 });
 

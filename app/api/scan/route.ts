@@ -16,7 +16,10 @@ import {
 } from "@/lib/scan-singleflight";
 
 export const dynamic = "force-dynamic";
-const INTERACTIVE_SCAN_BUDGET_MS = 20_000;
+// 15s Nasdaq timeout + one abort retry + Yahoo whole-set fallback + rank.
+// The screener fetch does not take this signal (see nasdaq-screener-fetch.ts);
+// this budget only caps ranking / Yahoo after Nasdaq returns or exhausts.
+const INTERACTIVE_SCAN_BUDGET_MS = 35_000;
 
 // Fresh, standalone market scan for the Market Scan tab. It returns current screener,
 // broker, and persisted web-signal data instead of waiting for the next strategy run.
