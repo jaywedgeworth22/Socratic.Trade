@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-18 CURSOR — Pinecone daily-fuse deadlock (`cursor/pinecone-write-deadlock-64c1`, #2800).** Rebased onto main (hybrid #2820 live).  Do not clamp the trial daily fuse to leftover local-MTD remainder (that is the 15-WU / 1-text skip).  Local MTD is not Pinecone's bill — pre-hybrid full-body writes can make it look spent.  Keep Yahoo VIX as failover; do not re-probe it while Cboe is serving.  Do not flip write-class or `--apply` prune.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+
 > **2026-08-18 CURSOR — IRA no tax-loss harvest (`cursor/ira-no-tax-loss-harvest-a1df`).** Green was harvesting losers on the Roth (NWG).  IRA runs no longer get taxable harvest instructions or `harvestableLosses`.  Taxable accounts unchanged.  Rollout: `docs/rollouts/2026-08-18-ira-no-tax-loss-harvest.md`.
 > **2026-08-18 CURSOR — iOS UX owner cut (`cursor/ios-ux-owner-cut-bdae`, #2825).** Rebased onto `main` (`995b7eee`).  IRA wash-sale N/A; lowercase “rotate models”; full jargon sweep; Ask-First ↔ Autopilot + % NAV on device.  Kept #2815 legal clickwrap and #2821 budget rows.  Did not steal reserved PRs.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
 > **2026-08-18 CURSOR — Per-user LLM daily budget in Settings/iOS — MERGED #2821 `972e3763`.** Live cap is `user_settings.llm_daily_budget`.  When set, spend primitives + chat + strategy skip fail-closed.  `RAG_RUN_BUDGET_*` is a Data Sources setting.  System secrets stay Infisical.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
@@ -21,6 +23,9 @@
 > **2026-08-17 CURSOR — Cross-app coordination audit (`cursor/cross-app-coordination-audit-1212`).** Report only.  Pins match CTS `v2.5.2`; ST pin-check is a no-op against vendor-era CT.  Independent-failure matrix and P1–P3 portfolio fixes in `docs/audits/2026-08-17-cross-app-coordination.md`.  Do not implement those fixes in this PR.
 
 > **2026-08-17 CURSOR — Pinecone trial WU + Litestream/FilingAPI alert noise (`cursor/pinecone-wu-trial-alerts-c9a3`).** Standard trial is usage-billed, not the Starter 2M monthly wall. Clear/ignore the monthly WU breaker and monthly pace budget while the trial is open. Ignore healed Litestream compaction-fail lines. Omit retired vendors from public `/api/health` dependencies. Do not raise the daily WU fuse. Rollout: `docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
+> **2026-08-17 CURSOR — Pinecone daily-fuse deadlock (`cursor/pinecone-write-deadlock-64c1`).** Do not clamp the trial daily fuse to leftover local-MTD remainder (that is the 15-WU / 1-text skip). Keep Yahoo VIX as failover; do not re-probe it while Cboe is serving. 429s are not a healthy expected outcome. CT OpenRouter prepaid-minimum is a leftover stored halt — owner has >$50. Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+
+> **2026-08-17 CURSOR — Pinecone trial WU + Litestream/FilingAPI alert noise (`cursor/pinecone-wu-trial-alerts-c9a3`).** Merged as #2799 `4980322b`. Standard trial is usage-billed, not the Starter 2M monthly wall. Daily remainder clamp is the follow-up above. Rollout: `docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
 
 > **2026-08-17 CURSOR — Settings search in ⌘K (`cursor/settings-search-palette-6e98`, #2558).** Wire the existing `searchSettings` catalog into the command palette; drop phantom `defaultLandingAccount`. Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
 

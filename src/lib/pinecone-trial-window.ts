@@ -33,6 +33,21 @@ export const PINECONE_FREE_TIER_MONTHLY_WU = 1_600_000;
  */
 export const PINECONE_TRIAL_RESERVE_USD = 45;
 export const PINECONE_TRIAL_ROLLED_BACK_KEY = "pinecone:trialRolledBackAt";
+/**
+ * Smallest daily write fuse that can accept one typical filing-sized upsert (~28 WU).
+ * Clamping the fuse to leftover local-MTD remainder (15 WU) skips every document and
+ * leaves used=0 forever — that is a deadlock, not a spent trial.
+ */
+export const PINECONE_MIN_USABLE_DAILY_WU = 2_048;
+/** Smallest ingest-text cap that can start a document. A 1-text park never writes. */
+export const PINECONE_MIN_USABLE_TEXTS_PER_DAY = 32;
+/**
+ * If the local month counter implies remaining trial dollars at or below this, do not
+ * shrink the daily fuse.  That counter is app-recorded estimates, not Pinecone's bill.
+ * Hybrid #2820 (processed writes) did not reset it, so pre-hybrid full-body upserts can
+ * still make the remainder look spent while the Standard trial has credit left.
+ */
+export const PINECONE_LOCAL_REMAINING_UNTRUSTED_USD = 1;
 const DAY_MS = 24 * 60 * 60_000;
 const MAX_TRIAL_DAILY_WU = 10_000_000;
 
@@ -115,6 +130,12 @@ export interface PineconeTrialAssessment {
   /** full-steam = remaining credit still above the reserve; finish = last $40-50 paced to trial end. */
   phase: "full-steam" | "finish" | "idle";
   mode: "trial" | "free" | "configured";
+  /**
+   * True when local month-to-date WUs imply the $300 trial is already gone.
+   * The daily fuse then stays at the configured trial cap so writes continue;
+   * Pinecone itself 429s if credit is actually exhausted.
+   */
+  localMtdUntrusted: boolean;
 }
 
 export function assessPineconeTrialWindow(input: {
@@ -145,14 +166,19 @@ export function assessPineconeTrialWindow(input: {
     // even the configured trial cap would leave dollars unused at trial end.  At/under
     // the reserve, pace remaining / remaining days so the last $40-50 lasts the trial
     // (unless that pace is still above the configured cap — then keep going).
+    //
+    // Do NOT clamp the daily fuse to remainingWriteUnits.  That leftover-lifetime cap
+    // is what produced "used 0 of 15 WUs, attempted 28, skipped 1" — a single document
+    // larger than the remainder can never start, so used stays 0.
     const wouldMissTrialAtConfiguredCap = pacedDailyWriteUnits > input.configuredDailyWriteUnits;
     const belowReserve = remainingUsd <= reserveUsd();
-    const phase: "full-steam" | "finish" = belowReserve && !wouldMissTrialAtConfiguredCap
+    const localMtdUntrusted = remainingUsd <= PINECONE_LOCAL_REMAINING_UNTRUSTED_USD;
+    const phase: "full-steam" | "finish" = !localMtdUntrusted && belowReserve && !wouldMissTrialAtConfiguredCap
       ? "finish"
       : "full-steam";
-    const effectiveDaily = phase === "full-steam"
-      ? Math.max(input.configuredDailyWriteUnits, pacedDailyWriteUnits, 1)
-      : Math.max(pacedDailyWriteUnits, 1);
+    const rawDaily = localMtdUntrusted || phase === "full-steam"
+      ? Math.max(input.configuredDailyWriteUnits, pacedDailyWriteUnits, PINECONE_MIN_USABLE_DAILY_WU)
+      : Math.max(pacedDailyWriteUnits, PINECONE_MIN_USABLE_DAILY_WU);
     return {
       active: true,
       endsAt: new Date(endsMs!).toISOString(),
@@ -162,12 +188,13 @@ export function assessPineconeTrialWindow(input: {
       remainingUsd,
       remainingWriteUnits,
       pacedDailyWriteUnits,
-      effectiveDailyWriteUnits: Math.min(MAX_TRIAL_DAILY_WU, remainingWriteUnits, effectiveDaily),
-      effectiveTextsPerDay: input.configuredTextsPerDay,
+      effectiveDailyWriteUnits: Math.min(MAX_TRIAL_DAILY_WU, rawDaily),
+      effectiveTextsPerDay: Math.max(input.configuredTextsPerDay, PINECONE_MIN_USABLE_TEXTS_PER_DAY),
       // Standard trial has no monthly write-unit cap. Ignore a leftover Starter 2M env budget.
       effectiveMonthlyWriteUnits: 0,
       phase,
-      mode: "trial"
+      mode: "trial",
+      localMtdUntrusted
     };
   }
 
@@ -189,7 +216,8 @@ export function assessPineconeTrialWindow(input: {
         ? input.configuredMonthlyWriteUnits
         : PINECONE_FREE_TIER_MONTHLY_WU,
       phase: "idle",
-      mode: "free"
+      mode: "free",
+      localMtdUntrusted: false
     };
   }
 
@@ -206,7 +234,8 @@ export function assessPineconeTrialWindow(input: {
     effectiveTextsPerDay: input.configuredTextsPerDay,
     effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits,
     phase: "idle",
-    mode: "configured"
+    mode: "configured",
+    localMtdUntrusted: false
   };
 }
 
