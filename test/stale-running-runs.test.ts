@@ -223,16 +223,32 @@ describe("markStaleRunningRuns", () => {
     const createdAt = new Date(Date.now() - 2 * STALE_THRESHOLD_MS).toISOString();
 
     insertOpenRequest(db, { id: requestId, userId, status: "running", createdAt });
-    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(true);
 
-    db.markStaleRunningRuns(Date.now());
+    const next = queueStrategyRunRequest({ userId, manual: true });
+    expect(next.deduped).toBe(false);
+    expect(next.request.id).not.toBe(requestId);
 
     const request = db
       .getDb()
       .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
       .get(requestId) as { status: string };
     expect(request.status).toBe("failed");
-    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(false);
+  });
+
+  it("leaves a fresh running request with no strategy_runs row alone (worker just claimed)", async () => {
+    const db = await import("../src/lib/db");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `fresh-stranded-user-${randomUUID()}`;
+    const requestId = randomUUID();
+
+    insertOpenRequest(db, { id: requestId, userId, status: "running" });
+
+    expect(queueStrategyRunRequest({ userId, manual: true }).deduped).toBe(true);
+    const request = db
+      .getDb()
+      .prepare("SELECT status FROM strategy_run_requests WHERE id = ?")
+      .get(requestId) as { status: string };
+    expect(request.status).toBe("running");
   });
 
   it("leaves a fresh (non-stale) running run untouched", async () => {

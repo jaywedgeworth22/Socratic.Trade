@@ -51,12 +51,12 @@ Focused commands (full suite not re-run; leftover #2845 wrap-up stopped):
 ```bash
 npx vitest run test/stale-running-runs.test.ts
 # Test Files  1 passed (1)
-# Tests  10 passed (10)
+# Tests  11 passed (11)
 
 npx tsc --noEmit   # exit 0
-npm run lint       # 0 errors, grandfathered warnings only
-npm run build      # Next.js 16.3.1 compiled successfully
 ```
+
+Earlier on this branch (before the click-path heal): `npm run lint` 0 errors; `npm run build` compiled.
 
 PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2847
 
