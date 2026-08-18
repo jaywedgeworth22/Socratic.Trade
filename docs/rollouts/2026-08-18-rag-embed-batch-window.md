@@ -31,12 +31,13 @@ Touched files:
 ## Verification State
 
 ```bash
-npm test -- test/embed-request-pack.test.ts test/vector-db-embedding-integrity.test.ts test/vector-db-chunk-cap.test.ts
 npm run lint
 npx tsc --noEmit
+npm test -- test/embed-request-pack.test.ts test/vector-db-embedding-integrity.test.ts test/vector-db-chunk-cap.test.ts
+npm run build
 ```
 
-Linux VM: no xcodebuild.  Do not claim an iOS compile.
+lint: 0 errors (grandfathered warnings only).  tsc clean.  44 focused tests passed (includes isolate-over-limit 32-batch).  `npm run build` clean (Next 16.3.1).  Linux VM: no xcodebuild.  Do not claim an iOS compile.
 
 ## Next Steps & Blockers
 
