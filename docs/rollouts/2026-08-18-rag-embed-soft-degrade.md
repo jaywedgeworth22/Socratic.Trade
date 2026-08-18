@@ -31,7 +31,15 @@ Touched files:
 
 ## Verification State
 
-Focused tests pending in this note's follow-up; commands actually run will be recorded after the local gate.
+```bash
+npm test -- test/connection-health-routing.test.ts -t "degrades a hard-stopped rag-embed|still 503s on a hard-stopped pinecone|does not fail liveness on a hard-stopped legacy|survives a pinned-but-keyless"
+# 5 passed / 21 skipped
+
+npm test -- test/vector-db-embedding-integrity.test.ts test/rag-multi-query-retrieval.test.ts
+# 27 passed
+```
+
+Four other `connection-health-routing` cases fail on this VM because notify prefers Pushover over Resend (`PUSHOVER` env).  Those are unrelated to rag-embed liveness and were not touched.
 
 ## Next Steps & Blockers
 
