@@ -1,20 +1,22 @@
 /**
- * First-call retry for a broker (or other) read that may be slow or hung after a
- * process swap, without treating a real rejection as success.
+ * First-call retry for an in-process Alpaca REST read, without treating a real
+ * rejection as success.
  *
- * Verified production shape (2026-08-18 ops snapshot): dashboard races
- * `gateway.getAccounts()` at 6s, then `accountReadinessForSnapshot` fail-closes
- * Manual Run once on that timeout string.  Paper / Roth are Alpaca REST, not MCP.
- * A single slow or hung first `getAccount` must not hard-fail Run once; a 401 /
+ * ASC + ops (2026-08-18, process 581467e1 / later d4299bec): there is no Alpaca
+ * sidecar.  Paper / Roth are REST `alpaca`.  alpaca-broker was 500/500 ok this
+ * process, but 191/500 calls were ≥6s (avg ~3.1s, max 14s).  `ftsMirrorSlice`
+ * also held the same event loop 6–12s.  The dashboard 6s abort is tighter than
+ * live successful broker reads; #2845's 6s+9s / 8s+7s still lost (portfolio
+ * `8000+7000ms` at 22:10:15Z).  First wait is above the live 14s max.  A 401 /
  * credential throw still fails immediately (no retry).
  */
 
-export const GET_ACCOUNTS_FIRST_MS = 6_000;
-export const GET_ACCOUNTS_RETRY_MS = 9_000;
-export const PORTFOLIO_BUNDLE_FIRST_MS = 8_000;
-export const PORTFOLIO_BUNDLE_RETRY_MS = 7_000;
-export const ALPACA_ACCOUNT_READ_FIRST_MS = 5_000;
-export const ALPACA_ACCOUNT_READ_RETRY_MS = 10_000;
+export const GET_ACCOUNTS_FIRST_MS = 16_000;
+export const GET_ACCOUNTS_RETRY_MS = 8_000;
+export const PORTFOLIO_BUNDLE_FIRST_MS = 16_000;
+export const PORTFOLIO_BUNDLE_RETRY_MS = 8_000;
+export const ALPACA_ACCOUNT_READ_FIRST_MS = 16_000;
+export const ALPACA_ACCOUNT_READ_RETRY_MS = 8_000;
 export const ALPACA_MCP_FETCH_MS = 8_000;
 
 export type SettleKind = "fulfilled" | "rejected" | "pending";

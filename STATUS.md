@@ -7,6 +7,13 @@
 Fix closes the matching open request on the sweep and `finishStrategyRun` write paths, heals already-terminal mismatches on the next tick, and heals this user's orphan on the next Manual Run once click.  Do not hide the lock by ignoring `running`.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2840 / #2812.
 
 PR **#2847**.  Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+## 2026-08-18 CURSOR — 6s getAccounts abort vs live p95 + ftsMirrorSlice loop pin
+
+ASC discarded the hung-sidecar / MCP hypothesis.  No Alpaca sidecar.  Gateway is in-process on socratic-app (581467e1, pid 2701530, 4:12pm CT).  Paper/Roth are REST `alpaca`.  alpaca-broker 500/500 ok this process; 191/500 calls ≥6s (avg ~3.1s, max 14s).  `ftsMirrorSlice` 6–12s on the same event loop.  Ops snapshot 22:31:35Z: `dashboard.getAccounts` still `after 6000ms`; after #2845, portfolio still timed out at 22:10:15Z (`8000+7000ms`).  Manual Run fail-closes on that abort, not a missing credential.
+
+Fix: first wait 16s (above live max 14s) on getAccounts / portfolio / `getAccount`; shrink FTS tick to 2s / 6 chunks / 1-row first group and do not start a slice that cannot fit the remaining budget.  Do not hide with copy.  Do not bounce Coolify.  Do not merge.  Do not touch #2841 / #2840 / #2812 / strategy logic.
+
+Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
 
 ## 2026-08-18 CURSOR — getAccounts 6s timeout blocks Run once after deploy
 

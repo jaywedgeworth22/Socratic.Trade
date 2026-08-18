@@ -411,9 +411,10 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     const accountsPromise = (async () => {
       if (!gateway) return [];
       try {
-        // 6s was racing a live Alpaca REST getAccount that is often just slow (or hung
-        // on a dead keep-alive) after a container swap.  A pending first call starts one
-        // fresh retry; a real rejection (credentials, 401) still fails immediately.
+        // Live alpaca-broker p95 is above 6s (191/500 ≥6s, max 14s) on the same
+        // in-process event loop that ftsMirrorSlice can pin for 6–12s.  First wait
+        // is 16s; a pending call starts one retry.  A credential / 401 throw still
+        // fails immediately.
         return await awaitWithFirstCallRetry(
           () => gateway.getAccounts(),
           {

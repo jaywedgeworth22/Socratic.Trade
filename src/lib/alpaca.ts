@@ -291,9 +291,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
     throw lastErr;
   }
 
-  /** Account GET used by getAccounts / getPortfolio.  One fresh retry if the first
-   *  SDK call stays pending (dead keep-alive or post-deploy warmup).  A thrown
-   *  credential / 401 error is not retried here — trackHealth already retries
+  /** Account GET used by getAccounts / getPortfolio.  First wait is above the
+   *  live alpaca-broker max (14s).  One fresh retry if that call stays pending.
+   *  A thrown credential / 401 is not retried here — trackHealth already retries
    *  UND_ERR_SOCKET. */
   private async readAccount(): Promise<any> {
     return awaitWithFirstCallRetry(

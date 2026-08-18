@@ -313,7 +313,7 @@ describe("nextFtsBatchGroupSize (2026-08-13 adaptive stretch budget)", () => {
 });
 
 describe("planFtsMirrorSlice (2026-08-14 bound above the 250ms yield)", () => {
-  it("computes the production 933/279522 receipt into a tick that stays inside 6s and 250ms sync", async () => {
+  it("computes the production 933/279522 receipt into a tick that stays inside the wall budget and 250ms sync", async () => {
     const {
       FTS_MIRROR_INCIDENT_CHUNKS,
       FTS_MIRROR_INCIDENT_WALL_MS,
@@ -400,16 +400,38 @@ describe("planFtsMirrorSlice (2026-08-14 bound above the 250ms yield)", () => {
   });
 
   it("stops on wall-clock even when chunks remain (whichever first)", async () => {
-    const { planFtsMirrorSlice } = await import("../src/lib/rag/fts-mirror-bound");
+    const { planFtsMirrorSlice, FTS_MIRROR_TICK_BUDGET_MS } = await import("../src/lib/rag/fts-mirror-bound");
     const plan = planFtsMirrorSlice({
       totalChunks: 933,
       offset: 0,
-      elapsedMs: 6_000,
-      tickBudgetMs: 6_000
+      elapsedMs: FTS_MIRROR_TICK_BUDGET_MS,
+      tickBudgetMs: FTS_MIRROR_TICK_BUDGET_MS
     });
     expect(plan.chunkCount).toBe(0);
     expect(plan.stopReason).toBe("tick-budget");
     expect(plan.complete).toBe(false);
+  });
+
+  it("does not start a chunk when remaining budget is below expected ms/chunk", async () => {
+    const { planFtsMirrorSlice, FTS_MIRROR_INCIDENT_MS_PER_CHUNK } = await import(
+      "../src/lib/rag/fts-mirror-bound"
+    );
+    const plan = planFtsMirrorSlice({
+      totalChunks: 933,
+      offset: 0,
+      elapsedMs: 1_900,
+      tickBudgetMs: 2_000,
+      msPerChunk: FTS_MIRROR_INCIDENT_MS_PER_CHUNK
+    });
+    expect(FTS_MIRROR_INCIDENT_MS_PER_CHUNK).toBeGreaterThan(100);
+    expect(plan.chunkCount).toBe(0);
+    expect(plan.stopReason).toBe("tick-budget");
+  });
+
+  it("keeps the FTS tick budget below the getAccounts first wait", async () => {
+    const { FTS_MIRROR_TICK_BUDGET_MS } = await import("../src/lib/rag/fts-mirror-bound");
+    const { GET_ACCOUNTS_FIRST_MS } = await import("../src/lib/inflight-deadline");
+    expect(FTS_MIRROR_TICK_BUDGET_MS).toBeLessThan(GET_ACCOUNTS_FIRST_MS);
   });
 });
 
@@ -549,7 +571,9 @@ describe("embed_queued FTS slice + durable resume", () => {
       .all(vectorDocId) as Array<{ content_hash: string }>;
     expect(firstRows.length).toBe(FTS_MIRROR_MAX_CHUNKS_PER_TICK);
     expect(firstRows[0]!.content_hash).toBe(`hash-${accession}-0000`);
-    expect(firstRows.at(-1)!.content_hash).toBe(`hash-${accession}-0019`);
+    expect(firstRows.at(-1)!.content_hash).toBe(
+      `hash-${accession}-${String(FTS_MIRROR_MAX_CHUNKS_PER_TICK - 1).padStart(4, "0")}`
+    );
     expect(vi.mocked(storeDocument)).toHaveBeenCalledTimes(1);
 
     const reclaimed = claimSecIngestTasks(jobId, {
@@ -566,10 +590,12 @@ describe("embed_queued FTS slice + durable resume", () => {
       .prepare("SELECT content_hash FROM document_chunks_fts WHERE accession = ? ORDER BY content_hash")
       .all(vectorDocId) as Array<{ content_hash: string }>;
     expect(secondRows.length).toBe(FTS_MIRROR_MAX_CHUNKS_PER_TICK * 2);
-    expect(secondRows.slice(0, 20).map((r) => r.content_hash)).toEqual(
+    expect(secondRows.slice(0, FTS_MIRROR_MAX_CHUNKS_PER_TICK).map((r) => r.content_hash)).toEqual(
       firstRows.map((r) => r.content_hash)
     );
-    expect(secondRows[20]!.content_hash).toBe(`hash-${accession}-0020`);
+    expect(secondRows[FTS_MIRROR_MAX_CHUNKS_PER_TICK]!.content_hash).toBe(
+      `hash-${accession}-${String(FTS_MIRROR_MAX_CHUNKS_PER_TICK).padStart(4, "0")}`
+    );
     // storeDocument must not run again on the FTS-only resume.
     expect(vi.mocked(storeDocument)).toHaveBeenCalledTimes(1);
   });

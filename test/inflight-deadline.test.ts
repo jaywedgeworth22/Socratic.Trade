@@ -38,20 +38,25 @@ describe("awaitWithFirstCallRetry", () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the slow first call and does not fail at the original 6s budget", async () => {
+  it("keeps a live-max 14s first getAccounts without aborting at 6s", async () => {
     vi.useFakeTimers();
-    const start = vi.fn(() => delay(7_000, [{ accountNumber: "294709855" }]));
+    const start = vi.fn(() => delay(14_000, [{ accountNumber: "294709855" }]));
     const result = awaitWithFirstCallRetry(start, {
       firstMs: GET_ACCOUNTS_FIRST_MS,
       retryMs: GET_ACCOUNTS_RETRY_MS,
       onFinalTimeout: () => {
-        throw new Error("should not hard-fail a 7s first getAccounts");
+        throw new Error("should not hard-fail a 14s first getAccounts");
       }
     });
-    await vi.advanceTimersByTimeAsync(GET_ACCOUNTS_FIRST_MS);
-    expect(start).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(start).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(8_000);
     await expect(result).resolves.toEqual([{ accountNumber: "294709855" }]);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("first wait is above the live alpaca-broker max of 14s", () => {
+    expect(GET_ACCOUNTS_FIRST_MS).toBeGreaterThan(14_000);
   });
 
   it("uses a fresh retry when the first call stays pending", async () => {
