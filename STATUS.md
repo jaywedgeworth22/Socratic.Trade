@@ -10,6 +10,15 @@ Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: 
 `fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  iOS `MobileStore` switch is exhaustive for `.scanQuotesUnavailable` (unsigned `xcodebuild` miss); Scan shows the abort warning, not silent No Candidates.  Rebased onto `origin/main` `7b073b65` (includes #2812 and #2832).  Did not revert #2812 / #2829 / #2800.  Does not block #2831.  UA/retry path not reverted.
 
 PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
+## 2026-08-18 CURSOR — Green 400 must actually fail over (First Green after #2829)
+
+#2829 is live (`6429d984`) and stopped the account-miss liar on 404.  It did not make Green complete.  Paper `PA33IDTHMFK9` run `7f5890a5-bc21-4474-87eb-9b595de04ed1` (19:33–19:38Z) picked `gpt-5.6-terra` → `openai/gpt-5.6-terra`, HTTP 400 "Provider returned error" (881ms), then claimed "Failover chain exhausted (3 Green Team endpoints)" after ONE stored `llm_call_latency`.  Red `deepseek-reasoner` never ran.  Roth had no `strategy_run` after process start 19:12:31Z.
+
+Root cause: `isFailoverLlmStatus` left 400 out (404/403 only), and the exhausted sentence used planned seats, not stored calls.  Terra is on public `/models` but OpenRouter 400s it; fail-open still lets it win first pick.
+
+Fix: 400 is failover-eligible (not a same-model retry, not an account miss).  Exhausted copy cites stored attempts only.  Terra is demoted from first Green pick when Gemini Flash / Mistral Medium class seats remain; those preferred seats lead implicit fallbacks.  Did not revert #2829 or #2800.  Did not rewrite the 400 sentence.
+
+Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
 
 ## 2026-08-18 CURSOR — Pinecone daily-fuse deadlock (rebased onto hybrid)
 

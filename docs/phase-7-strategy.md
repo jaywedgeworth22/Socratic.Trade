@@ -2,6 +2,12 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 Green 400 must fail over to the next stored call
+
+#2829 made 404/403 failover-eligible and stopped the account-miss liar.  It left HTTP 400 out.  Live Paper after that deploy (`7f5890a5-bc21-4474-87eb-9b595de04ed1`, sha `6429d984`): Green pick `gpt-5.6-terra` → `openai/gpt-5.6-terra`, OpenRouter 400 "Provider returned error", one `llm_call_latency`, then "Failover chain exhausted (3 Green Team endpoints)".  Red never ran.
+
+`isFailoverLlmStatus` now includes 400 (same-model `isRetryableLlmStatus` still does not).  The exhausted suffix cites stored Green attempts only.  `gpt-5.6-terra` is demoted from first Green pick when Gemini Flash / Mistral Medium class seats remain; those seats lead implicit rotation fallbacks.  A 400 "Provider returned error" is not an account-allowlist miss.  Rebased onto `12e8dcd` (#2812 rag-embed soft-degrade kept).  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
+
 ## 2026-08-18 rag-embed soft-degrade (health + store)
 
 A hard-stopped `rag-embed` / `rag-rerank` lane no longer 503s `/api/health`.  Coolify treats a 503 as container death; the restart re-halts autonomy via the boot interlock.  Those lanes now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay the only critical liveness deps.  One dead document-embed batch skips that batch and continues later batches; a thrown query embed returns empty retrieval.  Green/Red already skip RAG on lookup failure and do not halt.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
