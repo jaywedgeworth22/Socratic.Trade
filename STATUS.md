@@ -209,9 +209,9 @@ Owner: team of experts on all errors last 7d + iOS Scan/Home shots.  Live sha `1
 
 Sentry 7d: Pinecone terminated 360 (1T), OpenRouter embed 21 (1X), rerank 14 (22), CT SSE 13 (1V), NEW integrity rejection 9 (27 = #2812 remapping thrown batches, not missing key).  Do not mint OpenRouter.
 
-This PR **#2834**: Alpaca getAccount cache + iOS Scan/Home honesty (distinct scan error, no stacked workspace banner, 45s scan timeout, waiting-on-broker equity).  Do not rewrite **#2830** (Scan names) or **#2831** (Green 400).
+Owner follow-up: data cascade + OpenRouter still failing.  #2831's PR-attached `verify` stayed cancelled (dispatch green does not count).  This PR now also carries Green 400 failover and the Nasdaq UA/retry transport so Scan has a universe and the enrichment cascade can run.  Cursor **#2840** still owns embed 8192 pack (32-text / 8193 tok bge-m3 400s).
 
-Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`, `docs/rollouts/2026-08-18-week-error-expert-triage.md`.
+Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/2026-08-18-openrouter-and-cascade.md`, `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 
