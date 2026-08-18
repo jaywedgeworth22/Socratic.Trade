@@ -38,6 +38,8 @@ import {
 } from "../roic-transcripts-gate";
 import { resolveSourceNumber } from "../source-settings";
 import { rankDemandFirstSymbols, rankHighInterestSymbols } from "../rag/demand-first-symbols";
+import { chunkDocument } from "../rag/chunk";
+import { storeSignalSectionDocuments } from "../rag/processed-corpus-write";
 import { hasPineconeWriteBudget, storeDocument } from "../vector-db";
 
 export { ROIC_TRANSCRIPT_DOC_TYPE, ROIC_TRANSCRIPT_SOURCE, roicTranscriptsKillSwitchOn };
@@ -655,8 +657,39 @@ export async function ingestRoicTranscriptToRag(
   }
 
   const summaryOk = await storeRoicEarningsSummary(transcript, accession, published, observed);
+  const signalChunks = chunkDocument(
+    {
+      doc_id: `${doc_id}:signal`,
+      title,
+      doc_type: ROIC_TRANSCRIPT_DOC_TYPE,
+      source: ROIC_TRANSCRIPT_SOURCE,
+      text: transcript.content,
+      ticker: transcript.symbol,
+      published_at: published,
+      acceptance_datetime: observed,
+      sections: speakerSections(transcript)
+    },
+    {}
+  );
+  const signal = await storeSignalSectionDocuments(
+    {
+      ticker: transcript.symbol,
+      accession,
+      form: "earnings-transcript",
+      title,
+      publishedAt: published,
+      acceptanceDatetime: observed,
+      source: ROIC_TRANSCRIPT_SOURCE,
+      chunks: signalChunks,
+      userId: userId ?? "local"
+    },
+    storeDocument
+  );
   if (writeClass === "highlight-only" && summaryOk) {
-    insertIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE, transcript.symbol, 8);
+    insertIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE, transcript.symbol, 8 + signal.indexed, {
+      pineconeWriteClass: "highlight-only",
+      pineconeVectorCount: 8 + signal.indexed
+    });
   }
 
   const ragOk = writeClass === "full-body" ? fullBodyOk : summaryOk;

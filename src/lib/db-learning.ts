@@ -1060,13 +1060,34 @@ export function hasIngestedAccession(accession: string, docType: string): boolea
 }
 
 /** Record a successfully-ingested accession so it is never re-embedded. */
-export function insertIngestedAccession(accession: string, docType: string, ticker: string, chunkCount: number): void {
+export function insertIngestedAccession(
+  accession: string,
+  docType: string,
+  ticker: string,
+  chunkCount: number,
+  extras?: { pineconeWriteClass?: string; pineconeVectorCount?: number }
+): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
       "INSERT OR IGNORE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count) VALUES (?, ?, ?, ?, ?)"
     )
     .run(accession, docType, ticker, now, chunkCount);
+  if (extras && (extras.pineconeWriteClass !== undefined || extras.pineconeVectorCount !== undefined)) {
+    const writeClass = extras.pineconeWriteClass ?? "full-body";
+    const vectorCount = extras.pineconeVectorCount ?? 0;
+    try {
+      getDb()
+        .prepare(
+          `UPDATE ingested_accessions
+           SET pinecone_write_class = ?, pinecone_vector_count = ?
+           WHERE accession = ? AND doc_type = ?`
+        )
+        .run(writeClass, vectorCount, accession, docType);
+    } catch {
+      // Columns land in migration 84; older test DBs that skipped versioned migrate stay compatible.
+    }
+  }
 
   // Preserve the original SEC filed_at/accepted_at from the scraper (if the row already
   // exists) rather than overwriting every field via insertSecFiling, which sets both

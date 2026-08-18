@@ -19,6 +19,12 @@ PR **#2819**.  Branch `cursor/paper-live-docs-cost-68d3`.  Rollout:
 `docs/rollouts/2026-08-18-paper-live-pooling-cost.md`.  Did not touch #2792/#2798/#2800/#2794.
 lint 0 errors, tsc clean, 278 focused tests pass, `npm run build` clean.
 
+## 2026-08-18 CURSOR — Hybrid AND prune (processed operational index)
+
+Owner cut after #2811: condense-first for Pinecone, store-more locally, then prune junk so Green/Red retrieve (scout k=1 / deep k=8 + 24k) sees useful vectors.  Minimum PR A split is on this branch: local-complete FTS + extractive highlights + form-aware signal sections + speaker-turn slices write as their own complete `storeDocument`s.  `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` (not flipped; PR B hydrate is not in this PR).  Safe prune deletes raw-HTML / junk / dupes / low-value only; useful full-body only-copies stay.  2.5M fuse + $45 reserve unchanged.  No Stripe.  Did not retarget #2792 / #2798 / #2800 / #2794.
+
+Branch `cursor/hybrid-and-prune-7f41`.  PR #2820, rebased onto `main` (`522b2454` #2824).  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.  Next: dry-run prune against prod inventory when ready — do not `--apply` yet.  Do not flip write-class until PR B.
+
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
 Owner: $230.44 of $300 trial left, 12 days; likely Builder ~Aug 30; keep using Pinecone, do not prune.  Question: is more storage better for Green/Red, or is condensing the corpus?  **Hybrid: condense-first for Pinecone, store-more locally.**  Builder is 10 GB / 5M WU (hard cap), not unlimited raw 10-Ks.  Do not flip write-class.  Do not raise the 2.5M fuse (pacer already ~4.8M/day).  FilingAPI stays #2792.

@@ -5,6 +5,8 @@
 > **2026-08-18 CURSOR — Paper/live pooling truth + paper cost = OOS 20 bps (`cursor/paper-live-docs-cost-68d3`).** Owner cut 2026-08-17: paper→live pooling stays; delete the leftover 20-paper+5-live transfer gate from current-truth docs. Paper execution-cost default rises from 1 bp to the shared `OOS_ROUND_TRIP_COST_BPS` / `PAPER_DEFAULT_BASE_SLIPPAGE_BPS` (20). No `autoApplyWeights`. No Stripe. Did not touch #2792/#2798/#2800/#2794. Rollout: `docs/rollouts/2026-08-18-paper-live-pooling-cost.md`.
 
 
+> **2026-08-18 CURSOR — Hybrid AND prune (`cursor/hybrid-and-prune-7f41`).** Implement the #2811 hybrid: processed operational writes (highlights + signal sections + speaker turns) via a minimum writer split.  Do not flip `RAG_PINECONE_WRITE_CLASS` until PR B hydrate exists.  Prune junk/HTML/dupes/low-value only; keep useful only-copies.  Keep 2.5M fuse + $45 reserve.  No Stripe.  Leave #2800 remainder deadlock alone.  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.
+
 > **2026-08-18 CURSOR — Pinecone store vs condense (`cursor/pinecone-store-vs-condense-ce2b`).** Report only.  Recommended default is hybrid: processed proposer corpus in Pinecone, full bodies local, hydrate after A+B.  Do not fill Builder with raw 10-K/Q/transcripts.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not raise the 2.5M WU fuse.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.
 
 > **2026-08-17 CURSOR — Blind-spots audit (`cursor/blind-spots-audit-299e`).** Read-only red-team register across legal/fintech, product identity, a11y-beyond-#2795, i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  No production code.  `docs/audits/2026-08-17-blind-spots.md`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
