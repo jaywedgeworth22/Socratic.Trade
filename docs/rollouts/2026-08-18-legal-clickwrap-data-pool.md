@@ -35,13 +35,12 @@ sentence (`agentic-strategy@2.11.0`).
 - `app/welcome/page.tsx`
 - `app/how-it-works/page.tsx`
 - `app/settings-search.ts`
-- `ios/SocraticTrade/LegalConsentSheet.swift`
+- `ios/SocraticTrade/SocraticTradeApp.swift` (`LegalConsentSheet` lives here so CI's committed `.pbxproj` compiles it — do not add a new `.swift` file without regenerating XcodeGen)
 - `ios/SocraticTrade/LoginView.swift`
 - `ios/SocraticTrade/HomeView.swift`
 - `ios/SocraticTrade/MobileModels.swift`
 - `ios/SocraticTrade/MobileAPIClient.swift`
 - `ios/SocraticTrade/MobileStore.swift`
-- `ios/SocraticTrade/SocraticTradeApp.swift`
 - `test/data-pool-consent.test.ts`
 - `test/legal-notice-consent.test.ts`
 - `test/per-user-policy-isolation.test.ts`
@@ -79,12 +78,15 @@ npm test
 npm run build
 ```
 
-iOS was edited; this Cloud VM cannot run `xcodebuild`.  CI must compile Swift.
+iOS was edited; this Cloud VM cannot run `xcodebuild`.  First CI iOS job failed
+because a new `LegalConsentSheet.swift` was not in the committed `.pbxproj`.
+The sheet is now inlined in `SocraticTradeApp.swift`.
 
 ## Next Steps & Blockers
 
-- Existing production users (including the owner) will see the gate once on next
-  visit because unset/v1 records no longer count as current-version accept.
+- Re-run iOS CI after the inline-sheet commit.  Existing production users
+  (including the owner) will see the gate once on next visit because unset/v1
+  records no longer count as current-version accept.
 - Counsel-drafted Terms/Privacy still not in this PR — copy is product-legal,
   not a lawyer pass.
 - Leave #2792 / #2798 / #2800 / #2794 to their owners.

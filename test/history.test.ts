@@ -418,7 +418,7 @@ describe("fetchDailyOHLC", () => {
   it("keeps user-keyed history cache entries private when both users decline the data pool", async () => {
     const userA = `history-user-a-${randomUUID()}`;
     const userB = `history-user-b-${randomUUID()}`;
-    // Pool consent defaults ON — explicit decline required for private user-key isolation.
+    // Mandatory share is off until accept; explicit decline keeps user-keyed history private.
     setDataPoolConsent(userA, false);
     setDataPoolConsent(userB, false);
     upsertUserApiKey(userA, "marketstack", "user-a-marketstack-key");

@@ -29,8 +29,9 @@ Branch `cursor/hybrid-and-prune-7f41`.  PR #2820, rebased onto `main` (`522b2454
 Owner cut 2026-08-17 items 9–11.  Versioned dismissible legal notice (clickwrap +
 desk sentence + Green/Red prompt).  Data-pool is accept-or-cannot-use; unset users
 do not silently share.  `/welcome` stays on; a second `ALLOWED_EMAILS` address
-stays isolated.  No Stripe/IAP.  Branch `cursor/legal-clickwrap-data-pool-1016`.
-Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
+stays isolated.  No Stripe/IAP.  PR **#2815**.  Branch `cursor/legal-clickwrap-data-pool-1016`.
+`LegalConsentSheet` is inlined in `SocraticTradeApp.swift` so the committed
+`.pbxproj` compiles it.  Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
