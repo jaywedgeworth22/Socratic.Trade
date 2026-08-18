@@ -12,7 +12,7 @@ Owner cut after the #2811 store-vs-condense audit: condense-first for the Pineco
 - SEC ingest and ROIC write extractive highlights plus those signal / speaker-turn slices as their own complete `storeDocument`s.  Full-body 10-K/Q upserts still run while write-class is `full-body`.
 - Worker embed text prefers parsed section text over raw HTML.
 - `corpus-reembed` treats a highlight+signal commit as accession coverage so leftover FTS body rows are not re-uploaded.
-- `ingested_accessions` gains `pinecone_write_class` + `pinecone_vector_count` (migration 84).
+- `ingested_accessions` gains `pinecone_write_class` + `pinecone_vector_count` (migration 84).  The migration no-ops when that table is absent so legacy hardening DBs can still apply later versions.
 - Safe prune planner + `npx tsx scripts/prune-operational-index.ts` (dry-run default; live delete needs `--apply --confirm=prune-operational-junk`).
 - Signal-section writes now carry the shared RAG lease guard.  Filing tests route mocks by document class so processed abstracts/sections cannot consume the full-body receipt.
 
@@ -31,6 +31,8 @@ Touched files:
 - `scripts/prune-operational-index.ts`
 - `test/pinecone-write-class.test.ts`
 - `test/operational-index-prune.test.ts`
+- `test/sec-filings.test.ts`
+- `test/persistence-hardening.test.ts`
 - `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`, `docs/phase-7-strategy.md`
 - `docs/designs/2026-08-16-proposer-corpus-storage.md`
 - `docs/rollouts/2026-08-18-hybrid-and-prune.md`

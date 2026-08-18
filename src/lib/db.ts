@@ -3134,6 +3134,10 @@ const MIGRATIONS: Migration[] = [
     version: 84,
     name: "ingested_accessions_pinecone_write_class",
     up: (database) => {
+      const hasTable = database
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ingested_accessions'")
+        .get();
+      if (!hasTable) return;
       const cols = database.prepare("PRAGMA table_info(ingested_accessions)").all() as Array<{ name: string }>;
       if (!cols.some((c) => c.name === "pinecone_write_class")) {
         database.exec(
