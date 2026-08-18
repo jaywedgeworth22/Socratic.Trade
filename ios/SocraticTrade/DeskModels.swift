@@ -537,16 +537,11 @@ enum DeskCopy {
         return nil
     }
 
-    /// Never show the `__rotate__` seat sentinel.  Prefer a concrete fallback; otherwise "Rotating".
-    static func modelSeatValue(_ raw: String?, fallbacks: [String] = []) -> String {
+    /// Never show the `__rotate__` seat sentinel.  Owner: "Rotate models" / "(rotate models)".
+    static func modelSeatValue(_ raw: String?, fallbacks _: [String] = []) -> String {
         let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if isRotationSentinel(trimmed) {
-            if let fallback = fallbacks
-                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-                .first(where: { !$0.isEmpty && !isRotationSentinel($0) }) {
-                return fallback.lowercased()
-            }
-            return "Rotating"
+            return "Rotate models"
         }
         if trimmed.isEmpty { return "—" }
         return trimmed.lowercased()

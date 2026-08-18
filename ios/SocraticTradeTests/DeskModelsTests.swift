@@ -154,15 +154,16 @@ final class DeskModelsTests: XCTestCase {
     }
 
     func testModelSeatValueNeverShowsTheRotateSentinel() {
-        XCTAssertEqual(DeskCopy.modelSeatValue("__rotate__"), "Rotating")
-        XCTAssertEqual(DeskCopy.modelSeatValue(" __ROTATE__ "), "Rotating")
+        XCTAssertEqual(DeskCopy.modelSeatValue("__rotate__"), "Rotate models")
+        XCTAssertEqual(DeskCopy.modelSeatValue(" __ROTATE__ "), "Rotate models")
         XCTAssertEqual(
             DeskCopy.modelSeatValue("__rotate__", fallbacks: ["google/gemini-3.7-flash"]),
-            "google/gemini-3.7-flash"
+            "Rotate models"
         )
         XCTAssertEqual(DeskCopy.modelSeatValue("claude-sonnet-5"), "claude-sonnet-5")
         XCTAssertEqual(DeskCopy.modelSeatValue(nil), "—")
-        XCTAssertFalse(DeskCopy.modelSeatValue("__rotate__").contains("__"))
+        XCTAssertFalse(DeskCopy.modelSeatValue("__rotate__").contains("_"))
+        XCTAssertFalse(DeskCopy.modelSeatValue("__rotate__").contains("rotate__"))
     }
 
     func testJoinedListAndYesNoAreSentenceCaseValues() {

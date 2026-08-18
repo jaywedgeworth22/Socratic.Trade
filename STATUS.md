@@ -36,7 +36,7 @@ CI green on `1b9e84ca` (iOS + verify-hosted).  User-visible copy is product
 language only (no remotes/surfaces/`ALLOWED_EMAILS`/Infisical asides).
 ## 2026-08-18 CURSOR — iOS UX owner cut (IRA wash-sale, copy, bidirectional caps)
 
-Owner cut 2026-08-17 ~8:45pm CT; live Guardrails screenshot confirmed 2026-08-18.  IRA/Roth no longer shows Wash-Sale Guard yes or Handling auto.  `__rotate__` displays as Rotating (or a concrete fallback).  No `/api/policy` subtitle, phone-safe-only, or console-only cap rows.  Ask-First ↔ Autopilot and raise/lower / % NAV caps on the phone.  Typed `AUTOPILOT` / live `CONFIRM` only.  Did not touch reserved PRs.  `xcodebuild` not on this VM.
+Owner cut 2026-08-17 ~8:45pm CT; live Guardrails screenshot confirmed 2026-08-18.  IRA/Roth no longer shows Wash-Sale Guard yes or Handling auto.  `__rotate__` displays as “Rotate models” — ordinary words, no underscores.  No `/api/policy` subtitle, phone-safe-only, or console-only cap rows.  Ask-First ↔ Autopilot and raise/lower / % NAV caps on the phone.  Typed `AUTOPILOT` / live `CONFIRM` only.  Did not touch reserved PRs.  `xcodebuild` not on this VM.
 
 PR **#2825**.  Branch `cursor/ios-ux-owner-cut-bdae`.  lint + tsc + `npm run build` passed.  Full vitest hung on unrelated env/network failures (no JS product files in this PR).  `xcodebuild` not available on this VM.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
 
