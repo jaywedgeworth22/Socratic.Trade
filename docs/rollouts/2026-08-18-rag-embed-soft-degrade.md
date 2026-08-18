@@ -33,7 +33,11 @@ Touched files:
 
 ## Verification State
 
+Rebase onto `origin/main` `6429d984` (2026-08-18 hotfix pass):
+
 ```bash
+git merge-tree --write-tree origin/main HEAD   # exit 0 after rebase
+git merge-base --is-ancestor origin/main HEAD  # true
 npm run lint          # exit 0 (warnings only)
 npx tsc --noEmit      # exit 0
 npm test -- test/connection-health-routing.test.ts -t "degrades a hard-stopped rag-embed|still 503s on a hard-stopped pinecone|does not fail liveness on a hard-stopped legacy|survives a pinned-but-keyless"
@@ -43,7 +47,7 @@ npm test -- test/vector-db-embedding-integrity.test.ts test/rag-multi-query-retr
 npm run build         # exit 0 (Next.js 16.3.1 webpack)
 ```
 
-A full `npm test` on this VM also fails unrelated cases: notify prefers Pushover over Resend, leftover SiliconFlow env keys change `embed_revision` to `v1-baai-bge-m3`, and SEC/Yahoo network 404s time out strategy tests.  Those files were not touched.  The rag-embed liveness + isolate cases above are the gate for this change.
+`git merge-tree` before rebase exited 1 on `docs/phase-7-strategy.md` only.  `src/lib/vector-db.ts` auto-merged.  Linux VM: no xcodebuild.  A full `npm test` on this VM still fails leftover SiliconFlow `embed_revision=v1-baai-bge-m3`, notify/Pushover, and SEC/Yahoo 404s.  Those files were not touched.  The rag-embed liveness + isolate cases above are the gate for this change.
 
 ## Next Steps & Blockers
 
