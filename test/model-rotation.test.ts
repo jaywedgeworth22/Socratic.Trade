@@ -27,6 +27,7 @@ afterEach(() => {
   resetDbForTesting();
   vi.resetModules();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
@@ -174,6 +175,51 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     expect(safe).toContain("gemini-flash-latest");
     expect(safe.length).toBe(MODEL_ROTATION_POOL.length - 2);
   });
+
+  it("keeps the pool when /models/user lists versioned ids but omits *-latest aliases", async () => {
+    const { applyRotationUserModelAllowlist, MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
+    const versionedOnly = new Set([
+      "openai/gpt-5.6-terra",
+      "anthropic/claude-haiku-4.5",
+      "google/gemini-3.7-flash",
+      "deepseek/deepseek-v4-flash",
+      "mistralai/mistral-small-2603",
+      "openai/gpt-5.6-luna",
+      "anthropic/claude-sonnet-4.6",
+      "google/gemini-3.5-flash-lite",
+      "x-ai/grok-4.5",
+      "openai/gpt-5.4-mini",
+      "anthropic/claude-opus-4.6",
+      "google/gemini-3.1-pro-preview",
+      "deepseek/deepseek-v4-pro",
+      "mistralai/mistral-medium-3-5",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.4-nano",
+      "openai/gpt-4o",
+      "meta-llama/llama-3.3-70b-instruct",
+      "deepseek/deepseek-reasoner"
+    ]);
+    const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, versionedOnly);
+    expect(result.emptiedByAllowlist).toBe(false);
+    expect(result.pool.length).toBeGreaterThan(0);
+    expect(result.pool).toContain("claude-haiku-4.5");
+    expect(result.pool).toContain("gemini-flash-latest");
+    expect(result.pool).toContain("mistral-small-latest");
+    expect(result.pool).toContain("grok-4.5");
+    expect(result.pool).toContain("gpt-5.4-mini");
+    expect(result.pool).not.toContain("kimi-latest");
+    expect(result.pool).not.toContain("claude-fable-5");
+  });
+
+  it("fail-opens to the credential pool minus dead slugs when the allowlist matches nothing", async () => {
+    const { applyRotationUserModelAllowlist, MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
+    const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, new Set(["acme/not-a-catalog-model"]));
+    expect(result.emptiedByAllowlist).toBe(true);
+    expect(result.pool.length).toBeGreaterThan(0);
+    expect(result.pool).toContain("gpt-5.6-terra");
+    expect(result.pool).not.toContain("kimi-latest");
+    expect(result.pool).not.toContain("claude-fable-5");
+  });
 });
 
 describe("eligibleRotationPool (credential-missing skip)", () => {
@@ -209,6 +255,46 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     expect(result.availabilityError).toBe("http_429");
     expect(result.pool.length).toBeGreaterThan(0);
     expect(result.pool).toContain("gpt-5.6-terra");
+  });
+
+  it("keeps a non-empty pool when a live /models/user list has versioned ids and no *-latest aliases", async () => {
+    noEnvKeys();
+    const userId = `rot-or-alias-${randomUUID()}`;
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey(userId, "openrouter", "sk-test-openrouter", "test");
+    vi.stubEnv("NODE_ENV", "production");
+    const { clearOpenRouterUserModelAvailabilityCache } = await import("../src/lib/openrouter-model-availability");
+    clearOpenRouterUserModelAvailabilityCache();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: "anthropic/claude-haiku-4.5" },
+              { id: "google/gemini-3.7-flash" },
+              { id: "mistralai/mistral-small-2603" },
+              { id: "x-ai/grok-4.5" },
+              { id: "openai/gpt-5.4-mini" },
+              { id: "openai/gpt-5.6-terra" }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+    );
+    const { eligibleRotationPool } = await import("../src/lib/model-rotation");
+    const result = await eligibleRotationPool(userId);
+    expect(result.availability).toBe("checked");
+    expect(result.availabilityError).toBeUndefined();
+    expect(result.pool.length).toBeGreaterThan(0);
+    expect(result.pool).toContain("claude-haiku-4.5");
+    expect(result.pool).toContain("gemini-flash-latest");
+    expect(result.pool).toContain("grok-4.5");
+    expect(result.pool).not.toContain("kimi-latest");
+    expect(result.pool).not.toContain("claude-fable-5");
+    vi.unstubAllGlobals();
+    clearOpenRouterUserModelAvailabilityCache();
   });
 });
 

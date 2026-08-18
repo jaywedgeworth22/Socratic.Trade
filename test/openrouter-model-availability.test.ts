@@ -33,6 +33,26 @@ describe("OpenRouter account model availability", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/v1/models/user");
   });
 
+  it("matches alias/version pairs when /models/user lists versioned ids, not *-latest", () => {
+    const versioned = new Set([
+      "anthropic/claude-haiku-4.5",
+      "google/gemini-3.7-flash",
+      "mistralai/mistral-small-2603",
+      "x-ai/grok-4.5",
+      "openai/gpt-5.4-mini",
+      "anthropic/claude-sonnet-4.6",
+      "openai/gpt-5.6-terra"
+    ]);
+    expect(isOpenRouterModelAvailable("claude-haiku-4.5", versioned)).toBe(true);
+    expect(isOpenRouterModelAvailable("gemini-flash-latest", versioned)).toBe(true);
+    expect(isOpenRouterModelAvailable("mistral-small-latest", versioned)).toBe(true);
+    expect(isOpenRouterModelAvailable("grok-4.5", versioned)).toBe(true);
+    expect(isOpenRouterModelAvailable("gpt-5.4-mini", versioned)).toBe(true);
+    expect(isOpenRouterModelAvailable("claude-sonnet-5", versioned)).toBe(true);
+    expect(isOpenRouterModelAvailable("claude-fable-5", versioned)).toBe(false);
+    expect(isOpenRouterModelAvailable("kimi-latest", versioned)).toBe(false);
+  });
+
   it("fails closed when the availability endpoint is unavailable", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 503 })));

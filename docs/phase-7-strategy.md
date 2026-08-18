@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 OpenRouter rotation alias miss is not "not on your account"
+
+`eligibleRotationPool` keep-only-filters the curated pool against `/models/user`.  Catalog ids normalize to `*-latest` aliases (`claude-haiku-4.5` → `anthropic/claude-haiku-latest`) while the user-list often returns versioned ids.  An exact-id miss used to empty the pool or drop live families.  Matching is now family-identity (`canonicalModelId`); if a successful list would still empty an otherwise keyed pool, rotation fail-opens minus `kimi-latest` / `claude-fable-5`.  User-facing copy may say a model is missing from the OpenRouter account only when chat/completions 404/403 body is model-not-found / no-access.  `/models/user` timeout, empty list, or alias miss is "couldn't check" or silent fail-open.  Green/Red failover also leaves a 404/403 model for the next chain entry.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
+
 ## 2026-08-18 Pinecone store-more vs condense-first (report)
 
 Green/Red consume 8/1 chunks and a 24k filings-family budget via `retrieveContextDetailed`.  More raw 10-K/Q/transcript vectors are not better for those decisions.  Operational path is **hybrid**: processed proposer corpus (extractive highlights + form-aware signal sections + speaker-turn slices; latest full call for high-interest names until transcript FTS exists) in Pinecone, full bodies in SQLite/artifacts.  Minimum writer split is landed; `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` until PR B hydrate exists — do not flip the env in this PR.  Live prune is junk/HTML/duplicate/low-value only; useful full-body vectors that are the only copy stay.  Builder is 10 GB / 5M WU with a hard cap.  Full argument: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.  Writer-split design: `docs/designs/2026-08-16-proposer-corpus-storage.md`.  Implementation: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.

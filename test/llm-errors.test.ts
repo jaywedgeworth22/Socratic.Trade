@@ -53,6 +53,15 @@ describe("humanizeLlmError", () => {
     expect(humanizeLlmError("model_not_found", { provider: "openai", status: 404 }).toLowerCase()).toContain("isn't available");
   });
 
+  it("does not blame the OpenRouter account for a bare 404 or No endpoints found", () => {
+    const routing = humanizeLlmError("No endpoints found matching your request", { provider: "openrouter", status: 404 });
+    expect(routing.toLowerCase()).toContain("couldn't complete");
+    expect(routing.toLowerCase()).not.toContain("isn't available on your");
+    const bare = humanizeLlmError("", { provider: "openrouter", status: 404 });
+    expect(bare.toLowerCase()).toContain("couldn't complete");
+    expect(bare.toLowerCase()).not.toContain("openrouter account");
+  });
+
   it("maps Anthropic's workspace usage-limit error to a plain-English message (not raw JSON)", () => {
     const raw = '{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-08-01 at 00:00 UTC."},"request_id":"req_011Ccm8KXQnpRLjFAULndY1w"}';
     const msg = humanizeLlmError(raw, { provider: "anthropic", status: 400 });

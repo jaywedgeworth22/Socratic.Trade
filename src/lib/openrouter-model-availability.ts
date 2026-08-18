@@ -1,4 +1,5 @@
 import { normalizeOpenRouterModelId } from "./llm-provider";
+import { canonicalModelId } from "./model-identity";
 
 const AVAILABILITY_CACHE_TTL_MS = 5 * 60 * 1_000;
 /** 5s was too tight: every 2026-08-13 scheduled rotation timed out on /models/user. */
@@ -84,6 +85,21 @@ export function clearOpenRouterUserModelAvailabilityCache(): void {
   availabilityCache.clear();
 }
 
+/**
+ * True when the catalog/wire id is the same OpenRouter model class as a listed
+ * `/models/user` row.  Exact normalized id still wins.  Alias/version pairs
+ * also match (`claude-haiku-4.5` ↔ `anthropic/claude-haiku-latest`,
+ * `gemini-flash-latest` ↔ `google/gemini-3.7-flash`, vendor prefix optional)
+ * so a successful user-list that omits `*-latest` aliases cannot empty the
+ * rotation pool.
+ */
 export function isOpenRouterModelAvailable(model: string, modelIds: ReadonlySet<string>): boolean {
-  return modelIds.has(normalizeOpenRouterModelId(model));
+  const normalized = normalizeOpenRouterModelId(model);
+  if (modelIds.has(normalized) || modelIds.has(model.trim())) return true;
+  const family = canonicalModelId(model);
+  if (!family) return false;
+  for (const id of modelIds) {
+    if (id === normalized || canonicalModelId(id) === family) return true;
+  }
+  return false;
 }

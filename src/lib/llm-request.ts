@@ -487,6 +487,16 @@ const RETRYABLE_LLM_STATUSES = new Set([429, 500, 502, 503, 504]);
 export function isRetryableLlmStatus(status: number): boolean {
   return RETRYABLE_LLM_STATUSES.has(status);
 }
+
+/**
+ * Statuses that should try the NEXT model in a Green/Red failover chain.
+ * 404/403 are not transient (`llmFetch` must not retry the same model) but they
+ * are worth leaving this model for another in the chain — otherwise implicit
+ * rotation fallbacks never run and the run dies on the first miss.
+ */
+export function isFailoverLlmStatus(status: number): boolean {
+  return isRetryableLlmStatus(status) || status === 404 || status === 403;
+}
 /** True for timeouts (AbortSignal.timeout → AbortError/TimeoutError) and transient network errors. */
 export function isRetryableLlmError(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name;

@@ -5,6 +5,11 @@
 #2800 rebased onto `origin/main` (`cda485ff`, includes hybrid #2820 `ea68c1fc`).  Verified: the trip was local-MTD remainder math, not the 2.5M fuse and not a spent Standard trial.  Live card was used 0 of 15 estimated WUs, attempted 28, skipped 1.  Local month-to-date WUs (including pre-hybrid full-body writes) were treated as Pinecone's bill; leftover lifetime units collapsed the daily fuse below one document.  Hybrid processed writes stay; write-class stays full-body; prune stays dry-run.  Did not raise a post-trial 2.5M/60k ceiling.
 
 Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+## 2026-08-18 CURSOR — OpenRouter rotation alias miss is not "not on your account"
+
+Owner: Green failed because models are not available on his OpenRouter account.  False.  Live health ~17:20Z: OpenRouter credits above $3, `tradingLivenessDegraded` true, oldest completed Green ~27h.  Ops snapshot showed rotation already picking `gemini-3.7-flash` / `mistral-medium-3-5` and classifying chat 404 as an account miss.  Alias keep-only filter is a second liar.  Fail-open + family match + honest copy + 404/403 failover.  Keep `__rotate__`.  Do not add OpenRouter dashboard models.  No Stripe/IAP.
+
+Branch `cursor/openrouter-rotation-alias-fb04`.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
 
 ## 2026-08-18 CURSOR — IRA accounts must not tax-loss harvest
 
