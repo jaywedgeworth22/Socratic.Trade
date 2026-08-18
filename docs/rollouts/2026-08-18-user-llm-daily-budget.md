@@ -40,16 +40,20 @@ Per-user RAG rolling-window knobs (`RAG_RUN_BUDGET_ENABLED` / `CEILING` / `WINDO
 
 ## Verification State
 
-Commands run after this note was drafted (see commit follow-ups if a later SHA adds receipts):
-
 ```bash
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean
+npx vitest run test/llm-budget-enforcement.test.ts \
+  test/llm-budget-route.test.ts \
+  test/settings-search-index.test.ts \
+  test/source-settings.test.ts
+# 4 files, 44 passed
+npm run build         # Next.js 16.3.1 webpack; /api/settings/llm-budget listed
 ```
 
-iOS was not compiled on this Linux cloud VM (`xcodebuild` is not available).  Swift decode coverage is `DeskModelsTests.testLlmBudgetResponseDecodesNullCaps`.
+Full `npm test` on this Linux cloud VM hit unrelated network/timeout flakes (SEC/Alpaca 404s, 30s strategy-scope hangs) and was stopped.  CI `verify` on the PR is the full-suite authority.
+
+iOS was not compiled here (`xcodebuild` is not available).  Swift decode coverage is `DeskModelsTests.testLlmBudgetResponseDecodesNullCaps`.
 
 ## Next Steps & Blockers
 
