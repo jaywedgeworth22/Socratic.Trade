@@ -313,7 +313,7 @@ PR **#2812**.  Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/roll
 
 Owner: coordinator/owner comments do not belong in the iOS UI.  Notes for Jay stay in PRs/docs.  Concrete leak on `main`: Home Desk subtitle `full surfaces, not just the remote`.  Removed that subtitle and the same class of leaked strings (control-remote setup line, Infisical footer, `/api/policy` / `policy.patch` / "not a second copy here" / "phone-safe").  Did not steal #2792/#2798/#2800/#2794 (those own FilingAPI, alert-noise, Pinecone writes, and iOS console handoffs).
 
-Branch `cursor/ios-no-owner-note-ui-5139`.  Rollout: `docs/rollouts/2026-08-18-ios-no-owner-note-ui.md`.
+PR **#2814**.  Branch `cursor/ios-no-owner-note-ui-5139`.  Rollout: `docs/rollouts/2026-08-18-ios-no-owner-note-ui.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

@@ -41,7 +41,11 @@ Left #2794's readiness / "full desk" / desktop-console handoff strings alone.
 
 ## Verification State
 
-Commands run and results will be recorded after the first push.
+- `npm run lint` — exit 0 (0 errors, grandfathered warnings only)
+- `npx tsc --noEmit` — exit 0
+- `npm run build` — exit 0
+- `npm test` — Cloud VM outbound HTTP flakes (SEC `company_tickers.json` 404, FRED, Finnhub, TwelveData).  Unrelated to iOS copy.  Stopped after 10m; GitHub `verify` is the full-suite gate.
+- `xcodebuild` — not available in this Cloud VM.  Next Mac compile / TestFlight is the first Swift compile.
 
 ## Next Steps & Blockers
 
