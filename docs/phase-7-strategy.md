@@ -4,7 +4,7 @@ This document defines the comprehensive architecture for the AI Trading Strategy
 
 ## 2026-08-18 rag-embed DeepInfra batch window (ingest)
 
-OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` against 8192 tokens.  A count-only batch of 32 ordinary chunks hit 8193 and 400'd `embed documents` after the 2026-08-18 2:12pm CT deploy.  `embedWithRetry` now packs each POST under ~7500 `approxTokens` (plus a conservative byte cap) and isolates a single over-limit text: split, embed the pieces, mean-pool so the document still lands.  `VECTOR_EMBED_BATCH_SIZE=32` in Infisical is safe.  The #2812 health gate is unchanged — this is the ingest success path, not another 503 demotion.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
+OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` against 8192 tokens.  A count-only batch of 32 ordinary chunks hit 8193 and 400'd `embed documents` after the 2026-08-18 2:12pm CT deploy.  That is a batch-sum, not one unchunked 10-K.  `embedWithRetry` now packs each POST under ~7500 `approxTokens` (plus a conservative byte cap).  A single over-budget text is isolated as its own POST; hybrid chunking stays in `chunkDocument` (480).  `VECTOR_EMBED_BATCH_SIZE=32` in Infisical is safe.  The #2812 health gate and #2820 producer order are unchanged.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
 
 ## 2026-08-18 rag-embed soft-degrade (health + store)
 

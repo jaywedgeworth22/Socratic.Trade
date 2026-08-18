@@ -2,9 +2,9 @@
 
 ## 2026-08-18 CURSOR — rag-embed DeepInfra batch-window 400 (hotfix)
 
-Live `VECTOR_EMBED_BATCH_SIZE=32` POSTed 32 ingest texts to OpenRouter `baai/bge-m3`.  DeepInfra sums the whole `input[]` against 8192; a batch hit 8193 and 400'd `embed documents` from 19:12:49Z.  #2812 stopped the 503; it did not embed those docs.  `embedWithRetry` now packs under ~7500 `approxTokens` (plus an 18,750-byte cap) and isolates a single over-limit text (chunk + mean-pool) so the filing still lands.  Infisical can keep the count at 32.  Did not revert #2812/#2829/#2800.  Did not drop rag-embed from health.
+Live `VECTOR_EMBED_BATCH_SIZE=32` POSTed 32 ingest texts to OpenRouter `baai/bge-m3`.  DeepInfra sums the whole `input[]` against 8192; a batch hit 8193 and 400'd `embed documents` from 19:12:49Z.  That is a batch-sum, not one unchunked 10-K.  #2812 stopped the 503; it did not embed those docs.  Pack-at-embed only: `embedWithRetry` packs under ~7500 `approxTokens` (plus an 18,750-byte cap) and isolates a single over-budget text as its own POST.  No second filing chunker.  No extra table vectors.  Hybrid producer order unchanged.  Infisical can keep the count at 32.  Did not revert #2812/#2829/#2800.  Did not drop rag-embed from health.
 
-Branch `cursor/rag-embed-batch-window-54d7`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.  Linux VM: no xcodebuild.
+Branch `cursor/rag-embed-batch-window-54d7`.  PR **#2840**.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.  Linux VM: no xcodebuild.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

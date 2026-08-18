@@ -2,11 +2,11 @@
 
 ## Context & Objective
 
-After the 2026-08-18 2:12pm CT deploy, `rag-embed` hard-failed on `embed documents`.  Live `VECTOR_EMBED_BATCH_SIZE` is 32 (code default 8).  `storeContextsImpl` POSTed `{model, input: string[]}` to OpenRouter `baai/bge-m3`.  DeepInfra sums the **whole batch** against the 8192-token context.  A 32-text ingest hit 8193 and 400'd.  The same body still fired on `12e8dcd` after #2812.  Small later probes (17–59 tokens) succeeded.  Jay wants those documents embedded, not a prettier 400.  The #2812 health 503 gate stays.
+After the 2026-08-18 2:12pm CT deploy, `rag-embed` hard-failed on `embed documents`.  Live `VECTOR_EMBED_BATCH_SIZE` is 32 (code default 8).  DeepInfra sums the **whole** OpenRouter `baai/bge-m3` `input[]` against 8192.  A 32-text ingest hit 8193 and 400'd.  That is a batch-sum, not one unchunked 10-K.  Hybrid producer order stays (#2820): `chunkDocument` → `persistLocalComplete` → highlights/abstract → `storeSignalSectionDocuments` → full-body `storeDocument` only if `writesFullBodyToPinecone()`.  Jay wants those batches to embed without violating hybrid.  The #2812 health 503 gate stays.
 
 ## Changes Made
 
-`embedWithRetry` no longer sends a count-only batch.  It packs each provider POST so `approxTokens` (UTF-8 bytes / 4) stays under ~7500, with a 18,750-byte cap so a `VECTOR_CONTEXT_MAX_CHARS=2400` batch cannot sneak past 8192 if DeepInfra tokenizes denser than bytes/4.  A single over-limit text is isolated, split into in-window pieces, embedded, and mean-pooled so the document still lands.  Infisical can keep `VECTOR_EMBED_BATCH_SIZE=32`.  Did not revert #2812 / #2829 / #2800.  Did not drop `rag-embed` from health.
+Pack-at-embed only.  `embedWithRetry` packs each provider POST so `approxTokens` stays under ~7500, with an 18,750-byte cap so a `VECTOR_CONTEXT_MAX_CHARS=2400` multi-text request cannot sneak past 8192.  A single over-budget text is isolated as its own POST with the original string intact — no second filing chunker, no extra ContextDocuments, no extra table vectors, no mean-pooled split records.  Query embed uses the same function (`embedWithRetry(..., [q], "query")`).  Infisical can keep `VECTOR_EMBED_BATCH_SIZE=32`.  Did not revert #2812 / #2829 / #2800.  Did not flip `RAG_PINECONE_WRITE_CLASS` or `--apply` prune.  Did not rewrite `test/vector-db-chunk-cap.test.ts` to accept new Pinecone table chunks.
 
 Touched files:
 
@@ -14,7 +14,6 @@ Touched files:
 - `src/lib/rag-metering.ts`
 - `src/lib/vector-db.ts`
 - `test/embed-request-pack.test.ts`
-- `test/vector-db-chunk-cap.test.ts`
 - `STATUS.md`
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
@@ -23,28 +22,25 @@ Touched files:
 
 ## Decisions & Trade-offs
 
-- Pack at `embedWithRetry`, not only the `chunks(documentsToStore, embedBatchSize())` loop, so query embed and the reuse-exact missing-input path get the same guard.
-- Mean-pool an isolated over-limit text so storeContexts still gets one vector per document (managed commit cardinality unchanged).  Prefer that over skipping the filing.
-- Dual budget (7500 tokens + 18,750 bytes).  Token-only packing of 12×2400-char texts can still exceed 8192 if the real tokenizer is denser than bytes/4.
-- Did not change the #2812 soft-degrade: one dead lane stays HTTP 200.  This PR makes the lane succeed.
+- Pack inside `embedWithRetry`, not in `storeContexts` and not by changing `chunkDocument` (480) or `selectSignalChunks`.
+- Isolate an over-budget singleton instead of splitting it.  Item 8 / `is_table` metadata and content_hash stay whole.
+- Dual budget (7500 tokens + 18,750 bytes) because token-only packing of max-char texts can still exceed 8192 if DeepInfra is denser than bytes/4.
+- Did not add an ingest LLM.  Did not touch `DO_NOT_TOUCH_DOC_TYPES`.  Did not clamp the #2800 trial WU.
 
 ## Verification State
 
 ```bash
-npm test -- test/embed-request-pack.test.ts
-# 8 passed
-npm test -- test/vector-db-embedding-integrity.test.ts test/vector-db-chunk-cap.test.ts
+npm test -- test/embed-request-pack.test.ts test/vector-db-embedding-integrity.test.ts test/vector-db-chunk-cap.test.ts
 npm run lint
 npx tsc --noEmit
-npm run build
 ```
 
 Linux VM: no xcodebuild.  Do not claim an iOS compile.
 
 ## Next Steps & Blockers
 
-- Land and let auto-deploy pick it up.  Confirm live `rag-embed` `ok=1` on ingest batches, not only 17–59-token probes.
-- Leave Infisical `VECTOR_EMBED_BATCH_SIZE=32` unless an operator wants a smaller count for RPM.
+- Land and let auto-deploy pick it up.  Confirm live `rag-embed` `ok=1` on 32-count ingest batches, not only 17–59-token probes.
+- Leave Infisical `VECTOR_EMBED_BATCH_SIZE=32`.
 - Do not reclassify this as an account-miss.  Do not drop rag-embed from health.
 
 ## Zero-Code Findings

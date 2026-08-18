@@ -286,14 +286,10 @@ describe("storeDocument: per-chunk char cap aligned with the token chunker (item
       { text: hugeTable, metadata: { symbol: "AAPL", source: "sec-edgar", timestamp: "2026-06-20", is_table: true } }
     ], "local", { maxChars: 2400 }); // even with an explicit small maxChars, is_table must win
 
-    const embeddedTexts: string[] = mocks.embed.mock.calls.flatMap((call) => call[0].input as string[]);
-    expect(embeddedTexts.length).toBeGreaterThan(0);
-    for (const text of embeddedTexts) {
-      expect(text).not.toContain("[truncated for vector memory]");
-    }
-    // DeepInfra sums one POST against 8192, so a giant table is split across in-window
-    // requests and mean-pooled.  The last row must still be sent, not trimmed.
-    expect(embeddedTexts.join("")).toContain("|LineItem199|");
+    const embeddedTexts: string[] = mocks.embed.mock.calls[0][0].input;
+    expect(embeddedTexts[0]).not.toContain("[truncated for vector memory]");
+    // The full table content (last row) must be present untouched.
+    expect(embeddedTexts[0]).toContain("|LineItem199|");
   });
 
   it("content_hash (computed pre-trim by chunkDocument) stays consistent with the stored text for a table chunk", async () => {

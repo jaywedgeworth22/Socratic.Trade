@@ -35,9 +35,7 @@ import { estimateRagDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, met
 import {
   EMBED_REQUEST_TOKEN_BUDGET,
   embedRequestFits,
-  meanPoolEmbeddings,
-  packInWindowTexts,
-  splitTextToEmbedWindow
+  packInWindowTexts
 } from "./rag/embed-request-pack";
 import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
 import { selectItemsWithinWriteBudget } from "./pinecone-write-budget";
@@ -2487,27 +2485,22 @@ async function embedWithRetry(
   };
 
   // DeepInfra sums the whole `input[]` against 8192.  Count-only batches (prod
-  // VECTOR_EMBED_BATCH_SIZE=32) 400 at 8193.  Pack under ~7500 and isolate any
-  // single over-limit text so the rest of the lane still embeds.
-  const isolated: Array<{ sourceIndex: number; pieces: string[] }> = [];
-  const batchable: Array<{ text: string; sourceIndex: number }> = [];
-  for (let sourceIndex = 0; sourceIndex < input.length; sourceIndex++) {
-    const text = input[sourceIndex] ?? "";
-    const pieces = splitTextToEmbedWindow(text);
-    if (pieces.length > 1) isolated.push({ sourceIndex, pieces });
-    else batchable.push({ text: pieces[0] ?? text, sourceIndex });
-  }
-  const packed = packInWindowTexts(batchable, { maxCount: embedBatchSize() });
-  const needsSplit = isolated.length > 0 || packed.length > 1;
-  if (!needsSplit) {
+  // VECTOR_EMBED_BATCH_SIZE=32) 400 at 8193.  Pack under ~7500.  A single
+  // over-budget text is isolated as its own POST — never re-chunked into extra
+  // Pinecone records or extra ContextDocuments.
+  const packed = packInWindowTexts(
+    input.map((text, sourceIndex) => ({ text, sourceIndex })),
+    { maxCount: embedBatchSize() }
+  );
+  if (packed.length <= 1) {
     return embedOnce(input);
   }
 
   const embeddings = new Array<number[]>(input.length);
   let sent = false;
-  const embedGroup = async (texts: string[]): Promise<number[][]> => {
-    if (texts.length === 0) return [];
-    if (!embedRequestFits(texts)) {
+  for (const group of packed) {
+    const texts = group.map((item) => item.text);
+    if (texts.length > 1 && !embedRequestFits(texts)) {
       throw new Error(`embed packer produced an over-budget request (${texts.length} texts, budget ${EMBED_REQUEST_TOKEN_BUDGET})`);
     }
     if (sent) await sleep(embedBatchDelayMs(), signal);
@@ -2517,26 +2510,9 @@ async function embedWithRetry(
     if (!validated.embeddings) {
       throw new Error(`Embedding response rejected after window pack (${validated.reason ?? "unknown"})`);
     }
-    return validated.embeddings;
-  };
-
-  for (const group of packed) {
-    const groupEmbeddings = await embedGroup(group.map((item) => item.text));
     for (let i = 0; i < group.length; i++) {
-      embeddings[group[i]!.sourceIndex] = groupEmbeddings[i]!;
+      embeddings[group[i]!.sourceIndex] = validated.embeddings[i]!;
     }
-  }
-  for (const item of isolated) {
-    const pieceRefs = item.pieces.map((text, pieceIndex) => ({ text, sourceIndex: pieceIndex }));
-    const pieceGroups = packInWindowTexts(pieceRefs, { maxCount: embedBatchSize() });
-    const pieceEmbeddings = new Array<number[]>(item.pieces.length);
-    for (const group of pieceGroups) {
-      const groupEmbeddings = await embedGroup(group.map((entry) => entry.text));
-      for (let i = 0; i < group.length; i++) {
-        pieceEmbeddings[group[i]!.sourceIndex] = groupEmbeddings[i]!;
-      }
-    }
-    embeddings[item.sourceIndex] = meanPoolEmbeddings(pieceEmbeddings);
   }
   return {
     data: embeddings.map((embedding, index) => ({ embedding, index }))

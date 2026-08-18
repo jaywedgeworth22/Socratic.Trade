@@ -1,6 +1,6 @@
 # Active Implementation Plan
 
-> **2026-08-18 CURSOR — rag-embed DeepInfra batch-window (`cursor/rag-embed-batch-window-54d7`).** Live 32-text embed POSTs 400 at 8193 tokens on baai/bge-m3.  Pack each request under ~7500 approxTokens; isolate and chunk a single over-limit text.  Leave the #2812 health 503 gate alone.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
+> **2026-08-18 CURSOR — rag-embed DeepInfra batch-window (`cursor/rag-embed-batch-window-54d7`, #2840).** Live 32-text embed POSTs 400 at 8193 tokens on baai/bge-m3 (batch-sum, not one unchunked 10-K).  Pack-at-embed only under ~7500 approxTokens.  Isolate an over-budget singleton; do not invent a second filing chunker.  Leave the #2812 health 503 gate and #2820 hybrid producer order alone.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
 
 > **2026-08-18 CURSOR — rag-embed soft-degrade rebase (`cursor/rag-embed-soft-degrade-ed6d`, #2812).** Rebased onto `origin/main` `6429d984`.  One dead rag-embed must not 503 Docker or halt Green/Red.  Kept #2800 fuse fix and #2829 `require_parameters` narrowing.  Sole conflict was `docs/phase-7-strategy.md`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 
