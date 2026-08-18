@@ -20,6 +20,7 @@ import { readLocalArtifact, writeLocalArtifact } from "../web-sources/sec-filing
 import { insertDocumentChunkFtsBatch, countDocumentChunkFts, getDb } from "../db";
 import { serverKnobBool } from "../server-knobs";
 import { chunkDocument } from "./chunk";
+import { filingTextFromParsedSections } from "./pinecone-write-class";
 import {
   FTS_MIRROR_HEARTBEAT_MS,
   FTS_MIRROR_MAX_CHUNKS_PER_TICK,
@@ -294,7 +295,7 @@ export class SecIngestWorker {
 
       const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
       const doc = {
-        text: rawContent,
+        text: filingTextFromParsedSections(sections, rawContent),
         doc_id: vectorDocId,
         ticker: task.symbol,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
@@ -372,7 +373,7 @@ export class SecIngestWorker {
 
       const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
       const doc = {
-        text: rawContent,
+        text: filingTextFromParsedSections(sections, rawContent),
         doc_id: vectorDocId,
         ticker: task.symbol,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
