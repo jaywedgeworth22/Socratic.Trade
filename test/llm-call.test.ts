@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, toGeminiJsonSchema } from "../src/lib/llm-call";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, shouldRequireOpenRouterParameters, toGeminiJsonSchema } from "../src/lib/llm-call";
 
 const SCHEMA = {
   name: "trade_proposals",
@@ -493,6 +493,40 @@ describe("OpenRouter provider routing", () => {
     expect(body.provider).toEqual({ require_parameters: true, allow_fallbacks: true });
     expect(body.max_completion_tokens).toBeGreaterThan(0);
     expect(body.temperature).toBeUndefined();
+  });
+
+  it("does not require_parameters on Gemini or Mistral strategy bodies (avoids No endpoints 404)", () => {
+    const gemini = buildLlmRequestBody(
+      { provider: "openrouter", transport: "chat-completions" },
+      {
+        model: "google/gemini-3.7-flash",
+        systemPrompt: "sys",
+        userContent: "{}",
+        schema: SCHEMA,
+        maxOutputTokens: 1500,
+        reasoningEffort: "low"
+      }
+    ) as Record<string, any>;
+    expect(gemini.max_completion_tokens).toBeGreaterThan(0);
+    expect(gemini.provider).toEqual({ require_parameters: false, allow_fallbacks: true });
+    expect(shouldRequireOpenRouterParameters(gemini)).toBe(false);
+
+    const mistral = buildLlmRequestBody(
+      { provider: "openrouter", transport: "chat-completions" },
+      {
+        model: "mistralai/mistral-medium-3-5",
+        systemPrompt: "sys",
+        userContent: "{}",
+        schema: SCHEMA,
+        maxOutputTokens: 1500,
+        reasoningEffort: "none"
+      }
+    ) as Record<string, any>;
+    expect(mistral.provider).toEqual({ require_parameters: false, allow_fallbacks: true });
+
+    expect(
+      shouldRequireOpenRouterParameters({ model: "openai/gpt-5.4-nano" })
+    ).toBe(false);
   });
 });
 

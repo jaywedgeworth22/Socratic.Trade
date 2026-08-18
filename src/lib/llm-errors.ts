@@ -80,7 +80,7 @@ function extractStructuredProviderError(
  *  second pass (e.g. humanizeLlmTransportError re-wrapping an Error whose message was humanized at
  *  the throw site) returns it unchanged instead of stuttering "Gemini error: Gemini error: ...". */
 const ALREADY_HUMANIZED =
-  /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|Moonshot AI \(Kimi\)|OpenRouter|the LLM) error\b|^(?:That model isn't available on your |Couldn't complete this model request\.)/;
+  /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|Moonshot AI \(Kimi\)|OpenRouter|the LLM) error\b|^(?:That model isn't available on your |Couldn't complete this model request\.|.+ had no compatible endpoint for this request\.)/;
 
 /**
  * Convert a raw LLM error (and optional HTTP status) into a plain-English, actionable message.
@@ -106,9 +106,20 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
   if (status === 403 || has("permission", "do not have access", "does not have access", "not allowed", "forbidden", "unsupported_country", "region"))
     return `Your ${provider} key doesn't have access to this model or region.  Pick a different model, or check your ${provider} plan.`;
 
+  // OpenRouter require_parameters 404 — the model exists; no endpoint advertised
+  // every request field.  Never call that an account allowlist miss.
+  const noEndpointRouting = has(
+    "no endpoints found",
+    "no endpoints available",
+    "no endpoint found",
+    "no available providers",
+    "no provider available"
+  );
+  if (status === 404 && noEndpointRouting)
+    return `${provider} had no compatible endpoint for this request.  Try again, or choose a different model.`;
+
   // Only blame the account when chat/completions actually said the model is
-  // missing or forbidden.  A bare 404 (OpenRouter "No endpoints found", a
-  // /models/user miss, a routing gap) is "couldn't complete", not "not on
+  // missing or forbidden.  A bare 404 is "couldn't complete", not "not on
   // your account".
   const modelMissingBody = has(
     "model not found",

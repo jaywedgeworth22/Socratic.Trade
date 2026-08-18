@@ -2,9 +2,9 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
-## 2026-08-18 OpenRouter rotation alias miss is not "not on your account"
+## 2026-08-18 OpenRouter "No endpoints" 404 is not "not on your account"
 
-`eligibleRotationPool` keep-only-filters the curated pool against `/models/user`.  Catalog ids normalize to `*-latest` aliases (`claude-haiku-4.5` → `anthropic/claude-haiku-latest`) while the user-list often returns versioned ids.  An exact-id miss used to empty the pool or drop live families.  Matching is now family-identity (`canonicalModelId`); if a successful list would still empty an otherwise keyed pool, rotation fail-opens minus `kimi-latest` / `claude-fable-5`.  User-facing copy may say a model is missing from the OpenRouter account only when chat/completions 404/403 body is model-not-found / no-access.  `/models/user` timeout, empty list, or alias miss is "couldn't check" or silent fail-open.  Green/Red failover also leaves a 404/403 model for the next chain entry.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
+Primary: live #2771 set `require_parameters=true` on every OpenRouter body.  OpenRouter 404s `No endpoints found matching your request` when that filter empties the endpoint set; `allow_fallbacks` does not revive it.  `humanizeLlmError` used to treat any 404 as an account allowlist miss.  `require_parameters` is now only for OpenAI reasoning + `max_completion_tokens`.  The account sentence is only for a real model-not-found / no-access body.  Secondary: `/models/user` family-match + fail-open minus dead slugs.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
 
 ## 2026-08-18 Pinecone store-more vs condense-first (report)
 

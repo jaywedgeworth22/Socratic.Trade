@@ -1,28 +1,34 @@
-# 2026-08-18 — OpenRouter rotation alias miss is not "not on your account"
+# 2026-08-18 — OpenRouter "No endpoints" 404 is not "not on your account"
 
 ## Context & Objective
 
-Jay reported Green Team failed because models are not available on his OpenRouter account.  That is false: live `/api/health` at 2026-08-18 ~17:20Z had OpenRouter credits above the $3 floor, `tradingLivenessDegraded` true, and `oldestCompletedRunAgeSeconds` ~96k (~27h).  Rotation (`__rotate__`) must keep running.  Do not require adding models in the OpenRouter dashboard.
+Jay reported Green Team failed because models are not available on his OpenRouter account.  That is false: live `/api/health` at 2026-08-18 ~17:20Z had OpenRouter credits above the $3 floor, `tradingLivenessDegraded` true, and last completed Green ~9:37am CT Aug 17 (~27h).  Rotation (`__rotate__`) must keep running.  Do not require adding models in the OpenRouter dashboard.
 
 ## Changes Made
 
-Live ops snapshot (same window) showed rotation was already picking concrete models (`mistral-medium-3-5`, `gemini-3.7-flash`, `mistral-small-2603`) and dying on chat/completions.  The user-visible sentence came from `humanizeLlmError`: any HTTP 404 became "That model isn't available on your OpenRouter account."  The empty-pool / alias-miss path is a real second liar (exact `normalizeOpenRouterModelId` keep-only filter) but was not what emptied today's Green runs.
+**Primary liar (live-path receipts):** #2771 is live (`f75027c1`, 2026-08-17T14:17:36Z, now in prod `cda485ff`).  Every OpenRouter LLM body set `provider.require_parameters=true`.  OpenRouter then 404s `No endpoints found matching your request` when no endpoint advertises every field.  `allow_fallbacks` only covers 5xx / rate-limit within a model — it does not revive that empty set.  `humanizeLlmError` treated **any HTTP 404** as "That model isn't available on your OpenRouter account."  We do not have a Coolify last-run body; the classifier + routing are coded so this class of 404 cannot lie again.
 
-- Match `/models/user` rows by family identity so versioned ids keep catalog aliases (`claude-haiku-4.5` ↔ `anthropic/claude-haiku-latest`, `*-latest` ↔ current class, vendor prefix optional).
-- If a successful allowlist would empty an otherwise keyed credential pool, fail OPEN minus `kimi-latest` / `claude-fable-5`.
-- Say a model is missing from the OpenRouter account only when chat/completions 404/403 body is model-not-found / no-access.  Bare 404 / "No endpoints found" / `/models/user` timeout or alias miss is "couldn't check" or silent fail-open.
-- Green/Red failover now leaves a 404/403 model for the next chain entry (`isFailoverLlmStatus`).  `llmFetch` still does not retry 404 on the same model.
+**Secondary:** `/models/user` rotation already fail-OPENs after 2026-08-13.  `availability_unavailable` copy only if that fail-open pool is empty, which is unlikely when the OpenRouter key resolves catalog models.  Exact-id alias miss is still hardened.
+
+Ops snapshot (same window) showed rotation already picking `mistral-medium-3-5` / `gemini-3.7-flash` / `mistral-small-2603` — not an empty pool.
+
+- `require_parameters` only when the body sends `max_completion_tokens` on an OpenAI reasoning model (the #2771 nano case).  Gemini / Mistral / Claude / embeds stay on OpenRouter's default false.  `allow_fallbacks` stays true.
+- 404 "No endpoints found matching your request" (and similar routing 404s) says the provider had no compatible endpoint.  The account-allowlist sentence is only for a real model-not-found / no-access body, never `status === 404` alone.
+- Green/Red failover leaves a 404/403 model for the next chain entry (`isFailoverLlmStatus`).  `llmFetch` still does not retry 404 on the same model.
+- Match `/models/user` rows by family identity; if a successful allowlist would empty a keyed pool, fail OPEN minus `kimi-latest` / `claude-fable-5`.
 - `model_rotation_pick` audits now include `skipped` + `availability` + `availabilityError`.
 
 Touched files:
 
-- `src/lib/openrouter-model-availability.ts`
-- `src/lib/model-rotation.ts`
-- `src/lib/llm-required.ts`
+- `src/lib/llm-call.ts`
+- `src/lib/chat/llm.ts`
 - `src/lib/llm-errors.ts`
 - `src/lib/llm-request.ts`
 - `src/lib/strategy.ts`
 - `src/lib/red-team.ts`
+- `src/lib/openrouter-model-availability.ts`
+- `src/lib/model-rotation.ts`
+- `src/lib/llm-required.ts`
 - `app/console/components/chrome.tsx`
 - `test/openrouter-model-availability.test.ts`
 - `test/model-rotation.test.ts`
@@ -36,30 +42,36 @@ Touched files:
 
 ## Decisions & Trade-offs
 
-- Did not treat the empty-pool hypothesis as proven.  Live runs were not `empty_pool` / `availability_unavailable`; they served wire slugs and classified the chat error as an account miss.
-- Did not flip `provider.require_parameters`.  That 2026-08-17 nano routing knob may still produce "No endpoints found" 404s, but the body is not proof on this snapshot.  Copy + failover are the honest fix without inventing that root cause.
+- Primary fix is the 404 classifier + narrowing `require_parameters`.  OpenRouter docs (provider-selection, 2026-08-18): `require_parameters` default is false; when true, unsupported-parameter endpoints never receive the request; `allow_fallbacks` does not reopen that empty set.
+- Did not invent a Coolify HTTP body.  Last-run `error_class` / slug / OpenRouter body are still unknown.
+- `/models/user` fail-open is secondary.  Live runs were already picking concrete slugs.
 - Did not drop rotation.  Did not add models to Jay's OpenRouter dashboard.  Did not raise spend or touch the Congress $2 cap.  No Stripe / IAP.  No coordinator notes in product UI.
 
 ## Verification State
 
 ```bash
-npm run lint          # 0 errors (768 grandfathered warnings)
-npx tsc --noEmit      # clean
+npm run lint          # first pass: 0 errors (768 grandfathered warnings)
+npx tsc --noEmit      # first pass: clean
 npm test -- test/openrouter-model-availability.test.ts \
   test/model-rotation.test.ts test/llm-errors.test.ts test/llm-request.test.ts
-                          # 65 passed
+                          # first pass: 65 passed
 npm test -- test/llm-provider.test.ts test/strategy-llm-failover.test.ts \
   test/strategy-run-once-async-route.test.ts test/redteam-failure-routing.test.ts
-                          # 32 passed
-npm run build         # Next.js 16.3.1 webpack build clean
+                          # first pass: 32 passed
+npm test -- test/llm-errors.test.ts test/llm-call.test.ts \
+  test/model-rotation.test.ts test/openrouter-model-availability.test.ts
+                          # after require_parameters narrowing: 82 passed
+npm run build         # first pass: Next.js 16.3.1 webpack build clean
 ```
+
+Required coverage on this pass: (a) 404 "No endpoints found matching your request" (plain + JSON-wrapped) does not produce the account sentence — it says no compatible endpoint; (b) `model_not_found` + 404 still uses the account sentence; (c) allowlist that matches nothing fail-opens minus `kimi-latest` / `claude-fable-5`.  Nano still sets `require_parameters: true`; Gemini / Mistral strategy bodies set `false`.
 
 Full `npm test` was started and then stopped: unrelated suites hung/failed on this VM's outbound network (SEC company_tickers 404, TwelveData, RAG coverage).  Not a product regression from this PR.  `xcodebuild` was not run (no `ios/**` product change).
 
 ## Next Steps & Blockers
 
-- After merge/auto-deploy, the next Green rotate run should either serve or fail over instead of dying on the first 404 with an account lie.
-- If chat/completions still 404s every model after failover, inspect the raw OpenRouter body (likely `No endpoints found` vs true `model_not_found`) before touching `require_parameters`.
+- After merge/auto-deploy, the next Green rotate run should not call a require_parameters 404 an account miss.  Gemini / Mistral should route without `require_parameters`.
+- If chat/completions still 404s every model, inspect the raw OpenRouter body (we still do not have one) before adding more provider knobs.
 
 ## Zero-Code Findings
 

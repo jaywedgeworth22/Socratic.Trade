@@ -9,7 +9,7 @@
 // JSON, content-block responses). Centralizing the per-transport shaping here lets Claude be a
 // first-class Green/Red team model everywhere those sites run, instead of OpenAI-only.
 
-import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
+import { reasoningCapabilityForModel, withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
 import { getGitSha } from "./git-sha";
@@ -134,20 +134,33 @@ export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown
       err instanceof Error ? err.message : String(err)
     );
   }
-  // Independent of classifier telemetry: OpenRouter's default router will still pick a
-  // provider that does not advertise every parameter we send. GPT-5.4 nano's OpenAI
-  // endpoint (status -2 on 2026-08-17) lists `max_tokens` but not `max_completion_tokens`;
-  // we send the latter on reasoning chat-completions, so the call 400s as "Provider
-  // returned error" instead of failing over to healthy Azure. require_parameters skips
-  // incompatible endpoints; allow_fallbacks still lets a later healthy provider serve
-  // if the first preferred one dies. Always apply this, even when enrichment failed.
+}
+
+/**
+ * OpenRouter `require_parameters` (default false) drops every endpoint that does
+ * not advertise ALL request fields, then 404s "No endpoints found matching your
+ * request".  `allow_fallbacks` only covers 5xx / rate-limit within a model — it
+ * does not revive an empty require_parameters set (docs 2026-08-18).
+ *
+ * Keep the #2771 nano filter: we send `max_completion_tokens` on OpenAI
+ * reasoning models, and the native OpenAI endpoint may only list `max_tokens`.
+ * Do not require parameters on Gemini / Mistral / Claude / embeds, or a live
+ * model 404s and the old classifier called that an account miss.
+ */
+export function shouldRequireOpenRouterParameters(body: Record<string, unknown>): boolean {
+  if (typeof body.max_completion_tokens !== "number") return false;
+  const model = typeof body.model === "string" ? body.model : "";
+  return reasoningCapabilityForModel(model)?.provider === "openai";
+}
+
+export function applyOpenRouterProviderRouting(base: Record<string, unknown>): void {
   const existingProvider =
     base.provider && typeof base.provider === "object" && !Array.isArray(base.provider)
       ? (base.provider as Record<string, unknown>)
       : {};
   base.provider = {
     ...existingProvider,
-    require_parameters: existingProvider.require_parameters ?? true,
+    require_parameters: shouldRequireOpenRouterParameters(base),
     allow_fallbacks: existingProvider.allow_fallbacks ?? true
   };
 }
@@ -326,7 +339,9 @@ export function buildLlmRequestBody(
       base.tool_choice = { type: "tool", name: schema.name };
     }
     injectCommonFields(base);
-    return withLlmRequestBounds(base, transport, bounds);
+    const bounded = withLlmRequestBounds(base, transport, bounds);
+    if (endpoint.provider === "openrouter") applyOpenRouterProviderRouting(bounded);
+    return bounded;
   }
 
   const messages = [
@@ -339,7 +354,9 @@ export function buildLlmRequestBody(
     const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject, spec.model);
     if (responseFormat) base.response_format = responseFormat;
     injectCommonFields(base);
-    return withLlmRequestBounds(base, transport, bounds);
+    const bounded = withLlmRequestBounds(base, transport, bounds);
+    if (endpoint.provider === "openrouter") applyOpenRouterProviderRouting(bounded);
+    return bounded;
   }
 
   // responses transport (OpenAI)
@@ -347,7 +364,9 @@ export function buildLlmRequestBody(
   const textFormat = openAiResponsesTextFormat(schema, openAiJsonObject);
   if (textFormat) base.text = { format: textFormat };
   injectCommonFields(base);
-  return withLlmRequestBounds(base, transport, bounds);
+  const bounded = withLlmRequestBounds(base, transport, bounds);
+  if (endpoint.provider === "openrouter") applyOpenRouterProviderRouting(bounded);
+  return bounded;
 }
 
 /**
