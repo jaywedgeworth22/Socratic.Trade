@@ -28,6 +28,10 @@ OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` ag
 
 `isFailoverLlmStatus` now includes 400 (same-model `isRetryableLlmStatus` still does not).  The exhausted suffix cites stored Green attempts only.  `gpt-5.6-terra` is demoted from first Green pick when Gemini Flash / Mistral Medium class seats remain; those seats lead implicit rotation fallbacks.  A 400 "Provider returned error" is not an account-allowlist miss.  Rebased onto `12e8dcd` (#2812 rag-embed soft-degrade kept).  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
 
+## 2026-08-18 Alpaca getAccount coalescing
+
+Dashboard and strategy both `Promise.all` `getAccounts` + `getPortfolio`.  Each used to call Alpaca `GET /v2/account`, so the dashboard's 6s getAccounts deadline lost to a duplicate in-flight read (Roth IRA recoverable_issue storm).  REST `getAccount` is now in-flight coalesced and reused for 15s per connected account.  Rollout: `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
+
 ## 2026-08-18 rag-embed soft-degrade (health + store)
 
 A hard-stopped `rag-embed` / `rag-rerank` lane no longer 503s `/api/health`.  Coolify treats a 503 as container death; the restart re-halts autonomy via the boot interlock.  Those lanes now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay the only critical liveness deps.  One dead document-embed batch skips that batch and continues later batches; a thrown query embed returns empty retrieval.  Green/Red already skip RAG on lookup failure and do not halt.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.

@@ -68,6 +68,22 @@ export function getAlpacaGateway(userId: string = "local", connectedAccountId?: 
 const alpacaProbeCache = new Map<string, { at: number; ok: boolean; reason?: string }>();
 const ALPACA_PROBE_TTL_MS = 2 * 60_000;
 
+/**
+ * Dashboard and strategy both call getAccounts + getPortfolio in Promise.all, and each
+ * hits Alpaca getAccount().  Two live-account round-trips routinely blow the dashboard's
+ * 6s getAccounts deadline (Roth IRA recoverable_issue storm 2026-08-18) even though the
+ * second call is the same account.  Collapse in-flight duplicates and reuse a short TTL
+ * so one load / one strategy run pays for one GET /v2/account.
+ */
+const alpacaAccountCache = new Map<string, { at: number; account: unknown }>();
+const alpacaAccountInflight = new Map<string, Promise<unknown>>();
+const ALPACA_ACCOUNT_TTL_MS = 15_000;
+
+export function resetAlpacaAccountCacheForTests(): void {
+  alpacaAccountCache.clear();
+  alpacaAccountInflight.clear();
+}
+
 // Re-exported for existing callers/tests that import symbol conversion from this module — the
 // canonical definitions now live in ./money alongside normalizeSymbol so data-providers.ts and
 // the Alpaca stream workers can share them without importing this (much heavier) gateway module.
@@ -184,6 +200,8 @@ class AlpacaBrokerGateway implements BrokerGateway {
   // Credential lane for health logging: a per-user connected account resolves to "user",
   // the operator env fallback (local only, no stored account) to "env".
   private keySource: string;
+  /** Stable per-credential cache key.  Never includes the secret. */
+  private accountCacheKey: string;
 
   constructor(private userId: string, connectedAccountId?: string) {
     const targeted = connectedAccountId ? getConnectedAccount(connectedAccountId, userId) : undefined;
@@ -194,6 +212,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         ? brokerAccount
         : undefined;
     this.keySource = accountKeys ? "user" : "env";
+    this.accountCacheKey = `${userId}|${accountKeys?.id ?? connectedAccountId ?? "env"}|${accountKeys?.environment ?? "paper"}`;
     this.isMcp = brokerAccount?.broker === "alpaca-mcp";
     this.label = accountKeys?.label || (accountKeys?.environment === "live" ? "Alpaca Brokerage" : "Alpaca Paper");
     // A connected-account key (per-user account data) wins. If an Alpaca account is explicitly
@@ -304,6 +323,26 @@ class AlpacaBrokerGateway implements BrokerGateway {
     );
   }
 
+  private getAccountCached(): Promise<any> {
+    const key = this.accountCacheKey;
+    const hit = alpacaAccountCache.get(key);
+    if (hit && Date.now() - hit.at < ALPACA_ACCOUNT_TTL_MS) {
+      return Promise.resolve(hit.account);
+    }
+    const pending = alpacaAccountInflight.get(key);
+    if (pending) return pending;
+    const request = this.readAccount()
+      .then((account) => {
+        alpacaAccountCache.set(key, { at: Date.now(), account });
+        return account;
+      })
+      .finally(() => {
+        alpacaAccountInflight.delete(key);
+      });
+    alpacaAccountInflight.set(key, request);
+    return request;
+  }
+
   private async callMcp<T>(toolName: string, args: Record<string, unknown>, fallbackFn: () => Promise<T>): Promise<T> {
     if (!this.isMcp || !this.mcpUrl) {
       return fallbackFn();
@@ -360,7 +399,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
       return { ok: cached.ok, reason: cached.reason };
     }
     try {
-      const account = await this.readAccount();
+      const account = await this.getAccountCached();
       if (account && String(account.account_number ?? "") && accountNumber) {
         const live = String(account.account_number).trim().toLowerCase();
         const want = String(accountNumber).trim().toLowerCase();
@@ -411,7 +450,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     };
 
     return this.callMcp<any>("get_account_info", {}, async () => {
-      const account = await this.readAccount();
+      const account = await this.getAccountCached();
       return [
         {
           accountNumber: account.account_number,
@@ -437,7 +476,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     return this.callMcp<any>("get_account_info", {}, async () => {
-      const account = await this.readAccount();
+      const account = await this.getAccountCached();
       // Alpaca API credentials are scoped to exactly one account, so getAccount() always returns THE
       // account these keys belong to. Only flag a GENUINE cross-account mismatch (both numbers present
       // and actually different, ignoring case/whitespace) — a blank configured number or a mere

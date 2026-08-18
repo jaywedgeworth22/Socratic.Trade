@@ -202,6 +202,13 @@ PR **#2831** was CONFLICTING/DIRTY after #2830 merged (`13b60747`).  Rebased `cu
 PR **#2831** was CONFLICTING after #2812 merged (`12e8dcd`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Sole conflict was `docs/phase-7-strategy.md` — kept both this Green 400 stanza and #2812's rag-embed soft-degrade stanza.  Did not revert #2812 (rag-embed must not 503) or #2829/#2800.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
 
 Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
+## 2026-08-18 GROK — Live prod triage + Alpaca getAccount cache
+
+Owner: grokbot too slow; troubleshoot the live app.  Ops snapshot 19:56Z: Paper Autopilot 4x Green 400 (terra/luna) with a fake 3-endpoint exhaust; Roth completed 19:43Z with 0 proposals; Scan empty since 08-13; Roth dashboard `getAccounts` 6s timeout (duplicate Alpaca `getAccount`); L2/L3 wedge 13h left as owner-ops.
+
+Rematched Cursor **#2831** (Green 400 failover) and **#2830** (Scan Nasdaq UA) onto `main` so verify can land them.  This branch only adds a 15s in-process + in-flight `getAccount` cache so dashboard/strategy `Promise.all` pays for one REST call.
+
+Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollout: `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 
