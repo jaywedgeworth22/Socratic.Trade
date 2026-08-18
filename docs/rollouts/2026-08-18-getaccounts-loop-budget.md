@@ -68,15 +68,14 @@ Fix:
 
 ## Verification State
 
-Focused after leftover 6s `getEquityQuotes` / 8s `getOptionPositions` waits moved to 16s (full suite not re-run):
+Focused after rebase onto `4abfb7fa` + ROIC/FTS pause (full suite not re-run):
 
 ```bash
-npx vitest run test/inflight-deadline.test.ts test/sec-ingest-worker.test.ts test/dashboard-agentic-fallback.test.ts
-# Test Files  3 passed (3)
-# Tests  43 passed (43)
+npx vitest run test/inflight-deadline.test.ts test/sec-ingest-worker.test.ts test/roic-transcripts.test.ts test/dashboard-agentic-fallback.test.ts test/stale-running-runs.test.ts
+# Test Files  5 passed (5)
+# Tests  71 passed (71)
 
 npx tsc --noEmit   # exit 0
-npm run lint       # 0 errors, grandfathered warnings only
 ```
 
 PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2848
@@ -84,8 +83,8 @@ PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2848
 ## Next Steps & Blockers
 
 - Do not merge or deploy from this seat.
-- After merge, confirm Manual Run once no longer fail-closes on a successful ≥6s alpaca-broker read, and that `ftsMirrorSlice` logs stay under the getAccounts first wait.
+- After merge, confirm a Manual Run once can reach Green while a ROIC walk is mid-universe, and that `ftsMirrorSlice` does not claim during that run.
 
 ## Zero-Code Findings
 
-#2845's retry is live (portfolio message format `8000+7000ms` at 22:10:15Z) and still lost.  The 6s first abort matches both live broker latency and the old FTS tick budget on one Node event loop.
+#2845's retry is live (portfolio message format `8000+7000ms` at 22:10:15Z) and still lost.  After #2847, the leftover request lock is gone (`b3b83913` wrote) but Green still waited behind ROIC + FTS on the same event loop.
