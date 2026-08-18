@@ -204,6 +204,63 @@ describe("storeContexts embed window (ingest)", () => {
     ));
     expect(thrown400).toBe(false);
   });
+
+  it("does not fail the whole 32-batch when one over-limit condensed text 400s", async () => {
+    mocks.embed.mockImplementation(async ({ input }: { input: string[] }) => {
+      const tokens = approxTokens(input);
+      if (tokens >= EMBED_MODEL_CONTEXT_TOKENS || (input.length > 1 && !embedRequestFits(input))) {
+        throw new Error(LIVE_400_BODY);
+      }
+      return {
+        data: input.map((_, i) => ({ embedding: [0.1 + i * 0.001, 0.2, 0.3] }))
+      };
+    });
+
+    const { storeContexts } = await import("../src/lib/vector-db");
+    const giant = textOfTokens(9000, "E");
+    const documents = [
+      {
+        text: giant,
+        metadata: {
+          symbol: "AAPL",
+          source: "sec-10k",
+          timestamp: "2026-08-18",
+          accession: "over-limit-table",
+          is_table: true
+        }
+      },
+      ...Array.from({ length: 31 }, (_, i) => ({
+        text: textOfTokens(256, "F"),
+        metadata: {
+          symbol: "AAPL",
+          source: "sec-8k",
+          timestamp: "2026-08-18",
+          accession: `companion-${i}`
+        }
+      }))
+    ];
+
+    const result = await storeContexts(documents);
+
+    expect(result.indexed).toBe(31);
+    expect(result.rejectedInvalidEmbeddings).toBe(1);
+    expect(mocks.upsert.mock.calls.reduce((sum, call) => sum + call[0].records.length, 0)).toBe(31);
+    const companionEmbeds = mocks.embed.mock.calls.filter((call) => {
+      const input = call[0].input as string[];
+      return input.every((text) => !text.includes("E".repeat(40)));
+    });
+    expect(companionEmbeds.length).toBeGreaterThan(0);
+    for (const call of companionEmbeds) {
+      const input = call[0].input as string[];
+      expect(approxTokens(input)).toBeLessThanOrEqual(EMBED_REQUEST_TOKEN_BUDGET);
+      expect(embedRequestFits(input)).toBe(true);
+    }
+    const isolatedGiant = mocks.embed.mock.calls.some((call) => {
+      const input = call[0].input as string[];
+      return input.length === 1 && input[0]?.includes("E".repeat(40));
+    });
+    expect(isolatedGiant).toBe(true);
+  });
 });
 
 describe("query embed window", () => {

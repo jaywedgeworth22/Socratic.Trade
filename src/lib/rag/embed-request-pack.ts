@@ -1,4 +1,4 @@
-// Token-budget packing for embed POSTs.  Pack-at-embed only — not a second filing chunker.
+// Token-budget packing for embed POSTs.  Pack AFTER hybrid condense — not a second filing chunker.
 //
 // OpenRouter `baai/bge-m3` is served by DeepInfra, which sums EVERY string in
 // `input: string[]` against the model's 8192-token context.  A count-only batch
@@ -6,9 +6,11 @@
 // and 400s the whole lane.  Pack by estimated tokens (and a conservative byte
 // cap) so Infisical can keep the count at 32 without ever sending that request.
 //
-// A single text that already exceeds the pack budget is isolated into its own
-// POST with the original string intact (metadata/hash stay whole; no extra
-// Pinecone records).  Hybrid chunking stays in `chunkDocument` (480 tokens).
+// `storeContexts` packs already-condensed texts into in-window groups and embeds
+// each group on its own lane.  A single over-limit condensed text is isolated
+// as its own POST with the original string intact (metadata/hash stay whole; no
+// extra Pinecone records).  If that singleton still 400s, companions still
+// upsert.  Hybrid chunking stays in `chunkDocument` (480 tokens).
 
 import { approxTokens } from "../rag-metering";
 
