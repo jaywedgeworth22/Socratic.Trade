@@ -306,13 +306,11 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies["alpaca-broker"].degraded).toBe(true);
   });
 
-  // rag-embed/rag-rerank criticality (bge-m3-metering-gate 2026-07-18; lane rename 2026-07-19 —
-  // see docs/rollouts/2026-07-19-advisory-cleanup-batch.md). The lanes are now provider-generic:
-  // whichever embed/rerank provider is ACTUALLY active (Voyage, OpenRouter, SiliconFlow) logs
-  // under "rag-embed"/"rag-rerank", so they are UNCONDITIONALLY critical — fixing the prior gap
-  // where "voyage"/"voyage-rerank" only gated liveness while Voyage itself was the active provider,
-  // meaning a dead OpenRouter/bge-m3 lane never failed liveness at all.
-  it("/api/health 503s on a hard-stopped rag-embed/rag-rerank lane when OpenRouter is the active embed provider", async () => {
+  // rag-embed/rag-rerank (bge-m3-metering-gate 2026-07-18; lane rename 2026-07-19; soft-degrade
+  // 2026-08-18). The lanes stay provider-generic and are still REPORTED, but they must NEVER 503
+  // Docker: a restart cannot revive a dead embed and re-halts Green/Red via the boot interlock.
+  // pinecone + alpaca-broker remain the only critical liveness deps.
+  it("/api/health degrades a hard-stopped rag-embed/rag-rerank lane without 503 when OpenRouter is the active embed provider", async () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
@@ -324,16 +322,18 @@ describe("Connection Health & Failure Routing", () => {
     }
 
     const response = await healthRoute.GET(anonymousHealthRequest());
-    expect(response.status).toBe(503); // now correctly critical regardless of which provider is active
+    expect(response.status).toBe(200);
 
     const body = await response.json();
-    expect(body.ok).toBe(false);
+    expect(body.ok).toBe(true);
     expect(body.checks.ragEmbedProvider).toBe("openrouter");
     expect(body.checks.dependencies["rag-embed"].ok).toBe(false);
+    expect(body.checks.dependencies["rag-embed"].degraded).toBe(true);
     expect(body.checks.dependencies["rag-rerank"].ok).toBe(false);
+    expect(body.checks.dependencies["rag-rerank"].degraded).toBe(true);
   });
 
-  it("/api/health still 503s on a hard-stopped rag-embed lane when Voyage IS the active embed provider", async () => {
+  it("/api/health degrades a hard-stopped rag-embed lane without 503 when Voyage IS the active embed provider", async () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
@@ -345,12 +345,34 @@ describe("Connection Health & Failure Routing", () => {
     }
 
     const response = await healthRoute.GET(anonymousHealthRequest());
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.checks.ragEmbedProvider).toBe("voyage");
+    expect(body.checks.dependencies["rag-embed"].ok).toBe(false);
+    expect(body.checks.dependencies["rag-embed"].degraded).toBe(true);
+  });
+
+  it("/api/health still 503s on a hard-stopped pinecone lane (critical) even when rag-embed is also dead", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    db.upsertUserApiKey("local", "openrouter", "or-test-key");
+
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "pinecone", ok: false, errorText: "Pinecone down", keySource: "env" });
+      db.logApiHealth({ service: "rag-embed", ok: false, errorText: "OpenRouter down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET(anonymousHealthRequest());
     expect(response.status).toBe(503);
 
     const body = await response.json();
     expect(body.ok).toBe(false);
-    expect(body.checks.ragEmbedProvider).toBe("voyage");
+    expect(body.checks.dependencies.pinecone.ok).toBe(false);
     expect(body.checks.dependencies["rag-embed"].ok).toBe(false);
+    expect(body.checks.dependencies["rag-embed"].degraded).toBe(true);
   });
 
   it("/api/health does not fail liveness on a hard-stopped legacy 'voyage' lane (pre-rename/back-compat rows are no longer critical)", async () => {

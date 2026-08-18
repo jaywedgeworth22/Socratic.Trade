@@ -81,6 +81,11 @@ PR **#2825**.  Branch `cursor/ios-ux-owner-cut-bdae`.  lint + tsc + `npm run bui
 ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
 
 Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+## 2026-08-18 CURSOR — rag-embed soft-degrade (no 503 / no autonomy halt)
+
+One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify restarted Docker, and the boot interlock re-halted Green/Red.  `rag-embed` and `rag-rerank` now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay critical.  A thrown document-embed batch skips that batch and continues later ones; a thrown query embed returns empty retrieval.  Did not steal #2792/#2798/#2800/#2794.
+
+Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

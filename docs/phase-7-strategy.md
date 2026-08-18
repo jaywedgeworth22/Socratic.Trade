@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-18 rag-embed soft-degrade (health + store)
+
+A hard-stopped `rag-embed` / `rag-rerank` lane no longer 503s `/api/health`.  Coolify treats a 503 as container death; the restart re-halts autonomy via the boot interlock.  Those lanes now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay the only critical liveness deps.  One dead document-embed batch skips that batch and continues later batches; a thrown query embed returns empty retrieval.  Green/Red already skip RAG on lookup failure and do not halt.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+
 ## 2026-08-18 OpenRouter 404s are not "not on your account"
 
 Coolify 2026-08-18 (sha `cda485ff`): today's Green 404s are valid public slugs `google/gemini-3.7-flash` (86ms) and `mistralai/mistral-medium-3-5` (82ms).  Claude/Grok/Kimi/mini-latest were skipped, not called — tilde restore does not clear today's fails.  Live #2771 set `require_parameters=true` on every OpenRouter body; that empties the endpoint set and 404s models that exist.  Strategy now omits `require_parameters` except the nano `max_completion_tokens` case.  Classifier: bare 404 / “No endpoints found matching your request” is not an account miss; `model_not_found` is a bad slug.  Secondary: dated / `~` wire ids for the skipped seats.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.

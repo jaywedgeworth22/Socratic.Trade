@@ -341,7 +341,7 @@ export interface ValidatedDocumentEmbeddingBatch {
   /** Number of malformed/unaccounted response entries; any positive value rejects the whole batch. */
   rejected: number;
   /** Bounded diagnostic code; never contains provider content or document text. */
-  reason?: "missing-data" | "cardinality" | "malformed-item" | "mixed-index" | "invalid-index" | "duplicate-index" | "invalid-embedding";
+  reason?: "missing-data" | "cardinality" | "malformed-item" | "mixed-index" | "invalid-index" | "duplicate-index" | "invalid-embedding" | "embed-api-failed";
 }
 
 /**
@@ -2736,6 +2736,42 @@ function assertVectorStoreLease(guard: VectorStoreLeaseGuard | undefined): void 
   }
 }
 
+/**
+ * One dead rag-embed call must not abort remaining batches or the rest of the store.
+ * Lease loss still throws (concurrency boundary). Provider/network failures skip THIS
+ * batch only — later batches still embed. Health already logs the lane via withRagApiHealth.
+ */
+async function embedDocumentsLaneOrSkip(
+  voyage: unknown,
+  inputs: string[],
+  voyageSource: ApiKeySource,
+  userId: string,
+  leaseGuard: VectorStoreLeaseGuard | undefined
+): Promise<{ response?: { data?: unknown }; rejected: number; reason?: ValidatedDocumentEmbeddingBatch["reason"] }> {
+  try {
+    const embedProvider = activeEmbeddingProvider(userId);
+    const response = await withRagApiHealth(
+      "voyage",
+      voyageSource,
+      userId,
+      "embed documents",
+      () => embedDocumentsWithRetry(voyage, inputs, voyageSource, userId, leaseGuard),
+      leaseGuard,
+      { durablyTrackedInside: true },
+      { lane: "rag-embed", provider: embedProvider }
+    );
+    assertVectorStoreLease(leaseGuard);
+    meterEmbed(inputs, activeEmbeddingModel(userId), userId, embedProvider);
+    return { response, rejected: 0 };
+  } catch (error) {
+    if (error instanceof VectorStoreLeaseLostError) throw error;
+    assertVectorStoreLease(leaseGuard);
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[vector-db] Embed batch failed; continuing remaining batches: ${message}`);
+    return { rejected: Math.max(1, inputs.length), reason: "embed-api-failed" };
+  }
+}
+
 /** Serialize the complete lifecycle of one deterministic commit inside a process. A concurrent
  * replay waits for its predecessor, then reuses the proven committed occurrence set. This keeps
  * same-commit calls from resetting or finalizing each other's local/provider state. */
@@ -3214,25 +3250,20 @@ async function storeContextsImpl(
         }
 
         if (missingInputs.length > 0) {
-          // Provider-generic health/alert lane (2026-07-19): embedProvider is the ACTUAL active
-          // embed provider, so an OpenRouter/SiliconFlow outage is no longer misreported as
-          // "Voyage connection failed" — the "voyage" service arg above still only drives the
-          // internal dispatch/credential path (a no-op here anyway, since durablyTrackedInside
-          // means embedDocumentsWithRetry -> embedWithRetry already dispatches with the real provider).
-          const embedProvider = activeEmbeddingProvider(userId);
-          const response = await withRagApiHealth(
-            "voyage",
+          // Provider-generic health/alert lane (2026-07-19). A thrown embed skips THIS batch
+          // only — remaining batches still run so one dead call cannot park the store.
+          const embedResult = await embedDocumentsLaneOrSkip(
+            voyage,
+            missingInputs,
             voyageSource,
             userId,
-            "embed documents",
-            () => embedDocumentsWithRetry(voyage, missingInputs, voyageSource, userId, options?.leaseGuard),
-            options?.leaseGuard,
-            { durablyTrackedInside: true },
-            { lane: "rag-embed", provider: embedProvider }
+            options?.leaseGuard
           );
-          assertVectorStoreLease(options?.leaseGuard);
-          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId, embedProvider);
-          const validated = validateDocumentEmbeddingBatch(response.data, missingInputs.length);
+          if (embedResult.reason === "embed-api-failed" || !embedResult.response) {
+            rejected = embedResult.rejected;
+            rejectionReason = embedResult.reason ?? "embed-api-failed";
+          } else {
+          const validated = validateDocumentEmbeddingBatch(embedResult.response.data, missingInputs.length);
           if (!validated.embeddings) {
             rejected = validated.rejected;
             rejectionReason = validated.reason;
@@ -3273,6 +3304,7 @@ async function storeContextsImpl(
               );
             }
           }
+          }
         }
         const complete = Array.from({ length: batch.length }, (_unused, index) => isValidEmbedding(resolved[index])).every(Boolean);
         if (rejected === 0 && complete) batchEmbeddings = resolved;
@@ -3312,23 +3344,18 @@ async function storeContextsImpl(
         if (toEmbedPositions.length === 0) {
           batchEmbeddings = resolved as number[][];
         } else {
-          // See the reuseExactEmbeddings branch above for why embedProvider (not the "voyage"
-          // service arg) drives the health/alert lane.
+          // One dead embed skips this batch only; later batches still run.
           const toEmbedInputs = toEmbedPositions.map((position) => embedInputs[position]!);
-          const embedProvider = activeEmbeddingProvider(userId);
-          const response = await withRagApiHealth(
-            "voyage",
+          const embedResult = await embedDocumentsLaneOrSkip(
+            voyage,
+            toEmbedInputs,
             voyageSource,
             userId,
-            "embed documents",
-            () => embedDocumentsWithRetry(voyage, toEmbedInputs, voyageSource, userId, options?.leaseGuard),
-            options?.leaseGuard,
-            { durablyTrackedInside: true },
-            { lane: "rag-embed", provider: embedProvider }
+            options?.leaseGuard
           );
-          assertVectorStoreLease(options?.leaseGuard);
-          meterEmbed(toEmbedInputs, activeEmbeddingModel(userId), userId, embedProvider);
-          const validated = validateDocumentEmbeddingBatch(response.data, toEmbedInputs.length);
+          const validated = embedResult.reason === "embed-api-failed" || !embedResult.response
+            ? { embeddings: undefined as number[][] | undefined, rejected: embedResult.rejected, reason: embedResult.reason ?? "embed-api-failed" as const }
+            : validateDocumentEmbeddingBatch(embedResult.response.data, toEmbedInputs.length);
           if (!validated.embeddings) {
             rejected = validated.rejected;
             rejectionReason = validated.reason;
@@ -3375,12 +3402,12 @@ async function storeContextsImpl(
         rejectedInvalidEmbeddings += rejected;
         assertVectorStoreLease(options?.leaseGuard);
         console.warn(
-          `[vector-db] Rejected Voyage document embedding batch (${rejectionReason ?? "invalid-response"}; expected=${batch.length}) — no records from this batch were upserted.`
+          `[vector-db] Rejected Voyage document embedding batch (${rejectionReason ?? "invalid-response"}; expected=${batch.length}) — no records from this batch were upserted; remaining batches continue.`
         );
-        // Stop spending after an integrity failure. Earlier batches may already be in Pinecone, but
-        // deterministic ids make the whole document safe to retry and no content/occurrence receipt
-        // is written while rejectedInvalidEmbeddings is non-zero.
-        break;
+        // One dead/invalid batch must not park later batches. Managed commits still require
+        // every chunk (`documentComplete` stays false when any batch is rejected). Deterministic
+        // ids make a later retry safe.
+        continue;
       }
 
       const records: PineconeRecord<RecordMetadata>[] = batchEmbeddings.map((embedding, indexInBatch) => {
@@ -6650,7 +6677,13 @@ export async function retrieveContextDetailed(
           endEmbed?.({ candidatesOut: response.data?.[0]?.embedding ? 1 : 0 });
         } catch (error) {
           endEmbed?.({ error });
-          throw error;
+          // Soft-degrade this query only. Multi-query already isolates per variant; the
+          // single-query caller treats null as lookup_failed and Green/Red skip RAG.
+          console.warn(
+            `[vector-db] Query embed failed; retrieval continues without this query:`,
+            error instanceof Error ? error.message : String(error)
+          );
+          return null;
         }
         meterEmbed([q], activeModel, userId, embedProvider); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(Date.now(), userId); // R16: count this embed call against the per-run budget (no-op unless enabled).
@@ -6872,15 +6905,10 @@ export async function retrieveContextDetailed(
     // ranked id lists into one candidate pool before the existing rankPool pipeline. Absent/empty
     // `queries` runs the exact single-query path unchanged (same one embed, one match round-trip).
     //
-    // Fail-OPEN, never fail-closed (2026-07-05 review fix): `embedAndMatchOneQuery` has no internal
-    // catch and its callees (withRagApiHealth/embedWithRetry) rethrow on a transient Voyage/Pinecone
-    // error, so a bare `Promise.all` here would let ONE variant's failure reject the whole fan-out —
-    // dropping every OTHER variant's already-successful results along with it. Each fan-out call is
-    // now individually caught (a rejected variant -> null, same "no result for this query" contract
-    // as a malformed embedding); and if EVERY variant fails/fuses to nothing, we fall back to the
-    // plain single-`query` path (i.e. behave exactly as flags-off) instead of returning `[]` — this
-    // module's header promise ("always falls back to the caller's original single query, never
-    // throws") only holds if this branch degrades that far, not just to an empty result.
+    // Fail-OPEN, never fail-closed (2026-07-05 review fix; query-embed isolate 2026-08-18):
+    // `embedAndMatchOneQuery` now returns null on a dead embed (same contract as a malformed
+    // vector). Each fan-out variant is also individually caught. If EVERY variant fails/fuses
+    // to nothing, we fall back to the plain single-`query` path instead of returning `[]`.
     const fanOutQueries = (options?.queries ?? []).length > 0
       ? Array.from(new Set([query, ...(options!.queries as string[])]))
       : [];

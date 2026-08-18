@@ -202,19 +202,14 @@ export async function GET(request: Request) {
   try {
     const summaries = getServiceHealthSummaries();
     const dependencies: Record<string, { ok: boolean; degraded?: boolean }> = {};
-    // "rag-embed"/"rag-rerank" (renamed 2026-07-19 from the historical "voyage"/"voyage-rerank"
-    // service names — see withRagApiHealth in vector-db.ts) are now provider-generic: they ALWAYS
-    // reflect whichever embed/rerank provider (Voyage, OpenRouter, SiliconFlow) is actually active,
-    // so they can be unconditionally critical rather than only "critical while Voyage happens to be
-    // the pin" (the old logic's gap — a dead OpenRouter/bge-m3 lane never failed liveness at all).
-    // Still excluded when RAG_EMBED_PROVIDER is pinned-but-keyless (`ragEmbedProviderError` set):
-    // that misconfiguration is already surfaced there, and 503ing the container on stale rag-embed/
-    // rag-rerank rows from BEFORE the mis-pin would just restart-loop without fixing anything.
+    // Critical liveness is ONLY Pinecone + Alpaca. A hard-stopped rag-embed/rag-rerank lane used
+    // to 503 this probe (bge-m3-metering-gate, 2026-07-18), which Coolify treats as container
+    // death: restart -> boot interlock re-halts autonomy. A dead embed cannot refill itself via
+    // restart, same as drained OpenRouter credits, so those lanes DEGRADE only (ok=false +
+    // degraded=true). Retrieval already fail-opens; ingest isolates per task. Still excluded
+    // from any 503 when RAG_EMBED_PROVIDER is pinned-but-keyless (`ragEmbedProviderError` set).
     const criticalServices = new Set(["pinecone", "alpaca-broker"]);
-    if (!checks.ragEmbedProviderError) {
-      criticalServices.add("rag-embed");
-      criticalServices.add("rag-rerank");
-    }
+    const softDegradeServices = new Set(["rag-embed", "rag-rerank"]);
     // Collapse (service, keySource) lanes to one entry per service. Prefer a CONFIGURED lane
     // (env/user) over a stale keySource:"none" lane so a service that later got a working key isn't
     // pinned failed forever by an old missing-key "none" lane (no future success is logged to "none").
@@ -254,6 +249,7 @@ export async function GET(request: Request) {
       const nextDegraded =
         (summary.stoppedWorking && !hardStopped) ||
         (hardStopped && configuredLaneHealthy.has(summary.service)) ||
+        (hardStopped && softDegradeServices.has(summary.service)) ||
         undefined;
       if (existing) {
         // Merge lanes for the same service: hard-stopped only wins when no configured lane is healthy.
@@ -269,14 +265,11 @@ export async function GET(request: Request) {
       // market-data lanes (fmp/massive) degrade to Yahoo/others (the provider-tier section already
       // reports data-provider degradation), so they mark degraded but never fail liveness.
       //
-      // rag-embed/rag-rerank criticality (bge-m3-metering-gate 2026-07-18, lane rename 2026-07-19):
-      // these two lanes now gate liveness UNCONDITIONALLY (see the criticalServices comment above)
-      // because the lane itself is provider-generic — a hard-stopped rag-embed lane means whichever
-      // provider is actually active is down, which is always liveness-critical, not just when
-      // Voyage happens to be the pin. Historical "voyage"/"voyage-rerank" rows (pre-rename, or from
-      // recordMissingRagKey's still-literal-"voyage" missing-key path) are simply not in
-      // criticalServices and degrade this route rather than 503 it — consistent with treating them
-      // as legacy/informational once the real per-operation lane has taken over.
+      // rag-embed/rag-rerank (bge-m3-metering-gate 2026-07-18, lane rename 2026-07-19, soft-degrade
+      // 2026-08-18): these two lanes are provider-generic and still REPORTED (ok=false + degraded)
+      // when hard-stopped, but they never fail liveness. A 503 here restarts Docker and re-halts
+      // Green/Red via the boot interlock — a restart cannot revive a dead embed provider.
+      // Historical "voyage"/"voyage-rerank" rows stay informational, same as before.
       //
       // Env-lane hard-stop alone does NOT 503 when a user-keyed lane for the same service is
       // healthy (see configuredLaneHealthy) — otherwise bad Infisical env Alpaca keys block deploys
