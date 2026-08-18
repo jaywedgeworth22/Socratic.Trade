@@ -43,23 +43,68 @@ marks the named container unhealthy.  Docker does not restart `unhealthy`
 (`restart: unless-stopped` only reacts to process exit) — origin stays 503
 until the next swap.
 
-Both #2810 and #2811 are image-noop (markdown + `docs/**`, not
-`docs/benchmarks`).  Skip those rebuilds.  **Keep stop-old-first** for real
-runtime commits (one writer).  Do not add rolling.
+Both #2810 and #2811 are image-noop (markdown + `docs/**`).  **Keep
+stop-old-first** for real runtime commits (one writer).  Do not add rolling.
+
+## Live Coolify `watch_paths` (ASC applied 2026-08-18 — do not re-apply)
+
+ASC set `watch_paths` on Coolify app **socratic-app**
+(`d83b1aykr03uwr32yhgzaiay`) while the app stayed healthy.  No bounce.
+Auto-deploy is still on.  Stop-old-first is kept.  `health_check_start_period`
+is still **60**.  This PR must **not** PATCH or re-apply that list.
+
+Applied (runtime / image trees only):
+
+```
+Dockerfile
+.dockerignore
+package.json
+package-lock.json
+next.config.mjs
+postcss.config.mjs
+tsconfig.json
+middleware.ts
+instrumentation.ts
+instrumentation-client.ts
+sentry.server.config.ts
+sentry.edge.config.ts
+litestream.coolify.yml
+src
+src/**
+app
+app/**
+public
+public/**
+scripts
+scripts/**
+```
+
+Omitted: `docs/**`, `STATUS.md`, `PLAN.md`, `docs/rollouts`, `ios/`, `test/`.
+
+A later docs-only merge (#2810 / #2811 class) no longer starts a Coolify
+deploy.  `docs/benchmarks/**` is also omitted (Next imports those JSON files
+at build time); a benchmarks change needs a runtime-path touch or a manual
+Deploy.  Do not add `docs/` from this PR.
 
 ## Stop-old-first path (kept)
 
-1. **Skip** the deploy when the commit cannot change the runtime image
-   (implemented).  That is the #2810 / #2811 class.
-2. For a real runtime commit: Coolify **stop-old-first**, then start the new
-   named container (one Litestream writer).  Build gap is the observed ~6–7
-   minutes, not a 34-minute stuck job.
-3. Once the process is up, Traefik must see Docker `healthy` via `GET /api/live`
-   (process + SQLite only).  `/api/health` stays the UptimeRobot / deploy-verify
-   probe and may 503 without taking the only backend out of rotation.
+1. **Coolify `watch_paths`** (already live) skips docs-only / ios / test
+   pushes so stop-old-first is not taken for markdown.
+2. **In-repo RTH latch** (this PR) refuses the image build during weekday
+   RTH unless `HOTFIX=1` / `RTH_DEPLOY_OVERRIDE=1`.  `watch_paths` does not
+   know about market hours.
+3. Dockerfile image-noop exit 3 is belt-and-suspenders if someone clicks
+   Deploy on a docs-only SHA.
+4. For a watched runtime commit: Coolify **stop-old-first**, then start the
+   new named container (one Litestream writer).  Tonight's watched-path
+   builds were ~6–7 minutes.
+5. Once the process is up, Traefik must see Docker `healthy` via
+   `GET /api/live`.  `/api/health` stays the UptimeRobot / deploy-verify
+   probe.
 
-Owner Coolify UI (do **not** apply from this agent): if an HTTP health path
-is set, it must be `/api/live`, not `/api/health`.
+Owner Coolify UI (do **not** apply from this agent): do not rewrite
+`watch_paths`.  If an HTTP health path is set, it must be `/api/live`, not
+`/api/health`.  Leave `health_check_start_period` at 60.
 
 ## Changes Made
 
@@ -80,7 +125,7 @@ The Dockerfile now runs `tsx scripts/assert-rth-deploy-latch.ts` **before
 A refused build must keep the last healthy named container.  The check is
 **not** in `scripts/coolify-prod-start.sh`.
 
-- `src/lib/deploy-image-impact.ts`
+- `src/lib/deploy-image-impact.ts` (`COOLIFY_WATCH_PATHS_LIVE` record; do not PATCH)
 - `src/lib/rth-deploy-latch.ts`
 - `scripts/assert-rth-deploy-latch.ts`
 - `scripts/rth-deploy-drain.sh` (skips image-noop pending diffs)
@@ -104,8 +149,10 @@ A refused build must keep the last healthy named container.  The check is
 
 ## Decisions & Trade-offs
 
-- **Build-time fail, not webhook disable.**  Turning off Coolify auto-deploy
-  would require a box/DB flip.  This agent does not PATCH live Coolify.
+- **`watch_paths` is already live.**  ASC applied it.  Do not re-apply or
+  PATCH Coolify from this PR.  Auto-deploy stays on.
+- **Build-time RTH latch, not webhook disable.**  `watch_paths` does not
+  know about market hours.  This agent does not PATCH live Coolify.
 - **Image-noop skip beats HOTFIX=1.**  A hotfix token on a markdown commit
   must not recreate the named container.  Touch a runtime file to force a
   rebuild.
@@ -136,17 +183,16 @@ npm run lint
   test/market-hours.test.ts
 ```
 
-tsc clean.  lint 0 errors.  100 focused tests passed (5 files).  Prior
-`verify-hosted` on this branch was green before the image-noop and
-`/api/live` follow-ups (run `32087609316`).  Re-run after this push.
+tsc clean.  lint 0 errors (prior pass).  Latch + live tests 26 passed after
+the `watch_paths` record.  Prior `verify-hosted` on this branch was green
+before these follow-ups (run `32087609316`).  Re-run after this push.
 
 ## Next Steps & Blockers
 
-- Merge this PR outside weekday RTH (or the latch's own first image must
-  build once).  After it is live, later RTH / docs-only builds refuse fast
-  and Traefik uses `/api/live`.
-- Owner: if Coolify has an HTTP health path, set it to `/api/live`.  This
-  agent will not PATCH that.
+- Merge this PR outside weekday RTH (this branch touches `app/` + `src/` +
+  `Dockerfile`, so `watch_paths` will start a real stop-old-first deploy).
+  After the latch is live, later RTH builds refuse unless `HOTFIX=1`.
+- Do **not** re-apply `watch_paths`.  Leave `health_check_start_period` at 60.
 - Optional: `COOLIFY_DEPLOY_WEBHOOK_URL` if hook redeliver stays forbidden.
 
 ## Zero-Code Findings
@@ -155,6 +201,8 @@ tsc clean.  lint 0 errors.  100 focused tests passed (5 files).  Prior
 - `processStartedAt` 00:49:27Z is #2811 completing, not a hung #2810.
 - 7:22–7:43pm CT is unhealthy-while-up, not a missing process.
   `litestream-runtime.log` has only the two SIGTERMs, no ERROR.
-- Repo hook still POSTs every `push` to Coolify with no path filter.
+- ASC applied `watch_paths` live on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`).
+  App stayed healthy.  No bounce.  Auto-deploy still on.
+- Repo hook still POSTs every `push`; Coolify now ignores unwatched paths.
 - `scripts/coolify-prod-start.sh` has no market-hours gate and must not gain
   one (runtime refusal after swap = another 503).

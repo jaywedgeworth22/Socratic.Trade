@@ -1,13 +1,48 @@
 // Classify whether a Coolify image rebuild can change socratictrade.com.
 //
-// Tonight 2026-08-17 ~7:15-7:49pm CT, docs-only #2811 (sha 23412aff) still
-// triggered stop-old-then-start.  The production image does not even contain
-// most of those files (.dockerignore drops docs/** except docs/benchmarks).
-// A no-op rebuild must not take origin down for the ~30 min Horizon build.
+// Live Coolify `watch_paths` on socratic-app (uuid d83b1aykr03uwr32yhgzaiay)
+// was applied by ASC 2026-08-18.  App stayed healthy; no bounce.  Do NOT
+// re-apply or PATCH that list from a PR.  Auto-deploy stays on.  Stop-old-
+// first stays.  health_check_start_period stays 60.
 //
-// Fail CLOSED for skip: unknown / mixed paths are treated as image-relevant.
-// Do not enable Coolify rolling to hide this -- two Litestream writers wedge
-// L2.  Consistent container name stays on.
+// The Dockerfile image-noop latch is belt-and-suspenders if someone clicks
+// Deploy on a docs-only SHA.  Fail CLOSED for skip: unknown / mixed paths
+// are image-relevant.  Do not enable Coolify rolling.
+
+/** Already live on Coolify.  Record only -- do not PATCH from this repo. */
+export const COOLIFY_WATCH_PATHS_LIVE = [
+  "Dockerfile",
+  ".dockerignore",
+  "package.json",
+  "package-lock.json",
+  "next.config.mjs",
+  "postcss.config.mjs",
+  "tsconfig.json",
+  "middleware.ts",
+  "instrumentation.ts",
+  "instrumentation-client.ts",
+  "sentry.server.config.ts",
+  "sentry.edge.config.ts",
+  "litestream.coolify.yml",
+  "src",
+  "src/**",
+  "app",
+  "app/**",
+  "public",
+  "public/**",
+  "scripts",
+  "scripts/**"
+] as const;
+
+/** Intentionally omitted from live watch_paths (docs-only / non-image). */
+export const COOLIFY_WATCH_PATHS_OMITTED = [
+  "docs/**",
+  "STATUS.md",
+  "PLAN.md",
+  "docs/rollouts",
+  "ios/",
+  "test/"
+] as const;
 
 export function parseChangedFiles(raw: string | undefined | null): string[] {
   if (!raw) return [];

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  COOLIFY_WATCH_PATHS_LIVE,
+  COOLIFY_WATCH_PATHS_OMITTED,
   ISSUE_2811_DOCS_ONLY_PATHS,
   isDocsOnlyChange,
   isImageNoopChange
@@ -229,6 +231,41 @@ describe("fetchGithubCommitMessage", () => {
 });
 
 describe("deploy image impact", () => {
+  it("records the live Coolify watch_paths list (already applied; do not PATCH)", () => {
+    expect([...COOLIFY_WATCH_PATHS_LIVE]).toEqual([
+      "Dockerfile",
+      ".dockerignore",
+      "package.json",
+      "package-lock.json",
+      "next.config.mjs",
+      "postcss.config.mjs",
+      "tsconfig.json",
+      "middleware.ts",
+      "instrumentation.ts",
+      "instrumentation-client.ts",
+      "sentry.server.config.ts",
+      "sentry.edge.config.ts",
+      "litestream.coolify.yml",
+      "src",
+      "src/**",
+      "app",
+      "app/**",
+      "public",
+      "public/**",
+      "scripts",
+      "scripts/**"
+    ]);
+    expect([...COOLIFY_WATCH_PATHS_OMITTED]).toEqual([
+      "docs/**",
+      "STATUS.md",
+      "PLAN.md",
+      "docs/rollouts",
+      "ios/",
+      "test/"
+    ]);
+    expect(COOLIFY_WATCH_PATHS_LIVE.some((path) => path.startsWith("docs"))).toBe(false);
+  });
+
   it("treats #2811 as docs-only and image-noop", () => {
     expect(isDocsOnlyChange([...ISSUE_2811_DOCS_ONLY_PATHS])).toBe(true);
     expect(isImageNoopChange([...ISSUE_2811_DOCS_ONLY_PATHS])).toBe(true);

@@ -235,23 +235,27 @@ rollout note).
 dockerfile build pack, SSH deploy-key git source). The old uuid `m1os7ijf31bg3fanil152e4b` and the
 nixpacks note are STALE — the app was recreated during the Oracle migration; API calls against the
 old uuid return a bare `{"message":...}` that is easy to misread as a permissions problem.
-**AUTO-DEPLOY IS ON (owner-directed 2026-07-10), with a weekday RTH + image-noop latch
-(2026-08-18):** every push to `main` still hits Coolify via the repo webhook to Coolify's
-**manual webhook endpoint** (`https://host.jays.services/webhooks/source/github/events/manual`)
+**AUTO-DEPLOY IS ON (owner-directed 2026-07-10), with Coolify `watch_paths` + a weekday
+RTH latch (2026-08-18):** every push to `main` still hits Coolify via the repo webhook to
+Coolify's **manual webhook endpoint**
+(`https://host.jays.services/webhooks/source/github/events/manual`)
 — NOT the GitHub-App integration; the deploy-key source uses the manual endpoint, which
-validates an HMAC secret that must equal the app's `manual_webhook_secret_github`.  The
-Dockerfile refuses the **image build** (before `npm ci`) when (1) it is regular US equity
-hours (Mon–Fri 09:30–16:00 ET, or until 13:00 ET on NYSE early-close days) unless
-`HOTFIX=1` or `RTH_DEPLOY_OVERRIDE=1`, or (2) the commit is docs-only / image-noop (the
-#2811 class: markdown + `docs/**` except `docs/benchmarks`).  Keep
-`is_consistent_container_name_enabled` — do **not** turn on Coolify rolling / zero-downtime
-(two Litestream writers wedge L2).  **Keep stop-old-first.**  Docs-only / image-noop is
-skipped so that path is not taken for markdown.  Docker HEALTHCHECK (and any Coolify HTTP
-health path) must be `GET /api/live`, not `/api/health`: a finished deploy that marks
-`running:unhealthy` while the process is up leaves Traefik with no healthy backend
-(2026-08-17 7:22–7:43pm CT after docs-only #2810).  Do **not** put the RTH latch in
-`scripts/coolify-prod-start.sh`, do **not** `FORCE_RESTORE`, and do **not** bounce the live
-box from an agent.  Evenings, weekends, and full-close holidays still auto-deploy runtime
+validates an HMAC secret that must equal the app's `manual_webhook_secret_github`.
+ASC already applied `watch_paths` on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`) —
+runtime trees only (`Dockerfile`, `src/**`, `app/**`, `scripts/**`, lockfiles, …);
+omitted `docs/**`, `STATUS.md`, `PLAN.md`, `ios/`, `test/`.  **Do not re-apply or
+PATCH that list.**  Auto-deploy stays on.  Stop-old-first stays.
+`health_check_start_period` stays 60.  The Dockerfile still refuses the **image
+build** (before `npm ci`) during regular US equity hours (Mon–Fri 09:30–16:00 ET,
+or until 13:00 ET on NYSE early-close days) unless `HOTFIX=1` or
+`RTH_DEPLOY_OVERRIDE=1` (`watch_paths` does not know about market hours).  Keep
+`is_consistent_container_name_enabled` — do **not** turn on Coolify rolling /
+zero-downtime (two Litestream writers wedge L2).  **Keep stop-old-first.**  Docker
+HEALTHCHECK (and any Coolify HTTP health path) must be `GET /api/live`, not
+`/api/health`: a finished deploy that marks `running:unhealthy` while the process
+is up leaves Traefik with no healthy backend (2026-08-17 7:22–7:43pm CT after
+docs-only #2810).  Do **not** put the RTH latch in `scripts/coolify-prod-start.sh`,
+do **not** `FORCE_RESTORE`, and do **not** bounce the live box from an agent.  Evenings, weekends, and full-close holidays still auto-deploy runtime
 changes.  A weekday 21:20 UTC GitHub Action drain retries `origin/main` after the cash
 close when the pending diff is not image-noop.  **Known failure mode (bit us
 2026-08-01/02): if those secrets drift, every main push is answered `Invalid signature`, no

@@ -1,8 +1,9 @@
 # 2026-07-10 — Auto-deploy ON: merge-to-main auto-deploys prod (retires announce-then-deploy) (MONET)
 
-> **2026-08-18:** weekday RTH image builds are refused unless `HOTFIX=1` /
-> `RTH_DEPLOY_OVERRIDE=1`.  Docs-only / image-noop commits are refused
-> before `npm ci`.  Docker HEALTHCHECK is `/api/live`.  See
+> **2026-08-18:** ASC applied Coolify `watch_paths` on `socratic-app`
+> (docs/ios/test omitted).  Do not re-apply.  Weekday RTH image builds are
+> still refused unless `HOTFIX=1` / `RTH_DEPLOY_OVERRIDE=1`.  Docker
+> HEALTHCHECK is `/api/live`.  See
 > `docs/rollouts/2026-08-18-rth-deploy-latch.md`.
 
 ## Summary
@@ -58,15 +59,15 @@ diagnosis handed off on `#agent-sync`.
 
 ## Operational notes
 
-- **Every merge still hits Coolify immediately** (owner ruling).  As of 2026-08-18 the image
-  build is refused during weekday regular US equity hours unless `HOTFIX=1` or
-  `RTH_DEPLOY_OVERRIDE=1`; evenings/weekends still swap **runtime** commits.
-  Docs-only / image-noop is skipped so stop-old-first does not run for
-  markdown (#2810 + #2811 on 2026-08-17).  Docker HEALTHCHECK is `/api/live`
-  so a finished deploy cannot sit `running:unhealthy` while the process is
-  up (7:22–7:43pm CT after #2810).  Coolify serializes builds
-  (`concurrent_builds=1`), so bursty merges queue rather than run in
-  parallel.
+- **Every merge still hits Coolify immediately** (owner ruling).  As of
+  2026-08-18 ASC applied `watch_paths` on `socratic-app` (do not re-apply);
+  docs/ios/test/STATUS/PLAN do not start a deploy.  The image build is
+  refused during weekday regular US equity hours unless `HOTFIX=1` or
+  `RTH_DEPLOY_OVERRIDE=1`; evenings/weekends still swap **watched runtime**
+  commits.  Docker HEALTHCHECK is `/api/live` so a finished deploy cannot
+  sit `running:unhealthy` while the process is up (7:22–7:43pm CT after
+  #2810).  Coolify serializes builds (`concurrent_builds=1`), so bursty
+  merges queue rather than run in parallel.
 - **Rollback:** set `is_auto_deploy_enabled=false` (box DB) to return to manual deploys. The CF
   whitelist rules can be removed via the CF API if ever needed.
 - The GitHub Actions / self-hosted-runner alternative was NOT used (native flag + CF fix is simpler and
