@@ -8,8 +8,19 @@ Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-1
 ## 2026-08-18 CURSOR — OpenRouter rotation alias miss is not "not on your account"
 ## 2026-08-18 CURSOR — OpenRouter "No endpoints" 404 is not "not on your account"
 ## 2026-08-18 CURSOR — OpenRouter 404s are not "not on your account"
+## 2026-08-18 CURSOR — Today's Green 404s are valid public slugs, not tilde seats
 
-Owner: Green failed because models are not available on his OpenRouter account.  False.  Two live causes, same sentence.  (1) #2771 `require_parameters=true` 404s "No endpoints found matching your request".  (2) `normalizeOpenRouterModelId` dropped OpenRouter's `~` on `-latest` aliases (live catalog 2026-08-18: `~anthropic/claude-sonnet-latest` exists; `anthropic/claude-sonnet-latest` does not).  Same class as #2770.  Prefer dated public ids; matcher treats `~` as optional.  Classifier: routing 404 ≠ account miss; `model_not_found` = bad slug.  Keep `__rotate__`.  No dashboard adds.  No Stripe/IAP.  No Coolify body claimed.
+Coolify receipts (sha `cda485ff`, SELECT-only, no raw OpenRouter JSON).  Mapper on that sha is still 404 → “isn't available on your OpenRouter account.”
+
+Today's Green fails are **not** the missing-tilde seats.  Claude/Grok/Kimi/mini-latest were skipped (`skippedNoCredential`; that array also includes availability-filtered models) and never called.  Tilde restore will not by itself clear today's Green 404s.
+
+Actual 404s, ~80ms, OpenRouter, `key_source=user`:
+- 17:12:09Z Alpaca Paper `PA33IDTHMFK9` run `20072a55-2805-4d7a-8fa0-a1dff8c766cc`: pick `gemini-flash-latest` → called `google/gemini-3.7-flash` HTTP 404 86ms.  Failover chain exhausted (3 endpoints); only one `llm_call_latency`.  Red `gpt-5.6-luna` never called.
+- 17:01:57Z Roth IRA `294709855` run `a9f29155-e139-4259-8666-25b0cf5f901c`: pick `mistral-medium-latest` → `mistralai/mistral-medium-3-5` HTTP 404 82ms.
+
+Not 401/402/403/429.  Credits not involved.  Both slugs exist on public `/api/v1/models`.  7d 404s: `google/gemini-3.7-flash` ×2, `mistralai/mistral-medium-3-5` ×2, `mistralai/mistral-small-2603` ×1.  Fits #2771 `require_parameters=true` emptying the endpoint set.
+
+PR **#2829** primary: omit `require_parameters` except the nano `max_completion_tokens` case; classifier must not use the account sentence for bare 404 / “No endpoints found”.  Secondary: restore `~` / dated public ids for skipped Claude/Grok/Kimi/mini-latest.  Keep `__rotate__`.  No dashboard adds.  No Stripe/IAP.
 
 PR **#2829**.  Branch `cursor/openrouter-rotation-alias-fb04`.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
 

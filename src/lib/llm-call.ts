@@ -137,15 +137,24 @@ export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown
 }
 
 /**
- * OpenRouter `require_parameters` (default false) drops every endpoint that does
- * not advertise ALL request fields, then 404s "No endpoints found matching your
- * request".  `allow_fallbacks` only covers 5xx / rate-limit within a model — it
- * does not revive an empty require_parameters set (docs 2026-08-18).
+ * OpenRouter `require_parameters` (docs 2026-08-18, default false): when true,
+ * endpoints that do not advertise EVERY request field never receive the call,
+ * then chat/completions 404s "No endpoints found matching your request" in
+ * ~80ms.  `allow_fallbacks` only covers 5xx / rate-limit within a model — it
+ * does not revive that empty set.
  *
- * Keep the #2771 nano filter: we send `max_completion_tokens` on OpenAI
- * reasoning models, and the native OpenAI endpoint may only list `max_tokens`.
- * Do not require parameters on Gemini / Mistral / Claude / embeds, or a live
- * model 404s and the old classifier called that an account miss.
+ * Coolify receipts 2026-08-18 (sha cda485ff, SELECT-only): Green 404'd valid
+ * public slugs `google/gemini-3.7-flash` (86ms) and `mistralai/mistral-medium-3-5`
+ * (82ms).  7d also `mistralai/mistral-small-2603`.  Those ids exist on
+ * /api/v1/models.  Live #2771 set require_parameters=true on every OpenRouter
+ * body; strategy also sends response_format + max_completion_tokens +
+ * classifier user/session_id/trace.  That is today's Green fail, not a missing
+ * tilde and not an account allowlist miss.
+ *
+ * Keep require_parameters only for the #2771 nano case: OpenAI reasoning models
+ * send `max_completion_tokens`, and the native OpenAI endpoint may only list
+ * `max_tokens` (that was a 400, not today's 404).  Gemini / Mistral / Claude
+ * omit the flag so OpenRouter's default false can pick an endpoint.
  */
 export function shouldRequireOpenRouterParameters(body: Record<string, unknown>): boolean {
   if (typeof body.max_completion_tokens !== "number") return false;
@@ -158,11 +167,14 @@ export function applyOpenRouterProviderRouting(base: Record<string, unknown>): v
     base.provider && typeof base.provider === "object" && !Array.isArray(base.provider)
       ? (base.provider as Record<string, unknown>)
       : {};
-  base.provider = {
+  const requireParameters = shouldRequireOpenRouterParameters(base);
+  const provider: Record<string, unknown> = {
     ...existingProvider,
-    require_parameters: shouldRequireOpenRouterParameters(base),
     allow_fallbacks: existingProvider.allow_fallbacks ?? true
   };
+  if (requireParameters) provider.require_parameters = true;
+  else delete provider.require_parameters;
+  base.provider = provider;
 }
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */

@@ -1,63 +1,57 @@
-# 2026-08-18 — OpenRouter 404s are not "not on your account"
+# 2026-08-18 — Today's Green 404s are valid public slugs, not an account miss
 
 ## Context & Objective
 
-Jay reported Green Team failed because models are not available on his OpenRouter account.  That is false: live `/api/health` at 2026-08-18 ~17:20Z had OpenRouter credits above the $3 floor, `tradingLivenessDegraded` true, and last completed Green ~9:37am CT Aug 17 (~27h).  Rotation (`__rotate__`) must keep running.  Do not require adding models in the OpenRouter dashboard.  Do not treat `require_parameters` as the only cause.
+Jay sees “That model isn't available on your OpenRouter account.”  That is false.  Coolify receipts landed 2026-08-18 against live sha `cda485ff` (SELECT-only; no raw OpenRouter JSON).  The mapper on that sha is still 404 → the account sentence.  Rotation (`__rotate__`) stays.  Do not require OpenRouter dashboard adds.  Do not ship a tilde-only fix and call Green fixed.
 
 ## Changes Made
 
-**Two live causes, same false sentence.**  `humanizeLlmError` treated any HTTP 404 as "That model isn't available on your OpenRouter account."  We still do not have a Coolify last-run body.
+**Today's Green fails are not the missing-tilde seats.**  Claude/Grok/Kimi/mini-latest were skipped (`skippedNoCredential`; that array also includes availability-filtered models) and never called.  Restoring `~` will not by itself clear today's Green 404s.
 
-1. **#2771 routing 404.**  Live (`f75027c1`, 2026-08-17T14:17:36Z, now in prod `cda485ff`).  Every OpenRouter LLM body set `provider.require_parameters=true`.  OpenRouter then 404s `No endpoints found matching your request` when no endpoint advertises every field.  `allow_fallbacks` only covers 5xx / rate-limit within a model — it does not revive that empty set.
+**Actual 404s (Coolify, ~80ms, OpenRouter, `key_source=user`):**
 
-2. **Untilded `-latest` wire ids (live catalog, 2026-08-18).**  GET `https://openrouter.ai/api/v1/models` returned 413 models.  OpenRouter's `-latest` aliases use a `~` prefix.  `normalizeOpenRouterModelId` emitted them without `~`, so those ids are not in the catalog and chat/completions 404s.  Same class as #2770/#2771 (mistral-medium-3.5 period 404).  The 2026-07-20 rollout already required the tilde (`docs/rollouts/2026-07-20-openrouter-latest-alias.md`, #1864/#1894); the current normalizer lost it.
+1. 17:12:09Z Alpaca Paper `PA33IDTHMFK9` run `20072a55-2805-4d7a-8fa0-a1dff8c766cc` — pick `gemini-flash-latest` → called `google/gemini-3.7-flash` HTTP 404 86ms.  Payload `{"ok":false,"status":404,"provider":"openrouter","model":"google/gemini-3.7-flash","durationMs":86}`.  Failover chain exhausted (3 endpoints); only one `llm_call_latency`.  Red `gpt-5.6-luna` never called.
+2. 17:01:57Z Roth IRA `294709855` run `a9f29155-e139-4259-8666-25b0cf5f901c` — pick `mistral-medium-latest` → `mistralai/mistral-medium-3-5` HTTP 404 82ms.
 
-Verified live ids (do not invent slugs):
+Not 401/402/403/429.  Credits not involved.  Last completed: Paper `2026-08-18T14:37:17Z` then failed 17:12Z; Roth `2026-08-17T14:38:02Z` then failed 17:01Z.
 
-| ST used to send | In catalog? | Actual catalog ids |
-|---|---|---|
-| anthropic/claude-sonnet-latest | no | ~anthropic/claude-sonnet-latest, anthropic/claude-sonnet-5 |
-| anthropic/claude-haiku-latest | no | ~anthropic/claude-haiku-latest, anthropic/claude-haiku-4.5 |
-| anthropic/claude-opus-latest | no | ~anthropic/claude-opus-latest, anthropic/claude-opus-5 |
-| anthropic/claude-fable-latest | no | ~anthropic/claude-fable-latest, anthropic/claude-fable-5 |
-| x-ai/grok-latest | no | ~x-ai/grok-latest, x-ai/grok-4.5 |
-| openai/gpt-mini-latest | no | ~openai/gpt-mini-latest, openai/gpt-5.4-mini |
-| moonshotai/kimi-latest | no | ~moonshotai/kimi-latest |
-| deepseek/deepseek-reasoner | no | deepseek/deepseek-r1 |
+7d `llm_call_latency` 404s: `google/gemini-3.7-flash` ×2, `mistralai/mistral-medium-3-5` ×2, `mistralai/mistral-small-2603` ×1.  Aug 17 400s: `gpt-5.6-luna` / terra / `gpt-5.4-nano` and period slug `mistralai/mistral-medium-3.5`.  `google/gemini-3.7-flash` succeeded as red-team `2026-08-14T17:19Z`; 404s today.
 
-Catalog shorts (`claude-sonnet-5`, `claude-haiku-4.5`, `grok-4.5`, `gpt-5.4-mini`) went through the same normalizer and became the missing `-latest` form.
+Public `/api/v1/models`: all three 404 slugs **exist**.  Today's 404 is a valid public slug at ~80ms — that fits OpenRouter “No endpoints found matching your request” from live #2771 `provider.require_parameters=true`, not an unknown id and not an allowlist miss.
 
-`isOpenRouterModelAvailable()` compared `anthropic/claude-sonnet-latest` to `/models/user` ids that have `~` or the dated slug, so rotation skipped Claude even when the probe succeeded.
+Did not invent additional Coolify bodies.  The receipts above are the live ones.
 
-Ops snapshot (same window) showed rotation already picking `mistral-medium-3-5` / `gemini-3.7-flash` / `mistral-small-2603` — not an empty pool.
+**Primary (today's class):**
+- OpenRouter docs (provider-selection, 2026-08-18): `require_parameters` default is false; when true, unsupported-parameter endpoints never get the request; `allow_fallbacks` does not revive an empty set.
+- Strategy bodies send `response_format` + `max_completion_tokens` + classifier `user`/`session_id`/`trace`.  Hypothesis: require_parameters + a field remaining endpoints do not advertise → 404 in ~80ms.
+- `require_parameters` is now sent **only** for the #2771 nano case (OpenAI reasoning + `max_completion_tokens`).  Gemini / Mistral / Claude omit the flag.
+- 404 “No endpoints found matching your request” says no compatible endpoint.  Bare 404 says couldn't complete.  True `model_not_found` is a bad-slug sentence, not an account-privacy sentence.
+- Green/Red failover leaves a 404/403 model for the next chain entry (live exhausted the chain after one latency because prod 404 was not failover-eligible).
 
-- Wire ids prefer the dated public id when it exists; otherwise the live `~author/slug-latest` row (`~moonshotai/kimi-latest`).
-- Availability treats `~` as optional and matches dated ↔ latest aliases.
-- `require_parameters` only when the body sends `max_completion_tokens` on an OpenAI reasoning model.  Gemini / Mistral / Claude / embeds stay on OpenRouter's default false.  `allow_fallbacks` stays true.
-- 404 "No endpoints found matching your request" says no compatible endpoint.  Bare 404 says couldn't complete.  True `model_not_found` is a bad-slug sentence, not an account-privacy sentence.
-- Green/Red failover leaves a 404/403 model for the next chain entry.  `llmFetch` still does not retry 404 on the same model.
-- If a successful allowlist would empty a keyed pool, fail OPEN minus `kimi-latest` / `claude-fable-5`.
+**Secondary (skipped seats, not today's Green 404):**
+- `normalizeOpenRouterModelId` prefers dated public ids (`anthropic/claude-sonnet-5`, `openai/gpt-5.4-mini`, `deepseek/deepseek-r1`) or the live `~author/slug-latest` row (`~moonshotai/kimi-latest`).
+- Availability treats `~` as optional and matches dated ↔ latest.
+- If a successful `/models/user` allowlist would empty a keyed pool, fail OPEN minus `kimi-latest` / `claude-fable-5`.
 
 Touched files:
 
-- `src/lib/llm-provider.ts`
-- `src/lib/openrouter-model-availability.ts`
-- `src/lib/model-identity.ts`
 - `src/lib/llm-call.ts`
 - `src/lib/chat/llm.ts`
 - `src/lib/llm-errors.ts`
 - `src/lib/llm-request.ts`
 - `src/lib/strategy.ts`
 - `src/lib/red-team.ts`
+- `src/lib/llm-provider.ts`
+- `src/lib/openrouter-model-availability.ts`
+- `src/lib/model-identity.ts`
 - `src/lib/model-rotation.ts`
 - `src/lib/llm-required.ts`
 - `app/console/components/chrome.tsx`
+- `test/llm-call.test.ts`
+- `test/llm-errors.test.ts`
 - `test/llm-provider.test.ts`
 - `test/openrouter-model-availability.test.ts`
 - `test/model-rotation.test.ts`
-- `test/llm-errors.test.ts`
-- `test/llm-call.test.ts`
-- `test/llm-request.test.ts`
 - `STATUS.md`
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
@@ -66,33 +60,31 @@ Touched files:
 
 ## Decisions & Trade-offs
 
-- Do not treat `require_parameters` as the only cause.  The lost `~` / dated-slug map is the same 404 class as #2770.
-- Prefer dated public ids over the tilde alias when both exist, so chat/completions hits a stable catalog row.
-- Kimi has no dated public "latest" row — only `~moonshotai/kimi-latest`.  Did not invent `kimi-k2.5` as the wire id.
-- Did not invent a Coolify HTTP body.  Last-run `error_class` / slug / OpenRouter body are still unknown.
-- Did not drop rotation.  Did not add models to Jay's OpenRouter dashboard.  Did not raise spend or touch the Congress $2 cap.  No Stripe / IAP.  No coordinator notes in product UI.
+- Primary fix is today's gemini/mistral class: stop sending `require_parameters=true` on those bodies.  Tilde restore stays in the same PR but is not claimed as the Green fix.
+- Nano still gets `require_parameters` because #2771's OpenAI endpoint 400 (`max_completion_tokens` not advertised) is a different failure than today's 404.
+- Did not invent a Coolify HTTP body beyond the two runs and 7d latency counts above.
+- Did not drop rotation.  Did not add models to Jay's OpenRouter dashboard.  Did not raise spend or touch the Congress $2 cap.  No Stripe / IAP.
 
 ## Verification State
 
 ```bash
-curl -sS https://openrouter.ai/api/v1/models   # 413 models, 2026-08-18
-npm test -- test/llm-provider.test.ts test/llm-errors.test.ts \
-  test/llm-call.test.ts test/model-rotation.test.ts \
-  test/openrouter-model-availability.test.ts test/model-identity.test.ts
-                          # 96 passed
+curl -sS https://openrouter.ai/api/v1/models   # 413 models; gemini-3.7-flash + mistral-medium-3-5 exist
+npm test -- test/llm-call.test.ts test/llm-errors.test.ts \
+  test/llm-provider.test.ts test/model-rotation.test.ts \
+  test/openrouter-model-availability.test.ts
+                          # 91 passed
 ```
 
-Required coverage: (a) 404 "No endpoints found matching your request" does not produce the account sentence; (b) `model_not_found` is a bad-slug sentence, not account-privacy; (c) allowlist that matches nothing fail-opens minus dead slugs; (d) live catalog table above — ST no longer emits the missing untilded `-latest` ids.
+Required coverage: (a) 404 “No endpoints found matching your request” does not produce the account sentence; (b) `model_not_found` is a bad-slug sentence; (c) `google/gemini-3.7-flash`, `mistralai/mistral-medium-3-5`, and `mistralai/mistral-small-2603` strategy bodies do **not** send `require_parameters: true`; (d) empty allowlist still fail-opens minus dead slugs; (e) tilde/dated map for skipped seats.
 
-Full `npm test` not claimed: unrelated suites hang on this VM's outbound network.  `xcodebuild` was not run (no `ios/**` product change).
+Full `npm test` not claimed.  `xcodebuild` was not run (no `ios/**` product change).
 
 ## Next Steps & Blockers
 
-- After merge/auto-deploy, Green rotate should send dated or tilde catalog ids and should not call a routing 404 an account miss.
-- If chat/completions still 404s every model, inspect the raw OpenRouter body (we still do not have one) before adding more provider knobs.
+- After merge/auto-deploy, the next Paper/Roth rotate run should call gemini-3.7-flash / mistral-medium-3-5 without `require_parameters=true` and must not call a routing 404 an account miss.
+- Tilde restore only matters when those seats are actually picked.
 
 ## Zero-Code Findings
 
-- Production health 2026-08-18 ~17:24Z: `ok` true, `openrouterCredits.ok` true (`thresholdUsd` 3), scheduler age 0, `tradingLiveness.degraded` 1, `oldestCompletedRunAgeSeconds` 96349.
-- Live OpenRouter catalog 2026-08-18: 11 `~` latest aliases.  Untilded `author/slug-latest` rows are absent for Claude / Grok / GPT-mini / Kimi.
-- Recent Green failures (ops snapshot): Roth/Paper "That model isn't available on your OpenRouter account" on `mistral-medium-3-5` / `gemini-3.7-flash`; earlier 2026-08-17 400s on terra/luna/nano and the period-form Mistral slug.  Pool was not empty.
+- Production health earlier the same day: `ok` true, `openrouterCredits.ok` true (`thresholdUsd` 3), `tradingLiveness.degraded`.
+- Coolify receipts above are the live failing seats.  No additional OpenRouter JSON body was present — only status/model/duration.

@@ -4,7 +4,7 @@ This document defines the comprehensive architecture for the AI Trading Strategy
 
 ## 2026-08-18 OpenRouter 404s are not "not on your account"
 
-Two live causes, same false sentence.  (1) #2771 `require_parameters=true` 404s `No endpoints found matching your request`.  (2) `normalizeOpenRouterModelId` emitted untilded `-latest` ids that are not in OpenRouter's catalog (live 2026-08-18: aliases are `~author/slug-latest`; dated public ids exist for the current class).  Same class as #2770 period-Mistral.  Wire ids now prefer dated public ids (`anthropic/claude-sonnet-5`, `openai/gpt-5.4-mini`, `deepseek/deepseek-r1`) or the tilde alias when that is the only catalog row (`~moonshotai/kimi-latest`).  Availability treats `~` as optional and matches dated ↔ latest.  Classifier: routing 404 = no compatible endpoint; `model_not_found` = bad slug, not an account-privacy sentence.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
+Coolify 2026-08-18 (sha `cda485ff`): today's Green 404s are valid public slugs `google/gemini-3.7-flash` (86ms) and `mistralai/mistral-medium-3-5` (82ms).  Claude/Grok/Kimi/mini-latest were skipped, not called — tilde restore does not clear today's fails.  Live #2771 set `require_parameters=true` on every OpenRouter body; that empties the endpoint set and 404s models that exist.  Strategy now omits `require_parameters` except the nano `max_completion_tokens` case.  Classifier: bare 404 / “No endpoints found matching your request” is not an account miss; `model_not_found` is a bad slug.  Secondary: dated / `~` wire ids for the skipped seats.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
 
 ## 2026-08-18 Pinecone store-more vs condense-first (report)
 

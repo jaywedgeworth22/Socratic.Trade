@@ -495,38 +495,37 @@ describe("OpenRouter provider routing", () => {
     expect(body.temperature).toBeUndefined();
   });
 
-  it("does not require_parameters on Gemini or Mistral strategy bodies (avoids No endpoints 404)", () => {
-    const gemini = buildLlmRequestBody(
-      { provider: "openrouter", transport: "chat-completions" },
-      {
-        model: "google/gemini-3.7-flash",
-        systemPrompt: "sys",
-        userContent: "{}",
-        schema: SCHEMA,
-        maxOutputTokens: 1500,
-        reasoningEffort: "low"
-      }
-    ) as Record<string, any>;
-    expect(gemini.max_completion_tokens).toBeGreaterThan(0);
-    expect(gemini.provider).toEqual({ require_parameters: false, allow_fallbacks: true });
-    expect(shouldRequireOpenRouterParameters(gemini)).toBe(false);
+  it("does not require_parameters on today's Coolify Green 404 seats (valid public slugs)", () => {
+    // Live 2026-08-18 sha cda485ff: gemini-3.7-flash 86ms 404, mistral-medium-3-5 82ms 404.
+    // 7d also mistral-small-2603.  All three exist on /api/v1/models.
+    const seats: Array<{ model: string; reasoningEffort: "low" | "none" }> = [
+      { model: "google/gemini-3.7-flash", reasoningEffort: "low" },
+      { model: "mistralai/mistral-medium-3-5", reasoningEffort: "none" },
+      { model: "mistralai/mistral-small-2603", reasoningEffort: "none" }
+    ];
+    for (const seat of seats) {
+      const body = buildLlmRequestBody(
+        { provider: "openrouter", transport: "chat-completions" },
+        {
+          model: seat.model,
+          systemPrompt: "sys",
+          userContent: "{}",
+          schema: SCHEMA,
+          maxOutputTokens: 1500,
+          reasoningEffort: seat.reasoningEffort,
+          userId: "coolify-receipt",
+          service: "strategy",
+          feature: "strategy"
+        }
+      ) as Record<string, any>;
+      expect(body.max_completion_tokens).toBeGreaterThan(0);
+      expect(body.response_format).toBeTruthy();
+      expect(body.provider?.require_parameters, seat.model).not.toBe(true);
+      expect(body.provider?.allow_fallbacks).toBe(true);
+      expect(shouldRequireOpenRouterParameters(body), seat.model).toBe(false);
+    }
 
-    const mistral = buildLlmRequestBody(
-      { provider: "openrouter", transport: "chat-completions" },
-      {
-        model: "mistralai/mistral-medium-3-5",
-        systemPrompt: "sys",
-        userContent: "{}",
-        schema: SCHEMA,
-        maxOutputTokens: 1500,
-        reasoningEffort: "none"
-      }
-    ) as Record<string, any>;
-    expect(mistral.provider).toEqual({ require_parameters: false, allow_fallbacks: true });
-
-    expect(
-      shouldRequireOpenRouterParameters({ model: "openai/gpt-5.4-nano" })
-    ).toBe(false);
+    expect(shouldRequireOpenRouterParameters({ model: "openai/gpt-5.4-nano" })).toBe(false);
   });
 });
 
