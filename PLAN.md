@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-18 CURSOR — getAccounts post-deploy timeout (`cursor/getaccounts-post-deploy-timeout-befc`).** Dashboard 6s `getAccounts` race fail-closes Manual Run once via `accountReadiness`.  Paper/Roth are Alpaca REST.  First-call retry + 15s combined budget; do not hide a real broker-down.  Do not bounce Coolify.  Rollout: `docs/rollouts/2026-08-18-getaccounts-post-deploy-timeout.md`.
+
 > **2026-08-18 CURSOR — rag-embed DeepInfra batch-window (`#2840` `5674dfaf` MERGED).** Live 32-text embed POSTs 400 at 8193 tokens on baai/bge-m3 (batch-sum, not one unchunked 10-K).  Hybrid condense-first stayed; token-pack is after that step.  Isolate one over-limit condensed text; do not fail the companions.  Do not flip write-class or prune.  Do not re-clamp the #2800 fuse.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
 
 > **2026-08-18 CURSOR — rag-embed soft-degrade rebase (`cursor/rag-embed-soft-degrade-ed6d`, #2812).** Rebased onto `origin/main` `6429d984`.  One dead rag-embed must not 503 Docker or halt Green/Red.  Kept #2800 fuse fix and #2829 `require_parameters` narrowing.  Sole conflict was `docs/phase-7-strategy.md`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.

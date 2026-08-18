@@ -46,6 +46,15 @@ import {
 import { computeSpyBenchmarkDetailed, type SpyBenchmarkResult } from "./benchmark";
 import { getTaxSummary, overlayAccountTaxationType } from "./tax";
 import { getBrokerGateway } from "./broker";
+import {
+  GET_ACCOUNTS_FIRST_MS,
+  GET_ACCOUNTS_RETRY_MS,
+  PORTFOLIO_BUNDLE_FIRST_MS,
+  PORTFOLIO_BUNDLE_RETRY_MS,
+  awaitWithFirstCallRetry,
+  getAccountsTimeoutMessage,
+  portfolioBundleTimeoutMessage
+} from "./inflight-deadline";
 import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
 import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
@@ -402,15 +411,21 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     const accountsPromise = (async () => {
       if (!gateway) return [];
       try {
-        return await withDeadline(
-          gateway.getAccounts(),
-          6000,
-          () => {
-            handleAccountsReadFailure("Timed out waiting for gateway.getAccounts after 6000ms.");
-            return [];
-          },
-          "gateway.getAccounts",
-          timedOutSections
+        // 6s was racing a live Alpaca REST getAccount that is often just slow (or hung
+        // on a dead keep-alive) after a container swap.  A pending first call starts one
+        // fresh retry; a real rejection (credentials, 401) still fails immediately.
+        return await awaitWithFirstCallRetry(
+          () => gateway.getAccounts(),
+          {
+            firstMs: GET_ACCOUNTS_FIRST_MS,
+            retryMs: GET_ACCOUNTS_RETRY_MS,
+            onFinalTimeout: () => {
+              handleAccountsReadFailure(getAccountsTimeoutMessage());
+              return [];
+            },
+            label: "gateway.getAccounts",
+            timedOutSections
+          }
         );
       } catch (error) {
         handleAccountsReadFailure(messageFromUnknownError(error));
@@ -461,19 +476,23 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
 
       if (targetAccountNumber && gateway) {
         try {
-          [portfolio, positions, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
-            Promise.all([
-              gateway.getPortfolio(targetAccountNumber),
-              gateway.getEquityPositions(targetAccountNumber),
-              gateway.getEquityOrders(targetAccountNumber)
-            ]),
-            8000,
-            () => {
-              handlePortfolioReadFailure(targetAccountNumber as string, "Timed out waiting for portfolio, positions, and orders after 8000ms.");
-              return [undefined, [], []];
-            },
-            "portfolio/positions/orders",
-            timedOutSections
+          [portfolio, positions, orders] = await awaitWithFirstCallRetry<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
+            () =>
+              Promise.all([
+                gateway.getPortfolio(targetAccountNumber),
+                gateway.getEquityPositions(targetAccountNumber),
+                gateway.getEquityOrders(targetAccountNumber)
+              ]),
+            {
+              firstMs: PORTFOLIO_BUNDLE_FIRST_MS,
+              retryMs: PORTFOLIO_BUNDLE_RETRY_MS,
+              onFinalTimeout: () => {
+                handlePortfolioReadFailure(targetAccountNumber as string, portfolioBundleTimeoutMessage());
+                return [undefined, [], []];
+              },
+              label: "portfolio/positions/orders",
+              timedOutSections
+            }
           );
         } catch (error) {
           handlePortfolioReadFailure(targetAccountNumber, messageFromUnknownError(error));
