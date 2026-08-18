@@ -215,6 +215,9 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(disregarded.sameAccount, "not applicable")
         XCTAssertEqual(disregarded.crossAccount, "ignored")
 
+        let auto = DeskCopy.iraWashSaleRows(handling: "auto")
+        XCTAssertEqual(auto.crossAccount, "auto")
+
         let blocked = DeskCopy.iraWashSaleRows(handling: "block")
         XCTAssertEqual(blocked.sameAccount, "not applicable")
         XCTAssertEqual(blocked.crossAccount, "blocked")

@@ -1081,8 +1081,8 @@ function TaxBlock() {
         <p className="text-[color:var(--con-muted)]">
           This is an IRA — no yearly taxes on trades here, so rates are zeroed and loss-harvest
           candidates are not shown.{SENTENCE_GAP}A taxable-account loss can still appear as a lockout chip below.{SENTENCE_GAP}
-          Ignore (the default) does not constrain this IRA; Block only applies at or above the
-          minimum-loss floor.
+          Ignore (the default) does not constrain this IRA.{SENTENCE_GAP}Auto lets Green weigh it.{SENTENCE_GAP}Block
+          refuses.{SENTENCE_GAP}Minimum loss is optional (blank = every loss).
         </p>
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1100,7 +1100,7 @@ function TaxBlock() {
           <div className="con-card-title mb-1">Wash-sale lockouts (all your accounts)</div>
           <div className="flex flex-wrap gap-1.5">
             {tax.lockedSymbols.map((s) => (
-              <Chip key={s} tone="warn" title={ira ? "A taxable account realized a loss in this symbol. Ignore does not constrain this IRA; Block only applies at or above the minimum-loss floor." : "Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically."}>
+              <Chip key={s} tone="warn" title={ira ? "A taxable account realized a loss in this symbol. Ignore does not constrain this IRA. Auto weighs it. Block refuses. Minimum loss is optional." : "Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically."}>
                 <SymbolButton symbol={s} className="text-inherit" /> locked
               </Chip>
             ))}

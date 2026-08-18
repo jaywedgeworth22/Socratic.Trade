@@ -260,21 +260,19 @@ export interface AccountCapabilities {
  *              itself. Never silent; never a hard block by default.
  * The IRA-replacement rule (Rev. Rul. 2008-5) is governed SEPARATELY by
  * taxSettings.iraWashSaleHandling: an IRA buying a symbol locked by a taxable-account loss
- * defaults to "disregard" (see IraWashSaleHandling) for the same reason — the owner may still
- * opt an account into the stricter "block".
+ * defaults to "disregard" (see IraWashSaleHandling). The owner may choose Auto (weigh it)
+ * or the stricter Block.
  */
 export type WashSaleHandling = "block" | "ask" | "auto";
 
 /**
  * What an IRA-replacement wash sale MEANS for a BUY in an IRA (taxSettings.iraWashSaleHandling):
- *   - "block": refuse a replacement buy when the taxable-account loss is at/above this IRA's
- *     washSaleMinLossUsd floor (blank = $50). A trivial taxable loss is not a lock. Stricter
- *     opt-in; no longer the default.
- *   - "disregard": (DEFAULT) the buy proceeds and Green is not told to skip. Personal choice —
- *     some owners do not want the 30-day taxable window to steer the IRA at all. Annotated +
- *     audited; never silent.
+ *   - "block": refuse a replacement buy when the taxable-account loss meets the optional
+ *     washSaleMinLossUsd floor (blank = every loss). Stricter opt-in.
+ *   - "auto": proceed; Green weighs the priced forfeited deduction. Same idea as taxable Auto.
+ *   - "disregard": (DEFAULT, Ignore) the buy proceeds and Green is not told to skip.
  */
-export type IraWashSaleHandling = "block" | "disregard";
+export type IraWashSaleHandling = "block" | "auto" | "disregard";
 
 export interface TaxSettings {
   /** Tax treatment driving rates + wash-sale handling. Defaults to "taxable". */
@@ -287,9 +285,9 @@ export interface TaxSettings {
   iraWashSaleHandling?: IraWashSaleHandling;
   /**
    * Optional floor (dollars) for a realized loss to trigger the wash-sale rebuy lockout.
-   * On a taxable account, blank = every loss contributes a lock. On an IRA buyer, blank = $50
-   * so a nickle taxable loss never hard-locks this IRA (explicit 0 = every loss). The IRS still
-   * applies §1091 to any size of loss; this is only this app's guardrail.
+   * Blank = every loss is in play (taxable and IRA). Set a dollar amount to ignore smaller
+   * losses. Explicit 0 is the same as blank. The IRS still applies §1091 to any size of loss;
+   * this is only this app's guardrail.
    */
   washSaleMinLossUsd?: number;
   /** Marginal rate applied to short-term realized gains (ordinary income), e.g. 24. */

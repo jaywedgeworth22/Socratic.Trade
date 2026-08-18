@@ -11,13 +11,14 @@ import type {
   TradeProposal,
   TradingPolicy,
   IraWashSaleHandling,
+  TaxSettings,
   WashSaleGateAudit,
   WashSaleHandling
 } from "./types";
 import { normalizeSymbol } from "./money";
 import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./index-universes";
 import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
-import { DEFAULT_IRA_WASH_SALE_MIN_LOSS_USD, DEFAULT_TAX_SETTINGS } from "./defaults";
+import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap } from "./policy-caps";
@@ -139,11 +140,17 @@ function dollars(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
-/** IRA-buyer floor for the existing washSaleMinLossUsd option. Explicit 0 = every loss. */
-export function iraWashSaleMinLossUsd(settings?: TradingPolicy["taxSettings"]): number {
+/** Optional washSaleMinLossUsd floor. Blank / unset = every loss is in play. */
+export function iraWashSaleMinLossUsd(settings?: Pick<TaxSettings, "washSaleMinLossUsd">): number | undefined {
   const raw = settings?.washSaleMinLossUsd;
-  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return raw;
-  return DEFAULT_IRA_WASH_SALE_MIN_LOSS_USD;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  return undefined;
+}
+
+function isMaterialIraWashSaleLoss(lossUsd: number | undefined, settings?: Pick<TaxSettings, "washSaleMinLossUsd">): boolean {
+  const floor = iraWashSaleMinLossUsd(settings);
+  if (floor == null) return true;
+  return (lossUsd ?? 0) >= floor;
 }
 
 function round2(value: number): number {
@@ -699,11 +706,11 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   //
   // IRA-REPLACEMENT RULE (Rev. Rul. 2008-5): when the BUYING account is a roth/traditional
   // IRA and the symbol is locked, the binding loss is by construction from a TAXABLE account
-  // (IRA losses never contribute locks — see tax.ts). Governed by the EXISTING options:
-  //   "disregard" (DEFAULT) — proceed. Green is not told to skip. Personal choice.
-  //   "block" — hard-block only a MATERIAL taxable loss (washSaleMinLossUsd; blank = $50).
-  //     A trivial taxable loss is not a lock on this IRA. The min-loss field already existed
-  //     but was hidden on IRA pages and unused on the IRA buyer path.
+  // (IRA losses never contribute locks — see tax.ts). iraWashSaleHandling:
+  //   "disregard" (DEFAULT, Ignore) — proceed. Green is not told to skip.
+  //   "auto" — proceed; Green weighs the priced forfeited deduction (same idea as taxable Auto).
+  //   "block" — hard-block. Optional washSaleMinLossUsd: blank = every loss; a set floor
+  //     ignores smaller taxable losses.
   if (proposal.side === "buy") {
     const taxSettings = context.policy.taxSettings;
     const guardOn = taxSettings?.washSaleGuard ?? true;
@@ -745,20 +752,41 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         );
         if (buyerIsIra) {
           const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard";
-          const material = (lock.lossUsd ?? 0) >= iraWashSaleMinLossUsd(taxSettings);
-          if (material && iraHandling === "disregard") {
-            washSaleAudit = { ...auditBase, outcome: "ira_disregarded", note: IRA_WASH_SALE_DISREGARD_NOTE };
-          } else if (material) {
-            reasons.push(
-              `${symbol} is in a 30-day wash-sale lockout (${lockNote}). Rebuying it inside this IRA would PERMANENTLY ` +
-                `destroy the disallowed loss` +
-                (estimatedTaxCostUsd != null ? ` (~${dollars(estimatedTaxCostUsd)} of tax deduction forfeited forever)` : "") +
-                ` — a replacement purchase in an IRA can never recover the basis (Rev. Rul. 2008-5). ` +
-                `This is blocked because IRA taxable-loss rebuys is set to Block (change Tax rules to Ignore, or raise the minimum-loss floor).`
-            );
-            washSaleAudit = { ...auditBase, outcome: "blocked_ira" };
+          const material = isMaterialIraWashSaleLoss(lock.lossUsd, taxSettings);
+          switch (iraHandling) {
+            case "disregard":
+              if (material) {
+                washSaleAudit = { ...auditBase, outcome: "ira_disregarded", note: IRA_WASH_SALE_DISREGARD_NOTE };
+              }
+              break;
+            case "auto":
+              if (material) {
+                const expectedEdgeUsd = washSaleExpectedEdgeUsd(proposal, context.policy, estimatedNotional);
+                washSaleAudit = {
+                  ...auditBase,
+                  outcome: "auto_proceeded",
+                  expectedEdgeUsd,
+                  edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
+                };
+              }
+              break;
+            case "block":
+              if (material) {
+                reasons.push(
+                  `${symbol} is in a 30-day wash-sale lockout (${lockNote}). Rebuying it inside this IRA would PERMANENTLY ` +
+                    `destroy the disallowed loss` +
+                    (estimatedTaxCostUsd != null ? ` (~${dollars(estimatedTaxCostUsd)} of tax deduction forfeited forever)` : "") +
+                    ` — a replacement purchase in an IRA can never recover the basis (Rev. Rul. 2008-5). ` +
+                    `This is blocked because IRA taxable-loss rebuys is set to Block (change Tax rules to Ignore or Auto, or set a minimum-loss floor).`
+                );
+                washSaleAudit = { ...auditBase, outcome: "blocked_ira" };
+              }
+              break;
+            default: {
+              const _exhaustive: never = iraHandling;
+              void _exhaustive;
+            }
           }
-          // Below the existing washSaleMinLossUsd floor (IRA blank = $50): not a lock.
         } else if (override && (handling === "ask" || handling === "auto")) {
           // "Locked but user-approved via the ask/auto path": the server-stored token is honored
           // WITHOUT weakening the default block — if handling was tightened back to "block" since

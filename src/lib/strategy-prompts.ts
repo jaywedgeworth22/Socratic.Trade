@@ -1,6 +1,6 @@
 import { OPENING_ORDER_HEADROOM_PCT } from "./policy";
 import { STRATEGY_LEGAL_SENTENCE } from "./legal-notice";
-import type { WashSaleHandling } from "./types";
+import type { IraWashSaleHandling, WashSaleHandling } from "./types";
 
 /**
  * Versioned strategy Bull/Bear system prompts (Chat A item 2). Extracted from strategy.ts so the
@@ -17,7 +17,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.13.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.14.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -81,6 +81,11 @@ export interface BullSystemParams {
    */
   iraWashSaleDisregard?: boolean;
   /**
+   * IRA-buyer wash-sale mode. When set, selects Ignore / Auto / Block language.
+   * `iraWashSaleDisregard` still implies Ignore for older callers.
+   */
+  iraWashSaleHandling?: IraWashSaleHandling;
+  /**
    * True when this run's buyer is a Roth or Traditional IRA. Suppresses taxable-only harvest and
    * long-term-rate guidance. Also implied by `iraWashSaleDisregard`.
    */
@@ -106,18 +111,33 @@ export interface BullSystemParams {
  * message as a fenced <reflection_summary> DATA field, and a single data-not-command boundary
  * clause below enumerates every untrusted text block. Advisory hardening only — no gate, no block.
  */
+function iraWashSaleLine(handling: IraWashSaleHandling): string {
+  switch (handling) {
+    case "disregard":
+      return "- IRA wash-sale handling is Ignore. A wash-sale lockout from another account does not constrain this IRA. Do not skip a BUY because another account sold the symbol at a loss. Do not mention a forfeited deduction — the owner chose Ignore.";
+    case "auto":
+      return "- IRA wash-sale handling is Auto. A BUY of a symbol in `washSaleLockedSymbols` is allowed — it is YOUR judgment call: weigh the priced forfeited deduction in `taxContext.washSaleRebuyCosts` (per-symbol: `estimatedTaxCostUsd`, `clearsOn`) against conviction. An optional min-loss floor, when set, keeps trivial taxable losses out of that list.";
+    case "block":
+      return "- IRA wash-sale handling is Block. NEVER propose a BUY of a symbol in `washSaleLockedSymbols`. An optional min-loss floor, when set, keeps trivial taxable losses out of that list.";
+    default: {
+      const _exhaustive: never = handling;
+      return _exhaustive;
+    }
+  }
+}
+
 function taxEfficiencyLines(p: BullSystemParams): string[] {
   if (!p.hasTaxContext) return [];
-  const isIra = Boolean(p.isIraAccount || p.iraWashSaleDisregard);
-  const washSaleLine = p.iraWashSaleDisregard
-    ? "- IRA wash-sale handling is Ignore. A wash-sale lockout from another account does not constrain this IRA. Do not skip a BUY because another account sold the symbol at a loss. Do not mention a forfeited deduction — the owner chose Ignore."
-    : isIra
-      ? "- IRA wash-sale handling is Block. NEVER propose a BUY of a symbol in `washSaleLockedSymbols` — those are material locks only. A trivial taxable loss below the owner's min-loss floor is not in that list and is not a lock."
-      : p.washSaleHandling === "ask"
-        ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). Strongly prefer NOT to rebuy them; if you do propose one, it is routed to the owner for approval carrying the priced tax cost from `taxContext.washSaleRebuyCosts` — only propose it when the setup clearly justifies forfeiting that deduction, and say so in the rationale."
-        : p.washSaleHandling === "auto"
-          ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the policy gate — it is YOUR judgment call, not a deterministic threshold: weigh the priced forfeited deduction in `taxContext.washSaleRebuyCosts` (per-symbol: `estimatedTaxCostUsd`, `clearsOn`) against the setup's conviction and catalyst, and explicitly account for that tax cost in the rationale. Only propose one when the trade clearly justifies forfeiting the deduction."
-          : "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).";
+  const isIra = Boolean(p.isIraAccount || p.iraWashSaleDisregard || p.iraWashSaleHandling);
+  const iraHandling: IraWashSaleHandling | undefined = p.iraWashSaleHandling
+    ?? (p.iraWashSaleDisregard ? "disregard" : isIra ? "disregard" : undefined);
+  const washSaleLine = iraHandling
+    ? iraWashSaleLine(iraHandling)
+    : p.washSaleHandling === "ask"
+      ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). Strongly prefer NOT to rebuy them; if you do propose one, it is routed to the owner for approval carrying the priced tax cost from `taxContext.washSaleRebuyCosts` — only propose it when the setup clearly justifies forfeiting that deduction, and say so in the rationale."
+      : p.washSaleHandling === "auto"
+        ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the policy gate — it is YOUR judgment call, not a deterministic threshold: weigh the priced forfeited deduction in `taxContext.washSaleRebuyCosts` (per-symbol: `estimatedTaxCostUsd`, `clearsOn`) against the setup's conviction and catalyst, and explicitly account for that tax cost in the rationale. Only propose one when the trade clearly justifies forfeiting the deduction."
+        : "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).";
   return [
     "",
     isIra

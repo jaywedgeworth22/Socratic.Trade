@@ -312,8 +312,9 @@ Framework rules that shape it:
   forfeited deduction and, by default, records it as telemetry and prompt
   context rather than vetoing (the deterministic edge-vs-cost veto was
   removed as pseudo-math). IRA Ignore (default) does not steer Green or
-  veto; Block only applies at or above the existing min-loss floor (blank
-  = $50). No wash-sale outcome is ever silent.
+  veto; Auto weighs the priced cost then proceeds; Block refuses.
+  Minimum loss is optional (blank = every loss). No wash-sale outcome is
+  ever silent.
 - Missing data skips a check rather than guessing (staleness is the one
   deliberate, opt-in fail-safe exception).
 

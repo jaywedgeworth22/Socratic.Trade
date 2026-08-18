@@ -221,23 +221,28 @@ describe("console guardrails: washSaleHandling select classification", () => {
 describe("console guardrails: iraWashSaleHandling select classification", () => {
   const def = defByPath("taxSettings.iraWashSaleHandling");
 
-  it("is a select with block < disregard looseness ranking", () => {
+  it("is a select with block < auto < disregard looseness ranking", () => {
     expect(def.kind).toBe("select");
     expect(def.label).toBe("IRA taxable-loss rebuys");
     expect(def.hint).toContain("Under Rev. Rul. 2008-5");
-    expect(def.options?.map((o) => o.value)).toEqual(["block", "disregard"]);
-    expect(def.looseRank).toEqual({ block: 0, disregard: 1 });
+    expect(def.options?.map((o) => o.value)).toEqual(["block", "auto", "disregard"]);
+    expect(def.looseRank).toEqual({ block: 0, auto: 1, disregard: 2 });
   });
 
-  it("classifies block->disregard as LOOSER (typed word on LIVE) and back as TIGHTER", () => {
+  it("classifies block->auto->disregard as LOOSER and back as TIGHTER", () => {
+    expect(classify(def, "block", "auto")).toBe("looser");
+    expect(classify(def, "auto", "disregard")).toBe("looser");
     expect(classify(def, "block", "disregard")).toBe("looser");
+    expect(classify(def, "disregard", "auto")).toBe("tighter");
+    expect(classify(def, "auto", "block")).toBe("tighter");
     expect(classify(def, "disregard", "block")).toBe("tighter");
   });
 
   it("treats a blank stored value as the shipped default ('disregard', owner decision 2026-07-03)", () => {
     // Unset field: blank -> "block" is TIGHTENING (disregard is the looser rank), one click.
     expect(classify(def, undefined, "block")).toBe("tighter");
-    expect(classify(def, "block", undefined)).toBe("looser"); // block(0) -> blank/disregard(1): looser, typed word
+    expect(classify(def, "block", undefined)).toBe("looser");
+    expect(classify(def, undefined, "auto")).toBe("tighter");
     expect(classify(def, undefined, "disregard")).toBe("changed"); // same rank as the default: no direction
   });
 });

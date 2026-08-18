@@ -225,14 +225,11 @@ Owner follow-up: data cascade + OpenRouter still failing.  #2831's PR-attached `
 
 Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/2026-08-18-openrouter-and-cascade.md`, `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
 ## 2026-08-18 CURSOR — IRA Ignore/Block already existed; they were not wired
+## 2026-08-18 CURSOR — IRA Ignore / Auto / Block + optional min-loss
 
-Owner thought Ignore / Auto / min-loss already did what they asked (Ignore = I don't care; Auto = a factor; a small taxable loss should not lock the Roth).  Those options already exist: `iraWashSaleHandling` Ignore/Disregard vs Block, taxable `washSaleHandling` Auto, and `washSaleMinLossUsd`.  No new enum.
+Owner: min-loss should be optional, and Auto must be a choosable IRA option (not only Ignore vs Block).  `iraWashSaleHandling` is now `block | auto | disregard`.  Blank `washSaleMinLossUsd` means every loss is in play (no hidden $50 IRA default).  Ignore does not steer Green.  Auto proceeds and Green weighs priced lock costs.  Block refuses.
 
-Why it looked like they didn't work: Green on Ignore was still told to note a forfeited deduction and `taxContext` still carried `washSaleRebuyCosts` priced at the raw 24% ST rate (IRA rates are zeroed).  IRA Block fell through to taxable Auto prompt language.  Min-loss was hidden on IRA Guardrails and unused on the IRA buyer path, so a nickle taxable loss could still hard-lock a Roth on Block (and steer Green on Ignore).
-
-Fix uses the existing options only.  Prompt `agentic-strategy@2.13.0`.  IRA blank min-loss floor = $50 (explicit 0 = every loss).
-
-Branch `cursor/ira-wash-sale-factor-a1df`.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
+Prompt `agentic-strategy@2.14.0`.  Branch `cursor/ira-wash-sale-factor-a1df`.  PR #2842.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

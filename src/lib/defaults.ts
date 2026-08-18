@@ -22,9 +22,6 @@ export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   longTermRatePct: 15
 };
 
-/** Blank washSaleMinLossUsd on an IRA buyer: a taxable loss below this never hard-locks the IRA. */
-export const DEFAULT_IRA_WASH_SALE_MIN_LOSS_USD = 50;
-
 export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
   liquidity: 1.4,
   momentum: 1.2,

@@ -606,10 +606,17 @@ enum DeskCopy {
         raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "__rotate__"
     }
 
-    /// Same-account IRA wash sales are N/A.  Cross-account replacement is ignored unless blocked.
+    /// Same-account IRA wash sales are N/A.  Cross-account: ignored / auto / blocked.
     static func iraWashSaleRows(handling: String?) -> (sameAccount: String, crossAccount: String) {
         let normalized = handling?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let cross = normalized == "block" ? "blocked" : "ignored"
+        let cross: String
+        if normalized == "block" {
+            cross = "blocked"
+        } else if normalized == "auto" {
+            cross = "auto"
+        } else {
+            cross = "ignored"
+        }
         return ("not applicable", cross)
     }
 

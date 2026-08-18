@@ -128,9 +128,9 @@ struct GuardrailsView: View {
                         if let floor = tax.washSaleMinLossUsd {
                             policyRow("Wash-Sale Minimum Loss", String(format: "$%.0f", floor))
                         } else {
-                            policyRow("Wash-Sale Minimum Loss", "$50 when blank")
+                            policyRow("Wash-Sale Minimum Loss", "optional")
                         }
-                        Text("Same-account wash sales do not apply in an IRA.  Cross-account replacement buys are ignored unless you blocked them.  A taxable loss below the minimum-loss floor is not a lock.")
+                        Text("Same-account wash sales do not apply in an IRA.  Cross-account replacement buys are ignored, Auto (weighed), or blocked.  Minimum loss is optional — blank means every loss.")
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

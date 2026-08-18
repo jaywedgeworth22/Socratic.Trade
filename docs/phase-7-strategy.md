@@ -34,7 +34,7 @@ Dashboard and strategy both `Promise.all` `getAccounts` + `getPortfolio`.  Each 
 
 ## 2026-08-18 IRA Ignore/Block already existed — they were not wired
 
-`iraWashSaleHandling` Ignore/Disregard and Block, plus `washSaleMinLossUsd`, were the owner's options.  Ignore still told Green to note a forfeited deduction and fed `washSaleRebuyCosts` at the raw 24% ST rate; IRA Block fell through to taxable Auto language; min-loss was hidden on IRA Guardrails and unused on the IRA buyer path.  Prompt `agentic-strategy@2.13.0` now matches the gate: Ignore does not constrain; Block is material locks only (IRA blank floor = $50).  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
+`iraWashSaleHandling` is Ignore / Auto / Block.  `washSaleMinLossUsd` is optional (blank = every loss).  Ignore does not steer Green.  Auto feeds priced lock costs so Green can weigh them.  Block refuses.  Prompt `agentic-strategy@2.14.0`.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
 
 ## 2026-08-18 rag-embed soft-degrade (health + store)
 

@@ -4897,31 +4897,36 @@ async function proposeTrades(input: {
   // stricter opt-in, no longer the default) does the context stay byte-identical (locked names
   // remain a hard no).
   const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
-  // IRA Ignore (iraWashSaleHandling "disregard", the default): the gate permits locked rebuys
-  // and Green must not be steered by the taxable lock list or a fake forfeited-deduction dollar
-  // amount (IRA rates are zero; raw policy ST rate is often still 24%). IRA Block: only material
-  // user-level locks (washSaleMinLossUsd; blank = $50) — this account's own taxSummary.lockedSymbols
-  // is empty because resolveTaxSettings force-offs the per-account guard.
-  const iraWashSaleDisregard =
-    (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard") === "disregard" &&
-    buyerIsIra;
+  // IRA Ignore: omit lock lists and costs so Green is not steered. IRA Auto: feed material
+  // (or all, if min-loss is blank) user-level locks + priced costs so Green can weigh them.
+  // IRA Block: lock symbols only. This account's own taxSummary.lockedSymbols is empty because
+  // resolveTaxSettings force-offs the per-account guard.
+  const iraWashSaleHandling = buyerIsIra
+    ? (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard")
+    : undefined;
+  const iraWashSaleDisregard = iraWashSaleHandling === "disregard";
   const userWashSaleLocks = taxSummary ? getUserWashSaleLockProvenance(input.userId, new Date()) : new Map();
+  const iraMinLoss = iraWashSaleMinLossUsd(input.policy.taxSettings);
   const materialIraLockedSymbols = buyerIsIra
     ? Array.from(userWashSaleLocks.entries())
-        .filter(([, lock]) => (lock.lossUsd ?? 0) >= iraWashSaleMinLossUsd(input.policy.taxSettings))
+        .filter(([, lock]) => iraMinLoss == null || (lock.lossUsd ?? 0) >= iraMinLoss)
         .map(([sym]) => sym)
     : [];
   const washSaleRebuyCosts = (() => {
-    if (buyerIsIra || washSaleHandling === "block" || !taxSummary) return undefined;
+    if (!taxSummary) return undefined;
+    if (buyerIsIra && iraWashSaleHandling !== "auto") return undefined;
+    if (!buyerIsIra && washSaleHandling === "block") return undefined;
     const stRate = input.policy.taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
     if (userWashSaleLocks.size === 0) return undefined;
-    return Array.from(userWashSaleLocks.entries()).map(([sym, lock]) => ({
-      symbol: sym,
-      lossAccount: lock.account,
-      clearsOn: lock.clearDate.toISOString().slice(0, 10),
-      disallowedLossUsd: Number(lock.lossUsd.toFixed(2)),
-      estimatedTaxCostUsd: Number(((lock.lossUsd * stRate) / 100).toFixed(2))
-    }));
+    return Array.from(userWashSaleLocks.entries())
+      .filter(([, lock]) => !buyerIsIra || iraMinLoss == null || (lock.lossUsd ?? 0) >= iraMinLoss)
+      .map(([sym, lock]) => ({
+        symbol: sym,
+        lossAccount: lock.account,
+        clearsOn: lock.clearDate.toISOString().slice(0, 10),
+        disallowedLossUsd: Number(lock.lossUsd.toFixed(2)),
+        estimatedTaxCostUsd: Number(((lock.lossUsd * stRate) / 100).toFixed(2))
+      }));
   })();
   const taxContext = taxSummary
     ? {
@@ -4936,7 +4941,8 @@ async function proposeTrades(input: {
             }),
         ...(!buyerIsIra && washSaleHandling !== "block" ? { washSaleHandling } : {}),
         ...(iraWashSaleDisregard ? { iraWashSaleDisregard: true } : {}),
-        ...(washSaleRebuyCosts ? { washSaleRebuyCosts } : {}),
+        ...(iraWashSaleHandling && iraWashSaleHandling !== "disregard" ? { iraWashSaleHandling } : {}),
+        ...(washSaleRebuyCosts && washSaleRebuyCosts.length > 0 ? { washSaleRebuyCosts } : {}),
         ...(buyerIsIra
           ? {}
           : {
@@ -4976,6 +4982,7 @@ async function proposeTrades(input: {
     hasTaxContext: taxContext != null,
     washSaleHandling,
     iraWashSaleDisregard,
+    ...(iraWashSaleHandling ? { iraWashSaleHandling } : {}),
     isIraAccount: buyerIsIra,
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
