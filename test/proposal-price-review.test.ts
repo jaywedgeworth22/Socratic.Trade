@@ -27,8 +27,8 @@ describe("proposal price review", () => {
     expect(nameMovePct(200, 202.2)).toBeCloseTo(1.1, 5);
   });
 
-  it("stamps delayed fallback on the approval-card helper", () => {
-    expect(delayedFallbackStampLabel()).toBe("delayed fallback");
+  it("stamps Delayed Quote on the approval-card helper", () => {
+    expect(delayedFallbackStampLabel()).toBe("Delayed Quote");
     expect(pendingShowsDelayedFallback({ delayedFallback: true })).toBe(true);
     expect(pendingShowsDelayedFallback({ proposal: { quoteDelayedFallback: true } })).toBe(true);
     expect(pendingShowsDelayedFallback({})).toBe(false);

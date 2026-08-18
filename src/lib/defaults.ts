@@ -138,7 +138,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   maxProposalsPerRun: 3,
   // Quote staleness gate (owner-approved 2026-07-28; owner 2026-08-18 delayed Yahoo):
   // age live tape against 120s.  Delayed Yahoo fallback ages the FETCH snapshot, stamps
-  // "delayed fallback" on the approval card, and KEEP TRADING — never fail-closed.
+  // user-facing "Delayed Quote" on the approval card, and KEEP TRADING — never fail-closed.
   // Exits are never gated.  A still-stale fetch converts the opening to a limit; it is
   // not blocked and does not skip Green/Red.
   maxQuoteAgeSec: 120,

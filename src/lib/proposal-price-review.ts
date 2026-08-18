@@ -1,7 +1,7 @@
 /** Proposed / live / target / delay numbers for a pending proposal card.
  *  Mirrors ios/SocraticTrade/ProposalPriceReview.swift so website + iOS stay aligned. */
 
-import { DELAYED_FALLBACK_STAMP, delayedFallbackCardTitle } from "./quote-delayed-fallback";
+import { DELAYED_QUOTE_STAMP, delayedFallbackCardTitle } from "./quote-delayed-fallback";
 
 export function pendingShowsDelayedFallback(pending: {
   delayedFallback?: boolean;
@@ -12,7 +12,7 @@ export function pendingShowsDelayedFallback(pending: {
 }
 
 export function delayedFallbackStampLabel(): string {
-  return DELAYED_FALLBACK_STAMP;
+  return DELAYED_QUOTE_STAMP;
 }
 
 export function delayedFallbackStampTitle(): string {

@@ -311,12 +311,20 @@ One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify rest
 PR **#2812**.  Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 ## 2026-08-18 CURSOR — Delayed Yahoo fallback stamp; keep trading
 
-Owner: stamp **delayed fallback** on approval cards when quotes are delayed
-Yahoo fallback.  Openings must still go through.  Do not fail-closed.  Do not
-block Green/Red.  Did not steal #2792/#2798/#2800/#2794.  No Stripe.
+Owner: stamp user-facing **Delayed Quote** on approval cards when quotes are
+delayed Yahoo fallback.  No coordinator notes on the card or in iOS UI
+(no “full surfaces not just the remote”, no Infisical/remote/owner-cut asides).
+Openings must still go through.  Do not fail-closed.  Do not block Green/Red.
+Did not steal #2792/#2798/#2800/#2794.  No Stripe.
 
 PR **#2818**.  Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
 `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
+
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+PR **#2822**.  Branch `cursor/litestream-restore-drill-2cd9`.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

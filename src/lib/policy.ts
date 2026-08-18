@@ -21,7 +21,7 @@ import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap } from "./policy-caps";
-import { DELAYED_FALLBACK_STAMP, isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
+import { isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
 import { quoteAgeSecForStalenessGate } from "./quotes-cascade";
 
 export interface PolicyContext {
@@ -397,8 +397,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // Primary path: the quote cascade must supply a trade-time within maxQuoteAgeSec (default 120s).
   // Venue-authoritative delayed feeds (Tradier sandbox): age the FETCH snapshot (`fetchedAt`), not
   // trade-time `asOf` — the ~15m delay is the venue's fill world, not a broken cascade.
-  // Delayed Yahoo fallback (owner 2026-08-18): same rule — age the fetch, stamp "delayed fallback"
-  // on the proposal, KEEP TRADING.  Do not fail-closed openings.  Do not skip Green/Red.
+  // Delayed Yahoo fallback (owner 2026-08-18): same rule — age the fetch, stamp
+  // user-facing "Delayed Quote" on the card, KEEP TRADING.  Do not fail-closed
+  // openings.  Do not skip Green/Red.  Do not write coordinator notes into rationale.
   // Backup if data is still old/missing (should be rare once cascade is healthy): convert the order
   // to a LIMIT at the proposal's intended entry (referencePrice / existing limit), so the price the
   // strategy identified as worth buying/shorting is honored instead of chasing a stale market print.
@@ -422,9 +423,8 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     if (delayedFallback) {
       proposal.quoteDelayedFallback = true;
       if (scanQuote?.provider) proposal.quoteProvider = scanQuote.provider;
-      if (!proposal.rationale.includes(DELAYED_FALLBACK_STAMP)) {
-        proposal.rationale = `${proposal.rationale} [${DELAYED_FALLBACK_STAMP}: Yahoo delayed tape; openings still go through.]`;
-      }
+      // Stamp lives on the approval card.  Do not append coordinator notes to
+      // rationale — that text is user-facing on website + iOS.
     }
     if (maxQuoteAgeSec != null && maxQuoteAgeSec > 0) {
       const { ageSec, missing, venueDelayed } = quoteAgeSecForStalenessGate(scanQuote, now);
@@ -476,7 +476,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
           const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
           const tapeNote = delayedFallback
-            ? ` ${DELAYED_FALLBACK_STAMP}`
+            ? " delayed quote"
             : venueDelayed
               ? " venue-delayed snapshot"
               : "";

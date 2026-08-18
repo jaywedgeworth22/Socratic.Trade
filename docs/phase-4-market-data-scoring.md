@@ -279,6 +279,6 @@ not a broken cascade:
 - Cascade FALLBACK and Alpaca `fillMissingQuotesWithClose` stamp `delayedFallback`.
 - Policy ages the FETCH snapshot (`fetchedAt`), not the delayed print.  Openings are
   never fail-closed.  Green/Red are not skipped.
-- Approval cards (website + iOS) stamp **delayed fallback**.
+- Approval cards (website + iOS) stamp user-facing **Delayed Quote**.
 
 See `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.

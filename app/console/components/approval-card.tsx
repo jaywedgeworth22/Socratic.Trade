@@ -507,7 +507,7 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
             {priceStrip}
             {pendingShowsDelayedFallback(pending) && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]" title={delayedFallbackStampTitle()}>
-                Now price is {delayedFallbackStampLabel()}.  Openings still go through.
+                {delayedFallbackStampTitle()}
               </p>
             )}
             {p.redTeamVerdict && !p.redTeamVerdict.available && p.redTeamVerdict.failureKind !== "not_configured" && (
@@ -834,7 +834,7 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
         {priceStrip}
         {pendingShowsDelayedFallback(pending) && (
           <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]" title={delayedFallbackStampTitle()}>
-            Now price is {delayedFallbackStampLabel()}.  Openings still go through.
+            {delayedFallbackStampTitle()}
           </p>
         )}
 

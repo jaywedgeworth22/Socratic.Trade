@@ -958,7 +958,7 @@ export interface BrokerQuote {
   fetchedAt?: string;
   /**
    * True when this price is the delayed Yahoo fallback tape (live broker / Alpaca
-   * snapshot missed).  Owner 2026-08-18: stamp "delayed fallback" on approval
+   * snapshot missed).  Owner 2026-08-18: stamp user-facing "Delayed Quote" on approval
    * cards and keep trading — do not fail-closed openings.
    */
   delayedFallback?: boolean;
@@ -1574,8 +1574,8 @@ export interface TradeProposal {
   referencePriceProvenance?: "provided" | "limit-fallback";
   /**
    * True when the generation-time quote was delayed Yahoo fallback.  Owner
-   * 2026-08-18: approval cards must say "delayed fallback"; openings still go
-   * through.  Optional so legacy rows stay valid.
+   * 2026-08-18: approval cards stamp user-facing "Delayed Quote"; openings
+   * still go through.  Optional so legacy rows stay valid.
    */
   quoteDelayedFallback?: boolean;
   /** Provider id for the generation-time quote (e.g. yahoo-finance-delayed). */
@@ -2646,7 +2646,7 @@ export interface PendingProposal {
   proposalCurrentPrice?: number;
   /**
    * True when the card's Now price (or the persisted generation quote) is
-   * delayed Yahoo fallback.  Website + iOS stamp "delayed fallback".
+   * delayed Yahoo fallback.  Website + iOS stamp user-facing "Delayed Quote".
    */
   delayedFallback?: boolean;
   quoteProvider?: string;

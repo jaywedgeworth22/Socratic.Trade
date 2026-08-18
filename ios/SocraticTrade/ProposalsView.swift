@@ -19,7 +19,7 @@ struct ProposalsView: View {
             if snapshot.pendingProposals.isEmpty {
                 EmptyStateCard(
                     title: "No proposals waiting",
-                    message: "New owner decisions will appear here after a strategy run.",
+                    message: "New decisions will appear here after a strategy run.",
                     systemImage: "checkmark.seal"
                 )
             } else {

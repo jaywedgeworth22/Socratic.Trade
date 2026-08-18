@@ -3,11 +3,20 @@
  *
  * When live broker / Alpaca snapshot quotes fail, the cascade keeps the
  * freshest Yahoo print (~15–20m delayed) so openings still go through.
- * That tape is expected delay, not a broken cascade.  Stamp "delayed fallback"
- * on approval cards.  Do not fail-closed openings.  Do not skip Green/Red.
+ * That tape is expected delay, not a broken cascade.  Approval cards stamp
+ * user-facing "Delayed Quote" only — no coordinator notes.  Do not
+ * fail-closed openings.  Do not skip Green/Red.
  */
 
-export const DELAYED_FALLBACK_STAMP = "delayed fallback";
+/** User-facing approval-card stamp (Title Case chip). */
+export const DELAYED_QUOTE_STAMP = "Delayed Quote";
+
+/** User-facing sentence under Proposed / Now.  Two spaces between sentences. */
+export const DELAYED_QUOTE_NOTE =
+  "This price is delayed.  You can still approve the order.";
+
+/** @deprecated Use DELAYED_QUOTE_STAMP — kept so older test imports resolve. */
+export const DELAYED_FALLBACK_STAMP = DELAYED_QUOTE_STAMP;
 
 const EXPLICIT_DELAYED_YAHOO = new Set([
   "yahoo-finance-delayed",
@@ -62,9 +71,9 @@ export function isDelayedYahooFallbackQuote(
 }
 
 export function delayedFallbackCardLabel(): string {
-  return DELAYED_FALLBACK_STAMP;
+  return DELAYED_QUOTE_STAMP;
 }
 
 export function delayedFallbackCardTitle(): string {
-  return "Now price is delayed Yahoo fallback.  Openings still go through.";
+  return DELAYED_QUOTE_NOTE;
 }

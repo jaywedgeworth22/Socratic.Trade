@@ -2,8 +2,9 @@
 
 ## Context & Objective
 
-Owner ruling: when quotes are delayed Yahoo fallback, stamp **delayed fallback**
-on approval cards and KEEP TRADING.  Do not fail-closed openings.  Do not block
+Owner ruling: when quotes are delayed Yahoo fallback, stamp user-facing
+**Delayed Quote** on approval cards and KEEP TRADING.  Do not write coordinator
+notes into card or iOS copy.  Do not fail-closed openings.  Do not block
 Green/Red because the quote is delayed.  Live broker / Alpaca snapshot misses
 still fall through to Yahoo (~15–20m).  That tape must stay visible and must
 not stop openings.
@@ -18,7 +19,7 @@ Did not steal #2792 / #2798 / #2800 / #2794.  No Stripe.
 - Age those quotes by fetch snapshot (`fetchedAt`), not the delayed print, so a
   just-fetched 15m Yahoo tape does not convert the opening to a limit.
 - Persist `quoteDelayedFallback` on the proposal and `delayedFallback` on the
-  pending card.  Website + iOS approval cards show **delayed fallback**.
+  pending card.  Website + iOS approval cards show **Delayed Quote**.
 - Openings stay approved.  Green/Red are not skipped.
 
 ### Files
@@ -59,6 +60,11 @@ Did not steal #2792 / #2798 / #2800 / #2794.  No Stripe.
   Only fallback / explicit delayed Yahoo.
 - If the fetch snapshot itself is stale, the existing limit backup still
   fires.  The opening is not blocked.
+- User-facing stamp is **Delayed Quote** (Title Case chip).  Sentence:
+  "This price is delayed.  You can still approve the order."  Rationale is
+  not used as a coordinator channel.
+- iOS Home / Data Sources / empty Proposals no longer mention remote,
+  Infisical, or owner-cut asides.
 - Did not touch FilingAPI, Pinecone, iOS release-readiness, or Stripe lanes.
 
 ## Verification State
@@ -76,6 +82,17 @@ npx vitest run test/quote-delayed-fallback.test.ts \
   test/dashboard-ui.test.ts
 # 49 + 110 focused tests passed
 npm run build         # exit 0 (Next.js 16.3.1 webpack)
+```
+
+Copy follow-up (user-facing **Delayed Quote**, no iOS coordinator asides):
+
+```bash
+npm run lint          # exit 0
+npx tsc --noEmit      # exit 0
+npx vitest run test/quote-delayed-fallback.test.ts \
+  test/proposal-price-review.test.ts \
+  test/staleness-gate.test.ts
+# 26 passed
 ```
 
 iOS unsigned `xcodebuild` passed on the first CI run of PR #2818 (no Xcode on this VM).

@@ -119,7 +119,7 @@ final class ProposalPriceReviewTests: XCTestCase {
         )
         let review = ProposalPriceReview.from(pending)
         XCTAssertTrue(review.showsDelayedFallback)
-        XCTAssertEqual(review.delayedFallbackStamp, "delayed fallback")
-        XCTAssertTrue(review.delayedFallbackNote.contains("Openings still go through"))
+        XCTAssertEqual(review.delayedFallbackStamp, "Delayed Quote")
+        XCTAssertTrue(review.delayedFallbackNote.contains("You can still approve the order"))
     }
 }

@@ -17,6 +17,7 @@ import { evaluateTradeProposal } from "../src/lib/policy";
 import {
   DELAYED_FALLBACK_STAMP,
   delayedFallbackCardLabel,
+  delayedFallbackCardTitle,
   isDelayedYahooFallbackQuote,
   isYahooFallbackProvider
 } from "../src/lib/quote-delayed-fallback";
@@ -107,8 +108,9 @@ describe("delayed Yahoo fallback detection", () => {
     expect(isYahooFallbackProvider("yahoo-finance-batch")).toBe(true);
     expect(isYahooFallbackProvider("yahoo-finance-single")).toBe(true);
     expect(isYahooFallbackProvider("alpaca-snapshot")).toBe(false);
-    expect(delayedFallbackCardLabel()).toBe("delayed fallback");
+    expect(delayedFallbackCardLabel()).toBe("Delayed Quote");
     expect(delayedFallbackStampLabel()).toBe(DELAYED_FALLBACK_STAMP);
+    expect(delayedFallbackCardTitle()).toBe("This price is delayed.  You can still approve the order.");
   });
 
   it("treats an explicit delayedFallback stamp or yahoo-finance-delayed as delayed fallback", () => {
@@ -165,8 +167,7 @@ describe("delayed Yahoo fallback — KEEP TRADING (owner 2026-08-18)", () => {
     expect(proposal.type).toBe("market");
     expect(proposal.quoteDelayedFallback).toBe(true);
     expect(proposal.quoteProvider).toBe("yahoo-finance-single");
-    expect(proposal.rationale).toContain(DELAYED_FALLBACK_STAMP);
-    expect(proposal.rationale).toContain("openings still go through");
+    expect(proposal.rationale).not.toMatch(/Yahoo delayed tape|delayed fallback|Infisical/i);
     expect(result.quoteStale).toBeUndefined();
   });
 
@@ -206,7 +207,7 @@ describe("delayed Yahoo fallback — KEEP TRADING (owner 2026-08-18)", () => {
     expect(result.reasons).toEqual([]);
     expect(proposal.type).toBe("limit");
     expect(proposal.quoteDelayedFallback).toBe(true);
-    expect(proposal.rationale).toContain(DELAYED_FALLBACK_STAMP);
+    expect(proposal.rationale).toContain("delayed quote");
     expect(proposal.rationale).toContain("not blocked");
   });
 });

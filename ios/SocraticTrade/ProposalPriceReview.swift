@@ -91,10 +91,10 @@ struct ProposalPriceReview: Equatable {
         pendingDelayedFallback || proposalDelayedFallback
     }
 
-    var delayedFallbackStamp: String { "delayed fallback" }
+    var delayedFallbackStamp: String { "Delayed Quote" }
 
     var delayedFallbackNote: String {
-        "Now price is delayed fallback.  Openings still go through."
+        "This price is delayed.  You can still approve the order."
     }
 
     var missingTargetNote: String? {
@@ -102,7 +102,7 @@ struct ProposalPriceReview: Equatable {
         if let exitPlan, !exitPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return exitPlan
         }
-        return "No target was set.  Green and Red should debate a price target and a staged exit (partial stops / partial takes) sized to this name, the tape, and the account horizon."
+        return "No target was set."
     }
 
     static func from(_ pending: PendingProposal) -> ProposalPriceReview {
