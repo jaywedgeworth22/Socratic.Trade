@@ -63,16 +63,26 @@ Did not steal #2792 / #2798 / #2800 / #2794.  No Stripe.
 
 ## Verification State
 
-Focused tests run in this session (full gate before claim):
-
 ```bash
+npm run lint          # exit 0
+npx tsc --noEmit      # exit 0 (after mergeQuoteData extra type)
 npx vitest run test/quote-delayed-fallback.test.ts \
   test/quotes-cascade.test.ts \
   test/alpaca-quote-fallback.test.ts \
   test/proposal-price-review.test.ts \
   test/approval-quote-scan.test.ts \
-  test/staleness-gate.test.ts
+  test/staleness-gate.test.ts \
+  test/strategy-hardening.test.ts \
+  test/dashboard-ui.test.ts
+# 49 + 110 focused tests passed
+npm run build         # exit 0 (Next.js 16.3.1 webpack)
 ```
+
+iOS unsigned `xcodebuild` passed on the first CI run of PR #2818 (no Xcode on this VM).
+`npx tsc --noEmit` failed once on `mergeQuoteData` extra (`delayedFallback` missing
+from the extra type); fixed in `6b2b9037`.  Full local `npm test` also hit
+unrelated env flakes (TwelveData quota, vector-db receipts, server-metrics host
+metadata, 30s retrieval-scope timeouts) — not this change.
 
 ## Next Steps & Blockers
 

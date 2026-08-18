@@ -315,7 +315,7 @@ Owner: stamp **delayed fallback** on approval cards when quotes are delayed
 Yahoo fallback.  Openings must still go through.  Do not fail-closed.  Do not
 block Green/Red.  Did not steal #2792/#2798/#2800/#2794.  No Stripe.
 
-Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
+PR **#2818**.  Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
 `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
