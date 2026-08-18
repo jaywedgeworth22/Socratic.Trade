@@ -34,8 +34,10 @@ Fix: shared `src/lib/nasdaq-screener-fetch.ts` with `BROWSER_UA` + Origin/Refere
 ## Verification State
 
 ```bash
-npx vitest run test/scan-empty-screener.test.ts
-npx tsc --noEmit
+npx vitest run test/scan-empty-screener.test.ts test/market-custom-symbol.test.ts
+# 22 passed (abort → BROWSER_UA retry; empty seedEnrichment {} does not 200 cached; Yahoo whole-set)
+npx eslint src/lib/nasdaq-screener-fetch.ts src/lib/market.ts src/lib/congress-share.ts app/api/scan/route.ts test/scan-empty-screener.test.ts
+npx tsc --noEmit  # clean
 ```
 
 Live recorded 2026-08-18 (market open), this VM:
