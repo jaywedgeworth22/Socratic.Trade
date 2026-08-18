@@ -1,5 +1,7 @@
 # 2026-08-18 — Green 400 must actually fail over
 
+Rebased onto `origin/main` `12e8dcd` after #2812 merged (PR #2831 was CONFLICTING).  Sole conflict: `docs/phase-7-strategy.md`.  Kept #2812 rag-embed soft-degrade (must not 503).  Did not revert #2812/#2829/#2800.  Runtime unchanged: 400 failover-eligible, exhausted suffix counts stored calls, terra not first Green pick.
+
 ## Context & Objective
 
 First Green after #2829 is live (`6429d984`) still failed.  Jay's receipt: Paper `PA33IDTHMFK9` run `7f5890a5-bc21-4474-87eb-9b595de04ed1` (2026-08-18T19:33:02Z–19:38:29Z) picked `gpt-5.6-terra` → `openai/gpt-5.6-terra`, HTTP 400 "Provider returned error" (881ms), then "Failover chain exhausted (3 Green Team endpoints)" after ONE stored `llm_call_latency`.  Red `deepseek-reasoner` never ran.  The #2829 account-miss sentence did not fire.  Do not rewrite that 400 copy.  Make Green actually complete.

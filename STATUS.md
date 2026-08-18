@@ -1,8 +1,14 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — Green 400 failover rebased onto #2812 (`12e8dcd`)
+
+PR **#2831** was CONFLICTING after #2812 merged (`12e8dcd`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Sole conflict was `docs/phase-7-strategy.md` — kept both this Green 400 stanza and #2812's rag-embed soft-degrade stanza.  Did not revert #2812 (rag-embed must not 503) or #2829/#2800.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
+
+Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
+
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 
-PR **#2812** was CONFLICTING with `origin/main` (`6429d984`, includes #2800 fuse + #2829 `require_parameters` narrowing).  Rebased `cursor/rag-embed-soft-degrade-ed6d` onto that SHA.  Sole real conflict was `docs/phase-7-strategy.md` — kept both the soft-degrade stanza and main's OpenRouter/`require_parameters` + fuse notes.  `vector-db.ts` auto-merged: `embedDocumentsLaneOrSkip` and #2800 `selectItemsWithinWriteBudget` both remain.  Behavior unchanged: one dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.  Did not "fix" the embed outage.
+PR **#2812** MERGED as `12e8dcd`.  One dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.
 
 Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: no xcodebuild.  Full `npm test` still hits leftover SiliconFlow + SEC/Yahoo 404s (untouched).  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
 ## 2026-08-18 CURSOR — Nasdaq screener UA + retry so Scan returns names
