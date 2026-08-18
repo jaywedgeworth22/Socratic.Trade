@@ -118,6 +118,7 @@ final class MobileStore: ObservableObject {
     @Published private(set) var pendingAccountId: String?
     @Published private(set) var deletionRequest: AccountDeletionRequest?
     @Published private(set) var isDeletingAccount = false
+    @Published private(set) var isAcceptingConsent = false
     @Published private(set) var isSigningIn = false
     @Published private(set) var snapshotLoadFailed = false
     /// proposalId → queued command id so cards can follow approve/reject through recentCommands.
@@ -505,6 +506,23 @@ final class MobileStore: ObservableObject {
 
     func patchLlmBudget(_ body: [String: Any]) async throws -> LlmBudgetResponse {
         try await client.patchLlmBudget(body)
+    }
+
+    var needsAppConsent: Bool {
+        snapshot?.readiness.requiresAppConsent == true
+    }
+
+    func acceptAppConsent() async {
+        guard !isAcceptingConsent else { return }
+        isAcceptingConsent = true
+        defer { isAcceptingConsent = false }
+        do {
+            try await client.acceptAppConsent()
+            error = nil
+            await load()
+        } catch {
+            applyAuthAwareError(error)
+        }
     }
 
     func loadAccountDeletionPreview() async {

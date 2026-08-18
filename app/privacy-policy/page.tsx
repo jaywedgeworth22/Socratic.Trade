@@ -65,7 +65,9 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "6. Data retention",
     body: [
-      "We retain account, connection, and audit data for as long as your account is active and as needed to comply with legal obligations, resolve disputes, and enforce agreements. You can request deletion of your account and associated data by contacting us."
+      "We retain account, connection, and audit data for as long as your account is active and as needed to comply with legal obligations, resolve disputes, and enforce agreements.",
+      "Production database backups (Litestream snapshots) are retained for 7 days, then expire.  Deleting your account removes in-app rows; residual backup copies fall out of that window.",
+      "You can delete your account yourself in Settings → Danger using the typed confirmation.  That flow permanently fences the prior identity and erases app-side data and server-stored secrets for the signed-in account.  Broker positions and provider OAuth grants are not closed or revoked by the app."
     ]
   },
   {
@@ -73,21 +75,29 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
     body: [
       "You control which notification channels are enabled and can disable any of them, including SMS, at any time in Settings.",
       "You can disconnect a broker account at any time, which stops further data retrieval from that connection.",
-      "You can request a copy of, or the deletion of, your personal data by contacting us at the email below."
+      "Account deletion is self-serve: Settings → Danger (or Account & Settings on iOS) with typed confirmation.  You can also contact us at the email below."
     ]
   },
   {
-    title: "8. Children's privacy",
+    title: "8. Shared market-data pool and research corpus",
+    body: [
+      "Using the app requires contributing general market data — quotes, fundamentals, price history, and news pulled through your keys or broker — to a shared pool that other accepted users can read.  Personal account data (positions, orders, balances, P&L, credentials, watchlists, and strategy settings) is never pooled.",
+      "A shared research corpus (RAG) may include fact-tier learnings you contribute when that switch is on.  Risk rules and strategy directives stay in your private confirmation queue and are never written to the shared corpus.",
+      "A second allowed user (for example a friend or family email on ALLOWED_EMAILS) receives an isolated account.  Their positions, orders, credentials, and private settings are not visible to you, and yours are not visible to them."
+    ]
+  },
+  {
+    title: "9. Children's privacy",
     body: ["The service is not directed to, and is not knowingly used by, anyone under 18."]
   },
   {
-    title: "9. Changes to this policy",
+    title: "10. Changes to this policy",
     body: [
       "We may update this policy as the service evolves. Material changes will be reflected by updating the effective date below."
     ]
   },
   {
-    title: "10. Contact",
+    title: "11. Contact",
     body: ["Questions about this policy or your data: mail@jays.services."]
   }
 ];
@@ -107,7 +117,7 @@ export default function PrivacyPolicyPage() {
       <main className="mx-auto max-w-3xl px-6 py-14 space-y-10">
         <section className="space-y-3">
           <h1 className="text-3xl font-bold tracking-tight text-fg sm:text-4xl">Privacy Policy</h1>
-          <p className="text-sm text-faint">Effective date: July 10, 2026</p>
+          <p className="text-sm text-faint">Effective date: August 18, 2026</p>
         </section>
 
         {SECTIONS.map((section) => (

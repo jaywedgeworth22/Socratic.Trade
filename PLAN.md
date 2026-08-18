@@ -6,6 +6,7 @@
 
 
 > **2026-08-18 CURSOR — Hybrid AND prune (`cursor/hybrid-and-prune-7f41`).** Implement the #2811 hybrid: processed operational writes (highlights + signal sections + speaker turns) via a minimum writer split.  Do not flip `RAG_PINECONE_WRITE_CLASS` until PR B hydrate exists.  Prune junk/HTML/dupes/low-value only; keep useful only-copies.  Keep 2.5M fuse + $45 reserve.  No Stripe.  Leave #2800 remainder deadlock alone.  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.
+> **2026-08-18 CURSOR — Legal clickwrap + mandatory data-pool (`cursor/legal-clickwrap-data-pool-1016`).** Owner cut items 9–11.  Versioned dismissible clickwrap; mandatory market-data share; keep `/welcome` and second-email isolation.  No Stripe/IAP.  Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
 
 > **2026-08-18 CURSOR — Pinecone store vs condense (`cursor/pinecone-store-vs-condense-ce2b`).** Report only.  Recommended default is hybrid: processed proposer corpus in Pinecone, full bodies local, hydrate after A+B.  Do not fill Builder with raw 10-K/Q/transcripts.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not raise the 2.5M WU fuse.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.
 

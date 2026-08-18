@@ -24,6 +24,13 @@ lint 0 errors, tsc clean, 278 focused tests pass, `npm run build` clean.
 Owner cut after #2811: condense-first for Pinecone, store-more locally, then prune junk so Green/Red retrieve (scout k=1 / deep k=8 + 24k) sees useful vectors.  Minimum PR A split is on this branch: local-complete FTS + extractive highlights + form-aware signal sections + speaker-turn slices write as their own complete `storeDocument`s.  `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` (not flipped; PR B hydrate is not in this PR).  Safe prune deletes raw-HTML / junk / dupes / low-value only; useful full-body only-copies stay.  2.5M fuse + $45 reserve unchanged.  No Stripe.  Did not retarget #2792 / #2798 / #2800 / #2794.
 
 Branch `cursor/hybrid-and-prune-7f41`.  PR #2820, rebased onto `main` (`522b2454` #2824).  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.  Next: dry-run prune against prod inventory when ready — do not `--apply` yet.  Do not flip write-class until PR B.
+## 2026-08-18 CURSOR — Legal clickwrap + mandatory data-pool + keep multi-user
+
+Owner cut 2026-08-17 items 9–11.  Versioned dismissible legal notice (clickwrap +
+desk sentence + Green/Red prompt).  Data-pool is accept-or-cannot-use; unset users
+do not silently share.  `/welcome` stays on; a second `ALLOWED_EMAILS` address
+stays isolated.  No Stripe/IAP.  Branch `cursor/legal-clickwrap-data-pool-1016`.
+Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

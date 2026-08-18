@@ -334,6 +334,30 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     anchor: "delivery"
   },
   {
+    id: "settings.dataPool",
+    label: "Shared market-data pool",
+    synonyms: ["data pool", "consent", "sharing", "market data pool", "rag corpus"],
+    scope: "user",
+    destination: "settings/data-privacy",
+    legacySection: "data",
+    backingField: "dataPoolConsent",
+    disclosure: "advanced",
+    help: "Required.  General market data is pooled; personal account data is not.",
+    anchor: "sharing"
+  },
+  {
+    id: "settings.legalNotice",
+    label: "Legal notice",
+    synonyms: ["terms", "privacy", "disclaimer", "clickwrap", "not investment advice"],
+    scope: "user",
+    destination: "settings/data-privacy",
+    legacySection: "data",
+    backingField: "legalNoticeConsent",
+    disclosure: "advanced",
+    help: "Versioned terms and privacy acceptance.  Dismissed after accept until the version bumps.",
+    anchor: "legal"
+  },
+  {
     id: "settings.scanBreadthCandidates",
     label: "Scan breadth — candidates per run",
     synonyms: ["market scan", "candidate limit", "scan breadth", "data privacy"],

@@ -236,12 +236,20 @@ export default function HowItWorksPage() {
 
       <footer className="border-t border-line mt-8">
         <div className="mx-auto max-w-4xl px-6 py-8 flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-between">
-          <p className="text-xs text-faint">
-            Not investment advice. Trading involves risk of loss.{" "}
-            <a href="/welcome" className="underline underline-offset-2 hover:text-muted">
-              Home
-            </a>
-          </p>
+            <p className="text-xs text-faint">
+              Not investment advice.  You set authority.{" "}
+              <a href="/welcome" className="underline underline-offset-2 hover:text-muted">
+                Home
+              </a>
+              {" · "}
+              <a href="/terms-and-conditions" className="underline underline-offset-2 hover:text-muted">
+                Terms
+              </a>
+              {" · "}
+              <a href="/privacy-policy" className="underline underline-offset-2 hover:text-muted">
+                Privacy
+              </a>
+            </p>
           <p className="text-xs text-faint">
             &copy; 2026 Socratic Trade &middot;{" "}
             <a href="mailto:mail@jays.services" className="underline underline-offset-2 hover:text-muted">
