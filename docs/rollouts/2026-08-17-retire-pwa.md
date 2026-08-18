@@ -68,10 +68,32 @@ cache path, desktop + phone website and native iOS unchanged.
 
 ```
 npm run lint
+# 0 errors (744 grandfathered warnings)
+
 npx tsc --noEmit
-npx vitest run test/pwa-retired-redirect.test.ts test/middleware-auth.test.ts test/subdomain-routing.test.ts
+# exit 0
+
+npx vitest run test/pwa-retired-redirect.test.ts \
+  test/middleware-auth.test.ts test/subdomain-routing.test.ts
+# 3 files / 52 passed
+
+npx vitest run test/mobile-api.test.ts test/mobile-auth-exchange-route.test.ts \
+  test/mobile-auth-handoff.test.ts test/mobile-account-deletion-route.test.ts \
+  test/mobile-order-cancel.test.ts test/mobile-stop-preemption.test.ts \
+  test/mobile-view-scope.test.ts test/mobile-policy-precondition.test.ts \
+  test/stale-mobile-commands.test.ts test/apple-app-site-association-route.test.ts
+# 10 files / 46 passed (iOS gateway unchanged)
+
 npm test
+# 578 files passed / 21 failed / 1 skipped
+# 6860 passed / 37 failed / 51 skipped
+# Failures are unrelated env/network suites (Yahoo, Voyage/SiliconFlow,
+# notify, SEC coverage, usage-monitor).  None import the deleted PWA client
+# or manifest.
+
 npm run build
+# exit 0.  Routes include ƒ /mobile (redirect) and /api/mobile/*.
+# No /manifest.webmanifest route.
 ```
 
 iOS sources were not edited.  No `xcodebuild` required.

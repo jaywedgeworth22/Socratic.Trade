@@ -915,8 +915,8 @@ PWA client in place.  This branch deletes the PWA client, stops advertising an
 installable web app, 410s `/manifest.webmanifest`, unregisters leftover service
 workers, and keeps `/api/mobile/*` + responsive `/console` + native iOS.
 
-Branch `cursor/retire-pwa-72cb`.  Rollout:
-`docs/rollouts/2026-08-17-retire-pwa.md`.
+Branch `cursor/retire-pwa-72cb`.  PR #2801.
+Rollout: `docs/rollouts/2026-08-17-retire-pwa.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
