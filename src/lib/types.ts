@@ -160,10 +160,11 @@ export interface ScoringWeights {
 /** US tax-mitigation settings (estimates only — not tax advice). */
 /**
  * Tax treatment of an account. IRAs (Roth/Traditional) are tax-sheltered: there is no annual
- * capital-gains tax, and the IRC §1091 wash-sale lockout does not apply WITHIN a single IRA
- * (a wash sale has no benefit there). A loss realized in a TAXABLE account, however, still locks
- * rebuys of that symbol across ALL of the user's accounts — including the IRAs — for 30 days,
- * because buying the replacement in the IRA permanently destroys the disallowed basis.
+ * capital-gains tax, tax-loss harvesting has no effect (losses never appear on a return), and
+ * the IRC §1091 wash-sale lockout does not apply WITHIN a single IRA (a wash sale has no benefit
+ * there). A loss realized in a TAXABLE account, however, still locks rebuys of that symbol across
+ * ALL of the user's accounts — including the IRAs — for 30 days, because buying the replacement
+ * in the IRA permanently destroys the disallowed basis.
  */
 export type TaxationType = "taxable" | "roth_ira" | "traditional_ira";
 

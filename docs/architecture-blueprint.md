@@ -353,6 +353,7 @@ export function resolveTaxSettingsForAccount(
 
 1. **Forced 0% Tax Rates**: All estimated liability indicators on the Performance dashboard and in LLM prompts are set to 0.
 2. **Wash-Sale Bypass**: In taxable accounts, selling a stock at a loss and rebuying it within 30 days disallows the tax deduction. The agent blocks these rebuy attempts. For IRA accounts, this restriction is bypassed entirely (the wash-sale lock set in `getWashSaleLockedSymbols` returns an empty set).
+3. **No tax-loss harvest**: Harvest candidates are empty, Green is not told this is a taxable account, and `harvestableLosses` / `positionsNearLongTerm` are omitted from `taxContext`. An IRA cannot deduct a realized loss.
 
 ---
 

@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — IRA accounts must not tax-loss harvest
+
+Owner screenshot: Autopilot sold NWG on the Roth with Green rationale "Harvesting unrealized loss… as part of tax loss harvesting strategy."  Roth/Traditional cannot deduct that loss.  Root cause: `taxContext` always included `harvestableLosses`, and Green was told it traded a taxable account whenever any tax block existed.
+
+Fix: IRA prompt language forbids harvest; empty harvest candidates; omit harvest / LT-window fields on IRA runs; overlay account `taxationType` in strategy the same way the dashboard already did.  Prompt `agentic-strategy@2.12.0`.
+
+Branch `cursor/ira-no-tax-loss-harvest-a1df`.  Rollout: `docs/rollouts/2026-08-18-ira-no-tax-loss-harvest.md`.
+
 ## 2026-08-18 CURSOR — iOS UX owner cut (rebased onto main)
 
 Rebased #2825 `cursor/ios-ux-owner-cut-bdae` onto `main` (`995b7eee` #2815).  Kept IRA wash-sale N/A, lowercase “rotate models”, full jargon sweep, Ask-First ↔ Autopilot + % NAV caps on device.  Kept #2815 legal clickwrap / Terms+Privacy, #2821 Daily AI Budget, and #2821 Data Sources number rows.  No coordinator notes in the UI.  Did not steal reserved PRs.  Do not merge until GitHub mergeable is CLEAN.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.

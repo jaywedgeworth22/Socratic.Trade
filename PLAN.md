@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-18 CURSOR — IRA no tax-loss harvest (`cursor/ira-no-tax-loss-harvest-a1df`).** Green was harvesting losers on the Roth (NWG).  IRA runs no longer get taxable harvest instructions or `harvestableLosses`.  Taxable accounts unchanged.  Rollout: `docs/rollouts/2026-08-18-ira-no-tax-loss-harvest.md`.
 > **2026-08-18 CURSOR — iOS UX owner cut (`cursor/ios-ux-owner-cut-bdae`, #2825).** Rebased onto `main` (`995b7eee`).  IRA wash-sale N/A; lowercase “rotate models”; full jargon sweep; Ask-First ↔ Autopilot + % NAV on device.  Kept #2815 legal clickwrap and #2821 budget rows.  Did not steal reserved PRs.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
 > **2026-08-18 CURSOR — Per-user LLM daily budget in Settings/iOS — MERGED #2821 `972e3763`.** Live cap is `user_settings.llm_daily_budget`.  When set, spend primitives + chat + strategy skip fail-closed.  `RAG_RUN_BUDGET_*` is a Data Sources setting.  System secrets stay Infisical.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
 

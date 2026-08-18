@@ -1056,8 +1056,9 @@ function TaxBlock() {
     <div className="flex flex-col gap-4 text-[length:var(--con-fs-sm)]">
       {ira && (
         <p className="text-[color:var(--con-muted)]">
-          This is an IRA — no yearly taxes on trades here, so rates are zeroed. A loss realized in a <em>taxable</em>{" "}
-          account still locks rebuys of that symbol across all your accounts, including this one.
+          This is an IRA — no yearly taxes on trades here, so rates are zeroed and loss-harvest
+          candidates are not shown. A loss realized in a <em>taxable</em> account still locks rebuys
+          of that symbol across all your accounts, including this one.
         </p>
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

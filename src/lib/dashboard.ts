@@ -43,7 +43,7 @@ import {
   type PrefetchedPnl
 } from "./performance";
 import { computeSpyBenchmarkDetailed, type SpyBenchmarkResult } from "./benchmark";
-import { getTaxSummary } from "./tax";
+import { getTaxSummary, overlayAccountTaxationType } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
 import { getStoredMcpOAuthTokens } from "./mcp-oauth";
@@ -757,7 +757,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         accountNumber,
         scorecardSource,
         currentPrices,
-        { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType },
+        overlayAccountTaxationType(policy.taxSettings, activeAccount?.taxationType),
         new Date(),
         userId,
         prefetchedFills,
