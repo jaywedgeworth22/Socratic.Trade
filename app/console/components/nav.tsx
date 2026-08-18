@@ -376,7 +376,7 @@ function TabsSheet({
  * Browser padding is ~22% of env(safe-area-inset-bottom) so ~78% of the
  * grey-blue band is gone; a solid --con-surface ::after paints the rest
  * and the area around the URL pill (see .con-tabbar in console.css).
- * Standalone/PWA still uses the full env() pad for the home indicator. */}
+ * Standalone/PWA still uses the full env() pad for the home indicator. */
 
 export function MobileTabBar({ pendingCount, unreadCount = 0 }: { pendingCount: number; unreadCount?: number }) {
   const pathname = usePathname() ?? "";
