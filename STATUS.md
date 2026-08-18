@@ -309,6 +309,11 @@ Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED 
 One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify restarted Docker, and the boot interlock re-halted Green/Red.  `rag-embed` and `rag-rerank` now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay critical.  A thrown document-embed batch skips that batch and continues later ones; a thrown query embed returns empty retrieval.  Rebased onto `6429d984` (#2800 + #2829 kept).  Did not steal #2792/#2798/#2800/#2794.
 
 PR **#2812**.  Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+## 2026-08-18 CURSOR — iOS owner-note UI copy
+
+Owner: coordinator/owner comments do not belong in the iOS UI.  Notes for Jay stay in PRs/docs.  Concrete leak on `main`: Home Desk subtitle `full surfaces, not just the remote`.  Removed that subtitle and the same class of leaked strings (control-remote setup line, Infisical footer, `/api/policy` / `policy.patch` / "not a second copy here" / "phone-safe").  Did not steal #2792/#2798/#2800/#2794 (those own FilingAPI, alert-noise, Pinecone writes, and iOS console handoffs).
+
+Branch `cursor/ios-no-owner-note-ui-5139`.  Rollout: `docs/rollouts/2026-08-18-ios-no-owner-note-ui.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
