@@ -481,7 +481,9 @@ around the URL pill. Browser pad is now `calc(env(safe-area-inset-bottom) * 0.22
 remainder matches the tab strip. Did **not** repeat the 2026-08-05 negative-bottom
 shift (that hid labels). Standalone/PWA still uses the full env() pad.
 
-Branch `cursor/mobile-tabbar-chrome-gap-23d5`. Rollout:
+PR **#2828**.  Branch `cursor/mobile-tabbar-chrome-gap-23d5`.  lint + tsc +
+`npm run build` passed.  Focused nav tests 9/9.  Full vitest not green on this
+VM (unrelated live-HTTP tests).  Rollout:
 `docs/rollouts/2026-08-18-mobile-tabbar-chrome-gap.md`.
 
 ## 2026-08-18 CURSOR — iOS UX owner cut (rebased onto main)

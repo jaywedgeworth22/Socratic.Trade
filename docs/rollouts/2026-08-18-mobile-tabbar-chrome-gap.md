@@ -45,7 +45,19 @@ The 2026-08-05 fix *shifted* the whole bar down by 80% of a measured chrome gap.
 
 ## Verification State
 
-Commands run after the first push; see the PR for the latest gate.
+```bash
+npm run lint            # 0 errors (grandfathered warnings only)
+npx tsc --noEmit        # clean (after comment-terminator fix)
+npx vitest run test/console-nav-labels.test.ts test/console-tabs-keyboard.test.ts
+# 2 files, 9 tests — all passed
+npm run build           # Next.js 16.3.1 webpack build succeeded
+```
+
+Full `npm test` was started and then stopped: this cloud VM has no provider keys, so
+unrelated files fail/hang on live HTTP (TwelveData quota, SEC company_tickers 404,
+Alpaca snapshot 404, strategy-held-position 30s timeouts).  No product JS/TS
+logic changed — CSS + comments + docs only.  CI `verify` on the PR is the
+authoritative full suite.
 
 ## Next Steps & Blockers
 
