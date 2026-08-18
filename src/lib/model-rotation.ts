@@ -188,7 +188,7 @@ export function implicitGreenRotationFallbacks(
 ): string[] {
   const taken = new Set([primary, ...explicit].map((m) => m.trim()).filter(Boolean));
   const remaining = pool.filter((model) => !taken.has(model));
-  const preferred = remaining.filter((model) => PREFERRED_GREEN_FAILOVER_SEATS.includes(model));
+  const preferred = PREFERRED_GREEN_FAILOVER_SEATS.filter((model) => remaining.includes(model));
   const otherReady = remaining.filter(
     (model) => !PREFERRED_GREEN_FAILOVER_SEATS.includes(model) && !isUnservableOpenRouterFirstPick(model)
   );

@@ -443,8 +443,10 @@ describe("resolveModelRotationForRun", () => {
     }
     // A different account starts from its OWN (empty) representation, independent of acct-A's
     // committed picks: on the uniform/weighted boundary r (see the weighting test above), acct-B
-    // still resolves pool[0] — leaked acct-A history (or leaked red-seat history) would shift it.
-    const r = 1.5 / (2 * pool.length - 1);
+    // still resolves firstPick[0] — leaked acct-A history (or leaked red-seat history) would shift it.
+    const { greenFirstPickPool } = await import("../src/lib/model-rotation");
+    const firstPick = greenFirstPickPool(pool);
+    const r = 1.5 / (2 * firstPick.length - 1);
     const other = await resolveModelRotationForRun({
       userId,
       accountId: "acct-B",
@@ -452,8 +454,8 @@ describe("resolveModelRotationForRun", () => {
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL },
       random: () => r
     });
-    expect(other.llmModel).toBe(pool[0]);
-    expect(other.llmModel).toBe(out.llmModel); // acct-A's first pick was pool[0] too (r = 0)
+    expect(other.llmModel).toBe(firstPick[0]);
+    expect(other.llmModel).toBe(out.llmModel); // acct-A's first pick was firstPick[0] too (r = 0)
   });
 
   it("fails the rotating seats closed (empty override models, not the sentinel) when no credential resolves at all", async () => {
@@ -502,30 +504,31 @@ describe("resolveModelRotationForRun", () => {
     const userId = `rot-abort-${randomUUID()}`;
     const accountId = "acct-abort";
     const { upsertUserApiKey, getDb } = await import("../src/lib/db");
-    const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    const { resolveModelRotationForRun, eligibleRotationPool, greenFirstPickPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
     upsertUserApiKey(userId, "openai", "sk-test", "test");
     const { pool } = await eligibleRotationPool(userId);
-    expect(pool.length).toBeGreaterThanOrEqual(3);
-    // Uniform/weighted boundary r (see the weighting test): uniform stats -> pool[0]; after ONE
-    // committed pool[0] pick -> pool[1].
-    const r = 1.5 / (2 * pool.length - 1);
+    const firstPick = greenFirstPickPool(pool);
+    expect(firstPick.length).toBeGreaterThanOrEqual(3);
+    // Uniform/weighted boundary r (see the weighting test): uniform stats -> firstPick[0]; after ONE
+    // committed firstPick[0] pick -> firstPick[1].
+    const r = 1.5 / (2 * firstPick.length - 1);
     const random = () => r;
     // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget).
     const first = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
     // Run 2: the aborted run recorded nothing, so the same rng resolves the SAME model.
     const second = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
-    expect(first.llmModel).toBe(pool[0]);
+    expect(first.llmModel).toBe(firstPick[0]);
     expect(second.llmModel).toBe(first.llmModel);
     const auditCount = () =>
       (getDb()
         .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
         .get(userId) as { n: number }).n;
     expect(auditCount()).toBe(0); // no representation recorded by the aborted runs
-    // Run 2 now actually serves the LLM and commits -> pool[0] is represented (weight halved), so
+    // Run 2 now actually serves the LLM and commits -> firstPick[0] is represented (weight halved), so
     // the same rng shifts run 3 to the next underrepresented model.
     second.commit();
     const third = await resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }, random });
-    expect(third.llmModel).toBe(pool[1]);
+    expect(third.llmModel).toBe(firstPick[1]);
     expect(third.llmModel).not.toBe(first.llmModel);
   });
 });
