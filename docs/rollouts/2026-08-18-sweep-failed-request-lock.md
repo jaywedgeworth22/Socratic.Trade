@@ -47,9 +47,14 @@ Focused commands (full suite not re-run; leftover #2845 wrap-up stopped):
 
 ```bash
 npx vitest run test/stale-running-runs.test.ts
-npx tsc --noEmit
-npm run lint
+# Test Files  1 passed (1)
+# Tests  10 passed (10)
+
+npx tsc --noEmit   # exit 0
+npm run lint       # 0 errors, grandfathered warnings only
 ```
+
+PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2847
 
 ## Next Steps & Blockers
 

@@ -4,7 +4,7 @@
 
 #2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Roth orphan `strategy_runs` `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  The 5:14pm CT Run once then 502'd and wrote no new `strategy_runs` row.  Root cause: request id === run id; queue dedupes on any `queued`/`running` request; `markStaleRunningRuns` only wrote `strategy_runs`.  Fix closes the matching open request on the sweep and `finishStrategyRun` write paths, and heals already-terminal runs whose request is still open.  Do not hide the lock with queue-time ignore or error copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2840 / #2812.
 
-Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+PR **#2847**.  Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
 
 ## 2026-08-18 CURSOR — getAccounts 6s timeout blocks Run once after deploy
 
