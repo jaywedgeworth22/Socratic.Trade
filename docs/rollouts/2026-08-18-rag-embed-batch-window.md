@@ -14,6 +14,7 @@ Touched files:
 - `src/lib/rag-metering.ts`
 - `src/lib/vector-db.ts`
 - `test/embed-request-pack.test.ts`
+- `test/query-embedding-cache.test.ts`
 - `STATUS.md`
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
@@ -33,11 +34,11 @@ Touched files:
 ```bash
 npm run lint
 npx tsc --noEmit
-npm test -- test/embed-request-pack.test.ts test/vector-db-embedding-integrity.test.ts test/vector-db-chunk-cap.test.ts
+npm test -- test/embed-request-pack.test.ts test/vector-db-embedding-integrity.test.ts test/vector-db-chunk-cap.test.ts test/query-embedding-cache.test.ts
 npm run build
 ```
 
-lint: 0 errors (grandfathered warnings only).  tsc clean.  44 focused tests passed (includes isolate-over-limit 32-batch).  `npm run build` clean (Next 16.3.1).  Linux VM: no xcodebuild.  Do not claim an iOS compile.
+lint: 0 errors (grandfathered warnings only).  tsc clean.  Focused packer + integrity + chunk-cap + query-embed-cache tests.  `npm run build` clean (Next 16.3.1).  Linux VM: no xcodebuild.  Do not claim an iOS compile.
 
 ## Next Steps & Blockers
 

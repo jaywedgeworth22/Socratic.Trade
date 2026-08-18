@@ -4,7 +4,7 @@
 
 Live `VECTOR_EMBED_BATCH_SIZE=32` POSTed 32 ingest texts to OpenRouter `baai/bge-m3`.  DeepInfra sums the whole `input[]` against 8192; a batch hit 8193 and 400'd `embed documents` from 19:12:49Z.  That is a batch-sum, not one unchunked 10-K.  #2812 stopped the 503; it did not embed those docs.  Hybrid producer still condenses first (`chunkDocument` 480 / `VECTOR_CONTEXT_MAX_CHARS`); packing is a batch-window fix after that step.  `storeContexts` packs already-condensed texts under ~7500 `approxTokens` and embeds each group on its own lane so one over-limit singleton cannot skip the rest of a count-32 batch.  Local archive / store-more is unchanged.  No second filing chunker.  No extra table vectors.  Did not flip `RAG_PINECONE_WRITE_CLASS` or prune.  Did not re-clamp the #2800 fuse.  Infisical can keep the count at 32.  Did not drop rag-embed from health.
 
-Branch `cursor/rag-embed-batch-window-54d7`.  PR **#2840**.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.  Linux VM: no xcodebuild.
+Branch `cursor/rag-embed-batch-window-54d7`.  PR **#2840**.  `verify` failed on `test/query-embedding-cache.test.ts`: the rag-metering mock omitted `approxTokens`, so query-pack threw before `voyage.embed`.  Mock now keeps the real estimator.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.  Linux VM: no xcodebuild.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 
