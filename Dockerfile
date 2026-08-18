@@ -93,7 +93,12 @@ COPY --from=build /app /app
 
 USER root
 EXPOSE 4000
+# Traefik follows Docker health.  /api/health is the rich ops probe and
+# can 503 (Pinecone/RAG hard-stop) or exceed this 5s timeout after boot.
+# That marks running:unhealthy while the process is up -- public 503 for
+# ~20 min after #2810 finished on 2026-08-17.  /api/live is process+SQLite
+# only.  Do not point Coolify HTTP health back at /api/health.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:4000/api/health >/dev/null || exit 1
+  CMD curl -fsS http://127.0.0.1:4000/api/live >/dev/null || exit 1
 
 CMD ["bash", "scripts/coolify-prod-start.sh"]

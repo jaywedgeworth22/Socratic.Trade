@@ -552,6 +552,15 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
   });
 
+  it("public path /api/live passes with no identity and no auth configured", async () => {
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", "");
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/live");
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+  });
+
   it("one-time mobile auth exchange reaches its verifier gate without an existing session", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");

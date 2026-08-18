@@ -601,16 +601,19 @@ Last published coverage (2026-08-16): 608 transcripts / 565 tickers vs a 1,000-i
 PR **#2813**.  Branch `cursor/roic-individual-archive-9ad4`.  Rebased onto `d3e2c9ee` (#2892).  Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 ## 2026-08-18 CURSOR — Coolify RTH deploy latch (`HOTFIX=1` escape)
 ## 2026-08-18 CURSOR — Coolify RTH latch + skip docs-only rebuilds (#2811 503)
+## 2026-08-18 CURSOR — Coolify RTH latch + skip docs-only + `/api/live`
 
-Jay wanted auto-deploy only outside RTH unless `HOTFIX=1`.  ASC then showed
-socratictrade.com 503 ~7:15–7:49pm CT because Coolify **stop-old-then-start**
-ran a full rebuild for docs-only #2811 (`23412aff`).  Cloudflare `no available
-server`.  `last_restart_at` null.  Consistent container name / no rolling is
-the no-dual-Litestream-writer intent — **kept**.  Latch now also refuses
-image-noop / docs-only **before `npm ci`**.  Desired Coolify order (owner, not
-this agent): build image first, then stop the named container, then start.
-Did not bounce the box.  Did not `FORCE_RESTORE`.  Did not PATCH live Coolify.
-Did not touch #2792/#2798/#2800/#2794.
+Jay wanted auto-deploy only outside RTH unless `HOTFIX=1`.  ASC refined
+tonight's 503: #2810 build 00:15:40Z–00:22:27Z (~7m), #2811 build
+00:43:42Z–00:49:25Z (~6m).  `processStartedAt` 00:49:27Z is #2811
+completing, not a stuck deploy.  7:22–7:43pm CT the #2810 container was
+up (`litestream-runtime.log`, two SIGTERMs only, no ERROR) while public
+503 continued — likely Coolify `running:unhealthy`, Traefik no healthy
+backend.  Keep **stop-old-first** and no rolling.  Latch skips docs-only
+before `npm ci`.  Docker HEALTHCHECK is now `GET /api/live` (process +
+SQLite) so a finished deploy cannot leave origin 503 for ~20 extra
+minutes while the process is up.  Did not bounce the box, `FORCE_RESTORE`,
+or PATCH live Coolify.  Did not touch #2792/#2798/#2800/#2794.
 
 PR **#2817**.  Branch `cursor/rth-deploy-latch-c039`.
 Rollout: `docs/rollouts/2026-08-18-rth-deploy-latch.md`.

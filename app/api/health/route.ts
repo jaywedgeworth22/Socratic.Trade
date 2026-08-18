@@ -35,8 +35,12 @@ function leaseOwnerWithoutPid(owner: string): string {
   return owner.replace(/^\d+:/, "");
 }
 
-// Real liveness probe (was an unconditional {ok:true}). A health check that can never fail is
-// worse than none for a system that can hold real positions — it hides outages. This probes:
+// Rich public/ops probe — NOT the Coolify/Traefik backend probe.  Docker HEALTHCHECK
+// and any Coolify HTTP health path must use GET /api/live.  A 503 here (critical
+// Pinecone/RAG/Alpaca hard-stop) or a >5s response used to mark the named container
+// running:unhealthy while Next was up; Traefik then had no healthy backend
+// (2026-08-17 7:22-7:43pm CT after #2810).  UptimeRobot may still alert on this
+// route.  This probes:
 //   - DB reachability (the getInternalSetting read throws if SQLite is unwritable/locked), and
 //   - scheduler liveness (age of the last tick heartbeat; stale ⇒ autonomy/stops aren't running).
 // Returns 503 when a critical check fails so PM2/uptime tooling can act.

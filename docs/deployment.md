@@ -24,13 +24,14 @@ Dockerfile refuses the **image build before `npm ci`** when:
   trees — the #2811 class).  `docs/benchmarks/**` is image-relevant.
 
 A refused build must not swap the named container.  Keep consistent
-container names; do **not** enable rolling / zero-downtime (two Litestream
-writers).  Stop-old-then-start is the swap, **after** the new image exists.
-`last_restart_at` null + Cloudflare `no available server` on 2026-08-17
-~7:15–7:49pm CT was stop-old-then-build for docs-only `23412aff`.  Do not
-add this check to `scripts/coolify-prod-start.sh`.  Do not `FORCE_RESTORE`.
-Do not bounce the live box from an agent.  This repo does not PATCH live
-Coolify.
+container names and **stop-old-first**; do **not** enable rolling /
+zero-downtime (two Litestream writers).  Docker HEALTHCHECK is
+`GET /api/live` (process + SQLite).  Do not point Coolify HTTP health at
+`/api/health` — that probe can 503 or exceed 5s while Next is up, which
+is `running:unhealthy` and Cloudflare `no available server` (7:22–7:43pm
+CT after #2810 on 2026-08-17).  Do not add the latch to
+`scripts/coolify-prod-start.sh`.  Do not `FORCE_RESTORE`.  Do not bounce
+the live box from an agent.  This repo does not PATCH live Coolify.
 
 Canonical detail:
 
@@ -49,10 +50,12 @@ Canonical detail:
    with the app's **Dockerfile** pack.  The first app step (before `npm ci`)
    is `tsx scripts/assert-rth-deploy-latch.ts`.  Weekday RTH exits 2 unless
    `HOTFIX=1` / `RTH_DEPLOY_OVERRIDE=1`.  Docs-only / image-noop exits 3.
-   Either refusal must keep the last healthy named container.  Otherwise it
-   finishes the image, **then** stops the old named container and starts
-   `scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live` (one Litestream
-   writer).
+   Either refusal must keep the last healthy named container.  Otherwise
+   Coolify **stop-old-first** (consistent name, one Litestream writer)
+   and starts `scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live`.
+   Traefik must see Docker `healthy` via `/api/live` once the process is
+   up — a finished deploy must not sit `running:unhealthy` for extra
+   minutes.
 4. Boot injects Infisical secrets, restores SQLite when the marker-guarded
    bootstrap requires it, and runs Litestream (when R2 is enabled) around Next.js.
 

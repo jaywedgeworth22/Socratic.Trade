@@ -1,4 +1,4 @@
-# 2026-08-18 — Coolify auto-deploy only in non-RTH + skip docs-only rebuilds
+# 2026-08-18 — Coolify RTH latch, skip docs-only, /api/live for Traefik
 
 ## Context & Objective
 
@@ -8,51 +8,58 @@ immediately, including market hours (`docs/rollouts/2026-07-10-auto-deploy-on.md
 said so explicitly).  The blind-spots audit (`docs/audits/2026-08-17-blind-spots.md`
 F-OPS-1) recorded the same gap.
 
-ASC then produced tonight's outage: **socratictrade.com was 503 ~7:15–7:49pm CT
-(~34 minutes)** because Coolify **stop-old-then-start** ran a full image rebuild
-for docs-only **#2811** (`23412aff`).  Cloudflare `no available server`.
-`last_restart_at` null (the named container was gone; Traefik had no backend).
-The app uses a consistent container name and no rolling flag — that is the
-no-dual-Litestream-writer intent.  **Keep that.**  Do not bounce the live box.
-Do not `FORCE_RESTORE`.  Do not PATCH live Coolify from this agent.
+ASC then produced tonight's 503 on socratictrade.com.  Keep **stop-old-first**,
+consistent container name, and no rolling (one Litestream writer).  Block RTH
+except `HOTFIX=1`.  Skip docs-only Coolify rebuilds.  Also stop a finished
+deploy from leaving origin 503 for ~20 extra minutes while the process is
+up.  Do not bounce the live box.  Do not `FORCE_RESTORE`.  Do not PATCH live
+Coolify from this agent.
 
-This PR implements the RTH latch **and** refuses docs-only / image-noop
-rebuilds so a markdown merge cannot take origin down for the Horizon build
-budget again.
+## Tonight's 503 (ASC refined)
 
-## Tonight's 503 (#2811)
+Public Cloudflare `no available server` ran ~7:15–7:49pm CT.  That was **two
+short docs-only rebuilds plus a 20-minute unhealthy-while-up window**, not one
+stuck ~34-minute Horizon build.
 
-| Fact | Value |
-|---|---|
-| Window | ~7:15–7:49pm CT 2026-08-17 (merge `2026-08-18T00:43:40Z`) |
-| Symptom | Cloudflare `no available server` (origin 503) |
-| Sha | `23412aff` — docs-only #2811 |
-| Files | `PLAN.md`, `STATUS.md`, `docs/EFFORT-LOG.md`, `docs/audits/…`, `docs/phase-7-strategy.md`, `docs/rollouts/…` |
-| In the image? | Almost none.  `.dockerignore` drops `docs/**` except `docs/benchmarks`.  Root markdown is unused at runtime. |
-| Deploy shape | Consistent container name, rolling **off**, stop-old-then-start |
-| `last_restart_at` | null — process never came up as a successor; the old container was removed first |
+| UTC | CT | What |
+|---|---|---|
+| 00:15:37Z | 7:15pm | #2810 merged — docs-only blind-spots (`cde3deee`) |
+| 00:15:40Z–00:22:27Z | 7:15–7:22 | #2810 image build (~7m), stop-old-first |
+| 00:22:27Z–00:43:42Z | 7:22–7:43 | **#2810 container running** (`litestream-runtime.log`) while public 503 continued |
+| 00:43:40Z | 7:43 | #2811 merged — docs-only Pinecone audit (`23412aff`) |
+| 00:43:42Z–00:49:25Z | 7:43–7:49 | #2811 image build (~6m), stop-old-first again |
+| 00:49:27Z | 7:49 | `processStartedAt` — **#2811 completing**, not a stuck deploy |
 
-Stop-old-then-start with a consistent name is correct for **one Litestream
-writer**.  Rolling / zero-downtime would run two writers on one B2 prefix and
-re-wedge L2.  The bug is the **order**: Coolify removed the named container
-**before** the new image existed, so Traefik had nothing for the entire
-`npm ci` + `next build` (~30 min Horizon budget).
+`last_restart_at` null was a misread of "never came up."  The successor
+process is #2811 at 00:49:27Z.  Persistent `litestream-runtime.log` has only
+the two SIGTERMs (stop-old for each rebuild) and **no ERROR**.  Litestream
+was not the crash.  The 7:22–7:43 window is Coolify `running:unhealthy`:
+Traefik had no healthy backend even though Next and Litestream were up.
 
-Acceptable stop-old-first path (still one writer, still consistent name):
+Dockerfile HEALTHCHECK used to `curl /api/health` with a 5s timeout.
+`/api/health` is the rich ops probe: it can return 503 on a Pinecone/RAG/Alpaca
+hard-stop, and it can exceed 5s after boot (credits + Litestream IPC).  Either
+marks the named container unhealthy.  Docker does not restart `unhealthy`
+(`restart: unless-stopped` only reacts to process exit) — origin stays 503
+until the next swap.
+
+Both #2810 and #2811 are image-noop (markdown + `docs/**`, not
+`docs/benchmarks`).  Skip those rebuilds.  **Keep stop-old-first** for real
+runtime commits (one writer).  Do not add rolling.
+
+## Stop-old-first path (kept)
 
 1. **Skip** the deploy when the commit cannot change the runtime image
-   (implemented in-repo).
-2. For a real runtime commit: **build the new image while the old named
-   container keeps serving**, then stop the old container, then start the
-   new one.  Traefik gap is the start period (~60–90s), not 34 minutes.
-   Overlapping Traefik backends would require two containers; two
-   `DB_BOOTSTRAP=live` containers are two Litestream writers.  We will not
-   do that.
+   (implemented).  That is the #2810 / #2811 class.
+2. For a real runtime commit: Coolify **stop-old-first**, then start the new
+   named container (one Litestream writer).  Build gap is the observed ~6–7
+   minutes, not a 34-minute stuck job.
+3. Once the process is up, Traefik must see Docker `healthy` via `GET /api/live`
+   (process + SQLite only).  `/api/health` stays the UptimeRobot / deploy-verify
+   probe and may 503 without taking the only backend out of rotation.
 
-Owner Coolify UI (do **not** apply from this agent): confirm the recreate
-does not delete the named container until the new image tag exists.  Optional
-follow-up: disable `is_auto_deploy_enabled` and let workflow `RTH Deploy
-Latch` be the only nudge, so a docs-only webhook never starts a deploy.
+Owner Coolify UI (do **not** apply from this agent): if an HTTP health path
+is set, it must be `/api/live`, not `/api/health`.
 
 ## Changes Made
 
@@ -78,7 +85,12 @@ A refused build must keep the last healthy named container.  The check is
 - `scripts/assert-rth-deploy-latch.ts`
 - `scripts/rth-deploy-drain.sh` (skips image-noop pending diffs)
 - `test/rth-deploy-latch.test.ts`
-- `Dockerfile` (latch before `npm ci`)
+- `app/api/live/route.ts` (Coolify / Traefik liveness)
+- `middleware.ts` (`/api/live` public)
+- `app/api/health/route.ts` (comment: not the Traefik probe)
+- `test/live-route.test.ts`
+- `test/middleware-auth.test.ts`
+- `Dockerfile` (latch before `npm ci`; HEALTHCHECK `/api/live`)
 - `.github/workflows/rth-deploy-latch.yml`
 - `.github/workflows/sentry-ci-report.yml`
 - `scripts/sentry-ci-report.py`
@@ -102,6 +114,11 @@ A refused build must keep the last healthy named container.  The check is
   public GitHub commit files.  A failed or truncated (>=300 files) fetch
   is treated as image-relevant (fail closed for skip).  `.git` stays
   dockerignored, so the image build cannot `git diff`.
+- **Keep stop-old-first.**  Owner refined: do not flip Coolify to
+  build-then-stop or rolling.  Skip no-ops instead.
+- **`/api/live` vs `/api/health`.**  Traefik follows Docker health.  A
+  serving process must not go `running:unhealthy` because the ops probe
+  503'd or timed out.
 - **No rolling / no zero-downtime flag.**  Two Litestream writers are the
   L2 wedge RCA.  Consistent container name stays.
 - **No `FORCE_RESTORE`.**  A docs-only 503 is not a replica-restore event.
@@ -115,24 +132,29 @@ A refused build must keep the last healthy named container.  The check is
 ./node_modules/.bin/tsc --noEmit
 npm run lint
 ./node_modules/.bin/vitest run test/rth-deploy-latch.test.ts \
-  test/sentry-ci-report-workflows.test.ts test/market-hours.test.ts
+  test/live-route.test.ts test/sentry-ci-report-workflows.test.ts \
+  test/market-hours.test.ts
 ```
 
-tsc clean.  lint 0 errors (grandfathered warnings).  58 focused tests passed
-(3 files).  Prior `verify-hosted` on this branch was green before the
-image-noop follow-up (run `32087609316`).  Re-run after this push.
+tsc clean.  lint 0 errors.  100 focused tests passed (5 files).  Prior
+`verify-hosted` on this branch was green before the image-noop and
+`/api/live` follow-ups (run `32087609316`).  Re-run after this push.
 
 ## Next Steps & Blockers
 
 - Merge this PR outside weekday RTH (or the latch's own first image must
-  build once).  After it is live, later RTH / docs-only builds refuse fast.
-- Owner: confirm Coolify builds the new image **before** deleting the named
-  container.  This agent will not flip that.
+  build once).  After it is live, later RTH / docs-only builds refuse fast
+  and Traefik uses `/api/live`.
+- Owner: if Coolify has an HTTP health path, set it to `/api/live`.  This
+  agent will not PATCH that.
 - Optional: `COOLIFY_DEPLOY_WEBHOOK_URL` if hook redeliver stays forbidden.
 
 ## Zero-Code Findings
 
-- #2811 files are exactly the CI docs-only class and the image-noop class.
+- #2810 and #2811 are both the CI docs-only / image-noop class.
+- `processStartedAt` 00:49:27Z is #2811 completing, not a hung #2810.
+- 7:22–7:43pm CT is unhealthy-while-up, not a missing process.
+  `litestream-runtime.log` has only the two SIGTERMs, no ERROR.
 - Repo hook still POSTs every `push` to Coolify with no path filter.
 - `scripts/coolify-prod-start.sh` has no market-hours gate and must not gain
   one (runtime refusal after swap = another 503).
