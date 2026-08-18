@@ -12,8 +12,9 @@ gate from current-truth docs.  Paper execution-cost default rises from 1 bp to t
 `OOS_ROUND_TRIP_COST_BPS` / `PAPER_DEFAULT_BASE_SLIPPAGE_BPS` (20).  No `autoApplyWeights`.
 Code already had no 20+5 evaluator (`learning-transfer.ts` deleted 2026-07-23).
 
-Branch `cursor/paper-live-docs-cost-68d3`.  Rollout:
+PR **#2819**.  Branch `cursor/paper-live-docs-cost-68d3`.  Rollout:
 `docs/rollouts/2026-08-18-paper-live-pooling-cost.md`.  Did not touch #2792/#2798/#2800/#2794.
+lint 0 errors, tsc clean, 278 focused tests pass, `npm run build` clean.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

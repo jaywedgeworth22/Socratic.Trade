@@ -46,14 +46,34 @@ Touched files:
 
 ## Verification State
 
-Commands run after the first push (see later commits if the gate needed a fix):
-
 ```
-npx tsc --noEmit
-npx vitest run test/execution-cost.test.ts test/performance.test.ts test/learning-loop-autotuning-db.test.ts test/signal-health.test.ts test/learned-context-account-scope.test.ts test/lesson-vectors.test.ts
+npm run lint
+# 0 errors, 767 grandfathered warnings
+
+./node_modules/.bin/tsc --noEmit
+# exit 0
+
+./node_modules/.bin/vitest run \
+  test/execution-cost.test.ts \
+  test/performance.test.ts \
+  test/learning-loop-autotuning-db.test.ts \
+  test/signal-health.test.ts \
+  test/learned-context-account-scope.test.ts \
+  test/lesson-vectors.test.ts \
+  test/take-profit-trim-db.test.ts \
+  test/strategy-hardening.test.ts \
+  test/position-stop-plans-db.test.ts \
+  test/pending-fill-reconcile-refire.test.ts \
+  test/backtest.test.ts
+# 11 files / 278 passed
+
+npm run build
+# Next.js 16.3.1 webpack build succeeded
 ```
 
-Full `npm run lint` / `npm test` / `npm run build` follow the first PR revision.
+`npm test` (full suite) was started in this cloud VM and hung after ~18 minutes on unrelated
+network/provider tests (SEC 404s, Finnhub empty, server-metrics, vector-db receipts). Those
+failures are not in the cost or pooling files. Focused suites above cover the changed behavior.
 
 ## Next Steps & Blockers
 
