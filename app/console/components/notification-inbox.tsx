@@ -3,7 +3,7 @@
 /** Header inbox so a toast is not the only place a notification lives.
  *  Reuses the same persisted notification_events the Activity Alert Center shows. */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Bell, Check } from "lucide-react";
 import { formatNotificationDisplay } from "@/lib/dashboard-ui";
@@ -36,6 +36,15 @@ export function NotificationInbox({ snapshot }: { snapshot: DashboardSnapshot })
     setOpen(false);
     requestAnimationFrame(() => triggerRef.current?.focus());
   };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   const markRead = async (ids: string[]) => {
     const unique = ids.filter((id) => id.length > 0);
