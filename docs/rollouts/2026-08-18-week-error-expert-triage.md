@@ -67,7 +67,7 @@ xcodebuild build -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
 ```
 
-tsc clean.  3 Alpaca cache tests pass.  iOS **BUILD SUCCEEDED**.  `xcodebuild test` could not boot `iPhone 17 Pro` (simulator data missing on disk).  No device screenshot.
+tsc clean.  3 Alpaca cache tests pass.  iOS **BUILD SUCCEEDED**.  First `xcodebuild test` failed because this machine’s iPhone 17 Pro data dir was gone.  Recreated the sim (`27C2C925-8A84-4058-9EA1-C4A0F446B20A`).  Second run: **TEST SUCCEEDED** — 123 tests, 0 failures, including the new Scan copy / 45s timeout / portfolio empty tests.  No signed-in screenshot (fresh sim has no session).
 
 ## Next Steps & Blockers
 
