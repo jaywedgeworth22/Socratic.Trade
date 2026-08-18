@@ -27,18 +27,13 @@ const BODY =
 
 describe("ROIC Individual archive resume", () => {
   const dataDir = mkdtempSync(join(tmpdir(), "roic-artifacts-"));
-  const previousDataDir = process.env.DATA_DIR;
-  const previousDb = process.env.DATABASE_URL;
-  const previousKey = process.env.ROIC_API_KEY;
-  const previousMax = process.env.ROIC_TRANSCRIPTS_MAX_PER_RUN;
-  const previousDepth = process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL;
 
   beforeAll(() => {
-    process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-roic-archive-${randomUUID()}.db`)}`;
-    process.env.DATA_DIR = dataDir;
-    process.env.ROIC_API_KEY = "test-roic-archive-key";
-    process.env.ROIC_TRANSCRIPTS_MAX_PER_RUN = "8";
-    process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL = "20";
+    vi.stubEnv("DATABASE_URL", `file:${join(tmpdir(), `agentic-roic-archive-${randomUUID()}.db`)}`);
+    vi.stubEnv("DATA_DIR", dataDir);
+    vi.stubEnv("ROIC_API_KEY", "test-roic-archive-key");
+    vi.stubEnv("ROIC_TRANSCRIPTS_MAX_PER_RUN", "8");
+    vi.stubEnv("ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL", "20");
   });
 
   beforeEach(() => {
@@ -52,16 +47,7 @@ describe("ROIC Individual archive resume", () => {
   });
 
   afterAll(() => {
-    if (previousDataDir === undefined) delete process.env.DATA_DIR;
-    else process.env.DATA_DIR = previousDataDir;
-    if (previousDb === undefined) delete process.env.DATABASE_URL;
-    else process.env.DATABASE_URL = previousDb;
-    if (previousKey === undefined) delete process.env.ROIC_API_KEY;
-    else process.env.ROIC_API_KEY = previousKey;
-    if (previousMax === undefined) delete process.env.ROIC_TRANSCRIPTS_MAX_PER_RUN;
-    else process.env.ROIC_TRANSCRIPTS_MAX_PER_RUN = previousMax;
-    if (previousDepth === undefined) delete process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL;
-    else process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL = previousDepth;
+    vi.unstubAllEnvs();
     rmSync(dataDir, { recursive: true, force: true });
   });
 

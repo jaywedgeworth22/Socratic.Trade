@@ -36,8 +36,17 @@ Touched:
 ## Verification State
 
 ```bash
+npm run lint
+# 0 errors (767 grandfathered warnings)
+npx tsc --noEmit
+# exit 0
 npx vitest run test/roic-transcripts.test.ts test/roic-archive-resume.test.ts test/ops-snapshot.test.ts
-# then npm run lint && npx tsc --noEmit && npm test && npm run build
+# 3 files / 22 passed
+npm test
+# 580 files passed / 21 failed / 37 tests failed — all failures in untouched files
+# (this VM has live provider secrets; strategy/history/notify tests hit real HTTP)
+npm run build
+# Next.js 16.3.1 production build succeeded
 ```
 
 ## Remaining gaps (2026-08-18)
