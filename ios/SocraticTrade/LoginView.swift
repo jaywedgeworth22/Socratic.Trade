@@ -11,7 +11,7 @@ struct LoginView: View {
     private static let valueBullets = [
         "Review and approve proposals",
         "Track positions, orders, and performance",
-        "Control the backend agent without moving credentials onto the device"
+        "Run, pause, and approve from your phone"
     ]
 
     var body: some View {
@@ -196,7 +196,7 @@ struct LoginView: View {
     private var privacyNote: some View {
         VStack(spacing: 8) {
             Label(
-                "The app stores only your Socratic Trade session.  Broker and provider secrets stay on the backend.",
+                "The app stores only your Socratic Trade session.  Broker and provider keys stay with your account.",
                 systemImage: "lock.fill"
             )
             .font(.appCaption)

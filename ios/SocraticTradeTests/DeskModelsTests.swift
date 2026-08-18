@@ -98,6 +98,74 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(budget.effective.costSource, "user")
     }
 
+    func testIraWashSaleCopyMatchesWebNA() {
+        XCTAssertTrue(DeskCopy.isIraTaxation("roth_ira"))
+        XCTAssertTrue(DeskCopy.isIraTaxation(" traditional_ira "))
+        XCTAssertTrue(DeskCopy.isIraTaxation("Roth IRA"))
+        XCTAssertTrue(DeskCopy.isIraTaxation("Traditional IRA"))
+        XCTAssertFalse(DeskCopy.isIraTaxation("taxable"))
+        XCTAssertFalse(DeskCopy.isIraTaxation("brokerage"))
+        XCTAssertTrue(
+            DeskCopy.isIraAccount(
+                accountTaxation: nil,
+                capabilityType: "brokerage",
+                policyTaxation: "roth_ira"
+            )
+        )
+
+        XCTAssertEqual(
+            DeskCopy.resolvedTaxationType(
+                accountTaxation: "roth_ira",
+                capabilityType: "brokerage",
+                policyTaxation: "taxable"
+            ),
+            "roth_ira"
+        )
+
+        let disregarded = DeskCopy.iraWashSaleRows(handling: "disregard")
+        XCTAssertEqual(disregarded.sameAccount, "not applicable")
+        XCTAssertEqual(disregarded.crossAccount, "ignored")
+
+        let blocked = DeskCopy.iraWashSaleRows(handling: "block")
+        XCTAssertEqual(blocked.sameAccount, "not applicable")
+        XCTAssertEqual(blocked.crossAccount, "blocked")
+
+        let missing = DeskCopy.iraWashSaleRows(handling: nil)
+        XCTAssertEqual(missing.crossAccount, "ignored")
+    }
+
+    func testFullPolicyDecodesIraWashSaleHandling() throws {
+        let json = Data(#"""
+        {
+          "taxSettings": {
+            "taxationType": "roth_ira",
+            "washSaleGuard": true,
+            "washSaleHandling": "block",
+            "iraWashSaleHandling": "disregard",
+            "shortTermRatePct": 24,
+            "longTermRatePct": 15
+          }
+        }
+        """#.utf8)
+        let policy = try JSONDecoder().decode(FullPolicy.self, from: json)
+        XCTAssertEqual(policy.taxSettings?.taxationType, "roth_ira")
+        XCTAssertEqual(policy.taxSettings?.iraWashSaleHandling, "disregard")
+        XCTAssertTrue(DeskCopy.isIraTaxation(policy.taxSettings?.taxationType))
+    }
+
+    func testModelSeatValueNeverShowsTheRotateSentinel() {
+        XCTAssertEqual(DeskCopy.modelSeatValue("__rotate__"), "rotate models")
+        XCTAssertEqual(DeskCopy.modelSeatValue(" __ROTATE__ "), "rotate models")
+        XCTAssertEqual(
+            DeskCopy.modelSeatValue("__rotate__", fallbacks: ["google/gemini-3.7-flash"]),
+            "rotate models"
+        )
+        XCTAssertEqual(DeskCopy.modelSeatValue("claude-sonnet-5"), "claude-sonnet-5")
+        XCTAssertEqual(DeskCopy.modelSeatValue(nil), "—")
+        XCTAssertFalse(DeskCopy.modelSeatValue("__rotate__").contains("_"))
+        XCTAssertFalse(DeskCopy.modelSeatValue("__rotate__").contains("rotate__"))
+    }
+
     func testJoinedListAndYesNoAreSentenceCaseValues() {
         XCTAssertEqual(DeskCopy.joinedList(["QQQ", "SPY"]), "QQQ, SPY")
         XCTAssertEqual(DeskCopy.joinedList([]), "none")

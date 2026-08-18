@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — iOS UX owner cut (rebased onto main)
+
+Rebased #2825 `cursor/ios-ux-owner-cut-bdae` onto `main` (`995b7eee` #2815).  Kept IRA wash-sale N/A, lowercase “rotate models”, full jargon sweep, Ask-First ↔ Autopilot + % NAV caps on device.  Kept #2815 legal clickwrap / Terms+Privacy, #2821 Daily AI Budget, and #2821 Data Sources number rows.  No coordinator notes in the UI.  Did not steal reserved PRs.  Do not merge until GitHub mergeable is CLEAN.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
+
 ## 2026-08-18 CURSOR — Per-user LLM daily budget (Settings + iOS)
 
 **MERGED #2821 `972e3763`.**  Live store is `user_settings.llm_daily_budget` via `GET|PATCH /api/settings/llm-budget`.  Resolution: user setting → legacy `policy.tuning` → retired env `TRIGGER_LLM_DAILY_*`.  Explicit `0` = no cap.  When a cap is set and today's ledger cannot be read, skip LLM/RAG/chat (`ledger_unavailable`).  `RAG_RUN_BUDGET_*` is a Data Sources setting.  System secrets stay Infisical.  Console/iOS copy is product language only.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
@@ -34,6 +38,11 @@ stays isolated.  No Stripe/IAP.  PR **#2815**.  Branch `cursor/legal-clickwrap-d
 `.pbxproj` compiles it.  Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
 CI green on `1b9e84ca` (iOS + verify-hosted).  User-visible copy is product
 language only (no remotes/surfaces/`ALLOWED_EMAILS`/Infisical asides).
+## 2026-08-18 CURSOR — iOS UX owner cut (IRA wash-sale, copy, bidirectional caps)
+
+Owner cut 2026-08-17 ~8:45pm CT; live Guardrails screenshot confirmed 2026-08-18.  IRA/Roth no longer shows Wash-Sale Guard yes or Handling auto.  `__rotate__` displays as lowercase “rotate models”.  Swept every user-facing iOS string: no `/api/policy`, snapshot, phone-safe, `policy.patch`, console-only, APNs/SSE/sandbox, or dunder tokens.  Ask-First ↔ Autopilot and raise/lower / % NAV caps on the phone.  Typed `AUTOPILOT` / live `CONFIRM` only.  Notes for Jay stay in the PR.  Did not touch reserved PRs.  `xcodebuild` not on this VM.
+
+PR **#2825**.  Branch `cursor/ios-ux-owner-cut-bdae`.  lint + tsc + `npm run build` passed.  Full vitest hung on unrelated env/network failures (no JS product files in this PR).  `xcodebuild` not available on this VM.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
 
 ## 2026-08-18 CURSOR — Litestream restore drill (report only)
 

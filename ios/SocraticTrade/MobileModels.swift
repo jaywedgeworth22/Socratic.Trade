@@ -134,6 +134,9 @@ struct ConnectedAccount: Decodable, Identifiable, Hashable {
     let isActive: Bool?
     let isDraining: Bool?
     let capabilities: AccountCapabilities?
+    /// Connected-account tax regime (`roth_ira` / `traditional_ira` / `taxable`).  Wins over
+    /// `policy.taxSettings.taxationType` the same way the web desk resolves it.
+    let taxationType: String?
 }
 
 struct AccountCapabilities: Decodable, Hashable {

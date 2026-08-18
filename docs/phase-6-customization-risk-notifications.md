@@ -30,6 +30,15 @@ strategy generation, deterministic review, broker-minimum bumps, approval-time r
 utilization. Migration v26 changes only the exact former $500 product default to 20% NAV; other
 dollar values remain owner-selected dollar mode.
 
+iOS Guardrails (owner cut 2026-08-17) edits the same exclusive caps in either
+direction: Ask-First ↔ Autopilot, raise or lower notional, and edit or switch
+the binding % of NAV cap.  Returning to Autopilot types `AUTOPILOT`.  Raising a
+cap or switching modes on a live account types `CONFIRM` when typed-confirm is
+on.  IRA / Roth tax cards show same-account wash sales as not applicable and do
+not render the taxable Wash-Sale Guard as On.  User-facing iOS copy is ordinary
+app language: `__rotate__` reads as lowercase “rotate models”; route names,
+command types, SSE/APNs, and console-only notes stay out of the UI.
+
 Policy enforcement includes:
 
 - sector exposure caps for buys

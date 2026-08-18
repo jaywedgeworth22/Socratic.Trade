@@ -13,18 +13,18 @@ enum MobileAPIError: Error, LocalizedError {
         case .unauthorized:
             return "Your session expired.  Sign in again."
         case .serverError(let statusCode, let message):
-            // Cloudflare edge codes when the origin (socratictrade.com backend) is unreachable.
+            // Cloudflare 521-523: origin unreachable.  Keep the reason, drop the vendor and code.
             if (521...523).contains(statusCode) {
-                return "Socratic Trade servers are unreachable right now (Cloudflare \(statusCode)).  Try again in a few minutes."
+                return "Socratic Trade is unreachable right now.  Try again in a few minutes."
             }
             if let message, !message.isEmpty {
-                return "\(message) (\(statusCode))"
+                return message
             }
-            return "The server returned an error (\(statusCode)).  Try again."
-        case .network(let error):
-            return "Network error: \(error.localizedDescription)"
+            return "Something went wrong.  Try again."
+        case .network:
+            return "Check your connection and try again."
         case .decoding:
-            return "The app could not read the latest server response."
+            return "Couldn’t load your workspace.  Try again."
         }
     }
 }

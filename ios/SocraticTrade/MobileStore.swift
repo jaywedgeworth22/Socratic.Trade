@@ -704,14 +704,14 @@ final class MobileStore: ObservableObject {
 
     private func unavailableMessage(for commandType: String) -> String {
         if !serverAdvertises(commandType) {
-            return "This server build does not offer \(AppFormat.commandLabel(commandType)).  Use the web console for it."
+            return "This version cannot run \(AppFormat.commandLabel(commandType)) yet."
         }
         if Self.readinessDependentCommands.contains(commandType),
            let snapshot,
            !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
             return "Connect an account and configure a symbol universe before running the agent."
         }
-        return "Refresh the latest server state before submitting this action.  Stop remains available."
+        return "Pull to refresh, then try again.  Stop remains available."
     }
 
     private static let protectiveCommands: Set<String> = [
