@@ -282,6 +282,7 @@ struct FullPolicy: Decodable {
     let blocklist: [String]?
     let llmModel: String?
     let redTeamLlmModel: String?
+    let llmFallbackModels: [String]?
     let sellToFundBuy: String?
     let socraticOverrideMode: String?
     let stopLossPct: Double?
@@ -307,6 +308,7 @@ struct FullPolicy: Decodable {
         blocklist = try values.decodeIfPresent([String].self, forKey: .blocklist)
         llmModel = try values.decodeIfPresent(String.self, forKey: .llmModel)
         redTeamLlmModel = try values.decodeIfPresent(String.self, forKey: .redTeamLlmModel)
+        llmFallbackModels = try values.decodeIfPresent([String].self, forKey: .llmFallbackModels)
         sellToFundBuy = try values.decodeIfPresent(String.self, forKey: .sellToFundBuy)
         socraticOverrideMode = try values.decodeIfPresent(String.self, forKey: .socraticOverrideMode)
         stopLossPct = try values.decodeIfPresent(Double.self, forKey: .stopLossPct)
@@ -320,7 +322,7 @@ struct FullPolicy: Decodable {
         case runDuringExtendedHours, maxOrderNotional, maxOrderPctOfNav
         case maxDailyNotional, maxDailyPctOfNav, maxDailyOrders
         case requireTypedConfirmation, includedIndices, additionalSymbols, blocklist
-        case llmModel, redTeamLlmModel, sellToFundBuy, socraticOverrideMode
+        case llmModel, redTeamLlmModel, llmFallbackModels, sellToFundBuy, socraticOverrideMode
         case stopLossPct, trailingStopPct, shortStopLossPct, taxSettings
     }
 }
@@ -495,11 +497,27 @@ enum SourceSettingGroupOrder {
 
 enum DeskCopy {
     /// Roth / traditional IRA — same-account wash sales have no taxable loss deduction.
+    /// Accepts wire slugs (`roth_ira`) and display words (`Roth IRA`) so a live tax card
+    /// that already says Roth never still renders the taxable wash-sale guard.
     static func isIraTaxation(_ raw: String?) -> Bool {
-        switch raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "roth_ira", "traditional_ira": return true
-        default: return false
-        }
+        let collapsed = raw?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ") ?? ""
+        if collapsed.isEmpty { return false }
+        if collapsed == "roth ira" || collapsed == "traditional ira" { return true }
+        return collapsed.contains("ira") && (collapsed.contains("roth") || collapsed.contains("traditional"))
+    }
+
+    /// True when any account / capability / policy tax signal is IRA.  A taxable leftover
+    /// on `taxSettings.washSaleHandling` must not win just because one field is empty.
+    static func isIraAccount(
+        accountTaxation: String?,
+        capabilityType: String?,
+        policyTaxation: String?
+    ) -> Bool {
+        [accountTaxation, capabilityType, policyTaxation].contains { isIraTaxation($0) }
     }
 
     /// Connected-account taxation wins, then capability account type, then policy tax settings.
@@ -509,11 +527,33 @@ enum DeskCopy {
         policyTaxation: String?
     ) -> String? {
         let candidates = [accountTaxation, capabilityType, policyTaxation]
+        if let ira = candidates.first(where: { isIraTaxation($0) }) {
+            return ira?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         for raw in candidates {
             let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !trimmed.isEmpty { return trimmed }
         }
         return nil
+    }
+
+    /// Never show the `__rotate__` seat sentinel.  Prefer a concrete fallback; otherwise "Rotating".
+    static func modelSeatValue(_ raw: String?, fallbacks: [String] = []) -> String {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if isRotationSentinel(trimmed) {
+            if let fallback = fallbacks
+                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+                .first(where: { !$0.isEmpty && !isRotationSentinel($0) }) {
+                return fallback.lowercased()
+            }
+            return "Rotating"
+        }
+        if trimmed.isEmpty { return "—" }
+        return trimmed.lowercased()
+    }
+
+    static func isRotationSentinel(_ raw: String?) -> Bool {
+        raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "__rotate__"
     }
 
     /// Same-account IRA wash sales are N/A.  Cross-account replacement is ignored unless blocked.

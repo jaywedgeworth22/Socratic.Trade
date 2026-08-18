@@ -62,7 +62,7 @@ struct GuardrailsView: View {
     private func snapshotPolicyCard(_ snapshot: MobileSnapshot) -> some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Current Policy", subtitle: "values from the latest snapshot")
+                SectionHeading("Current Policy", subtitle: "this account's current rules")
                 policyRow("Horizon", AppFormat.policyHorizonValue(snapshot.policy.holdingHorizon))
                 policyRow("Cadence", AppFormat.cadenceMinutesValue(snapshot.policy.runCadenceMinutes))
                 policyRow("Extended Hours", DeskCopy.yesNo(snapshot.policy.runDuringExtendedHours))
@@ -94,9 +94,9 @@ struct GuardrailsView: View {
     private func extraPolicyCard(_ policy: FullPolicy) -> some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Full Rulebook", subtitle: "stops and models beyond the snapshot")
-                policyRow("Green Team", policy.llmModel?.lowercased() ?? "—")
-                policyRow("Red Team", policy.redTeamLlmModel?.lowercased() ?? "—")
+                SectionHeading("Stops and Models")
+                policyRow("Green Team", DeskCopy.modelSeatValue(policy.llmModel, fallbacks: policy.llmFallbackModels ?? []))
+                policyRow("Red Team", DeskCopy.modelSeatValue(policy.redTeamLlmModel, fallbacks: policy.llmFallbackModels ?? []))
                 policyRow("Stop Loss", DeskCopy.percentPoints(policy.stopLossPct))
                 policyRow("Trailing Stop", DeskCopy.percentPoints(policy.trailingStopPct))
                 policyRow("Short Stop", DeskCopy.percentPoints(policy.shortStopLossPct))
@@ -109,16 +109,23 @@ struct GuardrailsView: View {
     @ViewBuilder
     private func taxCard(_ tax: PolicyTaxSettings?, snapshot: MobileSnapshot) -> some View {
         if let tax {
+            let accountTaxation = snapshot.readiness.activeConnectedAccount?.taxationType
+            let capabilityType = snapshot.readiness.activeConnectedAccount?.capabilities?.accountType
             let taxation = DeskCopy.resolvedTaxationType(
-                accountTaxation: snapshot.readiness.activeConnectedAccount?.taxationType,
-                capabilityType: snapshot.readiness.activeConnectedAccount?.capabilities?.accountType,
+                accountTaxation: accountTaxation,
+                capabilityType: capabilityType,
+                policyTaxation: tax.taxationType
+            )
+            let isIra = DeskCopy.isIraAccount(
+                accountTaxation: accountTaxation,
+                capabilityType: capabilityType,
                 policyTaxation: tax.taxationType
             )
             AppCard {
                 VStack(alignment: .leading, spacing: 10) {
                     SectionHeading("Tax Settings", subtitle: "estimates only — not tax advice")
                     policyRow("Account Type", AppFormat.accountTypeWord(taxation ?? ""))
-                    if DeskCopy.isIraTaxation(taxation) {
+                    if isIra {
                         let rows = DeskCopy.iraWashSaleRows(handling: tax.iraWashSaleHandling)
                         policyRow("Same-Account Wash Sale", rows.sameAccount)
                         policyRow("Cross-Account Replacement", rows.crossAccount)

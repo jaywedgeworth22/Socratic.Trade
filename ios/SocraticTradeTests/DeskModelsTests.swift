@@ -101,8 +101,17 @@ final class DeskModelsTests: XCTestCase {
     func testIraWashSaleCopyMatchesWebNA() {
         XCTAssertTrue(DeskCopy.isIraTaxation("roth_ira"))
         XCTAssertTrue(DeskCopy.isIraTaxation(" traditional_ira "))
+        XCTAssertTrue(DeskCopy.isIraTaxation("Roth IRA"))
+        XCTAssertTrue(DeskCopy.isIraTaxation("Traditional IRA"))
         XCTAssertFalse(DeskCopy.isIraTaxation("taxable"))
         XCTAssertFalse(DeskCopy.isIraTaxation("brokerage"))
+        XCTAssertTrue(
+            DeskCopy.isIraAccount(
+                accountTaxation: nil,
+                capabilityType: "brokerage",
+                policyTaxation: "roth_ira"
+            )
+        )
 
         XCTAssertEqual(
             DeskCopy.resolvedTaxationType(
@@ -142,6 +151,18 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(policy.taxSettings?.taxationType, "roth_ira")
         XCTAssertEqual(policy.taxSettings?.iraWashSaleHandling, "disregard")
         XCTAssertTrue(DeskCopy.isIraTaxation(policy.taxSettings?.taxationType))
+    }
+
+    func testModelSeatValueNeverShowsTheRotateSentinel() {
+        XCTAssertEqual(DeskCopy.modelSeatValue("__rotate__"), "Rotating")
+        XCTAssertEqual(DeskCopy.modelSeatValue(" __ROTATE__ "), "Rotating")
+        XCTAssertEqual(
+            DeskCopy.modelSeatValue("__rotate__", fallbacks: ["google/gemini-3.7-flash"]),
+            "google/gemini-3.7-flash"
+        )
+        XCTAssertEqual(DeskCopy.modelSeatValue("claude-sonnet-5"), "claude-sonnet-5")
+        XCTAssertEqual(DeskCopy.modelSeatValue(nil), "—")
+        XCTAssertFalse(DeskCopy.modelSeatValue("__rotate__").contains("__"))
     }
 
     func testJoinedListAndYesNoAreSentenceCaseValues() {
