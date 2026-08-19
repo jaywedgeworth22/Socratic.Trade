@@ -365,3 +365,32 @@ describe("markStaleRunningRuns", () => {
     expect(JSON.parse(crashedReceipts(db, userId)[0].payload).reason).toBe("process_restarted_mid_run");
   });
 });
+
+// Regression (2026-08-18, #2848 follow-up): `db-execution` is reachable from the BROWSER bundle
+// through the `db` barrel (app/console/settings/brokers.tsx -> venue-contract -> source-settings ->
+// db-api-keys -> db).  Next's browser `process` shim has no `uptime`, so a module-scope
+// `process.uptime()` threw "process.uptime is not a function" and took down /console/connections.
+// The boot instant must be captured lazily and guarded so evaluating the module never throws.
+describe("db-execution module load without process.uptime (browser-shaped process)", () => {
+  it("evaluates and still classifies stale runs when process.uptime is missing", async () => {
+    const { vi } = await import("vitest");
+    const realUptime = process.uptime;
+    vi.resetModules();
+    // Mirror Next's client shim: `process` exists (env only), `uptime` is undefined.
+    (process as unknown as { uptime?: unknown }).uptime = undefined;
+    try {
+      const mod = await import("../src/lib/db-execution");
+      // Lazy accessor with uptime=0 -> boot ~= now, so a run that started long ago reads as a
+      // prior-process leftover and a run that starts now reads as a same-process stall.
+      expect(mod.staleRunningRunSweepCause(new Date(Date.now() - 60 * 60_000).toISOString())).toBe(
+        "process_restarted_mid_run"
+      );
+      expect(mod.staleRunningRunSweepCause(new Date(Date.now() + 5_000).toISOString())).toBe(
+        "stalled_no_progress"
+      );
+    } finally {
+      (process as unknown as { uptime?: unknown }).uptime = realUptime;
+      vi.resetModules();
+    }
+  });
+});
