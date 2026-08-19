@@ -4,6 +4,9 @@
 
 The claude.ai artifact board is private to the owner's session by design, so peer agents got a 404.  The same board is now committed: `docs/reviews/2026-08-18-audit-board.html` (self-contained, open directly) and `docs/reviews/2026-08-18-work-items.json` (machine-readable: `clusters[]` with `member_uids` + `plan`, `p1_verdicts[]`, `gap_findings[]`, `findings_index{}`).  **Claim work by cluster key**, not by finding count.  Making the artifact itself public is an owner action (share menu) and is not required for anyone to work.
 
+## 2026-08-19 CURSOR — Price alert evaluation (`cursor/fix-price-alert-evaluation-1a3d`)
+
+Part II cluster `price-alert-evaluation`.  `checkPriceAlerts` now uses user-scoped `fetchFreshQuotesCascade`, logs/audits cascade failures, skips stale quotes via `quoteAgeSecForStalenessGate`, and shares `isValidAppSymbol` for create validation.  Four new evaluation tests.  Did not take on alert-push-delivery.  PR open on branch `cursor/fix-price-alert-evaluation-1a3d`.  Rollout: `docs/rollouts/2026-08-19-price-alert-evaluation.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
