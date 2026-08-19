@@ -2,7 +2,9 @@
 
 ## Context & Objective
 
-Same Roth Manual Run once `9d71dda4-1383-4a27-814c-fd80fa44e314` as #2852/#2853.  Robinhood `too many symbols (max 10, got 250)` at 00:59:15Z (+18s) remains the first hard fail.  The same window also listed/fetched the whole Pinecone index, 502'd congress.trade, and 429'd Massive.  There was no OpenRouter strategy/completion call — only run-scoped `usage_budget_status` at +10s, then the crash.  Green never started.  New PR.  Fold in the Robinhood ≤10 chunk; do not replace it.
+Same Roth Manual Run once `9d71dda4-1383-4a27-814c-fd80fa44e314` as #2852/#2853.  Robinhood `too many symbols (max 10, got 250)` at 00:59:15Z (+18s) remains the first hard fail.  The same window also listed/fetched the whole Pinecone index, 502'd congress.trade, and 429'd Massive.  There was no OpenRouter strategy/completion call — only run-scoped `usage_budget_status` at +10s, then the crash.  Green never started.  Fold in the Robinhood ≤10 chunk; do not replace it.
+
+2026-08-19 rebase: #2854 was CONFLICTING/DIRTY after #2856 / #2857 / #2858.  Live is still `a8a0a65b`.  This morning's first post-open Roth + Paper runs failed with `strategy gather timeout` at 8 minutes, 0 proposed, Green never started.  Rebased `cursor/gather-no-pinecone-inventory-befc` onto `origin/main` `52add2ae`.  Did not open a second PR.
 
 ## Changes Made
 
@@ -32,7 +34,8 @@ Gather retrieval stays query/id scoped (`retrieveContextDetailed`).  Whole-index
 - Inventory aborts between pages if gather starts mid-pass.  Partial inventory is not returned as a complete index (throws / skipped).
 - Legacy short-circuit no longer awaits App A alone.  Paid providers on that off-path run without an App A coverage hint (free-first, default ON, still uses the two-wave planner).
 - Massive 429: `retries: 0`, suppress health, stop remaining symbols this enrich call.  A 404 stays a miss.
-- Did not touch #2850 / #2849 / #2841.  Did not merge, deploy, or bounce.
+- Did not touch #2850 / #2849 / #2841 / #2856 / #2857.  Did not merge, deploy, bounce, or TF.
+- Rebase vs later main: `git merge-tree --write-tree origin/main origin/cursor/gather-no-pinecone-inventory-befc` exited 0.  Overlap was `STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md` only.  No iOS files.  Rebase applied clean (3/3).
 
 ## Verification State
 
