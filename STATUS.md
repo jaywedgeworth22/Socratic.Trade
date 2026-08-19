@@ -4,7 +4,7 @@
 
 Copy/UI only.  iOS Guardrails joined raw `includedIndices` slugs.  Web Guardrails checkboxes already used the product names; policy-diff summaries still printed `russell2000`.  Display now goes through `indexUniverseLabel` / `DeskCopy.joinedIndexList`.  Storage, defaults (`["sp500"]`), and snapshot/API ids are unchanged.  Did not merge / deploy / bounce / TF.  Did not touch #2841 / #2849 / #2854 / #2840 / #2850.
 
-Branch `cursor/indices-display-labels-3381`.  Rollout: `docs/rollouts/2026-08-19-indices-display-labels.md`.
+PR **#2855**.  Branch `cursor/indices-display-labels-3381`.  Rollout: `docs/rollouts/2026-08-19-indices-display-labels.md`.
 
 ## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (rebased onto #2853)
 

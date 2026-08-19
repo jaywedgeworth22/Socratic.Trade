@@ -1,6 +1,6 @@
 # Active Implementation Plan
 
-> **2026-08-19 CURSOR — Indices labels (`cursor/indices-display-labels-3381`).** Copy/UI only.  User-facing Indices rows show `S&P 500` (etc.), never `sp500`.  Storage / API slugs stay.  Do not merge / deploy / bounce / TF.  Do not touch #2841 / #2849 / #2854 / #2840 / #2850.  Rollout: `docs/rollouts/2026-08-19-indices-display-labels.md`.
+> **2026-08-19 CURSOR — Indices labels (`cursor/indices-display-labels-3381`, #2855).** Copy/UI only.  User-facing Indices rows show `S&P 500` (etc.), never `sp500`.  Storage / API slugs stay.  Do not merge / deploy / bounce / TF.  Do not touch #2841 / #2849 / #2854 / #2840 / #2850.  Rollout: `docs/rollouts/2026-08-19-indices-display-labels.md`.
 
 > **2026-08-19 CURSOR — Robinhood quote chunk (`cursor/robinhood-quote-chunk-befc`, #2852).** Rebased onto #2853 `df1f5a37`.  Live `9d71dda4` died on `too many symbols (max 10, got 250)` 18s into gather.  Chunk Robinhood quote/tradability/fundamentals to 10.  Do not shrink the universe.  congress.trade 404 must not latch the free wave.  Do not reopen #2840 / #2848 / #2853.  Do not touch #2850 / #2849 / #2841.  Do not merge / deploy / bounce / TF.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
 

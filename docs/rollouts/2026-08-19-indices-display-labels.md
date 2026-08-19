@@ -35,10 +35,12 @@ Web Guardrails checkboxes already used the product names.  The leak was iOS Guar
 
 ```bash
 npx vitest run test/index-universes.test.ts test/console-policy-diff.test.ts
+npm run lint
 npx tsc --noEmit
+npm run build
 ```
 
-(Commands and results filled after the run.)
+Focused tests: 2 files, 30 passed.  Lint: 0 errors (grandfathered warnings).  `tsc --noEmit` clean.  `npm run build` succeeded.  Full `npm test` in this VM hit unrelated network/infra failures (SEC 404, usage-budget, vector-db receipts) not touched by this copy change.  No Xcode on this VM; iOS XCTest added but not compiled here.
 
 ## Next Steps & Blockers
 
