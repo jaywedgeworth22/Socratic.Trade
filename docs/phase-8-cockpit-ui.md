@@ -241,7 +241,8 @@ across panels, feeds, popovers, or status chips.
 - Top status values are kept visible in the command bar: Mock/Local/Live mode,
   autonomy/setup state, market session, daily risk, and allowed universe.
 - Settings → Operate groups the tradable universe controls together: Base
-  indexes are large multi-select toggle buttons, S&P 500 is selected by
+  indexes are large multi-select toggle buttons labeled with product names
+  (`S&P 500`, never `sp500`). S&P 500 is selected by
   default, Additional Watchlist adds explicit tickers, and Ignore List subtracts
   symbols from the final universe. S&P 100 and S&P 500 are mutually exclusive;
   Nasdaq 100 and Nasdaq Composite are mutually exclusive. The backend normalizes

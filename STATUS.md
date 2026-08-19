@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-19 CURSOR — Indices labels (`S&P 500`, not `sp500`)
+
+Copy/UI only.  iOS Guardrails joined raw `includedIndices` slugs.  Web Guardrails checkboxes already used the product names; policy-diff summaries still printed `russell2000`.  Display now goes through `indexUniverseLabel` / `DeskCopy.joinedIndexList`.  Storage, defaults (`["sp500"]`), and snapshot/API ids are unchanged.  Did not merge / deploy / bounce / TF.  Did not touch #2841 / #2849 / #2854 / #2840 / #2850.
+
+PR **#2855**.  Branch `cursor/indices-display-labels-3381`.  Rollout: `docs/rollouts/2026-08-19-indices-display-labels.md`.
+
 ## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (rebased onto #2853)
 
 #2853 is merged (`df1f5a37`).  This PR was CONFLICTING/DIRTY against that main.  Rebased `cursor/robinhood-quote-chunk-befc` onto `df1f5a37`.  The only real conflict was `docs/phase-7-strategy.md` (both added a 2026-08-19 stanza).  Kept #2853 drain/heartbeat/adopt and the ≤10 Robinhood chunk.  `strategy.ts` / quote-cascade did not conflict.

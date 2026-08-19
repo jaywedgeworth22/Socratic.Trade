@@ -36,8 +36,13 @@ the binding % of NAV cap.  Returning to Autopilot types `AUTOPILOT`.  Raising a
 cap or switching modes on a live account types `CONFIRM` when typed-confirm is
 on.  IRA / Roth tax cards show same-account wash sales as not applicable and do
 not render the taxable Wash-Sale Guard as On.  User-facing iOS copy is ordinary
-app language: `__rotate__` reads as lowercase “rotate models”; route names,
+  app language: `__rotate__` reads as lowercase “rotate models”; route names,
 command types, SSE/APNs, and console-only notes stay out of the UI.
+
+Included-index storage slugs (`sp500`, `nasdaq100`, …) stay on `IndexUniverse` /
+`includedIndices`.  User-facing Indices rows and policy-diff summaries use
+`indexUniverseLabel` / `DeskCopy.joinedIndexList` (`S&P 500`, `Nasdaq 100`, …).
+Snapshot / API payloads are unchanged.
 
 Policy enforcement includes:
 

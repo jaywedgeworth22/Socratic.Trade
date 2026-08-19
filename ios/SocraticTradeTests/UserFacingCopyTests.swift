@@ -68,6 +68,15 @@ final class UserFacingCopyTests: XCTestCase {
         XCTAssertEqual(PushAlertState.registered(environment: .production).summary, "Alerts on.")
     }
 
+    func testIndexRowsNeverShowStorageSlugs() {
+        let line = DeskCopy.joinedIndexList(["sp500", "nasdaq100", "ftWilshire5000"])
+        XCTAssertEqual(line, "S&P 500, Nasdaq 100, FT Wilshire 5000")
+        assertOrdinary(line)
+        for slug in ["sp100", "sp500", "nasdaq100", "nasdaqComposite", "dow30", "russell2000", "nyseComposite", "ftWilshire5000"] {
+            XCTAssertFalse(line.contains(slug), "\(line) still contains \(slug)")
+        }
+    }
+
     func testScanCopyDoesNotTreatWatchlistAsTheUniverse() {
         XCTAssertEqual(
             DeskCopy.scanCountLine(names: 0, scanned: 503, quotes: 0, watched: 2),

@@ -642,6 +642,29 @@ enum DeskCopy {
         return trimmed.isEmpty ? "none" : trimmed.joined(separator: ", ")
     }
 
+    /// Same labels as `INDEX_UNIVERSES` / web `INDICES`.  Storage slugs stay off the row.
+    static let indexUniverseLabels: [String: String] = [
+        "sp100": "S&P 100",
+        "sp500": "S&P 500",
+        "nasdaq100": "Nasdaq 100",
+        "nasdaqComposite": "Nasdaq Composite",
+        "dow30": "Dow 30",
+        "russell2000": "Russell 2000",
+        "nyseComposite": "NYSE Composite",
+        "ftWilshire5000": "FT Wilshire 5000"
+    ]
+
+    static func indexUniverseLabel(_ value: String) -> String? {
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        return indexUniverseLabels[key]
+    }
+
+    static func joinedIndexList(_ values: [String]?) -> String {
+        let labels = (values ?? []).compactMap(indexUniverseLabel)
+        return labels.isEmpty ? "none" : labels.joined(separator: ", ")
+    }
+
     static func yesNo(_ value: Bool?) -> String {
         guard let value else { return "—" }
         return value ? "yes" : "no"
