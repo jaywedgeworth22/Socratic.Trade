@@ -4,7 +4,7 @@
 
 #2855 merged (`b27de85c`).  Live Guardrails → Universe → Indices still printed `sp500, nasdaqComposite, dow30, nyseComposite`.  Jay does not distinguish rows vs Guardrails — both use **Indices** and the shared names (S&P 500, Nasdaq Composite, Dow 30, NYSE Composite, Nasdaq 100, Russell 2000, FT Wilshire 5000, S&P 100).  Web selected-set + checkbox grid, policy-diff, Scan `${id}-universe` chips, iOS Guardrails, and Desk Current Policy now go through `formatIndexUniverseList` / `indexUniverseLabel`.  Storage / API slugs stay.  Did not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Did not touch #2841 / #2849 / #2854 / #2840.  Did not reopen #2855.
 
-Branch `cursor/indices-common-names-3381`.  Rollout: `docs/rollouts/2026-08-19-indices-common-names.md`.
+PR **#2856**.  Branch `cursor/indices-common-names-3381`.  Rollout: `docs/rollouts/2026-08-19-indices-common-names.md`.
 
 ## 2026-08-19 CURSOR — Indices labels (`S&P 500`, not `sp500`)
 

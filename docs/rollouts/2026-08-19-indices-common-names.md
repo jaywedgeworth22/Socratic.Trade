@@ -48,8 +48,14 @@ on `joinedIndexList`.  iOS Guardrails already used that helper after #2855.
 
 ## Verification State
 
-Focused vitest + lint + tsc + build on this branch.  Exact commands and
-results recorded after the gate runs.
+```bash
+npx vitest run test/index-universes.test.ts test/console-policy-diff.test.ts test/dashboard-ui.test.ts
+npm run lint
+npx tsc --noEmit
+npm run build
+```
+
+Focused tests: 3 files, 36 passed.  Lint: 0 errors (771 grandfathered warnings).  `tsc --noEmit` clean.  `npm run build` succeeded.  No Xcode on this VM; iOS XCTest updated but not compiled here.
 
 ## Next Steps & Blockers
 
