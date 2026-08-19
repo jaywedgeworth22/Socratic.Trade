@@ -47,7 +47,7 @@ npm run lint
 npm run build
 ```
 
-Focused receipts: new gather/502/429/404 tests 5/5; scheduler-managed-vector-reconcile + roic-transcripts + api-clients-congress + robinhood-mcp 58/58 (Robinhood ≤10 chunk kept).  `npx tsc --noEmit` clean.  `npm run lint` exit 0.  `npm run build` compiled and finished TypeScript.  Full `npm test` was started; it hung after unrelated `notify-body-tiers` / `server-metrics` env misses and 30s `strategy-rationale-collapse-gate` timeouts (those tests hit live HTTP 404s).  Isolated collapse-gate still 30s-times out on this VM; not a write-class or prune change.
+Focused receipts (re-run after rebase onto `52add2ae`, HEAD `0cb36527`): gather/502/429/404 tests 5/5; scheduler-managed-vector-reconcile + roic-transcripts + api-clients-congress + robinhood-mcp 58/58 (Robinhood ≤10 chunk kept).  `npx tsc --noEmit` clean.  `npm run lint` exit 0 (0 errors, grandfathered warnings).  `npm run build` compiled and finished TypeScript.  `gh pr view 2854` is `MERGEABLE` (no longer CONFLICTING/DIRTY); `verify-hosted` was still in progress at push.  Full `npm test` was started on the pre-rebase tree; it hung after unrelated `notify-body-tiers` / `server-metrics` env misses and 30s `strategy-rationale-collapse-gate` timeouts (those tests hit live HTTP 404s).  Isolated collapse-gate still 30s-times out on this VM; not a write-class or prune change.
 
 ## Next Steps & Blockers
 
