@@ -39,8 +39,8 @@ Focused receipt: robinhood-mcp 17/17 (incl. 250-name chunk + partial-chunk survi
 
 ## Next Steps & Blockers
 
-- PR **#2852**.  Do not merge from this seat.  After merge, the next Manual Run once should get Robinhood prices on a 250-name universe and an `llm_usage` row within a few minutes.
-- Do not bounce Coolify.
+- Rebased onto #2853 `df1f5a37` (same branch `cursor/robinhood-quote-chunk-befc`; did not open a second PR).  The only real conflict was `docs/phase-7-strategy.md`.  `strategy.ts` / quote-cascade did not overlap.  Jay merges.  Do not merge / deploy / bounce / TF from this seat.
+- After merge, the next Manual Run once should get Robinhood prices on a 250-name universe and an `llm_usage` row within a few minutes.
 
 ## Zero-Code Findings
 

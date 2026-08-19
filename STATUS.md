@@ -1,19 +1,18 @@
 # Current Handoff
 
-## 2026-08-19 CURSOR — Manual Run once drain must resume a claimed worker
+## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (rebased onto #2853)
 
-#2848 is live (`c55c2e64`, `processStartedAt` 00:51:39Z).  Roth `9d71dda4` wrote 00:58:57Z, sat `running` llm=0, then sweep-failed 01:29:44Z `stalled_no_progress` (~31m, honest label).  ASC: embed already skipped, no FTS, no broker timeout.  Ops: `strategy-run-drain` 1372/1372 skipped (avg 8ms) because drain only selected `queued` after the HTTP kick claimed the row.  Background skip is not the remaining blocker.  Green never started.
-
-Robinhood `too many symbols (max 10, got 250)` at 00:59:15Z and congress.trade 404 at 01:01:53Z prove gather started, then the claimed worker did not finish.  Quote-chunk is a sibling PR (#2852).  This PR is why drain never took over after the kick claimed: heartbeat the in-process worker; drain resumes a claimed request with no heartbeat on the same run id so Activity's poll and `llm_usage` share the 202 UUID; `after()` second kick; 8m gather deadline; bound pre-Green Alpaca positions/orders + 45s snapshot.  Do not only add another skip.  Do not reopen #2840 / #2848.  Do not touch #2850 / #2849 / #2841.  Do not merge / deploy / bounce.
-
-Branch `cursor/manual-run-drain-handoff-befc`.  Rollout: `docs/rollouts/2026-08-19-manual-run-drain-handoff.md`.
-## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (250-name gather stall)
+#2853 is merged (`df1f5a37`).  This PR was CONFLICTING/DIRTY against that main.  Rebased `cursor/robinhood-quote-chunk-befc` onto `df1f5a37`.  The only real conflict was `docs/phase-7-strategy.md` (both added a 2026-08-19 stanza).  Kept #2853 drain/heartbeat/adopt and the ≤10 Robinhood chunk.  `strategy.ts` / quote-cascade did not conflict.
 
 #2848 is live.  Roth `9d71dda4` wrote 00:58:57Z, llm=0, then `stalled_no_progress` at 01:29:44Z.  ASC: robinhood `too many symbols (max 10, got 250)` at 00:59:15Z (18s after start).  congress.trade HTTP 404 at 01:01:53Z.  One OpenRouter embed document.  Zero completion `llm_usage`.  account-miss 404 did not fire.
 
-Root cause: `getEquityQuotes` sent the full scan universe in one MCP `get_equity_quotes`.  Robinhood rejected the batch, so gather never priced through Robinhood.  Do not shrink the universe to 10.  Chunk requests to 10.  congress.trade 404 is secondary and must not latch the free enrichment wave.  Do not reopen #2840.  Do not touch #2850 / #2849 / #2841 / strategy picks.  Do not merge / deploy / bounce.
+Root cause: `getEquityQuotes` sent the full scan universe in one MCP `get_equity_quotes`.  Robinhood rejected the batch, so gather never priced through Robinhood.  Do not shrink the universe to 10.  Chunk requests to 10.  congress.trade 404 is secondary and must not latch the free enrichment wave.  Do not reopen #2840 / #2853.  Do not touch #2850 / #2849 / #2841 / strategy picks.  Do not merge / deploy / bounce / TF.
 
-PR **#2852**.  Branch `cursor/robinhood-quote-chunk-befc`.  SHA `7fa03750`.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+PR **#2852**.  Branch `cursor/robinhood-quote-chunk-befc`.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+
+## 2026-08-19 CURSOR — Manual Run once drain must resume a claimed worker
+
+**MERGED #2853** `df1f5a37`.  #2848 was live (`c55c2e64`).  Roth `9d71dda4` wrote 00:58:57Z, sat `running` llm=0, then sweep-failed 01:29:44Z `stalled_no_progress` (~31m).  Drain now resumes a claimed request with no heartbeat on the same run id.  Remaining gather-pricing hole is #2852.
 
 ## 2026-08-18 MONET — HOTFIX: `/console/connections` crashed client-side after #2848
 
