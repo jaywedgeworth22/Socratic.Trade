@@ -106,6 +106,9 @@ Expert review tranche-1 cluster `account-write-guards`: `strategyAuthority` now 
 Implements review cluster `coach-tools-and-turns`.  `draft_order` no longer coerces invalid `side`/`order_type` to buy/market; limit orders require a positive `limit_usd`.  `kb_search` clamps `k` to [1, 20].  Chat LLM transports thread `args.abortSignal` so Cancel and the 120s deadline can abort in-flight provider calls.
 
 PR **#2874**.  Branch `cursor/coach-tools-fail-closed-1c54`.  Rollout: `docs/rollouts/2026-08-19-coach-tools-fail-closed.md`.
+## 2026-08-19 CURSOR — iOS session snapshot, edit alerts, nested stop-loss decode
+
+Part II clusters `ios-state-outcome-truth` + `web-ios-contract-drift` (stop-loss only).  `clearLocalSession` now wipes the UserDefaults snapshot; init uses the persisted capture time; guardrail/command feedback is modal alerts (not a scroll-top banner `load()` clears); `FullPolicy` reads stop percents from nested `riskRules`.  No TF upload.  PR on `cursor/ios-session-stop-loss-03c2`.  Rollout: `docs/rollouts/2026-08-19-ios-session-stop-loss.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

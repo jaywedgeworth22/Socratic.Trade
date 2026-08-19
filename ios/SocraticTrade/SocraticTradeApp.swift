@@ -77,6 +77,7 @@ struct ContentView: View {
                 .opacity(store.isAuthenticated ? 1 : 0)
                 .allowsHitTesting(store.isAuthenticated)
                 .accessibilityHidden(!store.isAuthenticated)
+                .storeTransientAlerts()
                 .fullScreenCover(isPresented: Binding(
                     get: { store.isAuthenticated && store.needsAppConsent },
                     set: { _ in }

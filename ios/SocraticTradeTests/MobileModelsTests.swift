@@ -397,6 +397,73 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(logoutURL?.absoluteString, "https://socratictrade.com/logout")
     }
 
+    @MainActor
+    func testClearLocalSessionRemovesDiskSnapshot() throws {
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        let data = try JSONEncoder().encode(snapshot)
+        let cacheKey = "cached_mobile_snapshot_data"
+        let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: cacheKey)
+        defaults.set(Date(timeIntervalSince1970: 1_700_000_000).timeIntervalSince1970, forKey: cacheTimestampKey)
+
+        let store = MobileStore(
+            client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!),
+            previewSnapshot: snapshot
+        )
+        store.clearLocalSession()
+
+        XCTAssertNil(defaults.data(forKey: cacheKey))
+        XCTAssertEqual(defaults.double(forKey: cacheTimestampKey), 0)
+        XCTAssertFalse(store.isAuthenticated)
+        XCTAssertNil(store.snapshot)
+    }
+
+    @MainActor
+    func testInitUsesPersistedSnapshotTimestamp() throws {
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        let data = try JSONEncoder().encode(snapshot)
+        let cacheKey = "cached_mobile_snapshot_data"
+        let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: cacheKey)
+        defaults.set(savedAt.timeIntervalSince1970, forKey: cacheTimestampKey)
+        defer {
+            defaults.removeObject(forKey: cacheKey)
+            defaults.removeObject(forKey: cacheTimestampKey)
+        }
+
+        let store = MobileStore(client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!))
+        XCTAssertNotNil(store.snapshot)
+        XCTAssertEqual(store.lastUpdatedAt?.timeIntervalSince1970, savedAt.timeIntervalSince1970)
+    }
+
+    @MainActor
+    func testColdLaunchAfterSignOutDoesNotRestoreCachedSnapshot() throws {
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        let data = try JSONEncoder().encode(snapshot)
+        let cacheKey = "cached_mobile_snapshot_data"
+        let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: cacheKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: cacheTimestampKey)
+
+        let store = MobileStore(
+            client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!),
+            previewSnapshot: snapshot
+        )
+        store.clearLocalSession()
+
+        let relaunched = MobileStore(client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!))
+        XCTAssertNil(relaunched.snapshot)
+        XCTAssertFalse(relaunched.isAuthenticated)
+        XCTAssertNil(relaunched.lastUpdatedAt)
+
+        defaults.removeObject(forKey: cacheKey)
+        defaults.removeObject(forKey: cacheTimestampKey)
+    }
+
     private func decodeCommand(_ json: String) -> MobileCommand {
         try! JSONDecoder().decode(MobileCommand.self, from: Data(json.utf8))
     }

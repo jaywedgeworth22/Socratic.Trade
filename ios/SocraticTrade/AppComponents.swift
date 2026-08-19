@@ -554,6 +554,45 @@ struct InlineErrorBanner: View {
     }
 }
 
+/// Presents `MobileStore` operation feedback as alerts anchored to the presenting view.
+/// Snapshot refresh no longer clears these messages, so guardrail edits and queued commands
+/// can surface failures after `load()` completes.
+struct StoreTransientAlerts: ViewModifier {
+    @EnvironmentObject private var store: MobileStore
+
+    func body(content: Content) -> some View {
+        content
+            .alert(
+                "Something Went Wrong",
+                isPresented: Binding(
+                    get: { store.error != nil },
+                    set: { if !$0 { store.dismissError() } }
+                )
+            ) {
+                Button("OK") { store.dismissError() }
+            } message: {
+                Text(store.error ?? "")
+            }
+            .alert(
+                "Saved",
+                isPresented: Binding(
+                    get: { store.successMessage != nil },
+                    set: { if !$0 { store.dismissSuccess() } }
+                )
+            ) {
+                Button("OK") { store.dismissSuccess() }
+            } message: {
+                Text(store.successMessage ?? "")
+            }
+    }
+}
+
+extension View {
+    func storeTransientAlerts() -> some View {
+        modifier(StoreTransientAlerts())
+    }
+}
+
 struct SnapshotScaffold<Content: View>: View {
     @EnvironmentObject private var store: MobileStore
 
@@ -585,13 +624,6 @@ struct SnapshotScaffold<Content: View>: View {
                         LazyVStack(spacing: 14) {
                             if let snapshot = store.snapshot {
                                 SnapshotStatusBanner(snapshot: snapshot, now: context.date)
-                                if let error = store.error, !hidesWorkspaceError {
-                                    InlineErrorBanner(
-                                        message: error,
-                                        retry: refresh,
-                                        dismiss: store.dismissError
-                                    )
-                                }
                                 content(snapshot)
                             }
                         }
