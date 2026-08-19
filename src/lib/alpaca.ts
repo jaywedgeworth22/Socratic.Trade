@@ -360,7 +360,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
       return { ok: cached.ok, reason: cached.reason };
     }
     try {
-      const account = await this.trackHealth(() => this.alpaca.getAccount());
+      const account = await this.readAccount();
       if (account && String(account.account_number ?? "") && accountNumber) {
         const live = String(account.account_number).trim().toLowerCase();
         const want = String(accountNumber).trim().toLowerCase();
@@ -478,7 +478,17 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
     return this.callMcp<any>("get_positions", {}, async () => {
-      const positions = await this.trackHealth(() => this.alpaca.getPositions());
+      const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
+      const positions = await awaitWithFirstCallRetry(
+        () => this.trackHealth(() => this.alpaca.getPositions()),
+        {
+          firstMs,
+          retryMs,
+          onFinalTimeout: () => {
+            throw new Error(`Timed out waiting for alpaca.getPositions after ${firstMs}+${retryMs}ms.`);
+          }
+        }
+      );
       return positions.map(parseAlpacaPosition);
     }).then((res: any) => {
       if (Array.isArray(res)) {
@@ -498,12 +508,22 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const PAGE = 500;
       let until: string | undefined;
       for (let guard = 0; guard < 50; guard++) {
-        const page = (await this.trackHealth(() => this.alpaca.getOrders({
-          status: "all",
-          limit: PAGE,
-          direction: "desc",
-          ...(until ? { until } : {})
-        } as Parameters<typeof this.alpaca.getOrders>[0]))) as Record<string, unknown>[];
+        const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
+        const page = (await awaitWithFirstCallRetry(
+          () => this.trackHealth(() => this.alpaca.getOrders({
+            status: "all",
+            limit: PAGE,
+            direction: "desc",
+            ...(until ? { until } : {})
+          } as Parameters<typeof this.alpaca.getOrders>[0])),
+          {
+            firstMs,
+            retryMs,
+            onFinalTimeout: () => {
+              throw new Error(`Timed out waiting for alpaca.getOrders after ${firstMs}+${retryMs}ms.`);
+            }
+          }
+        )) as Record<string, unknown>[];
         if (!Array.isArray(page) || page.length === 0) break;
         let added = 0;
         let oldest: string | undefined;

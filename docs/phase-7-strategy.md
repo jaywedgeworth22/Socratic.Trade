@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-19 Manual Run once drain handoff (claimed worker)
+
+#2848 paused ROIC/FTS.  Live `c55c2e64` Roth `9d71dda4` still sat llm=0 after embed was already skipped, then sweep-failed 01:29:44Z `stalled_no_progress` (~31m, same process 00:51:39Z).  `POST /api/strategy/run` claims the durable request in a request-scoped `void` kick.  `processPendingStrategyRunRequests` then selected only `queued`, so `strategy-run-drain` journaled skipped on every tick (1372/1372, avg 8ms) while the run row stayed `running`.  Drain now heartbeats a live worker, resumes a claimed request with no heartbeat on the same run id (the 202 UUID Activity polls), and the route kicks again via `after()`.  Scan + quote cascade has an 8m deadline so gather cannot sit until the 30m sweep.  Pre-Green Alpaca positions/orders use the 16s+8s budget; the strategy snapshot has a 45s deadline.  Robinhood max-10 quote chunk is a sibling change (#2852).  Rollout: `docs/rollouts/2026-08-19-manual-run-drain-handoff.md`.
+
 ## 2026-08-18 Manual Run once request/run status coupling
 
 `POST /api/strategy/run` writes `strategy_run_requests` first, then `runStrategyOnce` uses that same UUID as `strategy_runs.id`.  `queueStrategyRunRequest` dedupes while any request for that user is `queued` or `running`.  `markStaleRunningRuns` used to fail only the `strategy_runs` row.  After #2845, ASC saw 0 new Roth `strategy_runs` after 22:06:43Z because orphan `0e5ccd66` was sweep-failed at 22:13:05Z (0 LLM) while its request stayed `running`.  The sweep and `finishStrategyRun` now close the matching open request.  The next scheduler tick and the next Manual Run once click both heal an already-terminal run whose request is still open.  Do not hide the lock by ignoring `running`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.

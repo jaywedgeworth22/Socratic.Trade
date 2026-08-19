@@ -287,6 +287,15 @@ export function releaseStrategyLock(owner: string, userId: string = "local", con
 }
 
 export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string, accountNumber?: string, policyRevision?: string): void {
+  const existing = getDb()
+    .prepare("SELECT status FROM strategy_runs WHERE id = ? AND user_id = ?")
+    .get(id, userId) as { status: string } | undefined;
+  if (existing) {
+    // Drain re-adopts a claimed Manual Run once whose HTTP kick died after this
+    // insert (live Roth `9d71dda4`).  Resume the same row; do not mint a second.
+    if (existing.status === "running") return;
+    throw new Error(`Cannot reuse strategy run ${id} after status=${existing.status}`);
+  }
   getDb()
     .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, account_number, policy_revision, started_at, status) VALUES (?, ?, ?, ?, ?, ?, 'running')")
     .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());

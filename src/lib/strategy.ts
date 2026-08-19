@@ -206,7 +206,7 @@ import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
 import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
-import { runSafetyMaintenance } from "./safety-maintenance";
+import { runSafetyMaintenance, withDeadline } from "./safety-maintenance";
 import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
 import { deriveVenueContract } from "./venue-contract";
 
@@ -217,6 +217,12 @@ import { deriveVenueContract } from "./venue-contract";
  * is for learning only (never sent to the LLM), so size affects storage, not tokens.
  */
 const MAX_SKIPPED_EVIDENCE = 25;
+
+/** Live Roth `9d71dda4` sat in gather from 00:58:57Z until sweep-failed 01:29:44Z
+ *  (`stalled_no_progress`, llm=0).  Bound scan + quote cascade so a hung
+ *  Robinhood/Yahoo/congress.trade pass cannot keep the claimed request
+ *  `running` until the 30m sweep.  Green starts after this returns. */
+export const STRATEGY_GATHER_DEADLINE_MS = 8 * 60_000;
 
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
@@ -642,12 +648,20 @@ export async function runStrategyOnce(
       }
     }
 
-    const [accounts, portfolio, positions, orders] = await Promise.all([
-      gateway.getAccounts(),
-      gateway.getPortfolio(policy.accountNumber),
-      gateway.getEquityPositions(policy.accountNumber),
-      gateway.getEquityOrders(policy.accountNumber)
-    ]);
+    // Live `9d71dda4`: dashboard getAccounts/getPortfolio have a 16s+8s budget;
+    // this pre-Green snapshot did not.  An unbounded getPositions/getOrders hang
+    // leaves the claimed request `running` so drain journals skipped and Green
+    // never starts.  Bound the bundle; a timeout fails the run honestly.
+    const [accounts, portfolio, positions, orders] = await withDeadline(
+      Promise.all([
+        gateway.getAccounts(),
+        gateway.getPortfolio(policy.accountNumber),
+        gateway.getEquityPositions(policy.accountNumber),
+        gateway.getEquityOrders(policy.accountNumber)
+      ]),
+      45_000,
+      "strategy broker snapshot timeout"
+    );
     lockGuard.assertOwned();
     const selected = accounts.find((account) => account.accountNumber === policy.accountNumber);
     if (!selected) throw new Error("Selected account is not available.");
@@ -761,16 +775,25 @@ export async function runStrategyOnce(
     if (congressMultiplier === 0 && congressVerdict) {
       audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId, connectedAccountId);
     }
-    const baseMarketScan = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-      candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve,
-      universeFloor: policy.universeFloor,
-      congressMultiplier
-    });
-    const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
-    const marketScan = mergeQuoteData(
-      baseMarketScan,
-      await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber, connectedAccountId)
+    const { baseMarketScan, marketScan } = await withDeadline(
+      (async () => {
+        const scanned = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
+          candidateLimit: policy.marketScanCandidateLimit,
+          outlierReserve: policy.marketScanOutlierReserve,
+          universeFloor: policy.universeFloor,
+          congressMultiplier
+        });
+        const quoteSymbols = uniqueSymbols(scanned.topCandidates.map((quote) => quote.symbol));
+        return {
+          baseMarketScan: scanned,
+          marketScan: mergeQuoteData(
+            scanned,
+            await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber, connectedAccountId)
+          )
+        };
+      })(),
+      STRATEGY_GATHER_DEADLINE_MS,
+      "strategy gather timeout"
     );
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
