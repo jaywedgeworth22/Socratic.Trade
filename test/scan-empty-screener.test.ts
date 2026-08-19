@@ -73,6 +73,49 @@ describe("empty screener + expired seed", () => {
     });
   });
 
+  it("uses a last-good seed before Yahoo-pricing the whole allowed set", async () => {
+    let yahooCalls = 0;
+    vi.stubGlobal("fetch", async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("api.nasdaq.com")) {
+        return new Response(
+          JSON.stringify({ data: { asof: "2026-08-18", table: { rows: [] } } }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.includes("yahoo") || url.includes("/v7/finance/") || url.includes("/v8/finance/")) {
+        yahooCalls += 1;
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const scan = await scanMarket(["AAPL", "MSFT"], [], undefined, undefined, [], {
+      enrichmentMode: "skip",
+      seedEnrichment: {
+        AAPL: {
+          symbol: "AAPL",
+          price: 91,
+          score: 44,
+          peRatio: 15,
+          intradayChangePct: -1,
+          volume: 50_000
+        },
+        MSFT: {
+          symbol: "MSFT",
+          price: 400,
+          score: 50,
+          peRatio: 30,
+          intradayChangePct: 1,
+          volume: 20_000
+        }
+      }
+    });
+
+    expect(yahooCalls).toBe(0);
+    expect(scan.topCandidates.map((quote) => quote.symbol).sort()).toEqual(["AAPL", "MSFT"]);
+    expect(scan.warnings.join(" ")).toContain("stale fallback");
+  });
+
   it("keeps a fresh audit seed when the screener and quote fallback both miss", async () => {
     stubFetches({ nasdaqRows: [], yahoo: "miss" });
 

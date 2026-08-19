@@ -107,12 +107,17 @@ nasdaq-quote already used `BROWSER_UA`.  The screener now uses the same
 `BROWSER_UA` + Origin/Referer + `fetchWithRetry({ retries: 1 })` contract,
 a 15s named timeout, one abort retry, and does not attach the interactive
 deadline signal.  `congress-share` `fetchNasdaqScreenerRefs` uses that same
-helper.  If Nasdaq still returns 0, Yahoo prices the whole allowed set.
-A non-empty universe that still cannot be priced throws
-`ScanQuotesUnavailableError` (HTTP 503) and writes `market_scan_failed`.
+helper.  If Nasdaq still returns 0, a usable last-good seed is applied
+before Yahoo prices the whole allowed set.  Live Refresh of a ~5k-name
+universe used to start that Yahoo fallback, miss the 35s interactive
+budget / edge 503, and never reach the seed `/console/scan` already
+paints.  `marketScanQuotesFromAudit` keeps valid rows instead of voiding
+the map on one bad entry.  A non-empty universe that still cannot be priced
+throws `ScanQuotesUnavailableError` (HTTP 503) and writes `market_scan_failed`.
 An empty abort row is not last-good.  An empty `seedEnrichment: {}` does
-not 200 `cached=true`.  iOS Scan decodes 503 warnings + scanned/quotes
-counts and does not blame Guardrails or the watchlist.
+not 200 `cached=true`.  iOS Scan seeds from compact `latestScan` on
+`/api/mobile/snapshot` and keeps that universe when live Refresh 503s,
+same as the website.  It does not blame Guardrails or the watchlist.
 
 **Expanded dynamic universes (2026-06-23):** Base universe selection now covers
 small and broad indexes without sending the whole market to the LLM. Static

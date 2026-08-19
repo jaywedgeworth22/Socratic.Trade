@@ -20,6 +20,8 @@ struct MobileSnapshot: Decodable {
     let watchlist: [WatchlistItem]
     let alerts: [PriceAlert]
     let recentCommands: [MobileCommand]
+    /// Last-good `/api/scan` universe.  Same seed `/console/scan` keeps when Refresh 503s.
+    let latestScan: MarketScanResponse?
 
     private enum CodingKeys: String, CodingKey {
         case currentUser
@@ -38,6 +40,7 @@ struct MobileSnapshot: Decodable {
         case watchlist
         case alerts
         case recentCommands
+        case latestScan
     }
 
     init(from decoder: Decoder) throws {
@@ -64,6 +67,7 @@ struct MobileSnapshot: Decodable {
         watchlist = try values.decodeIfPresent([WatchlistItem].self, forKey: .watchlist) ?? []
         alerts = try values.decodeIfPresent([PriceAlert].self, forKey: .alerts) ?? []
         recentCommands = try values.decodeIfPresent([MobileCommand].self, forKey: .recentCommands) ?? []
+        latestScan = try values.decodeIfPresent(MarketScanResponse.self, forKey: .latestScan)
     }
 }
 

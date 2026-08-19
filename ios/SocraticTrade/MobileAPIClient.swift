@@ -129,12 +129,13 @@ struct MobileAPIClient {
         return envelope.providers
     }
 
-    /// Interactive market scan — GET `/api/scan`.  The server budget is 20s.
+    /// Interactive market scan — GET `/api/scan`.  The server budget is 35s.
+    /// Client wait is longer so a late seed/200 is not dropped as a dead table.
     /// A 503 `scan_quotes_unavailable` body still carries scanned/quotes/warnings
     /// so Scan can show the abort instead of "No Candidates."
     func marketScan() async throws -> MarketScanResponse {
         var req = request(path: "/api/scan")
-        req.timeoutInterval = 25
+        req.timeoutInterval = 50
         let data: Data
         let response: URLResponse
         do {

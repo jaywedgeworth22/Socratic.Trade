@@ -216,6 +216,10 @@ struct MarketScanResponse: Decodable {
     let returnedQuotes: Int?
     let warnings: [String]
 
+    var hasUsableUniverse: Bool { !topCandidates.isEmpty }
+
+    var lastGoodStamp: String? { asOf ?? generatedAt }
+
     private enum CodingKeys: String, CodingKey {
         case topCandidates
         case asOf
@@ -225,6 +229,22 @@ struct MarketScanResponse: Decodable {
         case scannedSymbols
         case returnedQuotes
         case warnings
+    }
+
+    init(
+        topCandidates: [ScanCandidate],
+        asOf: String? = nil,
+        generatedAt: String? = nil,
+        scannedSymbols: Int? = nil,
+        returnedQuotes: Int? = nil,
+        warnings: [String] = []
+    ) {
+        self.topCandidates = topCandidates
+        self.asOf = asOf ?? generatedAt
+        self.generatedAt = generatedAt
+        self.scannedSymbols = scannedSymbols
+        self.returnedQuotes = returnedQuotes
+        self.warnings = warnings
     }
 
     init(from decoder: Decoder) throws {
@@ -238,6 +258,13 @@ struct MarketScanResponse: Decodable {
         scannedSymbols = try values.decodeIfPresent(Int.self, forKey: .scannedSymbols)
         returnedQuotes = try values.decodeIfPresent(Int.self, forKey: .returnedQuotes)
         warnings = try values.decodeIfPresent([String].self, forKey: .warnings) ?? []
+    }
+
+    /// Same rule as `/console/scan`: a failed refresh never blanks a last-good table.
+    func keepingLastGood(from previous: MarketScanResponse?) -> MarketScanResponse {
+        if hasUsableUniverse { return self }
+        guard let previous, previous.hasUsableUniverse else { return self }
+        return previous
     }
 }
 
@@ -256,6 +283,28 @@ struct ScanCandidate: Decodable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case symbol, companyName, price, score, intradayChangePct, sector, volume, bid, ask
+    }
+
+    init(
+        symbol: String,
+        companyName: String? = nil,
+        price: Double? = nil,
+        score: Double? = nil,
+        intradayChangePct: Double? = nil,
+        sector: String? = nil,
+        volume: Double? = nil,
+        bid: Double? = nil,
+        ask: Double? = nil
+    ) {
+        self.symbol = symbol
+        self.companyName = companyName
+        self.price = price
+        self.score = score
+        self.intradayChangePct = intradayChangePct
+        self.sector = sector
+        self.volume = volume
+        self.bid = bid
+        self.ask = ask
     }
 
     init(from decoder: Decoder) throws {
@@ -634,5 +683,16 @@ enum DeskCopy {
             return "The scan could not price any names.  Refresh after quotes recover."
         }
         return "The scan returned no ranked names.  Refresh after quotes recover."
+    }
+
+    static let scanLoadingNote = "Refreshing the scan.  This can take about 40 seconds."
+
+    /// Failed refresh stays a banner.  Last-good names stay on screen.
+    static func scanRefreshFailedBanner(reason: String, lastGoodAt: String?) -> String {
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let lastGoodAt, !lastGoodAt.isEmpty else { return trimmed }
+        let stamped = AppFormat.dateTime(lastGoodAt)
+        if stamped == "—" { return trimmed }
+        return "\(trimmed)  Showing the last good scan from \(stamped)."
     }
 }

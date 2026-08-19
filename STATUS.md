@@ -17,6 +17,21 @@ Same process `4abfb7fa` (`processStartedAt` 23:10:43Z, uptime ~34m) sweep-failed
 #2848 rebase onto `4abfb7fa`: keep 16s wait-above-p95 and FTS 2s / 1-row bound; **also** skip / pause ROIC and FTS while any `strategy_runs`/`strategy_run_requests` row is queued or running, and yield between ROIC periods.  Do not reopen #2840.  Do not hide the embed 8193 error with copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2812 / strategy picks.
 
 PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+## 2026-08-19 CURSOR — iOS Scan last-good / seed-first rebased onto #2848 (`c55c2e64`)
+
+#2850 rebased onto current `main` (`c55c2e64`).  Did not rewrite #2848.  Live unblocker for TF 1.0.68 is still seed-first `GET /api/scan` (names before Yahoo whole-set).  iOS `latestScan` kept for the next TF.  Do not merge / deploy / bounce / second TestFlight.  Do not touch #2848 / #2849 / #2841 / #2840.
+
+## 2026-08-19 CURSOR — iOS Scan keeps last-good on a 503 refresh
+
+Live `4abfb7fa` web `/console/scan`: Refresh scan once (not Run once) 503s, then paints the last-good universe from Aug 18, 2026, 7:25:13 PM (70 names / 5069 quotes / 5073 scanned).  Public `GET /api/scan` is 401.  TF 1.0.68 already has #2830 ScanView but iOS only called live `/api/scan` and replaced the table with the empty 503 body.  Snapshot had no `latestScan`.
+
+Why Refresh 503s: after an empty Nasdaq screener, interactive `/api/scan` Yahoo-priced the whole ~5k allowed set inside the 35s budget.  That miss also dies as a generic 503 (often edge HTML, no `warnings` JSON) before the seed web already shows.  One bad row in `quotesBySymbol` also voided the whole seed.
+
+Fix: seed before Yahoo whole-set; keep valid seed rows; compact `latestScan` on `/api/mobile/snapshot`; iOS paints that universe and keeps it on a failed refresh.  Did not merge.  Did not deploy.  Did not bounce.  Did not start a second TestFlight.  Did not click Manual Run.  Did not touch #2848 / #2849 / #2841 / #2840.
+
+PR **#2850**.  Branch `cursor/ios-scan-last-good-503-b104`.  Rollout: `docs/rollouts/2026-08-19-ios-scan-last-good-503.md`.
+
+ASC follow-up (testers on TF **1.0.68** `202608182121` / `581467e1`, which already includes #2830+#2831): this is not a stale binary.  That client already calls `GET /api/scan` and decodes structured `scan_quotes_unavailable`.  Live Refresh still 503s without names (`4abfb7fa` scan path; live process is now `c55c2e64` = #2848 on top — scan/iOS files unchanged).  `/api/mobile/snapshot` on that live sha has no `latestScan`.  The 1.0.68 client times out at 25s vs the 35s server budget.  Do not start a second TestFlight.  Do not merge/deploy/bounce.  Do not touch #2848/#2849/#2841/#2840.  The 1.0.68-compatible fix is making `/api/scan` return names (seed before Yahoo) — already in #2850, not live.
 
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 

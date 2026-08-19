@@ -16,9 +16,10 @@ import {
 } from "@/lib/scan-singleflight";
 
 export const dynamic = "force-dynamic";
-// 15s Nasdaq timeout + one abort retry + Yahoo whole-set fallback + rank.
-// The screener fetch does not take this signal (see nasdaq-screener-fetch.ts);
-// this budget only caps ranking / Yahoo after Nasdaq returns or exhausts.
+// 15s Nasdaq timeout + one abort retry + last-good seed (or Yahoo whole-set
+// only when there is no seed) + rank.  The screener fetch does not take this
+// signal (see nasdaq-screener-fetch.ts); this budget caps ranking / Yahoo
+// after Nasdaq returns or exhausts.
 const INTERACTIVE_SCAN_BUDGET_MS = 35_000;
 
 // Fresh, standalone market scan for the Market Scan tab. It returns current screener,

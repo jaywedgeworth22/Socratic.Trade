@@ -22,6 +22,44 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.pendingProposals.first?.proposal.bracketStopLoss, 190)
         XCTAssertEqual(snapshot.pendingProposals.first?.proposal.exitPlan, "Trim a third at 220; trail the rest.")
         XCTAssertEqual(snapshot.recentCommands.first?.status, "succeeded")
+        XCTAssertNil(snapshot.latestScan)
+    }
+
+    func testSnapshotDecodesCompactLatestScan() throws {
+        let json = Data(#"""
+        {
+          "readiness": {
+            "hasAccount": true,
+            "hasUniverse": true,
+            "systemState": "active",
+            "strategyAuthority": "propose",
+            "selectedAccountNumber": null,
+            "activeConnectedAccount": null,
+            "commandBacklog": {"queued": 0, "running": 0}
+          },
+          "policy": {
+            "systemState": "active",
+            "strategyAuthority": "propose"
+          },
+          "latestScan": {
+            "generatedAt": "2026-08-18T19:25:13.000Z",
+            "asOf": "2026-08-18T19:25:13.000Z",
+            "scannedSymbols": 5073,
+            "returnedQuotes": 5069,
+            "warnings": ["Some ranked names are missing P/E."],
+            "topCandidates": [
+              {"symbol":"BRK-B","companyName":"Berkshire Hathaway","price":500,"score":88},
+              {"symbol":"GOOG","price":180,"score":86}
+            ]
+          }
+        }
+        """#.utf8)
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: json)
+        XCTAssertEqual(snapshot.latestScan?.topCandidates.map(\.symbol), ["BRK-B", "GOOG"])
+        XCTAssertEqual(snapshot.latestScan?.scannedSymbols, 5073)
+        XCTAssertEqual(snapshot.latestScan?.returnedQuotes, 5069)
+        XCTAssertEqual(snapshot.latestScan?.asOf, "2026-08-18T19:25:13.000Z")
+        XCTAssertTrue(snapshot.latestScan?.hasUsableUniverse == true)
     }
 
     func testDeletionPreviewMatchesReadOnlyServerContract() throws {
