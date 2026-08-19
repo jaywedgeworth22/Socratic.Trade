@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-18 MONET — Full-app expert-panel review landed (desktop web + mobile web + iOS)
+
+`docs/reviews/2026-08-18-full-app-expert-review.md`: 17 expert lanes + 17 verifiers + prior-review cross-check + a by-hand live pass.  336 panel findings (40 P1 / 148 P2 / 148 P3), 20 live-pass items, 50 verifier-added items, 15 prior items still open, 53 resolved.  Top of the list: MCP-fallback duplicate orders (`tsx-01`), stale-exit remediation cancel-replacing bracket legs with MARKET (`tsx-02`), iOS approve reported "succeeded" on blocked/error (`api-02`), fill ledger keeps the OLDEST 500 fills so P&L freezes (`perf-01`), Bull strict schema `exitPlan` missing from `required` = the Green 400s (`llm-01`), no `AUTH_SECRET` boot guard (`sec-01`), Friday cache freeze (`mdi-01`), FTS full-scan per chunk = the loop pin (`berel-01`).  Hotfix #2851 (Connections `process.uptime` crash) is live; root-cause split is LIVE-01.  Sequencing in report §11.  Rollout: `docs/rollouts/2026-08-18-full-app-expert-review.md`.
+
 ## 2026-08-19 CURSOR — iOS Home / Guardrails parity vs live web `a8a0a65b`
 
 Hypothesis held: #2855/#2856 are on `main` (`a8a0a65b`).  TF **1.0.68** is behind that binary, so Guardrails → Universe → Indices still prints `sp500, nasdaqComposite, dow30, nyseComposite` on the phone.  Current `main` iOS already uses `DeskCopy.joinedIndexList` on Guardrails and Desk Current Policy — no leftover raw-slug join.  Remaining leaks on this tree: #2849 Desk subtitle still open, and Home / Guardrails / Insights still pointed at a nonexistent iOS **Strategy** page (web universe edits are on Guardrails).
