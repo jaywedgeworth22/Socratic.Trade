@@ -328,8 +328,8 @@ describe("markStaleRunningRuns", () => {
 
     const row = db
       .getDb()
-      .prepare("SELECT status FROM strategy_runs WHERE id = ?")
-      .get(runId) as { status: string };
+      .prepare("SELECT status, summary FROM strategy_runs WHERE id = ?")
+      .get(runId) as { status: string; summary: string | null };
     expect(row.status).toBe("failed");
     expect(row.summary).toContain("stalled with no progress");
     expect(row.summary).not.toContain("Process restarted mid-run");
