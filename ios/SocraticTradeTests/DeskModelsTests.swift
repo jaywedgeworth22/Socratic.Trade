@@ -262,6 +262,30 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(DeskCopy.yesNo(nil), "—")
     }
 
+    func testIndexUniverseLabelsMatchTheWebMapAndNeverShowSlugs() {
+        let expected: [(String, String)] = [
+            ("sp100", "S&P 100"),
+            ("sp500", "S&P 500"),
+            ("nasdaq100", "Nasdaq 100"),
+            ("nasdaqComposite", "Nasdaq Composite"),
+            ("dow30", "Dow 30"),
+            ("russell2000", "Russell 2000"),
+            ("nyseComposite", "NYSE Composite"),
+            ("ftWilshire5000", "FT Wilshire 5000")
+        ]
+        XCTAssertEqual(DeskCopy.indexUniverseLabels.count, expected.count)
+        for (slug, label) in expected {
+            XCTAssertEqual(DeskCopy.indexUniverseLabel(slug), label)
+            XCTAssertNotEqual(label, slug)
+        }
+        XCTAssertEqual(DeskCopy.joinedIndexList(["sp500", "russell2000"]), "S&P 500, Russell 2000")
+        XCTAssertEqual(DeskCopy.joinedIndexList(["sp500", "not-an-index"]), "S&P 500")
+        XCTAssertEqual(DeskCopy.joinedIndexList([]), "none")
+        XCTAssertEqual(DeskCopy.joinedIndexList(["mysteryIndex"]), "none")
+        XCTAssertFalse(DeskCopy.joinedIndexList(["sp500", "nasdaq100"]).contains("sp500"))
+        XCTAssertFalse(DeskCopy.joinedIndexList(["sp500", "nasdaq100"]).contains("nasdaq100"))
+    }
+
     func testNewTabsStayCustomizableAndMoreDoesNot() {
         for tab in [AppTab.coach, .scan, .guardrails, .results] {
             XCTAssertTrue(AppTab.customizable.contains(tab), "\(tab)")

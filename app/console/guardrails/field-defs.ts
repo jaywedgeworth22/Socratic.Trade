@@ -9,6 +9,7 @@
  *    (panic brake, broker-held brackets), where turning protection off is
  *    the risk-increasing move. */
 
+import { SUPPORTED_INDEX_UNIVERSES, indexUniverseLabel } from "@/lib/index-universes";
 import type { IndexUniverse, OrderType } from "@/lib/types";
 import type { FieldDef } from "../lib/policy-diff";
 
@@ -292,15 +293,9 @@ export const ALL_DEFS: FieldDef[] = [
   ...TRIGGERS
 ];
 
-export const INDICES: Array<{ id: IndexUniverse; label: string }> = [
-  { id: "sp100", label: "S&P 100" },
-  { id: "sp500", label: "S&P 500" },
-  { id: "nasdaq100", label: "Nasdaq 100" },
-  { id: "nasdaqComposite", label: "Nasdaq Composite" },
-  { id: "dow30", label: "Dow 30" },
-  { id: "russell2000", label: "Russell 2000" },
-  { id: "nyseComposite", label: "NYSE Composite" },
-  { id: "ftWilshire5000", label: "FT Wilshire 5000" }
-];
+export const INDICES: Array<{ id: IndexUniverse; label: string }> = SUPPORTED_INDEX_UNIVERSES.map((id) => ({
+  id,
+  label: indexUniverseLabel(id)
+}));
 
 export const ORDER_TYPES: OrderType[] = ["market", "limit", "stop_market", "stop_limit"];
