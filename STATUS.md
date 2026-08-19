@@ -167,6 +167,9 @@ PR **#2886**.  Branch `cursor/broker-io-deadlines-85a9`.  SHA `54ed4a3c`.  Rollo
 ## 2026-08-19 CURSOR — Phone touch viewport cluster (`phone-touch-viewport`)
 
 Expert review Part II cluster: chrome bar budget at 360–390px, 44px touch floor on all interactive classes, 16px input anti-zoom, overlay scroll-lock + dvh/visualViewport + history back.  PR branch `cursor/phone-touch-viewport-b809`.  Rollout: `docs/rollouts/2026-08-19-phone-touch-viewport.md`.  Next: owner phone-width spot-check; mweb-06/mweb-09 may need follow-up.
+## 2026-08-19 CURSOR — Placement outcome truth (`placement-outcome-truth`)
+
+PR open on `cursor/placement-outcome-truth-6d4a`.  Introduces `src/lib/placement-outcome.ts` so approve reports `placed` only when the broker actually received an order.  Mobile `proposal.approve` no longer stamps `succeeded` for busy/blocked/not_placed; iOS decodes `result.status` and mirrors web approval-card tones.  HTTP 429/408 on the approval path land as `not_placed`, not `rejected_by_broker`.  Rollout: `docs/rollouts/2026-08-19-placement-outcome-truth.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

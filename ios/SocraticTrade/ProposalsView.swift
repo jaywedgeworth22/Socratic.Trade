@@ -464,7 +464,7 @@ private struct ProposalActionFeedbackBanner: View {
     private var showsSpinner: Bool {
         switch feedback {
         case .sending, .pending: return true
-        case .failed, .succeeded: return false
+        case .failed, .succeeded, .placementSettled: return false
         }
     }
 
@@ -484,6 +484,11 @@ private struct ProposalActionFeedbackBanner: View {
             return message
         case .succeeded(let action):
             return action == .approve ? "Approved — waiting for desk refresh." : "Rejected — waiting for desk refresh."
+        case .placementSettled(let action, let status, let reasons):
+            guard action == .approve else {
+                return "Rejected — waiting for desk refresh."
+            }
+            return AppFormat.placementApproveMessage(status: status, reasons: reasons)
         }
     }
 
@@ -492,6 +497,9 @@ private struct ProposalActionFeedbackBanner: View {
         case .sending, .pending: return "arrow.triangle.2.circlepath"
         case .failed: return "exclamationmark.triangle.fill"
         case .succeeded: return "checkmark.circle.fill"
+        case .placementSettled(let action, let status, _):
+            guard action == .approve else { return "checkmark.circle.fill" }
+            return AppFormat.placementApproveSystemImage(status: status)
         }
     }
 
@@ -500,6 +508,9 @@ private struct ProposalActionFeedbackBanner: View {
         case .sending, .pending: return AppPalette.accent
         case .failed: return AppPalette.negative
         case .succeeded: return AppPalette.positive
+        case .placementSettled(let action, let status, _):
+            guard action == .approve else { return AppPalette.positive }
+            return AppFormat.placementApproveColor(status: status)
         }
     }
 }

@@ -577,11 +577,19 @@ struct NotificationHistoryItem: Decodable, Identifiable, Equatable {
     }
 }
 
+struct MobileCommandResult: Decodable {
+    let status: String?
+    let outcome: String?
+    let reasons: [String]?
+    let orderId: String?
+}
+
 struct MobileCommand: Decodable, Identifiable {
     let id: String
     let commandType: String
     let status: String
     let error: String?
+    let result: MobileCommandResult?
     let createdAt: String
     let queuedAt: String?
     let startedAt: String?

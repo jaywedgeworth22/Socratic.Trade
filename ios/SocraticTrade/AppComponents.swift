@@ -196,6 +196,74 @@ enum AppFormat {
             .joined(separator: " ")
     }
 
+    /// Mirrors web `approval-card.tsx` placement toasts — same status strings, honest copy.
+    static func placementApproveMessage(status: String, reasons: [String]?) -> String {
+        let detail = reasons?
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let detail, !detail.isEmpty,
+           status == "blocked" || status == "busy" || status == "not_placed" || status == "error" {
+            return detail
+        }
+        switch status {
+        case "filled":
+            return "Order filled — waiting for desk refresh."
+        case "placed":
+            return "Order placed — waiting for desk refresh."
+        case "paper":
+            return "Paper trade filled — waiting for desk refresh."
+        case "blocked":
+            return detail ?? "Blocked at approval time."
+        case "busy":
+            return detail ?? "Approval is still busy — wait for the run to finish, then approve again."
+        case "not_placed":
+            return detail ?? "Order not placed — safe to retry."
+        default:
+            return detail ?? placementStatusLabel(status)
+        }
+    }
+
+    static func placementStatusLabel(_ status: String) -> String {
+        switch status.lowercased() {
+        case "filled": return "Filled"
+        case "placed": return "Placed"
+        case "paper": return "Paper trade"
+        case "blocked": return "Blocked"
+        case "busy": return "Busy"
+        case "not_placed": return "Not placed — safe to retry"
+        case "error": return "Placement failed"
+        case "rejected", "rejected_by_broker": return "Rejected by broker"
+        default:
+            return status
+                .replacingOccurrences(of: "_", with: " ")
+                .split(separator: " ")
+                .map { $0.capitalized }
+                .joined(separator: " ")
+        }
+    }
+
+    static func placementApproveColor(status: String) -> Color {
+        switch status {
+        case "filled", "placed", "paper":
+            return AppPalette.positive
+        case "blocked", "busy":
+            return AppPalette.warning
+        default:
+            return AppPalette.accent
+        }
+    }
+
+    static func placementApproveSystemImage(status: String) -> String {
+        switch status {
+        case "filled", "placed", "paper":
+            return "checkmark.circle.fill"
+        case "blocked", "busy":
+            return "exclamationmark.triangle.fill"
+        default:
+            return "info.circle.fill"
+        }
+    }
+
     /// Central time, explicitly labeled — fleet convention for any user-facing timestamp that
     /// shows a timezone. Used by SymbolInfoSheet's quote-as-of line; other mobile timestamps
     /// intentionally stay device-local (unchanged, out of scope here).
