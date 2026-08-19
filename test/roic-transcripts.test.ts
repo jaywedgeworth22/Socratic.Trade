@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldDeferBackgroundRagForStrategy } from "../src/lib/db-execution";
+import { shouldDeferBackgroundRagForStrategy, shouldSkipWholeIndexInventory } from "../src/lib/db-execution";
 import {
   parseRoicEarningsCallList,
   parseRoicTranscriptResponse,
@@ -257,6 +257,19 @@ describe("roic-transcripts", () => {
         cachedIndex: null
       })
     ).toEqual({ action: "fetch-gaps", needsList: true, periods: [] });
+  });
+
+  it("skips whole-index Pinecone inventory during gather but allows account deletion", () => {
+    expect(shouldSkipWholeIndexInventory({ strategyWorkInFlight: true })).toBe(true);
+    expect(shouldSkipWholeIndexInventory({ strategyWorkInFlight: false })).toBe(false);
+    expect(shouldSkipWholeIndexInventory({
+      strategyWorkInFlight: true,
+      accountDeletionRequestId: "del-1"
+    })).toBe(false);
+    expect(shouldSkipWholeIndexInventory({
+      strategyWorkInFlight: true,
+      allowDuringStrategyWork: true
+    })).toBe(false);
   });
 
   it("writes full-body only for the newest high-interest call", async () => {

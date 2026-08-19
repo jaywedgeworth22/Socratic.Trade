@@ -411,6 +411,12 @@ export function analystScoreFromMean(mean: number): number {
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
 const CONCURRENCY = 5;
+
+/** 502/429/timeout must fail-open the rest of gather.  A 404 is a miss. */
+export function isLatchingEnrichmentTransportError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /\b(429|500|502|503|504)\b/.test(msg) || /abort|timeout|fetch failed/i.test(msg);
+}
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
 const originalSet = cache.set.bind(cache);
 cache.set = function (key: string, value: { expiresAt: number; data: SymbolEnrichment }) {
@@ -849,8 +855,16 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
     if (misses.length === 0) return result;
 
     const client = getCongressTradeClient();
-    await Promise.all(
-      misses.map(async (symbol) => {
+    // Live `9d71dda4`: App A 502'd in the gather window.  Bound concurrency and
+    // stop remaining symbol pulls after the first latching 5xx/429/timeout so
+    // congress cannot own the event loop or skip Green.  A per-symbol 404 is a
+    // miss, not a latch.
+    let latchingUpstream = false;
+    for (let i = 0; i < misses.length && !latchingUpstream; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+        if (latchingUpstream) return;
         // Track whether EITHER read failed at the transport level (timeout/5xx/401 →
         // []). A genuine "App A has nothing" (both reads OK, no fresh rows) is
         // negative-cached; a transport error is NOT, so a fixed outage/token is retried
@@ -868,12 +882,22 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           congressFundamentalsEnabled()
             ? client.getFundamentals(symbol, { from: fromDate })
                 .then((r) => { recordProviderCall(this.name, { service: "fundamentals", ok: true, userId: this.userId }); return r; })
-                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "fundamentals", ok: false, userId: this.userId }); return [] as FundamentalRow[]; })
+                .catch((err: unknown) => {
+                  transportError = true;
+                  if (isLatchingEnrichmentTransportError(err)) latchingUpstream = true;
+                  recordProviderCall(this.name, { service: "fundamentals", ok: false, userId: this.userId });
+                  return [] as FundamentalRow[];
+                })
             : Promise.resolve([] as FundamentalRow[]),
           congressFundamentalsEnabled()
             ? client.getAnalyst(symbol, { from: fromDate })
                 .then((r) => { recordProviderCall(this.name, { service: "analyst", ok: true, userId: this.userId }); return r; })
-                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "analyst", ok: false, userId: this.userId }); return [] as AnalystRow[]; })
+                .catch((err: unknown) => {
+                  transportError = true;
+                  if (isLatchingEnrichmentTransportError(err)) latchingUpstream = true;
+                  recordProviderCall(this.name, { service: "analyst", ok: false, userId: this.userId });
+                  return [] as AnalystRow[];
+                })
             : Promise.resolve([] as AnalystRow[]),
         ]);
 
@@ -996,7 +1020,8 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           writeEnrichmentCache(this.name, symbol, "shared", this.userId, {}, now + CONGRESS_NEG_TTL_MS);
         }
       })
-    );
+      );
+    }
     return result;
   }
 }
@@ -1461,28 +1486,22 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         }
       }
     } else if (enrichmentShortCircuitEnabled()) {
-      // Legacy short-circuit: App A first, then every other non-scarce provider in parallel.
+      // Legacy short-circuit: do not await congress.trade alone.  Live `9d71dda4`
+      // 502'd App A in the same window as gather; Yahoo/Finnhub must keep
+      // running so Green can start.  Paid providers run without an App A hint
+      // on this path (free-first, default ON, still uses the two-wave planner).
       const waveOneProviders = legacyWaveOneIndexes.map((i) => this.providers[i]);
       const congressProvider = waveOneProviders.find((p) => p.name === "congress.trade");
-      const appAResult = congressProvider
-        ? await run(congressProvider, normalized)
-        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
-      const appA = appAResult.data;
-      const coveredFields: Record<string, ReadonlySet<string>> = {};
-      const analystSource: Record<string, string> = {};
-      for (const s of normalized) {
-        const e = appA[s];
-        if (e) {
-          coveredFields[s] = new Set(Object.keys(e));
-          const srcKey = e.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
-          if (srcKey) analystSource[s] = srcKey;
-        }
-      }
-      const context: EnrichmentContext = { coveredFields, analystSource };
       const otherProviders = waveOneProviders.filter((p) => p.name !== "congress.trade");
-      const otherResults = await Promise.all(
-        otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
-      );
+      const [appAResult, ...otherResults] = await Promise.all([
+        congressProvider
+          ? run(congressProvider, normalized)
+          : Promise.resolve({
+              name: "congress.trade",
+              data: {} as Record<string, SymbolEnrichment>
+            } satisfies ProviderRun),
+        ...otherProviders.map((p) => run(p, normalized))
+      ]);
       const byName = new Map<string, ProviderRun>();
       for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
       const waveOneRuns = waveOneProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
@@ -3856,16 +3875,21 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
       else misses.push(symbol);
     }
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+    const rateLimit = { tripped: false };
+    for (let i = 0; i < misses.length && !rateLimit.tripped; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
+          if (rateLimit.tripped) {
+            result[symbol] = {};
+            return;
+          }
           try {
             // Two independent reads: FINRA short interest (shares) + free float (shares). Both are
             // needed to compute short % of float — Massive returns neither as a ready-made percentage.
             const [shortRaw, floatRaw] = await Promise.allSettled([
-              this.getJson(`${this.base}/stocks/v1/short-interest?ticker=${encodeURIComponent(symbol)}&limit=1&sort=settlement_date.desc`),
-              this.getJson(`${this.base}/stocks/vX/float?ticker=${encodeURIComponent(symbol)}&limit=1`)
+              this.getJson(`${this.base}/stocks/v1/short-interest?ticker=${encodeURIComponent(symbol)}&limit=1&sort=settlement_date.desc`, rateLimit),
+              this.getJson(`${this.base}/stocks/vX/float?ticker=${encodeURIComponent(symbol)}&limit=1`, rateLimit)
             ]);
 
             const shortInterest = shortRaw.status === "fulfilled" ? massiveFirstResult(shortRaw.value)?.short_interest : undefined;
@@ -3897,7 +3921,7 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
     return result;
   }
 
-  private async getJson(url: string): Promise<unknown> {
+  private async getJson(url: string, rateLimit?: { tripped: boolean }): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
@@ -3908,12 +3932,17 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
           service: this.name,
           keySource: this.keySource,
           userId: this.userId,
-          // 404 = no short-interest / float row for this ticker (expected for some symbols) — don't log
-          // it as a lane failure. Real auth/quota errors (401/403/429/5xx) still surface to health.
-          suppressHealthStatuses: [404]
+          // Live `9d71dda4`: a Massive 429 must fail-open, not retry-storm the
+          // rest of gather.  No built-in 429 retry (retries: 0).  404 stays a miss.
+          retries: 0,
+          suppressHealthStatuses: [404, 429]
         }
       );
       if (response.status === 404) return { results: [] };
+      if (response.status === 429) {
+        if (rateLimit) rateLimit.tripped = true;
+        return { results: [] };
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {

@@ -26,6 +26,9 @@
 > **2026-08-19 CURSOR — Indices labels (`#2855` `b27de85c` MERGED).** Follow-up is `cursor/indices-common-names-3381`.
 
 > **2026-08-19 CURSOR — Robinhood quote chunk (`cursor/robinhood-quote-chunk-befc`, #2852).** Rebased onto #2853 `df1f5a37`.  Live `9d71dda4` died on `too many symbols (max 10, got 250)` 18s into gather.  Chunk Robinhood quote/tradability/fundamentals to 10.  Do not shrink the universe.  congress.trade 404 must not latch the free wave.  Do not reopen #2840 / #2848 / #2853.  Do not touch #2850 / #2849 / #2841.  Do not merge / deploy / bounce / TF.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+> **2026-08-19 CURSOR — Gather no Pinecone inventory + 502/429 fail-open (`cursor/gather-no-pinecone-inventory-befc`).** Same `9d71dda4` terminal.  Fold in #2852 (`c7b775c5`); do not replace the ≤10 Robinhood chunk.  Pause whole-index Pinecone list/fetch while a run is queued/running.  congress.trade 502 and Massive 429 fail-open.  No OpenRouter strategy/completion in that window — only `usage_budget_status` then the crash.  Do not flip write-class or prune.  Do not reopen #2840.  Do not touch #2850 / #2849 / #2841.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
+
+> **2026-08-19 CURSOR — Robinhood quote chunk (`#2852` `c7b775c5` MERGED).** Live `9d71dda4` died on `too many symbols (max 10, got 250)` 18s into gather.  Chunk Robinhood quote/tradability/fundamentals to 10.  Follow-up gather crumbs are `cursor/gather-no-pinecone-inventory-befc`.
 
 > **2026-08-19 CURSOR — Manual Run once drain handoff (`#2853` `df1f5a37` MERGED).** Drain resumes a claimed Manual Run once with no live heartbeat.  Remaining gather-pricing hole is #2852.
 

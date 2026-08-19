@@ -12,6 +12,7 @@ import {
   apiKeyFingerprint,
   callsPerSymbol,
   getEnrichmentProvider,
+  isLatchingEnrichmentTransportError,
   isTransientError,
   labelFromAnalystScore,
   mockEnrichmentProvider,
@@ -3136,6 +3137,64 @@ describe("enrichment short-circuit (App A coverage hint → paid providers skip 
     expect(out.AAA.peRatio).toBe(12);
   });
 
+  it("does not latch gather when congress.trade 502s on the free-first wave", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const cascade = new CascadingEnrichmentProvider([
+      {
+        name: "congress.trade",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          throw new Error("HTTP 502");
+        }
+      },
+      {
+        name: "yahoo-finance",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          return { AAA: { peRatio: 18 } };
+        }
+      }
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(out.AAA.peRatio).toBe(18);
+  });
+
+  it("does not latch gather when congress.trade 502s on the legacy short-circuit path", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    process.env[FREE_FIRST] = "0";
+    const cascade = new CascadingEnrichmentProvider([
+      {
+        name: "congress.trade",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          throw new Error("HTTP 502");
+        }
+      },
+      {
+        name: "yahoo-finance",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          return { AAA: { peRatio: 19 } };
+        }
+      }
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(out.AAA.peRatio).toBe(19);
+  });
+
+  it("treats 502/429/timeout as latching and 404 as a miss", () => {
+    expect(isLatchingEnrichmentTransportError(new Error("HTTP 502"))).toBe(true);
+    expect(isLatchingEnrichmentTransportError(new Error("HTTP 429"))).toBe(true);
+    expect(isLatchingEnrichmentTransportError(new Error("The operation was aborted due to timeout"))).toBe(true);
+    expect(isLatchingEnrichmentTransportError(new Error("HTTP 404"))).toBe(false);
+  });
+
   it("passes NO coverage hint when the flag is OFF (default)", async () => {
     process.env[READS] = "on"; // reads on, short-circuit off
     // Free-first also injects coveredFields for paid waves — disable it here so this test
@@ -3256,6 +3315,22 @@ describe("short-interest second source (Massive) — cross-check + disagreement 
     const provider = new MassiveEnrichmentProvider("massive-key", "env");
     const res = await provider.enrich(["NONE"]);
     expect(res.NONE).toEqual({});
+  });
+
+  it("MassiveEnrichmentProvider stops remaining symbols after the first 429", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      return new Response("rate limited", { status: 429 });
+    });
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const symbols = Array.from({ length: 20 }, (_, i) => `M${i}`);
+    const res = await provider.enrich(symbols);
+    expect(res.M0).toEqual({});
+    expect(res.M19).toEqual({});
+    expect(calls).toBeLessThan(20);
   });
 });
 

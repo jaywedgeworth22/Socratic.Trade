@@ -1,0 +1,57 @@
+# 2026-08-19 — Gather must not inventory Pinecone or latch on 502/429
+
+## Context & Objective
+
+Same Roth Manual Run once `9d71dda4-1383-4a27-814c-fd80fa44e314` as #2852/#2853.  Robinhood `too many symbols (max 10, got 250)` at 00:59:15Z (+18s) remains the first hard fail.  The same window also listed/fetched the whole Pinecone index, 502'd congress.trade, and 429'd Massive.  There was no OpenRouter strategy/completion call — only run-scoped `usage_budget_status` at +10s, then the crash.  Green never started.  New PR.  Fold in the Robinhood ≤10 chunk; do not replace it.
+
+## Changes Made
+
+Gather retrieval stays query/id scoped (`retrieveContextDetailed`).  Whole-index Pinecone `listPaginated` + `fetch` is paused while any strategy run/request is queued or running.  Account deletion still inventories so erasure can finish.  congress.trade 502 and Massive 429 fail-open: they must not latch the enrichment wave or skip Green.
+
+- `src/lib/db-execution.ts`
+- `src/lib/scheduler.ts`
+- `src/lib/vector-db.ts`
+- `src/lib/data-providers.ts`
+- `src/lib/api-clients/congress.ts`
+- `test/scheduler-managed-vector-reconcile.test.ts`
+- `test/roic-transcripts.test.ts`
+- `test/data-providers.test.ts`
+- `test/api-clients-congress.test.ts`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/EFFORT-LOG.md`
+- `docs/phase-4-market-data-scoring.md`
+- `docs/phase-7-strategy.md`
+- `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`
+
+## Decisions & Trade-offs
+
+- Folded in #2852 (`c7b775c5`).  Did not rewrite Robinhood chunking.
+- Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune the live index.  Did not reopen #2840.
+- Scheduler reconcile does not consume `lastAttempt` when a run is in flight, so the next idle tick can still inventory.
+- Inventory aborts between pages if gather starts mid-pass.  Partial inventory is not returned as a complete index (throws / skipped).
+- Legacy short-circuit no longer awaits App A alone.  Paid providers on that off-path run without an App A coverage hint (free-first, default ON, still uses the two-wave planner).
+- Massive 429: `retries: 0`, suppress health, stop remaining symbols this enrich call.  A 404 stays a miss.
+- Did not touch #2850 / #2849 / #2841.  Did not merge, deploy, or bounce.
+
+## Verification State
+
+```bash
+npx vitest run test/scheduler-managed-vector-reconcile.test.ts test/roic-transcripts.test.ts test/api-clients-congress.test.ts test/data-providers.test.ts test/robinhood-mcp.test.ts
+npx tsc --noEmit
+npm run lint
+npm test
+npm run build
+```
+
+Commands above are the intended gate.  Paste the actual receipts after they run.
+
+## Next Steps & Blockers
+
+- Do not merge / deploy / bounce from this seat.
+- Confirm live gather reaches Green/`llm_usage` after this lands.  Robinhood max-10 at +18s was the first hard fail; this PR removes the remaining same-window latches.
+- Do not inventory the live index by hand.  Do not flip write-class.
+
+## Zero-Code Findings
+
+`usage_budget_status` at +10s means `runStrategyOnce` passed rotation/budget advisory before scan.  Zero completion `llm_usage` means Green/`proposeTrades` never ran.  The thousands of Pinecone list/fetch were whole-index inventory (`managed-vector-reconcile` / `inventoryVectorRecordsByMetadata`), not gather query retrieve.

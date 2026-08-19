@@ -110,6 +110,14 @@ export async function reconcileManagedVectorRecordsIfDue(now = Date.now()): Prom
 
   const run = (async (): Promise<ManagedVectorReconcileRun | null> => {
     try {
+      // Live `9d71dda4`: thousands of Pinecone list/fetch ran in the same
+      // window as gather.  Pause whole-index inventory while a run/request is
+      // queued or running.  Do not consume the attempt marker so the next
+      // idle tick can still reconcile.  Do not flip write-class or prune.
+      if (hasInFlightStrategyWork()) {
+        return { status: "busy", result: { skipped: true } };
+      }
+
       const lastAttemptAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY);
       const lastSuccessAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY);
       if (!isManagedVectorReconcileDue(now, lastAttemptAt, lastSuccessAt)) return null;

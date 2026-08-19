@@ -151,6 +151,13 @@ PR **#2856**.  Branch `cursor/indices-common-names-3381`.  Rollout: `docs/rollou
 ## 2026-08-19 CURSOR — Indices labels (`S&P 500`, not `sp500`)
 
 **MERGED #2855** `b27de85c`.  Follow-up: live Guardrails Indices selected-set + Scan chips still leaked slugs — `cursor/indices-common-names-3381`.
+## 2026-08-19 CURSOR — Gather crumbs: no Pinecone inventory + 502/429 fail-open
+
+#2852 is merged (`c7b775c5`) — keep the Robinhood ≤10 chunk.  Same Roth `9d71dda4` window also did thousands of Pinecone list/fetch, congress.trade 502, and Massive 429.  No OpenRouter strategy/completion call.  Only run-scoped audits: `usage_budget_status` at +10s, then the crash.  Robinhood `too many symbols (max 10, got 250)` at +18s remains the first hard fail.
+
+Do not inventory the whole index during gather.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not prune.  Do not reopen #2840.  502/429 must not latch gather or skip Green.  New PR.  Do not merge / deploy / bounce.  Do not touch #2850 / #2849 / #2841.
+
+Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
 
 ## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (rebased onto #2853)
 
