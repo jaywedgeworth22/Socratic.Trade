@@ -665,6 +665,16 @@ enum DeskCopy {
         return labels.isEmpty ? "none" : labels.joined(separator: ", ")
     }
 
+    /// Same destination as web readiness (`/console/guardrails`).  iOS has no Strategy tab.
+    static let universeNeedsIndex =
+        "Choose at least one base index (e.g. S&P 500) or add extra symbols so the strategy has names to scan."
+
+    static let universeRefreshAfterGuardrails =
+        "Add an index or extra symbols on Guardrails, then pull to refresh here."
+
+    static let universeInsightDetail =
+        "Choose at least one base index (e.g. S&P 500) or add extra symbols."
+
     static func yesNo(_ value: Bool?) -> String {
         guard let value else { return "—" }
         return value ? "yes" : "no"

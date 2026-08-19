@@ -83,10 +83,6 @@ struct GuardrailsView: View {
                 policyRow("Indices", DeskCopy.joinedIndexList(snapshot.policy.includedIndices))
                 policyRow("Extra Symbols", DeskCopy.joinedList(snapshot.policy.additionalSymbols))
                 policyRow("Blocklist", DeskCopy.joinedList(snapshot.policy.blocklist))
-                Text("Universe edits stay on the Strategy page.  This screen edits authority and caps.")
-                    .font(.appCaption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

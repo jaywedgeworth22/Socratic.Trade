@@ -244,7 +244,11 @@ across panels, feeds, popovers, or status chips.
   (Guardrails → Universe, same name on iOS Guardrails and Desk) show the
   selected-set as common names (`S&P 500, Nasdaq Composite, Dow 30, NYSE
   Composite`, never `sp500, nasdaqComposite, dow30, nyseComposite`) plus
-  multi-select toggles labeled the same way. S&P 500 is selected by
+  multi-select toggles labeled the same way. iOS Home Desk is a heading plus
+  the Coach / Scan / Guardrails / Results buttons — it does not repeat those
+  four names as a subtitle.  Empty-universe copy on iOS Home / Insights points
+  at Guardrails with the `S&P 500` example (web `/console/guardrails`); there
+  is no iOS Strategy tab.  S&P 500 is selected by
   default, Additional Watchlist adds explicit tickers, and Ignore List subtracts
   symbols from the final universe. S&P 100 and S&P 500 are mutually exclusive;
   Nasdaq 100 and Nasdaq Composite are mutually exclusive. The backend normalizes
