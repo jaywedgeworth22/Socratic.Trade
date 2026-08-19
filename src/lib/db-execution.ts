@@ -325,8 +325,22 @@ export function hasInFlightStrategyWork(): boolean {
 // doesn't meaningfully delay detecting an actual stuck/killed process.
 const STALE_RUN_THRESHOLD_MS = 30 * 60_000;
 
-/** Captured once at module load, same formula as `runtime-health` `PROCESS_STARTED_AT_MS`. */
-const PROCESS_STARTED_AT_MS = Date.now() - Math.round(process.uptime() * 1000);
+/** Boot instant, same formula as `runtime-health` `PROCESS_STARTED_AT_MS`, captured on FIRST USE
+ *  rather than at module load.  This module is reachable from the browser bundle through the
+ *  `db` barrel (`app/console/settings/brokers.tsx` -> `venue-contract` -> `source-settings` ->
+ *  `db-api-keys` -> `db`); webpack stubs `better-sqlite3` for that bundle but Next's browser
+ *  `process` shim has no `uptime`, so a module-scope `process.uptime()` threw
+ *  "process.uptime is not a function" and took down `/console/connections` (2026-08-18, #2848).
+ *  Guarded + lazy: server callers get the real boot instant; a browser evaluation never throws. */
+let processStartedAtMsCache: number | null = null;
+function processStartedAtMs(): number {
+  if (processStartedAtMsCache === null) {
+    const uptimeSeconds =
+      typeof process !== "undefined" && typeof process.uptime === "function" ? process.uptime() : 0;
+    processStartedAtMsCache = Date.now() - Math.round(uptimeSeconds * 1000);
+  }
+  return processStartedAtMsCache;
+}
 /** Uptime rounding can place boot a few hundred ms after the first Date.now() in this process.
  *  Only treat a run as a prior-process leftover when it started clearly before boot. */
 const PROCESS_RESTART_DETECT_SKEW_MS = 2_000;
@@ -337,7 +351,7 @@ export type StaleRunningSweepCause = "process_restarted_mid_run" | "stalled_no_p
  *  `processStartedAt` 23:10:43Z, sat llm=0, and the sweep still wrote "Process restarted mid-run". */
 export function staleRunningRunSweepCause(
   startedAt: string,
-  processStartedMs: number = PROCESS_STARTED_AT_MS
+  processStartedMs: number = processStartedAtMs()
 ): StaleRunningSweepCause {
   const startedMs = Date.parse(startedAt);
   if (Number.isFinite(startedMs) && startedMs < processStartedMs - PROCESS_RESTART_DETECT_SKEW_MS) {
@@ -348,7 +362,7 @@ export function staleRunningRunSweepCause(
 
 export function staleRunningRunSweepSummary(
   startedAt: string,
-  processStartedMs: number = PROCESS_STARTED_AT_MS
+  processStartedMs: number = processStartedAtMs()
 ): string {
   const cause = staleRunningRunSweepCause(startedAt, processStartedMs);
   switch (cause) {
@@ -552,7 +566,7 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
         runId: row.id,
         startedAt: row.started_at,
         reason: cause,
-        processStartedAt: new Date(PROCESS_STARTED_AT_MS).toISOString()
+        processStartedAt: new Date(processStartedAtMs()).toISOString()
       },
       row.user_id,
       // Scope the receipt to the run's account so per-account ops queries can filter it.

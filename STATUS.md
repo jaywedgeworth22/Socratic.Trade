@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-18 MONET — HOTFIX: `/console/connections` crashed client-side after #2848
+
+Prod `c55c2e64` (live 00:51Z) renders "Dashboard error: process.uptime is not a function" on Connections.  `src/lib/db-execution.ts` module-scope `process.uptime()` reaches the browser bundle via `app/console/settings/brokers.tsx -> venue-contract -> source-settings -> db-api-keys -> db` (webpack stubs sqlite, not `process.uptime`).  Fix = lazy guarded accessor + regression test that fails on the old code.  Root cause (server DB modules in the client bundle; Turbopack `npm run dev` 500s every route after that page compiles) is a P1 in the MONET full-app review, not fixed here.  Branch `monet/hotfix-connections-process-uptime`.  Rollout: `docs/rollouts/2026-08-18-connections-process-uptime-hotfix.md`.
+
 ## 2026-08-18 CURSOR — #2848 verify hang + same-process stall labeled restart
 
 verify-hosted: 7010 passed, 1 failed.  `test/alpaca-mcp.test.ts:214` timed out 60000ms — the 16s live first wait plus a never-settling first `getAccount` hung fake-timer advance.  Mock a short `alpacaAccountReadBudgetMs` in that test only.  Keep the live 16s wait and ROIC/FTS pause.
