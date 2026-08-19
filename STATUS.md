@@ -23,6 +23,8 @@ Fix: seed before Yahoo whole-set; keep valid seed rows; compact `latestScan` on 
 
 PR **#2850**.  Branch `cursor/ios-scan-last-good-503-b104`.  Rollout: `docs/rollouts/2026-08-19-ios-scan-last-good-503.md`.
 
+ASC follow-up (testers on TF **1.0.68** `202608182121` / `581467e1`, which already includes #2830+#2831): this is not a stale binary.  That client already calls `GET /api/scan` and decodes structured `scan_quotes_unavailable`.  Live Refresh still 503s without names (`4abfb7fa` scan path; live process is now `c55c2e64` = #2848 on top — scan/iOS files unchanged).  `/api/mobile/snapshot` on that live sha has no `latestScan`.  The 1.0.68 client times out at 25s vs the 35s server budget.  Do not start a second TestFlight.  Do not merge/deploy/bounce.  Do not touch #2848/#2849/#2841/#2840.  The 1.0.68-compatible fix is making `/api/scan` return names (seed before Yahoo) — already in #2850, not live.
+
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 
 #2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Manual Run once did not create a `strategy_run`.  ASC: 0 new Roth rows after 22:06:43Z.  Orphan `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  That leftover request is the lock (`queueStrategyRunRequest` dedupes on `queued`/`running`; the worker never wrote the request terminal).  22:10:15Z `getPortfolioBundle` `8000+7000ms` is a separate slow first-read (#2848), not this lock.

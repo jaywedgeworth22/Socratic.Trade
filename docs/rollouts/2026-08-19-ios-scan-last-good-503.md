@@ -35,18 +35,37 @@ iOS only called `GET /api/scan`.  `/api/mobile/snapshot` had no `latestScan`.  A
 ## Verification State
 
 ```bash
-npm run lint
-npx tsc --noEmit
+npm run lint            # pass
+npx tsc --noEmit        # pass
 npx vitest run test/scan-empty-screener.test.ts test/scan-singleflight.test.ts test/mobile-scan.test.ts
 # 28 passed
+npm run build           # pass
 ```
 
-Linux VM cannot compile Swift.  No TestFlight.  Full `npm test` + `npm run build` running after this note.
+Linux VM cannot compile Swift.  No TestFlight.  Full `npm test` still hits leftover network 404s / provider timeouts unrelated to this scan path.
 
 ## Next Steps & Blockers
 
-Do not merge from this seat.  After verify is green, owner can land.  Testers still on TF 1.0.68 until a later ship that includes this iOS ScanView change.
+Do not merge from this seat.  Do not start a second TestFlight.  Do not bounce.  Do not touch #2848 / #2849 / #2841 / #2840.
+
+1.0.68 will show names only after live `/api/scan` returns a 200 with `topCandidates` (backend seed-first in this PR).  The iOS `latestScan` snapshot path does not exist on `581467e1` and cannot help that binary.
 
 ## Zero-Code Findings
 
-Public unauthenticated `GET /api/scan` is 401 (session required).  That is expected and is not the iOS break.  Web last-good proved the seed exists; iOS never received it.
+ASC: testers are on ST TestFlight 1.0.68 (`202608182121`), ASC `6799238379` / `trade.socratic.app`, sha `581467e1`.  That binary is `#2831` on top of `#2830` (`13b60747`).  iOS Scan files are identical on `581467e1` and `4abfb7fa`.  This is not a pre-#2830 client.
+
+Verified on `581467e1`:
+- `ScanView` only loads `GET /api/scan` (same refresh as web).  It does not read snapshot last-good.
+- `MobileSnapshot` has no `latestScan` key.
+- `marketScan()` waits 25s.  Structured 503 is used only when JSON decodes and `scannedSymbols > 0` or warnings exist.  Otherwise `requireSuccess` → `serverError` / network timeout.  `scan` stays nil.
+- On structured 503 it assigns the empty `topCandidates: []` body.  Still no 70-name universe.
+
+Verified against current live API (2026-08-19T00:51Z):
+- `GET /api/health` `checks.release.sha` = `c55c2e64275b41fd8afc38e28bc026c62914d2ab` (`#2848`).  Contains `4abfb7fa`.  `#2850` is not live.
+- `#2848` did not touch `src/lib/market.ts`, `app/api/scan/route.ts`, `app/api/mobile/snapshot/route.ts`, or iOS Scan files.
+- `nasdaq-delayed-screener` / `yahoo-finance` health `ok`.  Ops audit kinds omit `market_scan` / `market_scan_failed`.
+- Public `GET /api/scan` is 401 in 0.14s (session required).  Not the iOS break.
+- Live `4abfb7fa` scan path: empty Nasdaq → Yahoo whole-set (~5k) inside 35s **before** seed.  Snapshot route emits no `latestScan`.
+- Owner web Refresh on that API: `Market scan failed (503).` (no-JSON fallback) then last-good from dashboard snapshot.  Web `fetch("/api/scan")` has no 25s cap.
+
+So 1.0.68 fails because live `/api/scan` still does not return names, and that client has no other seed.  Not because testers lack #2830.
