@@ -80,6 +80,32 @@ final class UserFacingCopyTests: XCTestCase {
         }
     }
 
+    func testUniverseCopyMatchesWebGuardrailsNotAMissingStrategyPage() {
+        XCTAssertEqual(
+            DeskCopy.universeNeedsIndex,
+            "Choose at least one base index (e.g. S&P 500) or add extra symbols so the strategy has names to scan."
+        )
+        XCTAssertEqual(
+            DeskCopy.universeRefreshAfterGuardrails,
+            "Add an index or extra symbols on Guardrails, then pull to refresh here."
+        )
+        XCTAssertEqual(
+            DeskCopy.universeInsightDetail,
+            "Choose at least one base index (e.g. S&P 500) or add extra symbols."
+        )
+        XCTAssertTrue(DeskCopy.universeNeedsIndex.contains("S&P 500"))
+        XCTAssertTrue(DeskCopy.universeRefreshAfterGuardrails.contains("Guardrails"))
+        for text in [
+            DeskCopy.universeNeedsIndex,
+            DeskCopy.universeRefreshAfterGuardrails,
+            DeskCopy.universeInsightDetail
+        ] {
+            XCTAssertFalse(text.contains("Strategy page"), text)
+            XCTAssertFalse(text.contains("sp500"), text)
+            assertOrdinary(text)
+        }
+    }
+
     func testScanCopyDoesNotTreatWatchlistAsTheUniverse() {
         XCTAssertEqual(
             DeskCopy.scanCountLine(names: 0, scanned: 503, quotes: 0, watched: 2),

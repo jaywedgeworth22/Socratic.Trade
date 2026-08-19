@@ -91,7 +91,7 @@ private struct ReadinessChecklistHero: View {
                         done: !needsUniverse,
                         title: "Add a symbol universe",
                         detail: needsUniverse
-                            ? "Include an index or symbols on the Strategy page."
+                            ? DeskCopy.universeNeedsIndex
                             : "Universe ready for strategy runs"
                     )
                 }
@@ -106,7 +106,7 @@ private struct ReadinessChecklistHero: View {
                     .buttonStyle(.borderedProminent)
                     .tint(AppPalette.accent)
                 } else if needsUniverse {
-                    Text("Add an index or extra symbols on the Strategy page, then pull to refresh here.")
+                    Text(DeskCopy.universeRefreshAfterGuardrails)
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -512,7 +512,7 @@ private struct DeskShortcutsCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Desk", subtitle: "Coach, Scan, Guardrails, and Results")
+                SectionHeading("Desk")
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     shortcut("Coach", systemImage: "bubble.left.and.bubble.right.fill", tab: .coach)
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)

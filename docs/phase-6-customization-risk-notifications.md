@@ -45,7 +45,9 @@ Included-index storage slugs (`sp500`, `nasdaqComposite`, …) stay on
 `${id}-universe` chips, iOS Guardrails, Desk Current Policy) uses
 `indexUniverseLabel` / `formatIndexUniverseList` /
 `DeskCopy.joinedIndexList` (`S&P 500`, `Nasdaq Composite`, `Dow 30`,
-`NYSE Composite`, …).  Snapshot / API payloads are unchanged.
+`NYSE Composite`, …).  Snapshot / API payloads are unchanged.  iOS empty-universe
+copy uses that same `S&P 500` example and points at Guardrails (web's
+`/console/guardrails`), not a Strategy page the phone does not have.
 
 Policy enforcement includes:
 

@@ -39,7 +39,7 @@ struct InsightsView: View {
             insights.append(.init(
                 id: "universe",
                 title: "Your Trading Universe Is Empty",
-                detail: "Add an included index or symbol before asking the strategy to find opportunities.",
+                detail: DeskCopy.universeInsightDetail,
                 systemImage: "scope",
                 tone: .warning
             ))

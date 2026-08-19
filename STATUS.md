@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-19 CURSOR — iOS Home / Guardrails parity vs live web `a8a0a65b`
+
+Hypothesis held: #2855/#2856 are on `main` (`a8a0a65b`).  TF **1.0.68** is behind that binary, so Guardrails → Universe → Indices still prints `sp500, nasdaqComposite, dow30, nyseComposite` on the phone.  Current `main` iOS already uses `DeskCopy.joinedIndexList` on Guardrails and Desk Current Policy — no leftover raw-slug join.  Remaining leaks on this tree: #2849 Desk subtitle still open, and Home / Guardrails / Insights still pointed at a nonexistent iOS **Strategy** page (web universe edits are on Guardrails).
+
+This PR folds #2849 (`SectionHeading("Desk")` only) and retargets empty-universe copy at Guardrails with the same `S&P 500` example web uses.  Did not add iOS index checkboxes, Scan source chips, or Smart Money.  Did not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Did not touch #2841 / #2854 / #2840.
+
+PR **#2857**.  Branch `cursor/ios-web-parity-502f`.  SHA `e2f56f21`.  Rollout: `docs/rollouts/2026-08-19-ios-web-parity.md`.
+
 ## 2026-08-19 CURSOR — Indices common names on every surface
 
 #2855 merged (`b27de85c`).  Live Guardrails → Universe → Indices still printed `sp500, nasdaqComposite, dow30, nyseComposite`.  Jay does not distinguish rows vs Guardrails — both use **Indices** and the shared names (S&P 500, Nasdaq Composite, Dow 30, NYSE Composite, Nasdaq 100, Russell 2000, FT Wilshire 5000, S&P 100).  Web selected-set + checkbox grid, policy-diff, Scan `${id}-universe` chips, iOS Guardrails, and Desk Current Policy now go through `formatIndexUniverseList` / `indexUniverseLabel`.  Storage / API slugs stay.  Did not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Did not touch #2841 / #2849 / #2854 / #2840.  Did not reopen #2855.
