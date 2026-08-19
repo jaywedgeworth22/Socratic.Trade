@@ -29,6 +29,8 @@ Touched files:
 
 ## Verification State
 
+PR **#2849**.  SHA `ab118082de4d9712cd215dbe9b924c1743c4577b`.
+
 - `rg -n 'Coach, Scan, Guardrails' --glob '!docs/**' --glob '!ios/SocraticTrade/README.md'` — product UI hit is gone (`HomeView.swift` heading is `SectionHeading("Desk")`).
 - Linux Cloud VM: no `xcodebuild`.  Swift compile is CI-only for this change.
 - No TypeScript / console product files changed, so lint / tsc / vitest / next build were not re-run for this Swift heading delete.

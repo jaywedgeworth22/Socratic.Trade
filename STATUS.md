@@ -4,7 +4,7 @@
 
 Owner: Home shows “Coach, Scan, Guardrails, and Results” as text under **Desk**, immediately above the same four shortcut buttons.  That subtitle is gone.  Buttons and tab routing are unchanged.  Console / web has no matching Desk heading (rail + page h1 only).  Did not replace it with helper copy.  Did not touch #2848 / #2847 / #2841 / #2840 or strategy/trading paths.  Do not merge.  Do not deploy.  Do not bounce Coolify.
 
-Branch `cursor/remove-desk-subtitle-ba05`.  Rollout: `docs/rollouts/2026-08-19-desk-subtitle-remove.md`.
+PR **#2849**.  Branch `cursor/remove-desk-subtitle-ba05`.  SHA `ab118082`.  Rollout: `docs/rollouts/2026-08-19-desk-subtitle-remove.md`.
 
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 

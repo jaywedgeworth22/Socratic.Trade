@@ -1,6 +1,6 @@
 # Active Implementation Plan
 
-> **2026-08-19 CURSOR — remove redundant Home Desk subtitle (`cursor/remove-desk-subtitle-ba05`).** iOS Home Desk heading no longer restates Coach / Scan / Guardrails / Results above those same buttons.  Console has no matching chrome.  No replacement copy.  Buttons and tab routing unchanged.  Do not merge / deploy / bounce.  Do not touch #2848 / #2847 / #2841 / #2840.  Rollout: `docs/rollouts/2026-08-19-desk-subtitle-remove.md`.
+> **2026-08-19 CURSOR — remove redundant Home Desk subtitle (`cursor/remove-desk-subtitle-ba05`, #2849).** iOS Home Desk heading no longer restates Coach / Scan / Guardrails / Results above those same buttons.  Console has no matching chrome.  No replacement copy.  Buttons and tab routing unchanged.  Do not merge / deploy / bounce.  Do not touch #2848 / #2847 / #2841 / #2840.  Rollout: `docs/rollouts/2026-08-19-desk-subtitle-remove.md`.
 
 > **2026-08-18 CURSOR — sweep-failed request lock (`cursor/sweep-request-orphan-lock-befc`, #2847).** #2845 live; 0 new Roth `strategy_runs` after 22:06:43Z.  Orphan `0e5ccd66` sweep-failed 22:13:05Z (0 LLM) left the request `running`.  Close on sweep / `finishStrategyRun`; heal on tick and on the next click.  Portfolio `8000+7000ms` is a separate lock.  Do not merge / deploy / bounce.  Do not touch #2841.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
 
