@@ -157,7 +157,7 @@ PR **#2856**.  Branch `cursor/indices-common-names-3381`.  Rollout: `docs/rollou
 
 Do not inventory the whole index during gather.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not prune.  Do not reopen #2840.  502/429 must not latch gather or skip Green.  New PR.  Do not merge / deploy / bounce.  Do not touch #2850 / #2849 / #2841.
 
-PR **#2854**.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
+PR **#2854** `9283be85`+.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.  Do not merge / deploy / bounce.
 
 ## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (rebased onto #2853)
 

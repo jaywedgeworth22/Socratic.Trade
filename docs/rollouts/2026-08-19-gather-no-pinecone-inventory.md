@@ -37,14 +37,14 @@ Gather retrieval stays query/id scoped (`retrieveContextDetailed`).  Whole-index
 ## Verification State
 
 ```bash
-npx vitest run test/scheduler-managed-vector-reconcile.test.ts test/roic-transcripts.test.ts test/api-clients-congress.test.ts test/data-providers.test.ts test/robinhood-mcp.test.ts
+npx vitest run test/data-providers.test.ts -t "does not latch gather|stops remaining symbols|treats 502|does not fail the free wave"
+npx vitest run test/scheduler-managed-vector-reconcile.test.ts test/roic-transcripts.test.ts test/api-clients-congress.test.ts test/robinhood-mcp.test.ts
 npx tsc --noEmit
 npm run lint
-npm test
 npm run build
 ```
 
-Focused receipts: new gather/502/429 tests 5/5; scheduler-managed-vector-reconcile + roic-transcripts + api-clients-congress + robinhood-mcp 58/58 (Robinhood ≤10 chunk kept).  `npx tsc --noEmit` clean.  `npm run lint` exit 0.  Full `npm test` / `npm run build` receipts follow in this note when they finish.
+Focused receipts: new gather/502/429/404 tests 5/5; scheduler-managed-vector-reconcile + roic-transcripts + api-clients-congress + robinhood-mcp 58/58 (Robinhood ≤10 chunk kept).  `npx tsc --noEmit` clean.  `npm run lint` exit 0.  `npm run build` compiled and finished TypeScript.  Full `npm test` was started; it hung after unrelated `notify-body-tiers` / `server-metrics` env misses and 30s `strategy-rationale-collapse-gate` timeouts (those tests hit live HTTP 404s).  Isolated collapse-gate still 30s-times out on this VM; not a write-class or prune change.
 
 ## Next Steps & Blockers
 
