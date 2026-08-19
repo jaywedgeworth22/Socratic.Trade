@@ -13,6 +13,15 @@ Same process `4abfb7fa` (`processStartedAt` 23:10:43Z, uptime ~34m) sweep-failed
 #2848 rebase onto `4abfb7fa`: keep 16s wait-above-p95 and FTS 2s / 1-row bound; **also** skip / pause ROIC and FTS while any `strategy_runs`/`strategy_run_requests` row is queued or running, and yield between ROIC periods.  Do not reopen #2840.  Do not hide the embed 8193 error with copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2812 / strategy picks.
 
 PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+## 2026-08-19 CURSOR — iOS Scan keeps last-good on a 503 refresh
+
+Live `4abfb7fa` web `/console/scan`: Refresh scan once (not Run once) 503s, then paints the last-good universe from Aug 18, 2026, 7:25:13 PM (70 names / 5069 quotes / 5073 scanned).  Public `GET /api/scan` is 401.  TF 1.0.68 already has #2830 ScanView but iOS only called live `/api/scan` and replaced the table with the empty 503 body.  Snapshot had no `latestScan`.
+
+Why Refresh 503s: after an empty Nasdaq screener, interactive `/api/scan` Yahoo-priced the whole ~5k allowed set inside the 35s budget.  That miss also dies as a generic 503 (often edge HTML, no `warnings` JSON) before the seed web already shows.  One bad row in `quotesBySymbol` also voided the whole seed.
+
+Fix: seed before Yahoo whole-set; keep valid seed rows; compact `latestScan` on `/api/mobile/snapshot`; iOS paints that universe and keeps it on a failed refresh.  Did not merge.  Did not deploy.  Did not bounce.  Did not start a second TestFlight.  Did not click Manual Run.  Did not touch #2848 / #2849 / #2841 / #2840.
+
+PR on `cursor/ios-scan-last-good-503-b104`.  Rollout: `docs/rollouts/2026-08-19-ios-scan-last-good-503.md`.
 
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 

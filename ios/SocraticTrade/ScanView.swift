@@ -7,6 +7,7 @@ struct ScanView: View {
     @State private var scan: MarketScanResponse?
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var didAttemptLiveRefresh = false
     @State private var query = ""
     @State private var presentedSymbol: PresentedSymbol?
 
@@ -37,6 +38,9 @@ struct ScanView: View {
             SymbolInfoSheet(symbol: presented.symbol)
         }
         .task { await load(force: false) }
+        .onChange(of: store.snapshot?.latestScan?.generatedAt ?? store.snapshot?.latestScan?.asOf) { _, _ in
+            seedFromSnapshotIfNeeded()
+        }
     }
 
     private var filtered: [ScanCandidate] {
@@ -103,7 +107,7 @@ struct ScanView: View {
             AppCard {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Refreshing the scan — this can take up to 20 seconds.")
+                    Text(DeskCopy.scanLoadingNote)
                         .font(.appSubheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -135,20 +139,37 @@ struct ScanView: View {
         }
     }
 
+    private func seedFromSnapshotIfNeeded() {
+        guard let latest = store.snapshot?.latestScan, latest.hasUsableUniverse else { return }
+        if scan == nil || scan?.hasUsableUniverse != true {
+            scan = latest
+        }
+    }
+
     private func load(force: Bool) async {
-        if !force, scan != nil { return }
+        seedFromSnapshotIfNeeded()
+        if !force, didAttemptLiveRefresh { return }
         isLoading = true
         defer { isLoading = false }
         do {
             scan = try await store.fetchMarketScan()
             loadError = nil
+            didAttemptLiveRefresh = true
         } catch let error as MobileAPIError {
             if case .scanQuotesUnavailable(let failed) = error {
-                scan = failed
+                scan = failed.keepingLastGood(from: scan)
             }
-            loadError = error.localizedDescription
+            loadError = DeskCopy.scanRefreshFailedBanner(
+                reason: error.localizedDescription,
+                lastGoodAt: scan?.lastGoodStamp
+            )
+            didAttemptLiveRefresh = true
         } catch {
-            loadError = error.localizedDescription
+            loadError = DeskCopy.scanRefreshFailedBanner(
+                reason: error.localizedDescription,
+                lastGoodAt: scan?.lastGoodStamp
+            )
+            didAttemptLiveRefresh = true
         }
     }
 }

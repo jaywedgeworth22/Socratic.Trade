@@ -89,6 +89,15 @@ final class UserFacingCopyTests: XCTestCase {
         assertOrdinary(DeskCopy.scanUniverseNote)
         assertOrdinary(DeskCopy.scanCountLine(names: 0, scanned: 503, quotes: 0, watched: 2))
         assertOrdinary(DeskCopy.scanEmptyMessage(scanned: 503, quotes: 0, hasFilter: false))
+        assertOrdinary(DeskCopy.scanLoadingNote)
+        XCTAssertFalse(DeskCopy.scanLoadingNote.contains("503"))
+        let banner = DeskCopy.scanRefreshFailedBanner(
+            reason: "The live refresh did not finish.",
+            lastGoodAt: "2026-08-18T19:25:13.000Z"
+        )
+        assertOrdinary(banner)
+        XCTAssertTrue(banner.contains("Showing the last good scan from"))
+        XCTAssertFalse(banner.contains("503"))
     }
 
     func testWorkspaceErrorsStayOrdinary() throws {

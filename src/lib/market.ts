@@ -345,15 +345,20 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       if (dynamicResult.cached) cached = true;
 
       if (quotes.length === 0 && allowed.size > 0) {
-        // Screener produced no allowed-set quotes. Price the whole universe from
-        // the quote fallback — not only custom tickers. Index members were
-        // previously skipped here, so an empty screener + expired seed became
-        // a silent empty table.
+        // A usable last-good seed must win before Yahoo-pricing the whole
+        // allowed set.  Live Refresh of a 5k-name universe (nasdaq composite)
+        // used to start that fallback, miss the 35s interactive budget / edge
+        // 503, and never reach the seed that web already shows as last-good.
         quoteFallbackAttempted = true;
-        const quoteOnly = await fetchAllowedSetMarketQuotes(Array.from(allowed), positions);
-        quotes = [...quotes, ...quoteOnly.quotes];
-        warnings.push(...quoteOnly.warnings);
-        for (const q of quoteOnly.quotes) if (q.provider) universeSources.add(q.provider);
+        const recovered = await recoverQuotesWhenScreenerEmpty({
+          allowed,
+          positions,
+          seed: options?.seedEnrichment
+        });
+        quotes = [...quotes, ...recovered.quotes];
+        warnings.push(...recovered.warnings);
+        if (recovered.usedSeed) cached = true;
+        for (const q of recovered.quotes) if (q.provider) universeSources.add(q.provider);
       } else {
         const returnedSymbols = new Set(quotes.map((quote) => quote.symbol));
         const customSymbolsMissingFromScreener = Array.from(allowed)
@@ -378,11 +383,16 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     }
 
     if (quotes.length === 0 && allowed.size > 0 && !quoteFallbackAttempted) {
-      // Fetch throw / empty payload: still try the whole allowed set before seed.
-      const quoteOnly = await fetchAllowedSetMarketQuotes(Array.from(allowed), positions);
-      quotes = [...quotes, ...quoteOnly.quotes];
-      warnings.push(...quoteOnly.warnings);
-      for (const q of quoteOnly.quotes) if (q.provider) universeSources.add(q.provider);
+      // Fetch throw / empty payload: seed first, Yahoo whole-set only if no seed.
+      const recovered = await recoverQuotesWhenScreenerEmpty({
+        allowed,
+        positions,
+        seed: options?.seedEnrichment
+      });
+      quotes = [...quotes, ...recovered.quotes];
+      warnings.push(...recovered.warnings);
+      if (recovered.usedSeed) cached = true;
+      for (const q of recovered.quotes) if (q.provider) universeSources.add(q.provider);
     }
 
     if (quotes.length === 0 && options?.seedEnrichment) {
@@ -1450,6 +1460,25 @@ function uniqueQuotes(quotes: MarketQuote[]): MarketQuote[] {
 
 function normalizeMarketDataSymbol(value: string): string {
   return normalizeSymbol(value).replace(/\//g, "-");
+}
+
+async function recoverQuotesWhenScreenerEmpty(input: {
+  allowed: Set<string>;
+  positions: EquityPosition[];
+  seed?: Record<string, MarketQuoteSummary>;
+}): Promise<{ quotes: MarketQuote[]; warnings: string[]; usedSeed: boolean }> {
+  const seeded = input.seed ? persistedMarketQuotes(input.seed, input.positions) : [];
+  if (seeded.length > 0) {
+    return {
+      quotes: seeded,
+      warnings: [
+        "Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
+      ],
+      usedSeed: true
+    };
+  }
+  const quoteOnly = await fetchAllowedSetMarketQuotes(Array.from(input.allowed), input.positions);
+  return { quotes: quoteOnly.quotes, warnings: quoteOnly.warnings, usedSeed: false };
 }
 
 async function fetchAllowedSetMarketQuotes(

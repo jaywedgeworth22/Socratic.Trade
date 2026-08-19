@@ -104,6 +104,38 @@ final class DeskModelsTests: XCTestCase {
         )
     }
 
+    func testFailedRefreshKeepsLastGoodUniverse() {
+        let lastGood = MarketScanResponse(
+            topCandidates: [
+                ScanCandidate(symbol: "BRK-B", companyName: "Berkshire Hathaway", price: 500, score: 88),
+                ScanCandidate(symbol: "GOOG", price: 180, score: 86)
+            ],
+            asOf: "2026-08-18T19:25:13.000Z",
+            generatedAt: "2026-08-18T19:25:13.000Z",
+            scannedSymbols: 5073,
+            returnedQuotes: 5069
+        )
+        let failed = MarketScanResponse(
+            topCandidates: [],
+            scannedSymbols: 5073,
+            returnedQuotes: 0,
+            warnings: ["This operation was aborted"]
+        )
+        let kept = failed.keepingLastGood(from: lastGood)
+        XCTAssertEqual(kept.topCandidates.map(\.symbol), ["BRK-B", "GOOG"])
+        XCTAssertEqual(kept.scannedSymbols, 5073)
+        XCTAssertTrue(lastGood.hasUsableUniverse)
+        XCTAssertFalse(failed.hasUsableUniverse)
+
+        let banner = DeskCopy.scanRefreshFailedBanner(
+            reason: MobileAPIError.serverError(statusCode: 503, message: nil).errorDescription ?? "",
+            lastGoodAt: lastGood.lastGoodStamp
+        )
+        XCTAssertTrue(banner.contains("Showing the last good scan from"))
+        XCTAssertFalse(banner.contains("503"))
+        XCTAssertFalse(banner.lowercased().contains("http"))
+    }
+
     func testChatTurnAndSourceValueDecode() throws {
         let turn = try JSONDecoder().decode(
             ChatTurn.self,

@@ -150,7 +150,7 @@ export function marketScanQuotesFromAudit(
 
   const entries = Object.entries(quotes);
   if (entries.length === 0) return undefined;
-  const valid = entries.every(([symbol, value]) => {
+  const validEntries = entries.filter(([symbol, value]) => {
     if (!symbol || !value || typeof value !== "object" || Array.isArray(value)) return false;
     const quote = value as { symbol?: unknown; price?: unknown; score?: unknown };
     return quote.symbol === symbol
@@ -159,5 +159,9 @@ export function marketScanQuotesFromAudit(
       && typeof quote.score === "number"
       && Number.isFinite(quote.score);
   });
-  return valid ? quotes as Record<string, MarketQuoteSummary> : undefined;
+  if (validEntries.length === 0) return undefined;
+  // Keep valid rows.  One bad entry in a 5k-name map must not void the seed
+  // that Refresh needs when Nasdaq/Yahoo miss the interactive budget.
+  if (validEntries.length === entries.length) return quotes as Record<string, MarketQuoteSummary>;
+  return Object.fromEntries(validEntries) as Record<string, MarketQuoteSummary>;
 }
