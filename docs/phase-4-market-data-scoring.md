@@ -56,6 +56,11 @@ into the existing Momentum score rather than adding a separate technical weight.
 attributed as `webull-unofficial`, and must not be used for broker execution,
 account state, paper fills, or learning-grade fills.
 
+**Robinhood quote chunk (2026-08-19):** `get_equity_quotes` / tradability /
+fundamentals send at most 10 symbols per MCP call (live reject: `too many
+symbols (max 10, got 250)` on Roth `9d71dda4`).  The scan universe is not
+shrunk.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+
 **Quote/OHLC sharing guardrails (2026-06-19):** broker quote merges now append the
 actual provider to `MarketScan.source` (`alpaca-quotes`, `robinhood-quotes`, or
 `broker-quotes` when unspecified) and dedupe repeated merges. OHLC history caches

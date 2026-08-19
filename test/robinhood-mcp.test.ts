@@ -119,6 +119,98 @@ describe("robinhood mcp transport", () => {
     expect(firstCall.params.arguments).not.toHaveProperty("account_number");
   });
 
+  it("chunks a 250-name universe so Robinhood never sees more than 10 symbols", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    const { chunkRobinhoodSymbols, ROBINHOOD_EQUITY_SYMBOL_CHUNK } = await import("../src/lib/robinhood");
+    const universe = Array.from({ length: 250 }, (_, i) => `SYM${String(i + 1).padStart(3, "0")}`);
+    const chunks = chunkRobinhoodSymbols(universe);
+    expect(chunks).toHaveLength(25);
+    expect(chunks.every((chunk) => chunk.length <= ROBINHOOD_EQUITY_SYMBOL_CHUNK)).toBe(true);
+    expect(chunks.flat()).toHaveLength(250);
+    expect(new Set(chunks.flat()).size).toBe(250);
+
+    const calls: string[][] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      const symbols = request.params.arguments.symbols as string[];
+      if (symbols.length > 10) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { message: `too many symbols (max 10, got ${symbols.length})` }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      calls.push(symbols);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            structuredContent: {
+              data: {
+                quotes: symbols.map((symbol, idx) => ({ symbol, price: String(10 + idx) }))
+              }
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getRobinhoodGateway } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    const quotes = await getRobinhoodGateway("user-a").getEquityQuotes("RH-ACCOUNT", universe);
+    expect(calls.length).toBe(25);
+    expect(calls.every((chunk) => chunk.length <= 10)).toBe(true);
+    expect(Object.keys(quotes)).toHaveLength(250);
+    expect(quotes.SYM001?.price).toBe(10);
+    expect(quotes.SYM250?.price).toBeGreaterThan(0);
+  });
+
+  it("keeps quotes from other chunks when one Robinhood chunk hits max-10", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      const symbols = request.params.arguments.symbols as string[];
+      if (symbols.includes("BAD1")) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { message: "too many symbols (max 10, got 10)" }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            structuredContent: {
+              data: { quotes: symbols.map((symbol) => ({ symbol, price: "12" })) }
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getRobinhoodGateway } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+    const first = Array.from({ length: 10 }, (_, i) => `OK${i}`);
+    const second = Array.from({ length: 10 }, (_, i) => `BAD${i}`);
+    const quotes = await getRobinhoodGateway("user-a").getEquityQuotes("RH-ACCOUNT", [...first, ...second]);
+    expect(quotes.OK0?.price).toBe(12);
+    expect(quotes.BAD0).toBeUndefined();
+  });
+
   it("maps equity orders including limit/stop price (Robinhood `price` = limit) and time-in-force", async () => {
     vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
     vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {

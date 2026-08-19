@@ -1,6 +1,8 @@
 # Active Implementation Plan
 
-> **2026-08-19 CURSOR — Manual Run once drain handoff (`cursor/manual-run-drain-handoff-befc`).** #2848 live (`c55c2e64`).  Roth `9d71dda4` sat llm=0 then sweep-failed 01:29:44Z `stalled_no_progress` (~31m).  `strategy-run-drain` skipped every tick (claim-only-`queued` after the HTTP kick).  Drain now resumes a claimed request with no live heartbeat on the same run id; `after()` second kick; 8m gather deadline; bound pre-Green Alpaca snapshot.  Not another embed skip.  Quote-chunk is #2852.  Do not reopen #2840 / #2848.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-19-manual-run-drain-handoff.md`.
+> **2026-08-19 CURSOR — Robinhood quote chunk (`cursor/robinhood-quote-chunk-befc`, #2852).** Rebased onto #2853 `df1f5a37`.  Live `9d71dda4` died on `too many symbols (max 10, got 250)` 18s into gather.  Chunk Robinhood quote/tradability/fundamentals to 10.  Do not shrink the universe.  congress.trade 404 must not latch the free wave.  Do not reopen #2840 / #2848 / #2853.  Do not touch #2850 / #2849 / #2841.  Do not merge / deploy / bounce / TF.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+
+> **2026-08-19 CURSOR — Manual Run once drain handoff (`#2853` `df1f5a37` MERGED).** Drain resumes a claimed Manual Run once with no live heartbeat.  Remaining gather-pricing hole is #2852.
 
 > **2026-08-18 CURSOR — getAccounts loop budget + ROIC/FTS yield (`cursor/getaccounts-loop-budget-befc`, #2848).** VERIFY_FAIL: alpaca-mcp getAccount retry hung 60s under the 16s live wait.  Mock a short first-call budget in that test.  Sweep must not call a same-process stall a restart (Roth `b3b83913`).  Keep ROIC/FTS pause + 16s wait.  Do not skip the test.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
 

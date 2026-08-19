@@ -33,6 +33,97 @@ const TEST_SIM_STARTING_CASH = (() => {
 export const ROBINHOOD_TRADING_MCP_URL = "https://agent.robinhood.com/mcp/trading";
 const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
 
+/**
+ * Live Roth `9d71dda4` (2026-08-19): gather sent the full 250-name universe in
+ * one `get_equity_quotes` and Robinhood rejected `too many symbols (max 10,
+ * got 250)`.  The whole batch died, so cascade never priced through Robinhood
+ * and Manual Run once sat llm=0 until `stalled_no_progress`.  Keep the
+ * universe; chunk the request.
+ */
+export const ROBINHOOD_EQUITY_SYMBOL_CHUNK = 10;
+const ROBINHOOD_SYMBOL_CHUNK_CONCURRENCY = 4;
+
+export function chunkRobinhoodSymbols(
+  symbols: string[],
+  size: number = ROBINHOOD_EQUITY_SYMBOL_CHUNK
+): string[][] {
+  const unique = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+  const chunks: string[][] = [];
+  const n = Math.max(1, size);
+  for (let i = 0; i < unique.length; i += n) chunks.push(unique.slice(i, i + n));
+  return chunks;
+}
+
+async function mapRobinhoodSymbolChunks<T extends Record<string, unknown>>(
+  symbols: string[],
+  mapper: (chunk: string[]) => Promise<T>
+): Promise<T> {
+  const chunks = chunkRobinhoodSymbols(symbols);
+  const merged = {} as T;
+  const concurrency = ROBINHOOD_SYMBOL_CHUNK_CONCURRENCY;
+  for (let i = 0; i < chunks.length; i += concurrency) {
+    const wave = chunks.slice(i, i + concurrency);
+    const parts = await Promise.all(wave.map((chunk) => mapper(chunk)));
+    for (const part of parts) Object.assign(merged, part);
+  }
+  return merged;
+}
+
+export function parseRobinhoodQuotes(raw: Record<string, unknown> | unknown): Record<string, BrokerQuote> {
+  const root = raw as Record<string, unknown> | undefined;
+  const entries = Array.isArray(root?.results)
+    ? root!.results
+    : Array.isArray(root?.quotes)
+      ? root!.quotes
+      : Array.isArray(raw)
+        ? raw
+        : [];
+  return Object.fromEntries(
+    (entries as Array<Record<string, unknown>>).map((item) => {
+      const q = (item.quote ?? item) as Record<string, unknown>;
+      const symbol = normalizeSymbol(String(q.symbol ?? item.symbol));
+      return [
+        symbol,
+        {
+          symbol,
+          price: optionalNumber(q.last_trade_price ?? q.last_non_reg_trade_price ?? q.price ?? q.last_price),
+          bid: optionalNumber(q.bid_price ?? q.bid),
+          ask: optionalNumber(q.ask_price ?? q.ask),
+          asOf: optionalString(q.venue_last_trade_time ?? q.as_of ?? item.as_of),
+          provider: "robinhood"
+        } satisfies BrokerQuote
+      ];
+    })
+  );
+}
+
+function parseRobinhoodTradability(
+  raw: Record<string, unknown>
+): Record<string, { tradable: boolean; fractional: boolean; reason?: string }> {
+  const entries = Array.isArray(raw?.results) ? raw.results : Array.isArray(raw) ? raw : [];
+  return Object.fromEntries(
+    (entries as Array<Record<string, unknown>>).map((item) => {
+      const symbol = normalizeSymbol(String(item.symbol));
+      const active = item.state ? item.state === "active" : true;
+      const tradable = Boolean(item.tradeable ?? item.tradable ?? item.is_tradable ?? true) && active;
+      const fractional =
+        item.fractional_tradability !== undefined
+          ? item.fractional_tradability === "tradable"
+          : Boolean(item.fractional ?? item.fractional_tradable);
+      return [
+        symbol,
+        {
+          tradable,
+          fractional,
+          reason: tradable
+            ? (item.reason ? String(item.reason) : undefined)
+            : String(item.reason ?? `${symbol} is ${String(item.state ?? "not tradable")}.`)
+        }
+      ];
+    })
+  );
+}
+
 export interface RobinhoodMcpHealth {
   adapter: "mcp";
   ok: boolean;
@@ -354,70 +445,38 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
   }
 
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
-    try {
-      const raw = await this.callTool("get_equity_quotes", {
-        symbols: symbols.map(normalizeSymbol)
-      }) as Record<string, unknown>;
-      const entries = Array.isArray(raw?.results) ? raw.results : Array.isArray(raw?.quotes) ? raw.quotes : Array.isArray(raw) ? raw : [];
-      return Object.fromEntries(
-        entries.map((item: Record<string, unknown>) => {
-          // Robinhood nests the live quote under `quote` and pairs it with `close`.
-          const q = (item.quote ?? item) as Record<string, unknown>;
-          const symbol = normalizeSymbol(String(q.symbol ?? item.symbol));
-          return [
-            symbol,
-            {
-              symbol,
-              price: optionalNumber(q.last_trade_price ?? q.last_non_reg_trade_price ?? q.price ?? q.last_price),
-              bid: optionalNumber(q.bid_price ?? q.bid),
-              ask: optionalNumber(q.ask_price ?? q.ask),
-              asOf: optionalString(q.venue_last_trade_time ?? q.as_of ?? item.as_of),
-              provider: "robinhood"
-            } satisfies BrokerQuote
-          ];
-        })
-      );
-    } catch (error) {
-      recordRecoverableIssue({
-        source: "broker",
-        operation: "robinhood.getEquityQuotes",
-        message: messageFromUnknownError(error),
-        fallback: "Returning no Robinhood quotes; downstream logic may use another quote source or omit prices.",
-        userId: this.userId,
-        broker: "robinhood",
-        accountNumber,
-        details: { symbols: symbols.map(normalizeSymbol) }
-      });
-      return {};
-    }
+    return mapRobinhoodSymbolChunks(symbols, async (chunk) => {
+      try {
+        const raw = (await this.callTool("get_equity_quotes", { symbols: chunk })) as Record<string, unknown>;
+        return parseRobinhoodQuotes(raw);
+      } catch (error) {
+        recordRecoverableIssue({
+          source: "broker",
+          operation: "robinhood.getEquityQuotes",
+          message: messageFromUnknownError(error),
+          fallback: "Returning no Robinhood quotes for this chunk; other chunks and later cascade sources still run.",
+          userId: this.userId,
+          broker: "robinhood",
+          accountNumber,
+          details: { symbols: chunk, chunkSize: chunk.length, maxSymbols: ROBINHOOD_EQUITY_SYMBOL_CHUNK }
+        });
+        return {};
+      }
+    });
   }
 
   async getEquityTradability(accountNumber: string, symbols: string[]) {
-    const raw = await this.callTool("get_equity_tradability", {
-      account_number: accountNumber,
-      symbols: symbols.map(normalizeSymbol)
-    }) as Record<string, unknown>;
-    const entries = Array.isArray(raw?.results) ? raw.results : Array.isArray(raw) ? raw : [];
-    return Object.fromEntries(
-      entries.map((item: Record<string, unknown>) => {
-        const symbol = normalizeSymbol(String(item.symbol));
-        const active = item.state ? item.state === "active" : true;
-        // Robinhood spells the flag `tradeable`; fractional is a string enum ("tradable").
-        const tradable = Boolean(item.tradeable ?? item.tradable ?? item.is_tradable ?? true) && active;
-        const fractional =
-          item.fractional_tradability !== undefined
-            ? item.fractional_tradability === "tradable"
-            : Boolean(item.fractional ?? item.fractional_tradable);
-        return [
-          symbol,
-          {
-            tradable,
-            fractional,
-            reason: tradable ? (item.reason ? String(item.reason) : undefined) : String(item.reason ?? `${symbol} is ${String(item.state ?? "not tradable")}.`)
-          }
-        ];
-      })
-    );
+    return mapRobinhoodSymbolChunks(symbols, async (chunk) => {
+      try {
+        const raw = (await this.callTool("get_equity_tradability", {
+          account_number: accountNumber,
+          symbols: chunk
+        })) as Record<string, unknown>;
+        return parseRobinhoodTradability(raw);
+      } catch {
+        return {};
+      }
+    });
   }
 
   async reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder> {
@@ -1097,19 +1156,27 @@ export async function fetchRobinhoodFundamentals(symbols: string[], userId: stri
   if (!robinhoodMcpDataEnabled()) return {};
   const wanted = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
   if (wanted.length === 0) return {};
-  try {
-    const raw = await callRobinhoodMcpTool(userId, "get_equity_fundamentals", { symbols: wanted });
-    const root = raw as Record<string, unknown> | undefined;
-    const rows = Array.isArray(root?.results) ? root!.results : Array.isArray(root?.fundamentals) ? root!.fundamentals : Array.isArray(raw) ? (raw as unknown[]) : [];
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const row of rows as Array<Record<string, unknown>>) {
-      const sym = normalizeSymbol(String(row.symbol ?? row.ticker ?? ""));
-      if (sym) out[sym] = row;
+  return mapRobinhoodSymbolChunks(wanted, async (chunk) => {
+    try {
+      const raw = await callRobinhoodMcpTool(userId, "get_equity_fundamentals", { symbols: chunk });
+      const root = raw as Record<string, unknown> | undefined;
+      const rows = Array.isArray(root?.results)
+        ? root!.results
+        : Array.isArray(root?.fundamentals)
+          ? root!.fundamentals
+          : Array.isArray(raw)
+            ? (raw as unknown[])
+            : [];
+      const out: Record<string, Record<string, unknown>> = {};
+      for (const row of rows as Array<Record<string, unknown>>) {
+        const sym = normalizeSymbol(String(row.symbol ?? row.ticker ?? ""));
+        if (sym) out[sym] = row;
+      }
+      return out;
+    } catch {
+      return {};
     }
-    return out;
-  } catch {
-    return {};
-  }
+  });
 }
 
 /**

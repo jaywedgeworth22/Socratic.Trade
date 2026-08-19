@@ -2,9 +2,13 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-19 Robinhood quote chunk (250-name gather)
+
+Live Roth `9d71dda4` reached gather, then Robinhood `get_equity_quotes` rejected `too many symbols (max 10, got 250)`.  That emptied the Robinhood quote pass, so a full-scan universe never priced through the broker and Green/`llm_usage` never started.  Requests are chunked to 10 symbols; the universe stays 250 (or the full scan).  A congress.trade HTTP 404 is a miss, not a latch on the free enrichment wave.  Drain handoff is merged (#2853 `df1f5a37`).  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+
 ## 2026-08-19 Manual Run once drain handoff (claimed worker)
 
-#2848 paused ROIC/FTS.  Live `c55c2e64` Roth `9d71dda4` still sat llm=0 after embed was already skipped, then sweep-failed 01:29:44Z `stalled_no_progress` (~31m, same process 00:51:39Z).  `POST /api/strategy/run` claims the durable request in a request-scoped `void` kick.  `processPendingStrategyRunRequests` then selected only `queued`, so `strategy-run-drain` journaled skipped on every tick (1372/1372, avg 8ms) while the run row stayed `running`.  Drain now heartbeats a live worker, resumes a claimed request with no heartbeat on the same run id (the 202 UUID Activity polls), and the route kicks again via `after()`.  Scan + quote cascade has an 8m deadline so gather cannot sit until the 30m sweep.  Pre-Green Alpaca positions/orders use the 16s+8s budget; the strategy snapshot has a 45s deadline.  Robinhood max-10 quote chunk is a sibling change (#2852).  Rollout: `docs/rollouts/2026-08-19-manual-run-drain-handoff.md`.
+#2848 paused ROIC/FTS.  Live `c55c2e64` Roth `9d71dda4` still sat llm=0 after embed was already skipped, then sweep-failed 01:29:44Z `stalled_no_progress` (~31m, same process 00:51:39Z).  `POST /api/strategy/run` claims the durable request in a request-scoped `void` kick.  `processPendingStrategyRunRequests` then selected only `queued`, so `strategy-run-drain` journaled skipped on every tick (1372/1372, avg 8ms) while the run row stayed `running`.  Drain now heartbeats a live worker, resumes a claimed request with no heartbeat on the same run id (the 202 UUID Activity polls), and the route kicks again via `after()`.  Scan + quote cascade has an 8m deadline so gather cannot sit until the 30m sweep.  Pre-Green Alpaca positions/orders use the 16s+8s budget; the strategy snapshot has a 45s deadline.  Robinhood max-10 quote chunk is this PR (#2852).  Rollout: `docs/rollouts/2026-08-19-manual-run-drain-handoff.md`.
 
 ## 2026-08-18 Manual Run once request/run status coupling
 
