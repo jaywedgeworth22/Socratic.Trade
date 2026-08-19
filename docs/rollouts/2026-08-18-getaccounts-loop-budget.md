@@ -74,9 +74,16 @@ Fix:
 
 verify-hosted: 7010 passed, 1 failed at `test/alpaca-mcp.test.ts:214` (60s).  That test now mocks a short `alpacaAccountReadBudgetMs` and uses real timers.  The test is kept.
 
+Local on `f6bf7b86`:
+
 ```bash
 npx vitest run test/alpaca-mcp.test.ts test/inflight-deadline.test.ts test/stale-running-runs.test.ts
-npx tsc --noEmit
+# 3 files, 30 passed, 4.36s
+npx vitest run test/alpaca-mcp.test.ts -t "retries getAccount"
+# 1 passed, 2.83s (no 60s hang)
+npx vitest run test/sec-ingest-worker.test.ts test/roic-transcripts.test.ts test/dashboard-agentic-fallback.test.ts
+# 51 passed
+npx tsc --noEmit   # exit 0
 ```
 
 PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2848
