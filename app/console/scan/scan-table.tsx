@@ -125,7 +125,7 @@ function WatchButton({
           : `Add ${symbol} to your watchlist — watching costs nothing and never trades.`
       }
       className={cx(
-        "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+        "con-watch-btn inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
         watched
           ? "border-[color:var(--con-accent-border)] bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
           : "border-[color:var(--con-line)] text-[color:var(--con-faint)] hover:border-[color:var(--con-line-strong)] hover:text-[color:var(--con-fg)]"

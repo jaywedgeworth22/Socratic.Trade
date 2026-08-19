@@ -164,6 +164,9 @@ PR **#TBD**.  Branch `cursor/identity-fails-open-535a`.  Rollout: `docs/rollouts
 Part II cluster: Alpaca quotes/place/cancel and Tradier fetch now have deadlines; scheduler stop-monitor and stale-limit lanes wrap in `withDeadline(15s)` so in-flight keys cannot latch on a hung socket; default `getEquityOrders` returns open + 24h terminal history instead of walking `status:"all"`.  Explicit `{ fullHistory: true }` retains the legacy walk.  Did not change 16s+8s read retry budgets on getAccounts/getPositions/getEquityOrders pages.  Did not touch order-replacement provenance.
 
 PR **#2886**.  Branch `cursor/broker-io-deadlines-85a9`.  SHA `54ed4a3c`.  Rollout: `docs/rollouts/2026-08-19-broker-io-deadlines.md`.
+## 2026-08-19 CURSOR — Phone touch viewport cluster (`phone-touch-viewport`)
+
+Expert review Part II cluster: chrome bar budget at 360–390px, 44px touch floor on all interactive classes, 16px input anti-zoom, overlay scroll-lock + dvh/visualViewport + history back.  PR branch `cursor/phone-touch-viewport-b809`.  Rollout: `docs/rollouts/2026-08-19-phone-touch-viewport.md`.  Next: owner phone-width spot-check; mweb-06/mweb-09 may need follow-up.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
+import { useOverlay } from "../ui/use-overlay";
 import {
   Activity as ActivityIcon,
   BarChart3,
@@ -204,8 +205,11 @@ function TabsSheet({
   const sheetRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const headingId = useId();
+  const overlayId = useId();
   const [entered, setEntered] = useState(false);
   const barOffset = Math.max(barHeight, TABS_SHEET_BAR_FLOOR);
+
+  useOverlay(overlayId, open, onClose);
 
   useEffect(() => {
     if (!open) {
@@ -280,7 +284,7 @@ function TabsSheet({
         )}
         style={{
           bottom: barOffset + TABS_SHEET_GAP,
-          maxHeight: `calc(100dvh - ${barOffset + TABS_SHEET_GAP + TABS_SHEET_TOP_GAP}px)`
+          maxHeight: `min(calc(var(--con-vv-height, 100dvh) - ${barOffset + TABS_SHEET_GAP + TABS_SHEET_TOP_GAP}px), calc(100dvh - ${barOffset + TABS_SHEET_GAP + TABS_SHEET_TOP_GAP}px))`
         }}
       >
         <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5 relative">
@@ -291,13 +295,13 @@ function TabsSheet({
           <button
             type="button"
             aria-label="Close"
-            className="text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
+            className="con-icon-btn"
             onClick={onClose}
           >
             <X size={18} />
           </button>
         </header>
-        <div className="overflow-y-auto px-3 py-3">
+        <div className="overflow-y-auto overscroll-contain px-3 py-3">
           {groupedDestinations(DESTINATIONS).map((group) => (
             <div key={group.label} className="mb-4 last:mb-1">
               <div className="px-2 pb-1.5 text-[length:var(--con-fs-xs)] font-semibold uppercase tracking-[0.07em] text-[color:var(--con-faint)]">
@@ -347,7 +351,7 @@ function TabsSheet({
                         aria-label={pinned ? `Remove ${d.label} from tabs` : `Add ${d.label} to tabs`}
                         title={pinTitle}
                         disabled={!canToggle}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--con-radius-sm)] text-[color:var(--con-faint)] transition-colors enabled:hover:bg-[color:var(--con-surface-2)] enabled:hover:text-[color:var(--con-fg)] disabled:opacity-40"
+                        className="con-icon-btn h-9 w-9 shrink-0 text-[color:var(--con-faint)] enabled:hover:text-[color:var(--con-fg)] disabled:opacity-40"
                         onClick={(e) => {
                           e.stopPropagation();
                           tabs.togglePin(d.href);
