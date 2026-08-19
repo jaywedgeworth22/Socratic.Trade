@@ -51,6 +51,8 @@ import {
   GET_ACCOUNTS_RETRY_MS,
   PORTFOLIO_BUNDLE_FIRST_MS,
   PORTFOLIO_BUNDLE_RETRY_MS,
+  EQUITY_QUOTES_MS,
+  OPTION_POSITIONS_MS,
   awaitWithFirstCallRetry,
   getAccountsTimeoutMessage,
   portfolioBundleTimeoutMessage
@@ -120,8 +122,11 @@ const BLANK_MACRO_FALLBACK: MacroData = {
  * IPv6-blackhole failure mode — see docs/rollouts/2026-07-06-api-health-timeouts.md) can never block
  * the whole dashboard snapshot indefinitely. Does NOT abort the underlying promise — it keeps
  * running in the background and its eventual resolution/rejection is simply ignored once the
- * deadline has already produced a fallback. Existing `.catch(...)` fallbacks in this file still
- * handle real rejections; this only guards against a promise that never settles at all.
+ * deadline has already produced a fallback.  Live 581467e1: alpaca-broker logged ok at
+ * 6570–6600ms after `gateway.getAccounts timed out after 6000ms — serving degraded snapshot`
+ * and `Failed to fetch accounts`.  That is the race — the SDK finished after the abort.
+ * Existing `.catch(...)` fallbacks in this file still handle real rejections; this only guards
+ * against a promise that never settles at all.
  */
 function withDeadline<T>(
   promise: Promise<T>,
@@ -411,9 +416,10 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     const accountsPromise = (async () => {
       if (!gateway) return [];
       try {
-        // 6s was racing a live Alpaca REST getAccount that is often just slow (or hung
-        // on a dead keep-alive) after a container swap.  A pending first call starts one
-        // fresh retry; a real rejection (credentials, 401) still fails immediately.
+        // Live alpaca-broker p95 is above 6s (191/500 ≥6s, max 14s) on the same
+        // in-process event loop that ftsMirrorSlice can pin for 6–12s.  First wait
+        // is 16s; a pending call starts one retry.  A credential / 401 throw still
+        // fails immediately.
         return await awaitWithFirstCallRetry(
           () => gateway.getAccounts(),
           {
@@ -502,7 +508,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
           try {
             options = await withDeadline<OptionPosition[]>(
               gateway.getOptionPositions(targetAccountNumber),
-              8000,
+              OPTION_POSITIONS_MS,
               () => [],
               "gateway.getOptionPositions",
               timedOutSections
@@ -522,7 +528,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
           const quotes: Record<string, BrokerQuote> = priceSymbols.length > 0
             ? await withDeadline(
                 gateway.getEquityQuotes(targetAccountNumber, priceSymbols),
-                6000,
+                EQUITY_QUOTES_MS,
                 () => ({}),
                 "gateway.getEquityQuotes",
                 timedOutSections

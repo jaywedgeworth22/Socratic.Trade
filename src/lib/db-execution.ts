@@ -292,6 +292,30 @@ export function insertStrategyRun(id: string, userId: string = "local", connecte
     .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
 }
 
+/**
+ * Live Roth `b3b83913` (2026-08-18): Manual Run once wrote the run row, then sat
+ * llm=0 for ~17m with no gather/Green because `roic-transcript-refresh` and
+ * `ftsMirrorSlice` owned the one Node event loop.  Background RAG is process-wide
+ * (not per-user): any in-flight run or queued/running request on this process
+ * must pause ROIC / FTS so Green can start.
+ */
+export function shouldDeferBackgroundRagForStrategy(input: {
+  strategyWorkInFlight: boolean;
+  force?: boolean;
+}): boolean {
+  return input.strategyWorkInFlight && input.force !== true;
+}
+
+export function hasInFlightStrategyWork(): boolean {
+  const db = getDb();
+  const run = db.prepare("SELECT 1 FROM strategy_runs WHERE status = 'running' LIMIT 1").get();
+  if (run) return true;
+  const request = db
+    .prepare("SELECT 1 FROM strategy_run_requests WHERE status IN ('queued', 'running') LIMIT 1")
+    .get();
+  return Boolean(request);
+}
+
 // 30 min — raised from 10 min after a 2026-07-08 incident: an evening run (id 5d49c9b5) with
 // slow LLM steps (150s+ each observed under load) was still genuinely running past the old 10-min
 // threshold, got marked "crashed" by this sweep at the ~11-minute mark, and then completed 5s later
@@ -300,6 +324,44 @@ export function insertStrategyRun(id: string, userId: string = "local", connecte
 // normally finishes in ~1-2 min, so this only widens the window for the genuine crash case, it
 // doesn't meaningfully delay detecting an actual stuck/killed process.
 const STALE_RUN_THRESHOLD_MS = 30 * 60_000;
+
+/** Captured once at module load, same formula as `runtime-health` `PROCESS_STARTED_AT_MS`. */
+const PROCESS_STARTED_AT_MS = Date.now() - Math.round(process.uptime() * 1000);
+/** Uptime rounding can place boot a few hundred ms after the first Date.now() in this process.
+ *  Only treat a run as a prior-process leftover when it started clearly before boot. */
+const PROCESS_RESTART_DETECT_SKEW_MS = 2_000;
+
+export type StaleRunningSweepCause = "process_restarted_mid_run" | "stalled_no_progress";
+
+/** A 30m gather stall on the same process is not a restart.  Roth `b3b83913` started after
+ *  `processStartedAt` 23:10:43Z, sat llm=0, and the sweep still wrote "Process restarted mid-run". */
+export function staleRunningRunSweepCause(
+  startedAt: string,
+  processStartedMs: number = PROCESS_STARTED_AT_MS
+): StaleRunningSweepCause {
+  const startedMs = Date.parse(startedAt);
+  if (Number.isFinite(startedMs) && startedMs < processStartedMs - PROCESS_RESTART_DETECT_SKEW_MS) {
+    return "process_restarted_mid_run";
+  }
+  return "stalled_no_progress";
+}
+
+export function staleRunningRunSweepSummary(
+  startedAt: string,
+  processStartedMs: number = PROCESS_STARTED_AT_MS
+): string {
+  const cause = staleRunningRunSweepCause(startedAt, processStartedMs);
+  switch (cause) {
+    case "process_restarted_mid_run":
+      return `Process restarted mid-run — marked failed by stale-run sweep (started at ${startedAt})`;
+    case "stalled_no_progress":
+      return `Strategy run stalled with no progress — marked failed by stale-run sweep (started at ${startedAt})`;
+    default: {
+      const _exhaustive: never = cause;
+      throw new Error(`unhandled stale running sweep cause: ${String(_exhaustive)}`);
+    }
+  }
+}
 
 /**
  * Manual Run once persists `strategy_run_requests.id` and then passes that same UUID to
@@ -433,6 +495,8 @@ export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, s
  * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
  * within STALE_THRESHOLD_MS (default 30 min) is marked failed with a receipted reason — UNLESS it
  * still has recent audit activity (see the in-loop check below), in which case it's left alone.
+ * The reason is a process-restart leftover only when `started_at` predates this process boot.
+ * A same-process 30m stall with llm=0 (Roth `b3b83913`) is `stalled_no_progress`, not a restart.
  *
  * Also closes any matching open `strategy_run_requests` row (same UUID) so Manual Run once
  * is not left locked after the run is marked failed.  A later tick heals already-failed
@@ -467,7 +531,8 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
     if (recentActivity) continue;
 
     const finishedAt = new Date(now).toISOString();
-    const summary = `Process restarted mid-run — marked failed by stale-run sweep (started at ${row.started_at})`;
+    const cause = staleRunningRunSweepCause(row.started_at);
+    const summary = staleRunningRunSweepSummary(row.started_at);
     const res = db
       .prepare(
         `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = ?
@@ -483,7 +548,12 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
     // under ESM live bindings because audit is only called here at runtime, never at module init.
     audit(
       "strategy_run_crashed",
-      { runId: row.id, startedAt: row.started_at, reason: "marked failed by stale-run sweep" },
+      {
+        runId: row.id,
+        startedAt: row.started_at,
+        reason: cause,
+        processStartedAt: new Date(PROCESS_STARTED_AT_MS).toISOString()
+      },
       row.user_id,
       // Scope the receipt to the run's account so per-account ops queries can filter it.
       row.connected_account_id ?? undefined

@@ -1646,6 +1646,8 @@ export function insertDocumentChunkFts(
  *  group of them. */
 const FTS_BATCH_MAX_ROWS = 40;
 const FTS_BATCH_MIN_ROWS = 1;
+/** First group is one row so a slow 10-K tokenisation cannot pin 8 rows (6–12s) before a yield. */
+const FTS_BATCH_START_ROWS = 1;
 /** Keep in lockstep with `FTS_MIRROR_SYNC_STRETCH_BUDGET_MS` in fts-mirror-bound.ts. */
 export const FTS_BATCH_STRETCH_BUDGET_MS = 250;
 
@@ -1680,7 +1682,7 @@ export async function insertDocumentChunkFtsBatch(
       ins.run(row.contentHash, row.symbol, row.source, row.accession, row.text);
     }
   });
-  let groupSize = 8;
+  let groupSize = FTS_BATCH_START_ROWS;
   let i = 0;
   while (i < rows.length) {
     const group = rows.slice(i, i + groupSize);

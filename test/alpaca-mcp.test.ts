@@ -25,6 +25,7 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
 });
 beforeEach(async () => {
   vi.useRealTimers();
+  vi.doUnmock("../src/lib/inflight-deadline");
   vi.resetModules();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -212,7 +213,19 @@ describe("Alpaca MCP gateway adapter", () => {
   });
 
   it("retries getAccount when the first REST SDK call stays pending", async () => {
-    vi.useFakeTimers();
+    // Live first wait is 16s (above alpaca-broker max 14416ms).  Advancing that
+    // under fake timers while the first SDK promise never settles hangs vitest
+    // (`advanceTimersByTimeAsync` waits on pending promises).  Mock a short
+    // budget so this test proves the retry path without waiting the live 16s.
+    vi.doMock("../src/lib/inflight-deadline", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../src/lib/inflight-deadline")>();
+      return {
+        ...actual,
+        ALPACA_ACCOUNT_READ_FIRST_MS: 40,
+        ALPACA_ACCOUNT_READ_RETRY_MS: 40,
+        alpacaAccountReadBudgetMs: () => ({ firstMs: 40, retryMs: 40 })
+      };
+    });
     vi.stubGlobal("fetch", async () => new Response(null, { status: 500 }));
 
     const { getAlpacaGateway } = await import("../src/lib/alpaca");
@@ -230,12 +243,13 @@ describe("Alpaca MCP gateway adapter", () => {
       });
     };
 
-    const pending = gateway.getAccounts();
-    await vi.advanceTimersByTimeAsync(5_000);
-    const accounts = await pending;
-    expect(accounts[0]?.accountNumber).toBe("RETRY_ACC");
-    expect(calls).toBe(2);
-    vi.useRealTimers();
+    try {
+      const accounts = await gateway.getAccounts();
+      expect(accounts[0]?.accountNumber).toBe("RETRY_ACC");
+      expect(calls).toBe(2);
+    } finally {
+      vi.doUnmock("../src/lib/inflight-deadline");
+    }
   });
 
   it("passes an abort signal on MCP fetch so a hung sidecar can fall back to REST", async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shouldDeferBackgroundRagForStrategy } from "../src/lib/db-execution";
 import {
   parseRoicEarningsCallList,
   parseRoicTranscriptResponse,
@@ -204,6 +205,12 @@ describe("roic-transcripts", () => {
     expect(roicDepthForPhase("archive")).toBe(20);
     if (prev === undefined) delete process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL;
     else process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL = prev;
+  });
+
+  it("defers ROIC / FTS background work while a strategy run is in flight", () => {
+    expect(shouldDeferBackgroundRagForStrategy({ strategyWorkInFlight: true })).toBe(true);
+    expect(shouldDeferBackgroundRagForStrategy({ strategyWorkInFlight: false })).toBe(false);
+    expect(shouldDeferBackgroundRagForStrategy({ strategyWorkInFlight: true, force: true })).toBe(false);
   });
 
   it("writes full-body only for the newest high-interest call", async () => {

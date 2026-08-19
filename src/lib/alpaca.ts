@@ -31,12 +31,7 @@ import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } 
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
 import { isTransientNetworkError } from "./network-errors";
-import {
-  ALPACA_ACCOUNT_READ_FIRST_MS,
-  ALPACA_ACCOUNT_READ_RETRY_MS,
-  ALPACA_MCP_FETCH_MS,
-  awaitWithFirstCallRetry
-} from "./inflight-deadline";
+import { ALPACA_MCP_FETCH_MS, alpacaAccountReadBudgetMs, awaitWithFirstCallRetry } from "./inflight-deadline";
 
 /**
  * Fill in a usable price for any symbol the broker didn't quote (>0). Alpaca's latest-quote feed
@@ -291,20 +286,19 @@ class AlpacaBrokerGateway implements BrokerGateway {
     throw lastErr;
   }
 
-  /** Account GET used by getAccounts / getPortfolio.  One fresh retry if the first
-   *  SDK call stays pending (dead keep-alive or post-deploy warmup).  A thrown
-   *  credential / 401 error is not retried here — trackHealth already retries
+  /** Account GET used by getAccounts / getPortfolio.  First wait is above the
+   *  live alpaca-broker max (14s).  One fresh retry if that call stays pending.
+   *  A thrown credential / 401 is not retried here — trackHealth already retries
    *  UND_ERR_SOCKET. */
   private async readAccount(): Promise<any> {
+    const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
     return awaitWithFirstCallRetry(
       () => this.trackHealth(() => this.alpaca.getAccount()),
       {
-        firstMs: ALPACA_ACCOUNT_READ_FIRST_MS,
-        retryMs: ALPACA_ACCOUNT_READ_RETRY_MS,
+        firstMs,
+        retryMs,
         onFinalTimeout: () => {
-          throw new Error(
-            `Timed out waiting for alpaca.getAccount after ${ALPACA_ACCOUNT_READ_FIRST_MS}+${ALPACA_ACCOUNT_READ_RETRY_MS}ms.`
-          );
+          throw new Error(`Timed out waiting for alpaca.getAccount after ${firstMs}+${retryMs}ms.`);
         }
       }
     );

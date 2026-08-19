@@ -1,6 +1,8 @@
 # Active Implementation Plan
 
-> **2026-08-18 CURSOR — sweep-failed request lock (`cursor/sweep-request-orphan-lock-befc`, #2847).** #2845 live; 0 new Roth `strategy_runs` after 22:06:43Z.  Orphan `0e5ccd66` sweep-failed 22:13:05Z (0 LLM) left the request `running`.  Close on sweep / `finishStrategyRun`; heal on tick and on the next click.  Portfolio `8000+7000ms` is a separate lock.  Do not merge / deploy / bounce.  Do not touch #2841.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+> **2026-08-18 CURSOR — getAccounts loop budget + ROIC/FTS yield (`cursor/getaccounts-loop-budget-befc`, #2848).** VERIFY_FAIL: alpaca-mcp getAccount retry hung 60s under the 16s live wait.  Mock a short first-call budget in that test.  Sweep must not call a same-process stall a restart (Roth `b3b83913`).  Keep ROIC/FTS pause + 16s wait.  Do not skip the test.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+
+> **2026-08-18 CURSOR — sweep-failed request lock (`#2847` `4abfb7fa` MERGED).** Leftover `running` request after sweep-failed `0e5ccd66` no longer locks Manual Run once.  Roth wrote `b3b83913` at 23:13:25Z.  Follow-up starvation is #2848.
 
 > **2026-08-18 CURSOR — getAccounts post-deploy timeout (`cursor/getaccounts-post-deploy-timeout-befc`).** Dashboard 6s `getAccounts` race fail-closes Manual Run once via `accountReadiness`.  Paper/Roth are Alpaca REST.  First-call retry + 15s combined budget; do not hide a real broker-down.  Do not bounce Coolify.  Rollout: `docs/rollouts/2026-08-18-getaccounts-post-deploy-timeout.md`.
 

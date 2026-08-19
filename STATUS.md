@@ -1,5 +1,19 @@
 # Current Handoff
 
+## 2026-08-18 CURSOR — #2848 verify hang + same-process stall labeled restart
+
+verify-hosted: 7010 passed, 1 failed.  `test/alpaca-mcp.test.ts:214` timed out 60000ms — the 16s live first wait plus a never-settling first `getAccount` hung fake-timer advance.  Mock a short `alpacaAccountReadBudgetMs` in that test only.  Keep the live 16s wait and ROIC/FTS pause.
+
+Same process `4abfb7fa` (`processStartedAt` 23:10:43Z, uptime ~34m) sweep-failed Roth `b3b83913` as "Process restarted mid-run".  That run started at 23:13:25Z on this process and sat llm=0.  Restart only when `started_at` predates boot; a same-process 30m stall is `stalled_no_progress`.  Do not merge.
+
+## 2026-08-18 CURSOR — Manual Run once starved by ROIC / FTS on the event loop
+
+#2847 is live (`4abfb7fa`).  The request lock is gone: Roth Manual Run once wrote `b3b83913` at 23:13:25Z.  That run sat ~17m with llm=0 and never reached Green.  Not a #2831 miss.  `roic-transcript-refresh` was already in-flight (23:11:45Z, RJF 2024Q2→2022Q4); 78 `ftsMirrorSlice` 6–13s; `getEquityQuotes` 6s ×28; alpaca-broker 6.5–7.4s.  Bounding the FTS tick is not enough if ROIC still owns the loop.
+
+#2848 rebase onto `4abfb7fa`: keep 16s wait-above-p95 and FTS 2s / 1-row bound; **also** skip / pause ROIC and FTS while any `strategy_runs`/`strategy_run_requests` row is queued or running, and yield between ROIC periods.  Do not reopen #2840.  Do not hide the embed 8193 error with copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2812 / strategy picks.
+
+PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 
 #2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Manual Run once did not create a `strategy_run`.  ASC: 0 new Roth rows after 22:06:43Z.  Orphan `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  That leftover request is the lock (`queueStrategyRunRequest` dedupes on `queued`/`running`; the worker never wrote the request terminal).  22:10:15Z `getPortfolioBundle` `8000+7000ms` is a separate slow first-read (#2848), not this lock.
@@ -7,6 +21,13 @@
 Fix closes the matching open request on the sweep and `finishStrategyRun` write paths, heals already-terminal mismatches on the next tick, and heals this user's orphan on the next Manual Run once click.  Do not hide the lock by ignoring `running`.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2840 / #2812.
 
 PR **#2847**.  Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+## 2026-08-18 CURSOR — 6s getAccounts abort vs live p95 + ftsMirrorSlice loop pin
+
+ASC + Trading Ops, same process `581467e1`.  Exact log: `gateway.getAccounts timed out after 6000ms — serving degraded snapshot` then `Failed to fetch accounts… 6000ms` (11 times since 4:12pm CT).  Same window aborted portfolio/positions/orders at 8s and getEquityQuotes at 6s.  alpaca-broker 500/500 ok, 0 failures, min 97ms / avg ~3085ms / max 14416ms, 191/500 ≥6s.  Latest ~4:40pm CT 98–413ms ok; ~30s earlier several ok at 6570–6600ms — the SDK finished AFTER the 6s abort.  `/api/health` 200 at ~4.2s.  Event loop loaded (`ftsMirrorSlice` 6–12s).  No sidecar.
+
+Fix: first wait 16s on getAccounts / portfolio / getAccount / getEquityQuotes / option positions; shrink FTS tick so it cannot pin the 6s race.  Do not hide with copy.  Do not bounce Coolify.  Do not merge.  Do not touch #2841 / #2840 / #2812 / strategy logic.
+
+PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
 
 ## 2026-08-18 CURSOR — getAccounts 6s timeout blocks Run once after deploy
 

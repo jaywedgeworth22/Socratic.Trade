@@ -1,21 +1,33 @@
 /**
- * First-call retry for a broker (or other) read that may be slow or hung after a
- * process swap, without treating a real rejection as success.
+ * First-call retry for an in-process Alpaca REST read, without treating a real
+ * rejection as success.
  *
- * Verified production shape (2026-08-18 ops snapshot): dashboard races
- * `gateway.getAccounts()` at 6s, then `accountReadinessForSnapshot` fail-closes
- * Manual Run once on that timeout string.  Paper / Roth are Alpaca REST, not MCP.
- * A single slow or hung first `getAccount` must not hard-fail Run once; a 401 /
- * credential throw still fails immediately (no retry).
+ * ASC + ops (2026-08-18, process 581467e1 / later d4299bec): there is no Alpaca
+ * sidecar.  Paper / Roth are REST `alpaca`.  alpaca-broker was 500/500 ok this
+ * process, but 191/500 calls were ≥6s (min 97ms / avg ~3085ms / max 14416ms).
+ * Latest ~4:40pm CT 98–413ms ok; ~30s earlier several ok at 6570–6600ms — the
+ * SDK finished AFTER the 6s `withDeadline` abort.  Same window also aborted
+ * portfolio/positions/orders at 8s and getEquityQuotes at 6s.  `ftsMirrorSlice`
+ * held the same event loop 6–12s.  First wait is above the live 14.4s max.
+ * A 401 / credential throw still fails immediately (no retry).
  */
 
-export const GET_ACCOUNTS_FIRST_MS = 6_000;
-export const GET_ACCOUNTS_RETRY_MS = 9_000;
-export const PORTFOLIO_BUNDLE_FIRST_MS = 8_000;
-export const PORTFOLIO_BUNDLE_RETRY_MS = 7_000;
-export const ALPACA_ACCOUNT_READ_FIRST_MS = 5_000;
-export const ALPACA_ACCOUNT_READ_RETRY_MS = 10_000;
+export const GET_ACCOUNTS_FIRST_MS = 16_000;
+export const GET_ACCOUNTS_RETRY_MS = 8_000;
+export const PORTFOLIO_BUNDLE_FIRST_MS = 16_000;
+export const PORTFOLIO_BUNDLE_RETRY_MS = 8_000;
+export const ALPACA_ACCOUNT_READ_FIRST_MS = 16_000;
+export const ALPACA_ACCOUNT_READ_RETRY_MS = 8_000;
 export const ALPACA_MCP_FETCH_MS = 8_000;
+
+/** Live first-wait / retry for Alpaca REST `getAccount`.  Read at call time so tests can
+ *  mock a short budget without changing the 16s production wait. */
+export function alpacaAccountReadBudgetMs(): { firstMs: number; retryMs: number } {
+  return { firstMs: ALPACA_ACCOUNT_READ_FIRST_MS, retryMs: ALPACA_ACCOUNT_READ_RETRY_MS };
+}
+/** Same in-process broker lane as getAccounts.  Live 6s / 8s withDeadline races. */
+export const EQUITY_QUOTES_MS = 16_000;
+export const OPTION_POSITIONS_MS = 16_000;
 
 export type SettleKind = "fulfilled" | "rejected" | "pending";
 
