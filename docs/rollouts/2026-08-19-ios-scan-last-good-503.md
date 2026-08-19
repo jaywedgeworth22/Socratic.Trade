@@ -38,7 +38,7 @@ iOS only called `GET /api/scan`.  `/api/mobile/snapshot` had no `latestScan`.  A
 npm run lint            # pass
 npx tsc --noEmit        # pass
 npx vitest run test/scan-empty-screener.test.ts test/scan-singleflight.test.ts test/mobile-scan.test.ts
-# 28 passed
+# 28 passed (also after rebase onto c55c2e64)
 npm run build           # pass
 ```
 
