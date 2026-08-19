@@ -46,6 +46,8 @@ Linux VM cannot compile Swift.  No TestFlight.  Full `npm test` still hits lefto
 
 ## Next Steps & Blockers
 
+Rebased onto `origin/main` `c55c2e64` (#2848) 2026-08-19.  Seed-first `/api/scan` and iOS last-good both kept.  Did not rewrite #2848.
+
 Do not merge from this seat.  Do not start a second TestFlight.  Do not bounce.  Do not touch #2848 / #2849 / #2841 / #2840.
 
 1.0.68 will show names only after live `/api/scan` returns a 200 with `topCandidates` (backend seed-first in this PR).  The iOS `latestScan` snapshot path does not exist on `581467e1` and cannot help that binary.

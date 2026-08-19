@@ -13,6 +13,10 @@ Same process `4abfb7fa` (`processStartedAt` 23:10:43Z, uptime ~34m) sweep-failed
 #2848 rebase onto `4abfb7fa`: keep 16s wait-above-p95 and FTS 2s / 1-row bound; **also** skip / pause ROIC and FTS while any `strategy_runs`/`strategy_run_requests` row is queued or running, and yield between ROIC periods.  Do not reopen #2840.  Do not hide the embed 8193 error with copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2812 / strategy picks.
 
 PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+## 2026-08-19 CURSOR — iOS Scan last-good / seed-first rebased onto #2848 (`c55c2e64`)
+
+#2850 rebased onto current `main` (`c55c2e64`).  Did not rewrite #2848.  Live unblocker for TF 1.0.68 is still seed-first `GET /api/scan` (names before Yahoo whole-set).  iOS `latestScan` kept for the next TF.  Do not merge / deploy / bounce / second TestFlight.  Do not touch #2848 / #2849 / #2841 / #2840.
+
 ## 2026-08-19 CURSOR — iOS Scan keeps last-good on a 503 refresh
 
 Live `4abfb7fa` web `/console/scan`: Refresh scan once (not Run once) 503s, then paints the last-good universe from Aug 18, 2026, 7:25:13 PM (70 names / 5069 quotes / 5073 scanned).  Public `GET /api/scan` is 401.  TF 1.0.68 already has #2830 ScanView but iOS only called live `/api/scan` and replaced the table with the empty 503 body.  Snapshot had no `latestScan`.
