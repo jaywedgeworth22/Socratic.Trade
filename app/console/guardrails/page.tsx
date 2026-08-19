@@ -13,7 +13,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { toggleIncludedIndex } from "@/lib/index-universes";
+import { formatIndexUniverseList, toggleIncludedIndex } from "@/lib/index-universes";
 import type { IndexUniverse, OrderType, TaxationType, TradingPolicy } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
@@ -424,7 +424,10 @@ function AccountScopedGuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Universe">
             <div className="py-2">
-              <div className="con-label">Base indices</div>
+              <div className="con-label">Indices</div>
+              <p className="mb-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-fg)]">
+                {formatIndexUniverseList(indices)}
+              </p>
               <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                 {INDICES.map((idx) => {
                   const on = indices.includes(idx.id);

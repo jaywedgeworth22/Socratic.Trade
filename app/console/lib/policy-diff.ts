@@ -210,7 +210,7 @@ export function classifyExtraPatch(policy: TradingPolicy, extraPatch: PolicyPatc
         const { added, removed } = setDiff(toStringArray(policy.includedIndices), toStringArray(value));
         entries.push({
           key,
-          label: "Base indices",
+          label: "Indices",
           // Any broadening of the tradable universe is a loosening, even mixed with removals.
           direction: added.length > 0 ? "looser" : removed.length > 0 ? "tighter" : "changed",
           summary: listSummary(formatIndexUniverseLabels(added), formatIndexUniverseLabels(removed))

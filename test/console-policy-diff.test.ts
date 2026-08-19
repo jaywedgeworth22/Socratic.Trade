@@ -52,6 +52,7 @@ describe("console guardrails: extraPatch loosening classification (Codex finding
   it("classifies universe broadening as looser and narrowing as tighter", () => {
     const [broadened] = classifyExtraPatch(policy, { includedIndices: ["sp500", "russell2000"] });
     expect(broadened.direction).toBe("looser");
+    expect(broadened.label).toBe("Indices");
     expect(broadened.summary).toBe("adds Russell 2000");
     expect(broadened.summary).not.toMatch(/sp500|russell2000/);
 

@@ -5,6 +5,7 @@ import {
   SUPPORTED_INDEX_UNIVERSES,
   dynamicIndexUniversesForPolicy,
   formatIndexUniverseLabels,
+  formatIndexUniverseList,
   indexUniverseDisplayLabel,
   indexUniverseLabel,
   normalizeIncludedIndices,
@@ -75,5 +76,16 @@ describe("index universe display labels", () => {
     expect(formatIndexUniverseLabels(["sp500", "not-an-index", "dow30"])).toEqual(["S&P 500", "Dow 30"]);
     expect(indexUniverseDisplayLabel("sp500")).not.toMatch(/sp500/i);
     expect(formatIndexUniverseLabels(["sp500"]).join(", ")).not.toMatch(/sp500|nasdaq100|dow30/i);
+  });
+
+  it("maps the live Guardrails Indices selected-set without leaking any slug", () => {
+    const leaked = ["sp500", "nasdaqComposite", "dow30", "nyseComposite"] as const;
+    expect(formatIndexUniverseList(leaked)).toBe("S&P 500, Nasdaq Composite, Dow 30, NYSE Composite");
+    expect(formatIndexUniverseList(leaked)).not.toMatch(/sp500|nasdaqComposite|dow30|nyseComposite|nasdaq100|russell2000|ftWilshire5000|sp100/);
+    expect(formatIndexUniverseList([])).toBe("none");
+    for (const id of SUPPORTED_INDEX_UNIVERSES) {
+      expect(formatIndexUniverseList([id])).toBe(expected[id]);
+      expect(formatIndexUniverseList([id])).not.toBe(id);
+    }
   });
 });

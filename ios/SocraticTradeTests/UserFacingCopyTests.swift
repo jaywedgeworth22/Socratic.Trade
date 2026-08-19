@@ -72,8 +72,11 @@ final class UserFacingCopyTests: XCTestCase {
         let line = DeskCopy.joinedIndexList(["sp500", "nasdaq100", "ftWilshire5000"])
         XCTAssertEqual(line, "S&P 500, Nasdaq 100, FT Wilshire 5000")
         assertOrdinary(line)
+        let liveLeak = DeskCopy.joinedIndexList(["sp500", "nasdaqComposite", "dow30", "nyseComposite"])
+        XCTAssertEqual(liveLeak, "S&P 500, Nasdaq Composite, Dow 30, NYSE Composite")
         for slug in ["sp100", "sp500", "nasdaq100", "nasdaqComposite", "dow30", "russell2000", "nyseComposite", "ftWilshire5000"] {
             XCTAssertFalse(line.contains(slug), "\(line) still contains \(slug)")
+            XCTAssertFalse(liveLeak.contains(slug), "\(liveLeak) still contains \(slug)")
         }
     }
 
