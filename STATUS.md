@@ -13,7 +13,7 @@ Branch `cursor/manual-run-drain-handoff-befc`.  Rollout: `docs/rollouts/2026-08-
 
 Root cause: `getEquityQuotes` sent the full scan universe in one MCP `get_equity_quotes`.  Robinhood rejected the batch, so gather never priced through Robinhood.  Do not shrink the universe to 10.  Chunk requests to 10.  congress.trade 404 is secondary and must not latch the free enrichment wave.  Do not reopen #2840.  Do not touch #2850 / #2849 / #2841 / strategy picks.  Do not merge / deploy / bounce.
 
-Branch `cursor/robinhood-quote-chunk-befc`.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+PR **#2852**.  Branch `cursor/robinhood-quote-chunk-befc`.  SHA `7fa03750`.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
 
 ## 2026-08-18 MONET — HOTFIX: `/console/connections` crashed client-side after #2848
 

@@ -39,7 +39,7 @@ Focused receipt: robinhood-mcp 17/17 (incl. 250-name chunk + partial-chunk survi
 
 ## Next Steps & Blockers
 
-- Do not merge from this seat.  After merge, the next Manual Run once should get Robinhood prices on a 250-name universe and an `llm_usage` row within a few minutes.
+- PR **#2852**.  Do not merge from this seat.  After merge, the next Manual Run once should get Robinhood prices on a 250-name universe and an `llm_usage` row within a few minutes.
 - Do not bounce Coolify.
 
 ## Zero-Code Findings
