@@ -1,6 +1,6 @@
 # Active Implementation Plan
 
-> **2026-08-19 CURSOR — iOS web parity (`cursor/ios-web-parity-502f`).** #2856 is live on `main` (`a8a0a65b`); TF 1.0.68 is behind.  No leftover iOS slug join on current main.  Folds #2849 Desk subtitle; Home / Insights / Guardrails no longer send users to a missing Strategy page.  Do not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Do not touch #2841 / #2854 / #2840.  Rollout: `docs/rollouts/2026-08-19-ios-web-parity.md`.
+> **2026-08-19 CURSOR — iOS web parity (`cursor/ios-web-parity-502f`, #2857).** #2856 is live on `main` (`a8a0a65b`); TF 1.0.68 is behind.  No leftover iOS slug join on current main.  Folds #2849 Desk subtitle; Home / Insights / Guardrails no longer send users to a missing Strategy page.  Do not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Do not touch #2841 / #2854 / #2840.  Rollout: `docs/rollouts/2026-08-19-ios-web-parity.md`.
 
 > **2026-08-19 CURSOR — Indices common names (`#2856` `a8a0a65b` MERGED).** TF 1.0.68 is still the pre-#2855 binary.  Follow-up iOS chrome is `cursor/ios-web-parity-502f`.
 

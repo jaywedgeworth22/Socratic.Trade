@@ -6,7 +6,7 @@ Hypothesis held: #2855/#2856 are on `main` (`a8a0a65b`).  TF **1.0.68** is behin
 
 This PR folds #2849 (`SectionHeading("Desk")` only) and retargets empty-universe copy at Guardrails with the same `S&P 500` example web uses.  Did not add iOS index checkboxes, Scan source chips, or Smart Money.  Did not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Did not touch #2841 / #2854 / #2840.
 
-PR pending.  Branch `cursor/ios-web-parity-502f`.  Rollout: `docs/rollouts/2026-08-19-ios-web-parity.md`.
+PR **#2857**.  Branch `cursor/ios-web-parity-502f`.  SHA `e2f56f21`.  Rollout: `docs/rollouts/2026-08-19-ios-web-parity.md`.
 
 ## 2026-08-19 CURSOR — Indices common names on every surface
 

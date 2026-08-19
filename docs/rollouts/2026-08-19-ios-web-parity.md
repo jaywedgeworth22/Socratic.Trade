@@ -53,6 +53,8 @@ Touched files:
 
 ## Verification State
 
+PR **#2857**.  SHA `e2f56f21`.
+
 Product-source grep on this branch:
 
 ```bash
@@ -60,11 +62,22 @@ rg -n 'Coach, Scan, Guardrails|Strategy page' ios --glob '*.swift'
 rg -n 'joinedIndexList|joinedList\(snapshot.policy.includedIndices' ios/SocraticTrade --glob '*.swift'
 ```
 
-Expected: no Coach/Scan/Guardrails subtitle; no Strategy page; Indices rows
-use `joinedIndexList` only.
+No product UI hit for the Desk subtitle or Strategy page (test assertions
+only).  Indices rows: `GuardrailsView` + Desk Current Policy use
+`joinedIndexList` only.
 
-Linux Cloud VM cannot run `xcodebuild`.  Swift compile is CI-only.  Lint /
-tsc / vitest / next build run on this docs+Swift change before handoff.
+```bash
+npm run lint          # 0 errors (771 grandfathered warnings)
+npx tsc --noEmit      # clean
+npx vitest run test/index-universes.test.ts test/console-policy-diff.test.ts test/dashboard-ui.test.ts
+                      # 3 files, 36 passed
+npm run build         # succeeded
+```
+
+Linux Cloud VM cannot run `xcodebuild`.  Swift XCTest added but not compiled
+here.  Full `npm test` in this VM hit unrelated network/infra failures (SEC
+404, rag-doc-type-coverage, vector-db receipts) not touched by this copy
+change — same class as #2855/#2856.
 
 ## Next Steps & Blockers
 
