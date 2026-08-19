@@ -3918,6 +3918,11 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
         })
       );
     }
+    if (rateLimit.tripped) {
+      for (const symbol of misses) {
+        if (result[symbol] === undefined) result[symbol] = {};
+      }
+    }
     return result;
   }
 

@@ -44,7 +44,7 @@ npm test
 npm run build
 ```
 
-Commands above are the intended gate.  Paste the actual receipts after they run.
+Focused receipts: new gather/502/429 tests 5/5; scheduler-managed-vector-reconcile + roic-transcripts + api-clients-congress + robinhood-mcp 58/58 (Robinhood ≤10 chunk kept).  `npx tsc --noEmit` clean.  `npm run lint` exit 0.  Full `npm test` / `npm run build` receipts follow in this note when they finish.
 
 ## Next Steps & Blockers
 
