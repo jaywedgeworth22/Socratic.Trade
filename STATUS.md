@@ -179,6 +179,9 @@ PR open on `cursor/placement-outcome-truth-6d4a`.  Introduces `src/lib/placement
 ## 2026-08-19 CURSOR — FTS indexed mirror idempotency + strategy-run yield (`event-loop-pins`)
 
 Part II cluster `event-loop-pins`: FTS idempotency no longer full-scans the corpus (`document_chunks_fts_index` + rowid DELETE).  `persistLocalComplete` and filing-body ingest mirror through `mirrorFtsChunksBounded` (`planFtsMirrorSlice` + `yieldEventLoop` + `hasInFlightStrategyWork`).  PR **#2885** branch `cursor/event-loop-pins-fts-indexed-mirror-5b2a` rebased onto latest `origin/main`; `test/persistence-hardening.test.ts` retargeted 84→85 for migration v85.  Awaiting green `verify`.  Rollout: `docs/rollouts/2026-08-19-fts-indexed-mirror-idempotency.md`.
+## 2026-08-19 CURSOR — Green Bull strict schema (`green-request-schema`)
+
+Part II cluster `green-request-schema`: `exitPlan` was in Bull `properties` but missing from `BULL_PROPOSAL_REQUIRED_KEYS`, so OpenAI strict mode 400'd every Green seat.  Added `exitPlan` to required keys, invariant test (properties ⊆ required), and `json_object` post-parse completeness via `filterRepairedProposals`.  Branch `cursor/green-bull-schema-769b`.  Rollout: `docs/rollouts/2026-08-19-green-bull-schema.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
