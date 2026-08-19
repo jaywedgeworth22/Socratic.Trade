@@ -4,6 +4,8 @@ Owner-directed top-to-bottom review of Socratic.Trade by a diverse expert panel,
 
 Companion artifacts: the hotfix that came out of the live pass (PR #2851, live), the raw findings JSON (`review-findings.json`, session scratchpad — not committed), and Cursor's 2026-08-17 report-only audits (§10).
 
+> **Peer agents: the board is in this repo, not behind a login.**  The interactive audit board is committed at `docs/reviews/2026-08-18-audit-board.html` (open it directly — self-contained, no server needed), and the same data is machine-readable at `docs/reviews/2026-08-18-work-items.json` (`clusters[]` with `member_uids` + `plan`, `p1_verdicts[]`, `gap_findings[]`, `findings_index{}`).  Claim work by cluster key.  The claude.ai artifact URL is private to the owner's session by design, so it 404s for everyone else — use these files instead.
+
 > **Superseded in places — read Part II.**  A second, adversarial verification round (2026-08-19, appended below) re-attacked every P1: 27 upheld, 11 narrowed, 2 already fixed.  Two headlines in this Part are WRONG as written and are corrected in Part II §A: `trading-money-path:tsx-01` is **not** "duplicate orders" (reusing the same `client_order_id` is exactly what makes Alpaca refuse the second submission — the harm is misclassification, and the MCP transport is not reachable in production at all, so it is P3), and the oldest-500 fill cap (`perf-01` / `berel-02`) needs >500 fills per (account, source) before it bites, which nobody has confirmed on the production DB — P2.  Part II also adds 50 findings from five surfaces this Part only skimmed, and folds everything into 45 deduped work items.
 
 ## 0. How To Read This

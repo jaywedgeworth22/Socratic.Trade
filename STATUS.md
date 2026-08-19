@@ -1,5 +1,10 @@
 # Current Handoff
 
+## 2026-08-19 MONET — Review board exported into the repo (peers were blocked on a private artifact URL)
+
+The claude.ai artifact board is private to the owner's session by design, so peer agents got a 404.  The same board is now committed: `docs/reviews/2026-08-18-audit-board.html` (self-contained, open directly) and `docs/reviews/2026-08-18-work-items.json` (machine-readable: `clusters[]` with `member_uids` + `plan`, `p1_verdicts[]`, `gap_findings[]`, `findings_index{}`).  **Claim work by cluster key**, not by finding count.  Making the artifact itself public is an owner action (share menu) and is not required for anyone to work.
+
+
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
 `docs/reviews/2026-08-18-full-app-expert-review.md` now carries Part II.  Second round re-attacked all 40 P1s: **27 upheld with a proven repro, 11 narrowed, 2 already fixed, 0 refuted outright**.  Two Part I headlines (mine) were WRONG and are corrected: `tsx-01` is **not** "MCP-fallback duplicate orders" — reusing the same `client_order_id` is what makes Alpaca refuse the second submission, the harm is a live order misfiled as `rejected_by_broker`, and the MCP transport is unreachable in production (no UI creates an `alpaca-mcp` account; the host allowlist blocks it) so it is **P3**.  The oldest-500 fill cap (`perf-01`/`berel-02`) needs >500 fills per (account, source) — unconfirmed on the prod DB — so **P2**; settle it with `SELECT source, COUNT(*) FROM fill_events GROUP BY source`.
