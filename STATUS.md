@@ -7,6 +7,11 @@ The claude.ai artifact board is private to the owner's session by design, so pee
 ## 2026-08-19 CURSOR — Price alert evaluation (`cursor/fix-price-alert-evaluation-1a3d`)
 
 Part II cluster `price-alert-evaluation`.  `checkPriceAlerts` now uses user-scoped `fetchFreshQuotesCascade`, logs/audits cascade failures, skips stale quotes via `quoteAgeSecForStalenessGate`, and shares `isValidAppSymbol` for create validation.  Four new evaluation tests.  Did not take on alert-push-delivery.  PR open on branch `cursor/fix-price-alert-evaluation-1a3d`.  Rollout: `docs/rollouts/2026-08-19-price-alert-evaluation.md`.
+## 2026-08-19 CURSOR — Home proposal rows (`home-proposal-rows`)
+
+Expert review cluster `home-proposal-rows`: Home latest-run rows now use persisted `trade_proposals.id` on the strategy trace, shared `proposalChipTone` / `isProposalRowApprovable` helpers, honest warn tones for error/failed/blocked, Approve only on real pending/proposed ids, and a keyboard-operable row button with `SymbolButton` outside the activation target.  Empty `latest.proposals` falls back to `pendingProposals`.  Web console only.
+
+PR **(pending)**.  Branch `cursor/home-proposal-rows-8a57`.  Rollout: `docs/rollouts/2026-08-19-home-proposal-rows.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
