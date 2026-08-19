@@ -92,6 +92,11 @@
 > objections and override context remain visible. The canonical card owns the explicit
 > verdict status too, preserving “Approved at half size” and “Rejected by Red Team”
 > without restoring duplicate rationale rows.
+>
+> 2026-08-19: iOS Home `DeskShortcutsCard` keeps the **Desk** heading and the
+> Coach / Scan / Guardrails / Results shortcut buttons.  It no longer repeats
+> those four names as a subtitle above the same controls.  Console / web has no
+> matching Desk heading.  See `docs/rollouts/2026-08-19-desk-subtitle-remove.md`.
 
 
 This phase restructures the dashboard from a long vertical page into a

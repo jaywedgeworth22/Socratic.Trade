@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-19 CURSOR — remove redundant Home Desk subtitle
+
+Owner: Home shows “Coach, Scan, Guardrails, and Results” as text under **Desk**, immediately above the same four shortcut buttons.  That subtitle is gone.  Buttons and tab routing are unchanged.  Console / web has no matching Desk heading (rail + page h1 only).  Did not replace it with helper copy.  Did not touch #2848 / #2847 / #2841 / #2840 or strategy/trading paths.  Do not merge.  Do not deploy.  Do not bounce Coolify.
+
+Branch `cursor/remove-desk-subtitle-ba05`.  Rollout: `docs/rollouts/2026-08-19-desk-subtitle-remove.md`.
+
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 
 #2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Manual Run once did not create a `strategy_run`.  ASC: 0 new Roth rows after 22:06:43Z.  Orphan `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  That leftover request is the lock (`queueStrategyRunRequest` dedupes on `queued`/`running`; the worker never wrote the request terminal).  22:10:15Z `getPortfolioBundle` `8000+7000ms` is a separate slow first-read (#2848), not this lock.

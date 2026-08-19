@@ -512,7 +512,7 @@ private struct DeskShortcutsCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Desk", subtitle: "Coach, Scan, Guardrails, and Results")
+                SectionHeading("Desk")
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     shortcut("Coach", systemImage: "bubble.left.and.bubble.right.fill", tab: .coach)
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)
