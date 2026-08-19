@@ -240,9 +240,11 @@ across panels, feeds, popovers, or status chips.
   direction or a buy/sell signal.
 - Top status values are kept visible in the command bar: Mock/Local/Live mode,
   autonomy/setup state, market session, daily risk, and allowed universe.
-- Settings → Operate groups the tradable universe controls together: Base
-  indexes are large multi-select toggle buttons labeled with product names
-  (`S&P 500`, never `sp500`). S&P 500 is selected by
+- Settings → Operate groups the tradable universe controls together: Indices
+  (Guardrails → Universe, same name on iOS Guardrails and Desk) show the
+  selected-set as common names (`S&P 500, Nasdaq Composite, Dow 30, NYSE
+  Composite`, never `sp500, nasdaqComposite, dow30, nyseComposite`) plus
+  multi-select toggles labeled the same way. S&P 500 is selected by
   default, Additional Watchlist adds explicit tickers, and Ignore List subtracts
   symbols from the final universe. S&P 100 and S&P 500 are mutually exclusive;
   Nasdaq 100 and Nasdaq Composite are mutually exclusive. The backend normalizes

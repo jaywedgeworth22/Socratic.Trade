@@ -279,6 +279,10 @@ final class DeskModelsTests: XCTestCase {
             XCTAssertNotEqual(label, slug)
         }
         XCTAssertEqual(DeskCopy.joinedIndexList(["sp500", "russell2000"]), "S&P 500, Russell 2000")
+        XCTAssertEqual(
+            DeskCopy.joinedIndexList(["sp500", "nasdaqComposite", "dow30", "nyseComposite"]),
+            "S&P 500, Nasdaq Composite, Dow 30, NYSE Composite"
+        )
         XCTAssertEqual(DeskCopy.joinedIndexList(["sp500", "not-an-index"]), "S&P 500")
         XCTAssertEqual(DeskCopy.joinedIndexList([]), "none")
         XCTAssertEqual(DeskCopy.joinedIndexList(["mysteryIndex"]), "none")

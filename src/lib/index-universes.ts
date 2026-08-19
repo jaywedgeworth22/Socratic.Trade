@@ -220,6 +220,12 @@ export function formatIndexUniverseLabels(values: readonly string[] | undefined)
   return (values ?? []).map(indexUniverseDisplayLabel).filter((label) => label.length > 0);
 }
 
+/** Joined selected-set copy for Guardrails / Desk / policy-diff.  Empty → "none". */
+export function formatIndexUniverseList(values: readonly string[] | undefined): string {
+  const labels = formatIndexUniverseLabels(values);
+  return labels.length > 0 ? labels.join(", ") : "none";
+}
+
 export function indexUniverseSymbolCount(index: IndexUniverse): number {
   return INDEX_UNIVERSES[index].estimatedSymbols ?? INDEX_UNIVERSES[index].symbols.length;
 }

@@ -39,10 +39,13 @@ not render the taxable Wash-Sale Guard as On.  User-facing iOS copy is ordinary
   app language: `__rotate__` reads as lowercase “rotate models”; route names,
 command types, SSE/APNs, and console-only notes stay out of the UI.
 
-Included-index storage slugs (`sp500`, `nasdaq100`, …) stay on `IndexUniverse` /
-`includedIndices`.  User-facing Indices rows and policy-diff summaries use
-`indexUniverseLabel` / `DeskCopy.joinedIndexList` (`S&P 500`, `Nasdaq 100`, …).
-Snapshot / API payloads are unchanged.
+Included-index storage slugs (`sp500`, `nasdaqComposite`, …) stay on
+`IndexUniverse` / `includedIndices`.  Every user-facing Indices surface
+(Guardrails selected-set and checkbox grid, policy-diff, Scan
+`${id}-universe` chips, iOS Guardrails, Desk Current Policy) uses
+`indexUniverseLabel` / `formatIndexUniverseList` /
+`DeskCopy.joinedIndexList` (`S&P 500`, `Nasdaq Composite`, `Dow 30`,
+`NYSE Composite`, …).  Snapshot / API payloads are unchanged.
 
 Policy enforcement includes:
 
