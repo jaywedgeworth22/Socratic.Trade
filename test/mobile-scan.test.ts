@@ -3,12 +3,13 @@ import { compactMobileMarketScan } from "../src/lib/mobile-scan";
 import type { MarketQuote, MarketScan } from "../src/lib/types";
 
 function quote(partial: Pick<MarketQuote, "symbol"> & Partial<MarketQuote>): MarketQuote {
+  const { symbol, companyName, price, score, ...rest } = partial;
   return {
-    symbol: partial.symbol,
-    companyName: partial.companyName ?? partial.symbol,
-    price: partial.price ?? 100,
-    score: partial.score ?? 50,
-    ...partial
+    symbol,
+    companyName: companyName ?? symbol,
+    price: price ?? 100,
+    score: score ?? 50,
+    ...rest
   } as MarketQuote;
 }
 
@@ -73,6 +74,6 @@ describe("compactMobileMarketScan", () => {
   it("returns null for a missing or shapeless scan", () => {
     expect(compactMobileMarketScan(null)).toBeNull();
     expect(compactMobileMarketScan(undefined)).toBeNull();
-    expect(compactMobileMarketScan({ topCandidates: [] } as MarketScan)).toBeNull();
+    expect(compactMobileMarketScan({ topCandidates: [] } as unknown as MarketScan)).toBeNull();
   });
 });

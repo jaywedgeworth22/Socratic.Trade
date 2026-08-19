@@ -21,7 +21,7 @@ Why Refresh 503s: after an empty Nasdaq screener, interactive `/api/scan` Yahoo-
 
 Fix: seed before Yahoo whole-set; keep valid seed rows; compact `latestScan` on `/api/mobile/snapshot`; iOS paints that universe and keeps it on a failed refresh.  Did not merge.  Did not deploy.  Did not bounce.  Did not start a second TestFlight.  Did not click Manual Run.  Did not touch #2848 / #2849 / #2841 / #2840.
 
-PR on `cursor/ios-scan-last-good-503-b104`.  Rollout: `docs/rollouts/2026-08-19-ios-scan-last-good-503.md`.
+PR **#2850**.  Branch `cursor/ios-scan-last-good-503-b104`.  Rollout: `docs/rollouts/2026-08-19-ios-scan-last-good-503.md`.
 
 ## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
 

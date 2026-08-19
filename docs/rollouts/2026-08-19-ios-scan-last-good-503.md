@@ -34,7 +34,14 @@ iOS only called `GET /api/scan`.  `/api/mobile/snapshot` had no `latestScan`.  A
 
 ## Verification State
 
-Pending local gate on this branch (lint / tsc / focused tests / build).  Linux VM cannot compile Swift.  No TestFlight.
+```bash
+npm run lint
+npx tsc --noEmit
+npx vitest run test/scan-empty-screener.test.ts test/scan-singleflight.test.ts test/mobile-scan.test.ts
+# 28 passed
+```
+
+Linux VM cannot compile Swift.  No TestFlight.  Full `npm test` + `npm run build` running after this note.
 
 ## Next Steps & Blockers
 
