@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-19 CURSOR — Manual Run once drain handoff (`cursor/manual-run-drain-handoff-befc`).** #2848 live (`c55c2e64`).  Roth `9d71dda4` sat llm=0 then sweep-failed 01:29:44Z `stalled_no_progress` (~31m).  `strategy-run-drain` skipped every tick (claim-only-`queued` after the HTTP kick).  Drain now resumes a claimed request with no live heartbeat on the same run id; `after()` second kick; 8m gather deadline; bound pre-Green Alpaca snapshot.  Not another embed skip.  Quote-chunk is #2852.  Do not reopen #2840 / #2848.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-19-manual-run-drain-handoff.md`.
+
 > **2026-08-18 CURSOR — getAccounts loop budget + ROIC/FTS yield (`cursor/getaccounts-loop-budget-befc`, #2848).** VERIFY_FAIL: alpaca-mcp getAccount retry hung 60s under the 16s live wait.  Mock a short first-call budget in that test.  Sweep must not call a same-process stall a restart (Roth `b3b83913`).  Keep ROIC/FTS pause + 16s wait.  Do not skip the test.  Do not merge / deploy / bounce.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
 
 > **2026-08-18 CURSOR — sweep-failed request lock (`#2847` `4abfb7fa` MERGED).** Leftover `running` request after sweep-failed `0e5ccd66` no longer locks Manual Run once.  Roth wrote `b3b83913` at 23:13:25Z.  Follow-up starvation is #2848.

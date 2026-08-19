@@ -720,7 +720,11 @@ async function tick(): Promise<void> {
     .then(({ processPendingStrategyRunRequests }) =>
       journalLane("strategy-run-drain", {}, async () => {
         const result = await processPendingStrategyRunRequests({ limit: 1 });
-        return { status: result.processed > 0 ? ("ok" as const) : ("skipped" as const), summary: `processed=${result.processed}` };
+        const working = result.processed > 0 || result.liveRunning > 0;
+        return {
+          status: working ? ("ok" as const) : ("skipped" as const),
+          summary: `processed=${result.processed} adopted=${result.adopted} live=${result.liveRunning}`
+        };
       })
     )
     .catch((err) => console.error("[scheduler] strategy-run worker error:", err));

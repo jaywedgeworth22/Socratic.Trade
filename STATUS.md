@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-19 CURSOR — Manual Run once drain must resume a claimed worker
+
+#2848 is live (`c55c2e64`, `processStartedAt` 00:51:39Z).  Roth `9d71dda4` wrote 00:58:57Z, sat `running` llm=0, then sweep-failed 01:29:44Z `stalled_no_progress` (~31m, honest label).  ASC: embed already skipped, no FTS, no broker timeout.  Ops: `strategy-run-drain` 1372/1372 skipped (avg 8ms) because drain only selected `queued` after the HTTP kick claimed the row.  Background skip is not the remaining blocker.  Green never started.
+
+Robinhood `too many symbols (max 10, got 250)` at 00:59:15Z and congress.trade 404 at 01:01:53Z prove gather started, then the claimed worker did not finish.  Quote-chunk is a sibling PR (#2852).  This PR is why drain never took over after the kick claimed: heartbeat the in-process worker; drain resumes a claimed request with no heartbeat on the same run id so Activity's poll and `llm_usage` share the 202 UUID; `after()` second kick; 8m gather deadline; bound pre-Green Alpaca positions/orders + 45s snapshot.  Do not only add another skip.  Do not reopen #2840 / #2848.  Do not touch #2850 / #2849 / #2841.  Do not merge / deploy / bounce.
+
+Branch `cursor/manual-run-drain-handoff-befc`.  Rollout: `docs/rollouts/2026-08-19-manual-run-drain-handoff.md`.
+
 ## 2026-08-18 MONET — HOTFIX: `/console/connections` crashed client-side after #2848
 
 Prod `c55c2e64` (live 00:51Z) renders "Dashboard error: process.uptime is not a function" on Connections.  `src/lib/db-execution.ts` module-scope `process.uptime()` reaches the browser bundle via `app/console/settings/brokers.tsx -> venue-contract -> source-settings -> db-api-keys -> db` (webpack stubs sqlite, not `process.uptime`).  Fix = lazy guarded accessor + regression test that fails on the old code.  Root cause (server DB modules in the client bundle; Turbopack `npm run dev` 500s every route after that page compiles) is a P1 in the MONET full-app review, not fixed here.  Branch `monet/hotfix-connections-process-uptime`.  Rollout: `docs/rollouts/2026-08-18-connections-process-uptime-hotfix.md`.
