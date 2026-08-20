@@ -63,6 +63,13 @@ would keep writing `missed_window` with no visible auth error.
 Fix: extend the existing pass-through.  `/api/market/flatfile` stays session-gated.
 Handlers still validate the token.  Rollout:
 `docs/rollouts/2026-08-20-peer-quotes-intraday-middleware.md`.
+## 2026-08-20 CURSOR-BUGBOT — #2953 intraday provider failure must be 502
+
+`GET /api/market/intraday/{symbol}` documented that empty `bars` means a confirmed empty window and that only non-200 is a provider failure.  `fetchIntradayBars` returned `null` for credential miss, HTTP 403/timeout, AND a genuine empty Alpaca page, and the route mapped `null` to `200 { bars: [] }`.  Congress.Trade therefore treated an Alpaca 403 the same as a weekend and skipped its fallback — the same silent `missed_window` blanking #2953 was shipped to stop.
+
+Fix: discriminate `ok` vs `unavailable`.  Confirmed empty stays 200 `[]`.  Provider failure is 502.  Did not touch #2957 middleware, #2947, or #2952.
+
+**IN PR.**  Branch `cursor/intraday-provider-fail-502`.  Rollout: `docs/rollouts/2026-08-20-intraday-provider-fail-502.md`.
 
 ## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
 

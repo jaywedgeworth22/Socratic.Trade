@@ -14,8 +14,10 @@ export const dynamic = "force-dynamic";
 // the past without fabricating it — which is exactly why 2937 of 2955 snapshots correctly refused and
 // wrote `missed_window`. Minute bars answer it exactly, and can rebuild history after the fact.
 //
-// Returns 200 with `bars: []` when the range genuinely has no bars (weekend, halt, pre-listing) so the
-// caller only treats non-200 as a provider failure. Never substitutes a current price for a past bar.
+// Returns 200 with `bars: []` when a provider confirmed the range has no bars (weekend, halt,
+// pre-listing) so the caller only treats non-200 as a provider failure.  A credential miss,
+// HTTP error, or timeout is 502 — collapsing that to empty bars made CT record a false miss
+// and skip its fallback.  Never substitutes a current price for a past bar.
 const MAX_RANGE_MS = 8 * 24 * 60 * 60 * 1000; // a week-plus of intraday is plenty per call
 
 export async function GET(req: Request, { params }: { params: Promise<{ symbol: string }> }) {
@@ -40,6 +42,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ symbol: 
   }
 
   const timeframe = normalizeTimeframe(sp.get("timeframe"));
-  const bars = await fetchIntradayBars(symbol, new Date(startMs).toISOString(), new Date(endMs).toISOString(), timeframe);
-  return NextResponse.json({ ok: true, symbol: symbol.toUpperCase(), timeframe, bars: bars ?? [] });
+  const result = await fetchIntradayBars(symbol, new Date(startMs).toISOString(), new Date(endMs).toISOString(), timeframe);
+  switch (result.kind) {
+    case "ok":
+      // Confirmed empty (weekend / halt) stays 200 so the caller only treats non-200 as a provider failure.
+      return NextResponse.json({ ok: true, symbol: symbol.toUpperCase(), timeframe, bars: result.bars });
+    case "unavailable":
+      return NextResponse.json({ ok: false, error: result.reason }, { status: 502 });
+    default: {
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
+  }
 }
