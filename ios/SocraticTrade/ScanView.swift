@@ -12,7 +12,7 @@ struct ScanView: View {
     @State private var presentedSymbol: PresentedSymbol?
 
     var body: some View {
-        SnapshotScaffold { snapshot in
+        SnapshotScaffold(hidesWorkspaceError: true) { snapshot in
             header(snapshot: snapshot)
             filterField
             content
@@ -98,7 +98,7 @@ struct ScanView: View {
     private var content: some View {
         if let error = loadError {
             InlineErrorBanner(
-                message: error,
+                message: DeskCopy.scanRefreshFailed(from: error),
                 retry: { Task { await load(force: true) } },
                 dismiss: { loadError = nil }
             )

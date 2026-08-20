@@ -138,6 +138,43 @@ final class UserFacingCopyTests: XCTestCase {
         XCTAssertFalse(banner.contains("503"))
     }
 
+    func testScanRefreshCopyIsNotTheWorkspaceConnectionBanner() {
+        XCTAssertNotEqual(
+            DeskCopy.scanRefreshFailed(from: DeskCopy.genericConnectionMessage),
+            DeskCopy.genericConnectionMessage
+        )
+        XCTAssertTrue(
+            DeskCopy.scanRefreshFailed(from: DeskCopy.genericConnectionMessage)
+                .localizedStandardContains("market scan")
+        )
+        XCTAssertEqual(
+            DeskCopy.scanRefreshFailed(from: "Socratic Trade is unreachable right now.  Try again in a few minutes."),
+            "Socratic Trade is unreachable right now.  Try again in a few minutes."
+        )
+        assertOrdinary(DeskCopy.scanRefreshFailed(from: DeskCopy.genericConnectionMessage))
+        assertOrdinary(DeskCopy.scanEmptyUniverse)
+        assertOrdinary(DeskCopy.scanRefreshing)
+        XCTAssertTrue(DeskCopy.scanRefreshing.contains("45"))
+        XCTAssertFalse(DeskCopy.shouldShowScanEmptyState(hasFilter: false, loadFailed: true))
+        XCTAssertTrue(DeskCopy.shouldShowScanEmptyState(hasFilter: false, loadFailed: false))
+        XCTAssertTrue(DeskCopy.shouldShowScanEmptyState(hasFilter: true, loadFailed: true))
+    }
+
+    func testPortfolioEmptyCopyNamesTheBrokerWhenAnAccountIsSelected() {
+        XCTAssertEqual(
+            DeskCopy.portfolioUnavailableMessage(hasConnectedAccount: true),
+            DeskCopy.portfolioBrokerUnreachable
+        )
+        XCTAssertEqual(
+            DeskCopy.portfolioUnavailableMessage(hasConnectedAccount: false),
+            DeskCopy.portfolioSelectAccount
+        )
+        XCTAssertEqual(DeskCopy.equityWaitingOnBroker, "waiting on broker")
+        assertOrdinary(DeskCopy.portfolioBrokerUnreachable)
+        assertOrdinary(DeskCopy.portfolioSelectAccount)
+        assertOrdinary(DeskCopy.equityWaitingOnBroker)
+    }
+
     func testWorkspaceErrorsStayOrdinary() throws {
         assertOrdinary(MobileAPIError.serverError(statusCode: 522, message: nil).errorDescription ?? "")
         assertOrdinary(MobileAPIError.serverError(statusCode: 500, message: nil).errorDescription ?? "")

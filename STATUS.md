@@ -214,6 +214,16 @@ PR **#2831** was CONFLICTING/DIRTY after #2830 merged (`13b60747`).  Rebased `cu
 PR **#2831** was CONFLICTING after #2812 merged (`12e8dcd`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Sole conflict was `docs/phase-7-strategy.md` — kept both this Green 400 stanza and #2812's rag-embed soft-degrade stanza.  Did not revert #2812 (rag-embed must not 503) or #2829/#2800.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
 
 Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
+## 2026-08-18 GROK — Live prod triage + Alpaca getAccount cache
+## 2026-08-18 GROK — Week-error expert triage + iOS Scan/Home
+
+Owner: team of experts on all errors last 7d + iOS Scan/Home shots.  Live sha `12e8dcd` (#2812).  Health 200.  Paper Autopilot still degraded (Green 400s).  Scan empty since 8/13.  L2/L3 wedged 13h (owner-ops).
+
+Sentry 7d: Pinecone terminated 360 (1T), OpenRouter embed 21 (1X), rerank 14 (22), CT SSE 13 (1V), NEW integrity rejection 9 (27 = #2812 remapping thrown batches, not missing key).  Do not mint OpenRouter.
+
+Owner follow-up: data cascade + OpenRouter still failing.  #2831's PR-attached `verify` stayed cancelled (dispatch green does not count).  This PR now also carries Green 400 failover and the Nasdaq UA/retry transport so Scan has a universe and the enrichment cascade can run.  Cursor **#2840** still owns embed 8192 pack (32-text / 8193 tok bge-m3 400s).
+
+Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/2026-08-18-openrouter-and-cascade.md`, `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

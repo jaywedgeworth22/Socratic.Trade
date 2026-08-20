@@ -182,11 +182,21 @@ private struct ReadyHomeHero: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-                        Text(AppFormat.money(snapshot.portfolio?.totalMarketValue))
-                            .font(.appLargeTitle.weight(.bold))
-                            .foregroundStyle(AppPalette.accent)
-                            .minimumScaleFactor(0.7)
-                            .lineLimit(1)
+                        if snapshot.portfolio != nil {
+                            Text(AppFormat.money(snapshot.portfolio?.totalMarketValue))
+                                .font(.appLargeTitle.weight(.bold))
+                                .foregroundStyle(AppPalette.accent)
+                                .minimumScaleFactor(0.7)
+                                .lineLimit(1)
+                        } else {
+                            // A large-title em-dash reads as a stray bar when the broker
+                            // timed out.  Spell the wait instead.
+                            Text(DeskCopy.equityWaitingOnBroker)
+                                .font(.appTitle3.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .minimumScaleFactor(0.8)
+                                .lineLimit(2)
+                        }
                         Text("Equity")
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
@@ -516,7 +526,10 @@ private struct PortfolioOverviewCard: View {
             } else {
                 EmptyStateCard(
                     title: "No portfolio available",
-                    message: "Select a connected account or retry when the broker is reachable.",
+                    message: DeskCopy.portfolioUnavailableMessage(
+                        hasConnectedAccount: snapshot.readiness.hasAccount
+                            || snapshot.readiness.activeConnectedAccount != nil
+                    ),
                     systemImage: "briefcase"
                 )
             }

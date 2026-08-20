@@ -561,9 +561,17 @@ struct SnapshotScaffold<Content: View>: View {
     /// Optional `.id(_:)` value inside `content` to scroll into view — used by deep links that
     /// point at one row (a specific proposal).  Screens that never take a link pass nothing.
     private let scrollTarget: String?
+    /// Scan (and any other screen with its own Retry) must not stack a second
+    /// workspace banner that reloads the snapshot instead of this screen's data.
+    private let hidesWorkspaceError: Bool
 
-    init(scrollTarget: String? = nil, @ViewBuilder content: @escaping (MobileSnapshot) -> Content) {
+    init(
+        scrollTarget: String? = nil,
+        hidesWorkspaceError: Bool = false,
+        @ViewBuilder content: @escaping (MobileSnapshot) -> Content
+    ) {
         self.scrollTarget = scrollTarget
+        self.hidesWorkspaceError = hidesWorkspaceError
         self.content = content
     }
 
@@ -577,7 +585,7 @@ struct SnapshotScaffold<Content: View>: View {
                         LazyVStack(spacing: 14) {
                             if let snapshot = store.snapshot {
                                 SnapshotStatusBanner(snapshot: snapshot, now: context.date)
-                                if let error = store.error {
+                                if let error = store.error, !hidesWorkspaceError {
                                     InlineErrorBanner(
                                         message: error,
                                         retry: refresh,
