@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-19 CURSOR — Pinecone trial end in 7 days (`cursor/pinecone-trial-end-7d-c9a3`).** Owner: move the app Standard-trial snap from 2026-08-30 to 2026-08-27T00:00:00.000Z (7 days from 2026-08-19 21:59 CT). Infisical `PINECONE_TRIAL_ENDS_AT` + code default. Pinecone console trial unchanged. Daily WU fuse unchanged. Rollout: `docs/rollouts/2026-08-19-pinecone-trial-end-7d.md`.
+
 > **2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`).** Cluster `alert-repeat-lock`.  **IN PR #2877.**  60s same-fingerprint delivery lock on `price_alert` (by id) plus `provider_degraded` / `budget_alert` / `kill_switch`.  Reuses `notification_events` sent rows.  Health/usage same-channel fallback no longer double-sends.  Did not revert #2865 or take `alert-push-delivery`.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
 
 > **2026-08-19 CURSOR — Price alert evaluation (`cursor/fix-price-alert-evaluation-1a3d`).** Part II cluster `price-alert-evaluation`.  User-scoped `fetchFreshQuotesCascade`, logged `alert.check_error`, staleness gate, `isValidAppSymbol`.  Did not take on alert-push-delivery.  Rollout: `docs/rollouts/2026-08-19-price-alert-evaluation.md`.

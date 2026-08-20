@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-19 CURSOR — Pinecone trial end in 7 days
+
+Owner: set the Standard-trial calendar to 7 days from 2026-08-19 21:59 CT.  Default +
+Infisical `PINECONE_TRIAL_ENDS_AT` is now `2026-08-27T00:00:00.000Z` (remainingDays=7
+at that instant).  Pinecone's own console trial is unchanged.  Daily WU fuse unchanged.
+
+Branch `cursor/pinecone-trial-end-7d-c9a3`.  Rollout:
+`docs/rollouts/2026-08-19-pinecone-trial-end-7d.md`.
+
 ## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
 
 Run-scoped code no longer reads the console-active account.  `debateProposal`, `retryProposalRedTeam` and `applyApprovedPending` now resolve the account from the run's own policy via the new `resolveRunAccountScope(userId, policy)` (account required — no active-account default), so a two-account setup can no longer review account A's proposal against account B's venue, execution mode or strategy prompt, and switching the active account mid-run leaves in-flight reviews pinned.  `retry-red-team.ts` was NOT in the plan — the audit found it and it is fixed here.  Full gate green (lint 0 errors, tsc clean, 7056 tests, build 0); failing-first proven 7/7.  PR body carries the full 21-site `getActiveConnectedAccount` inventory.  Sibling cluster `per-account-visibility` lands next.  Rollout: `docs/rollouts/2026-08-19-run-scoped-account.md`.
