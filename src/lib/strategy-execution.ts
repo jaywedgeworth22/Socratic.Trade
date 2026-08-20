@@ -1273,7 +1273,9 @@ export async function executeProposal(
           // (strategy.ts) and the protective-state block above: honest terminal "blocked".
           // P2.6 / #1319: pre-flight validation and definitive broker HTTP 4xx are never
           // "uncertain". OrderValidationError → blocked; terminal 4xx → rejected_by_broker;
-          // HTTP 429/408 → not_placed (retryable). Reserve uncertain for timeouts / 5xx.
+          // HTTP 429/408 → not_placed (retryable). HTTP 409 (duplicate client_order_id) is
+          // not a rejection — fall through to reconcilePlacementError. Reserve uncertain
+          // for timeouts / 5xx.
           if (placeError instanceof OrderValidationError) {
             const blockedDecision: PolicyDecision = {
               ...decision,
