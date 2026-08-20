@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  comparePins,
-  ctHasNpmDep,
-  gitRef,
-  lockResolvedSha,
-  normVersion,
-  packageSpec,
-  parseProvenance,
-  PKG,
-} from "../scripts/check-shared-package-pin.mjs";
+// @ts-expect-error - plain ESM operator helper, intentionally dependency-free (single-line so the directive covers the specifier)
+import { comparePins, ctHasNpmDep, gitRef, lockResolvedSha, normVersion, packageSpec, parseProvenance, PKG } from "../scripts/check-shared-package-pin.mjs";
 
 describe("shared-package pin check (vendor-era triangle)", () => {
   it("normalizes git tag specs and lock SHAs", () => {
@@ -41,7 +33,7 @@ describe("shared-package pin check (vendor-era triangle)", () => {
         stSpec: "github:jaywedgeworth22/congress-trading-shared#v2.5.2",
         umSpec: "github:jaywedgeworth22/congress-trading-shared#v2.5.2",
         ctUnreadable: true,
-      }).problems.some((p) => p.includes("GH_PACKAGES_TOKEN"))
+      }).problems.some((p: string) => p.includes("GH_PACKAGES_TOKEN"))
     ).toBe(true);
     expect(
       ctHasNpmDep({ dependencies: { [PKG]: "github:x/y#v2.5.2" } }, { name: "root" })
@@ -58,7 +50,7 @@ describe("shared-package pin check (vendor-era triangle)", () => {
       ctVendorVersion: "2.5.2",
       ctHasNpmDep: false,
     });
-    expect(problems.some((p) => p.includes("ST pin"))).toBe(true);
+    expect(problems.some((p: string) => p.includes("ST pin"))).toBe(true);
   });
 
   it("accepts a matched triangle", () => {
