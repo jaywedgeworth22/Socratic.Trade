@@ -307,7 +307,7 @@ export interface StrategyResult {
   /** completed = decision cycle ran; skipped_* = pre-decision gate; failed = hard error */
   status: StrategyRunFinishStatus;
   summary: string;
-  proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
+  proposals: Array<{ id?: string; proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string | null;
   llmSteps?: StrategyLlmStep[];
@@ -3379,7 +3379,7 @@ export async function runStrategyOnce(
         };
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
           {
             type: "block",
@@ -3428,7 +3428,7 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
         if (shouldAlertBrokerMinimumOrderBlock(userId, policy.accountNumber, normalizedProposal.symbol)) {
           await sendNotification(
             {
@@ -3664,7 +3664,7 @@ export async function runStrategyOnce(
           );
           const washAsk = escalatedDecision.escalations?.find((entry) => entry.kind === "wash_sale_ask");
           const askCost = washAsk?.washSale?.estimatedTaxCostUsd;
-          results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
+          results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           await sendNotification(
             {
               type: "pending_approval",
@@ -3686,7 +3686,7 @@ export async function runStrategyOnce(
         lockGuard.assertOwned();
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
           {
             type: "block",
@@ -3743,7 +3743,7 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
         await sendNotification(
           {
             type: "block",
@@ -3764,7 +3764,7 @@ export async function runStrategyOnce(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -3785,7 +3785,7 @@ export async function runStrategyOnce(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`) });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`) });
         await sendNotification(
           {
             type: "pending_approval",
@@ -3819,7 +3819,7 @@ export async function runStrategyOnce(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [pendingReason] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: [pendingReason] });
         await sendNotification(
           {
             type: "pending_approval",
@@ -3863,7 +3863,7 @@ export async function runStrategyOnce(
         insertRunProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: [message] });
         await sendNotification(
           { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
           { policy, userId }
@@ -3921,7 +3921,7 @@ export async function runStrategyOnce(
         );
       } catch (error) {
         const message = reportSocraticCaseWriteFailure(placingCaseInput, error);
-        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Decision evidence could not be persisted before placement: ${message}`] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [`Decision evidence could not be persisted before placement: ${message}`] });
         await sendNotification(
           {
             type: "run_failed",
@@ -3973,7 +3973,7 @@ export async function runStrategyOnce(
               userId,
               connectedAccountId
             );
-            results.push({ proposal: normalizedProposal, status: "blocked", reasons: [protectiveStateBlock] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: [protectiveStateBlock] });
             return { done: "continue" } as const;
           }
           try {
@@ -4009,7 +4009,7 @@ export async function runStrategyOnce(
               } else {
                 audit("order_blocked_live_preflight", { runId, proposalId, symbol: sym, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
               }
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order ${status.replace(/_/g, " ")}`, payload: { runId, proposalId, refId, reason: message, reconcile: status } },
                 { policy, userId }
@@ -4033,7 +4033,7 @@ export async function runStrategyOnce(
               const note = "Account mutation lease lost before submission — the order was never sent to the broker. Safe to retry.";
               updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
               audit("order_not_placed_lease_lost", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [note] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [note] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order not placed — mutation lease lost (safe to retry)`, payload: { runId, proposalId, refId, error: message, reconcile: "lease_lost" } },
                 { policy, userId }
@@ -4071,7 +4071,7 @@ export async function runStrategyOnce(
               auditWashSaleProceed(decision, { runId, proposalId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
               audit("order_placement_recovered_inline", { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: normalizedProposal.side }, userId, connectedAccountId);
               resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
-              results.push({ proposal: normalizedProposal, status: recoveredStatus, reasons: [], orderId: outcome.orderId });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: recoveredStatus, reasons: [], orderId: outcome.orderId });
               await sendNotification(
                 { type: "fill", title: `${sym} live order ${outcome.state} (recovered after placement error)`, payload: { runId, proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
                 { policy, userId }
@@ -4084,7 +4084,7 @@ export async function runStrategyOnce(
               const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
               updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
               audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, connectedAccountId);
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
                 { policy, userId }
@@ -4096,7 +4096,7 @@ export async function runStrategyOnce(
               const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
               updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
               audit("order_confirmed_not_placed", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order was NOT placed — safe to retry`, payload: { runId, proposalId, refId, error: message, reconcile: "not_placed" } },
                 { policy, userId }
@@ -4109,7 +4109,7 @@ export async function runStrategyOnce(
             // path that still produces a perpetual-until-confirmed alert.
             updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
             audit("order_placement_uncertain", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
             await sendNotification(
               { type: "run_failed", title: `${sym} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: outcome.error, reconcile: "uncertain" } },
               { policy, userId }
@@ -4128,7 +4128,7 @@ export async function runStrategyOnce(
             const message = `Broker declined the order (state: ${execution.state}).`;
             updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
             audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message] });
             await sendNotification(
               { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
               { policy, userId }
@@ -4149,7 +4149,7 @@ export async function runStrategyOnce(
             const message = `Broker returned ${execution.state} without an order id; keeping the idempotent intent pending until refId reconciliation confirms the order.`;
             updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, message);
             audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, missingOrderId: true }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message] });
             await sendNotification(
               { type: "run_failed", title: `${normalizedProposal.symbol} order accepted without broker id — recovery pending`, payload: { runId, proposalId, refId, state: execution.state, reconcile: "uncertain" } },
               { policy, userId }
@@ -4196,7 +4196,7 @@ export async function runStrategyOnce(
             const message = `Broker confirmed order ${execution.orderId}, but its local fill receipt could not be committed: ${detail}`;
             updateProposalStatus(proposalId, "placing", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
             audit("order_placement_uncertain", { runId, proposalId, refId, orderId: execution.orderId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, receiptPersistenceFailed: true, error: detail }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [message], orderId: execution.orderId });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message], orderId: execution.orderId });
             await sendNotification(
               { type: "run_failed", title: `${normalizedProposal.symbol} broker order confirmed — local receipt recovery pending`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state, error: detail, reconcile: "uncertain" } },
               { policy, userId }
@@ -4205,7 +4205,7 @@ export async function runStrategyOnce(
             return { done: "continue" } as const;
           }
           auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
-          results.push({ proposal: normalizedProposal, status: proposalStatus, reasons: [], orderId: execution.orderId });
+          results.push({ id: proposalId, proposal: normalizedProposal, status: proposalStatus, reasons: [], orderId: execution.orderId });
           await sendNotification(
             {
               type: "fill",
@@ -4226,7 +4226,7 @@ export async function runStrategyOnce(
       if (!mutationOutcome.acquired) {
         const busyReason = `Account mutation lease busy (${mutationOutcome.busy.activeOperation}) — proposal not placed this run; safe to retry.`;
         updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, busyReason);
-        results.push({ proposal: normalizedProposal, status: "error", reasons: [busyReason] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [busyReason] });
         continue;
       }
       if (mutationOutcome.value.done === "continue") continue;
