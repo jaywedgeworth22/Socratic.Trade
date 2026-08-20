@@ -16,6 +16,16 @@ Owner asked why R2 exceeds a one-week snapshot.  `socratic-trade-bucket` holds T
 **FOOTGUN before anyone prunes:** both replicas use the IDENTICAL object path `trading-live/app.db`; only bucket + endpoint differ (R2 `socratic-trade-bucket` = dead/prunable, B2 `jays-socratic-trade-eu` = LIVE).  A prune against the wrong endpoint destroys the active backup.  `cold-snapshots/` must survive.
 
 Prune NOT executed here - no object-level R2 delete tooling and deleting backups needs an explicit human decision.  Runbook in `docs/rollouts/2026-08-20-r2-historic-prune-unblocked.md`.
+## 2026-08-20 MONET - the operator page tree had no server-side gate
+
+Confirmed, not inferred: every file under `app/admin/**` had zero executable auth checks, and middleware authenticated and allowlisted but never checked admin role.  Any authenticated allowlisted user could load the full operator tree; only the individual data probes 403'd, so a non-admin saw all the chrome and structure.  Now gated once at the edge for `/admin` and `/admin/**`, sharing one predicate with `requireAdmin` so the two cannot drift.
+
+Corrected the review while fixing it: `/api/chat-history` is the shared Coach history read by web AND iOS, not an admin endpoint missing a gate -- gating it would have broken chat for every non-admin.  Added a separate cross-user admin transcript route instead, which makes the nav's "every chat turn" label true rather than needing a reword.
+
+Exploitability today is narrow (with an empty ALLOWED_EMAILS only the primary operator can authenticate, and primary is always admin).  It matters the moment a second allowlist entry exists.  Recorded so nobody reads it as a live breach.
+
+Presentation half of that cluster stays open and belongs to #2795 / #2793.
+
 ## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on cancel timeout
 
 #2949 only wrote the do-not-replace tombstone after `cancelEquityOrder` returned.  #2886's 30s cancel deadline can throw after the broker already accepted the cancel.  Reconcile then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.

@@ -35,6 +35,7 @@ import {
   type AuthenticatedIdentitySource
 } from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
+import { isAdminEmail } from "./src/lib/auth/admin-emails";
 import { getSessionIdentity } from "./src/lib/auth/session-edge";
 import { isLiveBootstrap } from "./src/lib/auth-secret-guard";
 
@@ -105,6 +106,20 @@ function isPeerMarketReadPath(pathname: string): boolean {
     pathname.startsWith("/api/market/prices/") ||
     pathname.startsWith("/api/market/intraday/")
   );
+}
+
+/**
+ * The operator PAGE tree (`/admin`, `/admin/...`) — NOT the `/api/admin/*` routes, which each run
+ * their own `requireAdmin()` (and one of which, `/api/admin/securities/import`, deliberately uses a
+ * different bearer-token auth model that this gate must not pre-empt).
+ *
+ * Before this gate existed, every page under `app/admin/**` was reachable by ANY authenticated,
+ * allowlisted user: the pages are client components whose data probes 403 individually, so a
+ * non-admin saw the full admin chrome, nav and page structure and only the numbers were withheld.
+ * Gating the tree here covers all ten pages at one point, including `app/admin/page.tsx`.
+ */
+function isAdminPagePath(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
 }
 
 // --- Security response headers -------------------------------------------------
@@ -428,6 +443,21 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
         ? new NextResponse("Unauthorized", { status: 401 })
         : NextResponse.redirect(new URL("/login", req.url))
     );
+  }
+
+  // --- Admin role gate for the operator page tree ---
+  //
+  // Same allowlist the route handlers use (`src/lib/auth/admin.ts` shares `isAdminEmail` from the
+  // edge-safe module imported above), so the pages and their data agree about who is an admin.
+  //
+  // Provenance: the route gate additionally rejects the auth-unconfigured `local-fallback` source,
+  // because it also serves token-scripted, cost-side-effecting backfills. This page gate accepts the
+  // identity middleware itself just resolved. That is not a weaker perimeter in production: a live
+  // boot cannot reach the fallback at all — `assertAuthSecretConfiguredInLiveBootstrap` refuses to
+  // start without a real identity source, and the Source 3 branch above is additionally guarded by
+  // `!isLiveBootstrap()`. It only preserves local development, where auth is unconfigured by design.
+  if (isAdminPagePath(pathname) && !isAdminEmail(trustedEmail)) {
+    return withSecurityHeaders(NextResponse.redirect(new URL("/access-denied", req.url)));
   }
 
   // Strip spoofable client-supplied identity hints, then forward the resolved identity + provenance.
