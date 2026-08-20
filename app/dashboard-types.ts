@@ -75,6 +75,11 @@ export interface DashboardSnapshot {
     string,
     Pick<TradingPolicy, "systemState" | "strategyAuthority"> & Partial<Pick<TradingPolicy, "runDuringExtendedHours">>
   >;
+  /** Real pending-proposal count per connected account (not just the active one) — the
+   *  scheduler runs every connected account independently of which is loaded, so a
+   *  non-active account can genuinely have proposals waiting. Keyed by ConnectedAccount.id,
+   *  same as connectedAccountPolicies. */
+  connectedAccountPendingCounts?: Record<string, number>;
   portfolio?: Portfolio;
   portfolioReadError?: string;
   positions: EquityPosition[];
