@@ -73,7 +73,7 @@ Gate: lint 0 errors, tsc clean, 7140 tests, build 0, `xcodebuild build` 0.  Roll
 
 Fix: keep any `isLiveOrderState` row regardless of age.  Still apply the 24h window to true terminal rows.  Distinct from #2947 (5-page cap).  Did not change Alpaca or page count.
 
-**IN PR.**  Branch `cursor/tradier-live-pending-cancel-scope`.  Rollout: `docs/rollouts/2026-08-20-tradier-live-pending-cancel-scope.md`.
+**IN PR #2952.**  Branch `cursor/tradier-live-pending-cancel-scope`.  Rollout: `docs/rollouts/2026-08-20-tradier-live-pending-cancel-scope.md`.
 
 ## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on lookup miss
 
