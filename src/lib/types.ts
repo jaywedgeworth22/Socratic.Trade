@@ -2883,6 +2883,14 @@ export interface BenchmarkUnavailability {
   detail?: string;
 }
 
+export interface DayPnlHints {
+  /** Prior session close equity from the broker when available (e.g. Alpaca last_equity). */
+  priorCloseEquity?: number;
+  /** Net external flow on the current Central trading day from broker activities. */
+  todayBrokerFlow?: number;
+  cashFlowSource?: "broker" | "inferred";
+}
+
 export interface PerformanceSummary {
   liveEquityCurve: EquityCurvePoint[];
   paperEquityCurve: EquityCurvePoint[];
@@ -2892,6 +2900,8 @@ export interface PerformanceSummary {
    *  failure), so the UI can say WHY instead of a generic "not computable" — and never render
    *  a fake 0.00% comparison. Absent for the ordinary young-account insufficient-history case. */
   benchmarkUnavailable?: BenchmarkUnavailability;
+  /** Broker-authoritative Day P&L hints when Alpaca activities are available. */
+  dayPnlHints?: DayPnlHints;
   liveRealizedPnl: number;
   paperRealizedPnl: number;
   liveUnrealizedPnl: number;

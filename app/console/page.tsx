@@ -59,7 +59,7 @@ export default function ConsoleHomePage() {
     const state = deriveStateInfo(snapshot.policy);
     const spend = deriveSpend(snapshot);
     const portfolio = snapshot.portfolio;
-    const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio);
+    const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio, undefined, snapshot.performance?.dayPnlHints);
     const markToMarket = deriveMarkToMarket(snapshot);
     const risk = deriveRiskUtilization(snapshot);
     const equityWindow = selectEquityWindow(
