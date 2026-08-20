@@ -3,6 +3,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { evaluateTradeProposal, betaScaledStopPct } from "../src/lib/policy";
 import {
   BULL_PROPOSAL_REQUIRED_KEYS,
+  bullAttemptUsesJsonObjectTransport,
   firstQuoteTolerantBlockEnd,
   enrichOpeningProposal,
   filterRepairedProposals,
@@ -720,6 +721,39 @@ describe("firstQuoteTolerantBlockEnd (Bull trailing-JSON ambiguity, Codex round 
   });
 });
 
+describe("bullAttemptUsesJsonObjectTransport (json_object post-parse gate routing)", () => {
+  const proposalSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["proposals"],
+    properties: {
+      proposals: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [...BULL_PROPOSAL_REQUIRED_KEYS],
+          properties: Object.fromEntries(BULL_PROPOSAL_REQUIRED_KEYS.map((key) => [key, { type: "string" }]))
+        }
+      }
+    }
+  };
+
+  it("returns true for DeepSeek chat-completions (no provider schema enforcement)", () => {
+    expect(bullAttemptUsesJsonObjectTransport("deepseek", "deepseek-v4-pro", "chat-completions", proposalSchema)).toBe(true);
+    expect(bullAttemptUsesJsonObjectTransport("openrouter", "deepseek/deepseek-v4-pro", "chat-completions", proposalSchema)).toBe(true);
+  });
+
+  it("returns false for OpenAI strict json_schema transports", () => {
+    expect(bullAttemptUsesJsonObjectTransport("openai", "gpt-5.4-mini", "responses", proposalSchema)).toBe(false);
+    expect(bullAttemptUsesJsonObjectTransport("openrouter", "openai/gpt-4.1-mini", "chat-completions", proposalSchema)).toBe(false);
+  });
+
+  it("returns false for Anthropic messages transport", () => {
+    expect(bullAttemptUsesJsonObjectTransport("anthropic", "claude-sonnet-5", "anthropic-messages", proposalSchema)).toBe(false);
+  });
+});
+
 describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 PR #1696)", () => {
   const complete = () => ({
     symbol: "AAPL",
@@ -737,6 +771,7 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     autonomyOverride: null,
     bracketStopLoss: 172.5,
     bracketTakeProfit: 205,
+    exitPlan: null,
     stopPlan: { style: "atr", rationale: null }
   });
 
@@ -862,9 +897,19 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(dropped).toBe(4);
   });
 
+  it("drops a repaired proposal missing exitPlan (schema-required nullable key)", () => {
+    const missingExitPlan = { ...complete() };
+    delete (missingExitPlan as Record<string, unknown>).exitPlan;
+    const { kept, dropped } = filterRepairedProposals([missingExitPlan, complete()]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.symbol).toBe("AAPL");
+    expect(dropped).toBe(1);
+  });
+
   it("the completeness gate and the structured-output schema share one required-keys source", () => {
     // If a future schema change adds/removes a required key, this import proves the gate moves
     // with it (the schema literal spreads the same constant).
+    expect(BULL_PROPOSAL_REQUIRED_KEYS).toContain("exitPlan");
     expect(BULL_PROPOSAL_REQUIRED_KEYS).toContain("stopPlan");
     expect(BULL_PROPOSAL_REQUIRED_KEYS).toContain("tradeThesisTag");
     expect(new Set(BULL_PROPOSAL_REQUIRED_KEYS).size).toBe(BULL_PROPOSAL_REQUIRED_KEYS.length);
