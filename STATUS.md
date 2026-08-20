@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-20 MONET - iOS test target compiles again, three stale tests fixed (owner-directed)
+
+`xcodebuild test` was failing at BUILD on clean main (5 errors - `MobileModelsTests` encoded a `Decodable`-only `MobileSnapshot`), so no iOS test ran at all and three stale `DeskModelsTests` assertions sat invisible.  That is `qa-01`/`qa-02` from the review happening for real: the required gate never runs the Swift tests.
+
+Fixed test-side, not model-side: `MobileStore` caches the RAW response bytes and never re-encodes, so the tests now seed the cache the same way; adding `Encodable` would have bent a production model to satisfy a test.  The two catalog assertions were STALE - #2887 deliberately removed the `"Mock (offline)"` option, its provider branch and its availability bypass (keyless offline = the mock/demo path the rules forbid), so `provider(for:)` falls through to `openai` and `firstAvailable` returns nil with no keys.  The self-contradictory scan test now follows the implementation's joined-warnings form, which is also the honest one - the second warning is what tells the owner they are looking at a stale fallback scan.
+
+Verified: `xcodebuild test -only-testing:SocraticTradeTests/DeskModelsTests` exit 0, zero failures, 59s.  **Next: `qa-01`/`qa-02` are now actionable - add `xcodebuild test` to CI so a red Swift target cannot hide again.**  Rollout: `docs/rollouts/2026-08-20-ios-test-target-repair.md`.
+
 ## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on lookup miss
 
 `cancelWorkingOrder` only tombstoned an owner-cancelled app-managed stop when the advisory pre-cancel broker read returned the order.  Console cancel is fail-open on that read (timeout, throw, or a working GTC stop missing from scoped `getEquityOrders`).  The broker cancel still ran, but `cancelledSymbol` stayed empty, so the do-not-replace tombstone and `broker_protective_stops` delete were skipped.  The next reconcile tick then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.

@@ -411,8 +411,11 @@ final class MobileModelsTests: XCTestCase {
 
     @MainActor
     func testClearLocalSessionRemovesDiskSnapshot() throws {
+        // The app caches the RAW response bytes (MobileStore.saveCachedSnapshot(rawData), fed by
+        // client.snapshotData()); it never re-encodes a MobileSnapshot, which is why the model is
+        // Decodable-only.  Seed the cache the same way the app writes it.
         let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
-        let data = try JSONEncoder().encode(snapshot)
+        let data = Data(minimalSnapshotJSON.utf8)
         let cacheKey = "cached_mobile_snapshot_data"
         let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
         let defaults = UserDefaults.standard
@@ -433,8 +436,11 @@ final class MobileModelsTests: XCTestCase {
 
     @MainActor
     func testInitUsesPersistedSnapshotTimestamp() throws {
+        // The app caches the RAW response bytes (MobileStore.saveCachedSnapshot(rawData), fed by
+        // client.snapshotData()); it never re-encodes a MobileSnapshot, which is why the model is
+        // Decodable-only.  Seed the cache the same way the app writes it.
         let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
-        let data = try JSONEncoder().encode(snapshot)
+        let data = Data(minimalSnapshotJSON.utf8)
         let cacheKey = "cached_mobile_snapshot_data"
         let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
         let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
@@ -453,8 +459,11 @@ final class MobileModelsTests: XCTestCase {
 
     @MainActor
     func testColdLaunchAfterSignOutDoesNotRestoreCachedSnapshot() throws {
+        // The app caches the RAW response bytes (MobileStore.saveCachedSnapshot(rawData), fed by
+        // client.snapshotData()); it never re-encodes a MobileSnapshot, which is why the model is
+        // Decodable-only.  Seed the cache the same way the app writes it.
         let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
-        let data = try JSONEncoder().encode(snapshot)
+        let data = Data(minimalSnapshotJSON.utf8)
         let cacheKey = "cached_mobile_snapshot_data"
         let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
         let defaults = UserDefaults.standard
