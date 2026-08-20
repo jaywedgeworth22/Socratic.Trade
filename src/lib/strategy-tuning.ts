@@ -332,7 +332,7 @@ export function applyMissedOpportunityNudge(
  * Returns undefined when no closed lots have a regime field.
  */
 function currentRegimeFromLots(accountNumber: string, source: "paper" | "live", userId: string): string | undefined {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId));
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, undefined, userId));
   // Lots are returned oldest-first; iterate in reverse for the most-recent stamped regime.
   for (let i = closedLots.length - 1; i >= 0; i--) {
     const r = closedLots[i].regime?.trim();
@@ -406,15 +406,19 @@ export async function proposeStrategyTuning(
   const performance = accountNumber
     ? getPerformanceSummary(accountNumber, {}, userId, evidenceCutoffDate
         ? {
-            liveFills: pitFills(listFillEvents(accountNumber, "live", 500, userId)),
-            paperFills: pitFills(listFillEvents(accountNumber, "paper", 500, userId))
+            liveFills: pitFills(listFillEvents(accountNumber, "live", undefined, userId)),
+            paperFills: pitFills(listFillEvents(accountNumber, "paper", undefined, userId))
           }
         : undefined)
     : undefined;
   const source = fillSourceForExecutionMode(executionState);
+  // The tuner's `recentFills` context window: the NEWEST 30, still oldest-first. Both branches
+  // must agree on that. A LEADING slice of an oldest-first ledger is the account's FIRST trades,
+  // which is what this fed the paid review before — weight nudges argued from the oldest history
+  // under a label that says "recent".
   const fills = accountNumber
     ? (evidenceCutoffDate
-        ? pitFills(listFillEvents(accountNumber, source, 500, userId)).slice(0, 30)
+        ? pitFills(listFillEvents(accountNumber, source, undefined, userId)).slice(-30)
         : listFillEvents(accountNumber, source, 30, userId))
     : [];
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, source, userId) : 0;
@@ -600,7 +604,7 @@ export async function proposeStrategyTuning(
     performance: compactPerformance(performance, executionState.mode !== "broker/live", policy.tuning?.useEntryRunAttribution ?? false),
     closedLotCount,
     minClosedLotsForWeightShift: minLotsForWeights,
-    recentFills: fills.slice(0, 20).map((fill) => compactFill(fill, executionState)),
+    recentFills: fills.slice(-20).map((fill) => compactFill(fill, executionState)),
     recentRuns: runs.map((run) => ({
       startedAt: run.startedAt,
       status: run.status,

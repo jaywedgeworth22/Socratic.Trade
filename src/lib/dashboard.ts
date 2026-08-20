@@ -681,13 +681,15 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     ? dailyExecutionStats(accountNumber, new Date(), userId)
     : { orderCount: 0, openingOrderCount: 0, notional: 0 };
 
-  // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse)
+  // Fetch live + paper fills ONCE per request (each is a whole-ledger SELECT + JSON.parse)
   // and thread the parsed arrays into every downstream consumer — performance summary, scorecards,
   // tax, and the unified feed — instead of each re-issuing its own query.
   // C2: also run FIFO P&L ONCE per fill source and thread closed/open lots into scorecards/tax
-  // so we do not re-walk up to 1000 fills 4–5× per snapshot.
-  const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", 500, userId) : [];
-  const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", 500, userId) : [];
+  // so we do not re-walk the ledger 4–5× per snapshot.
+  // Unbounded on purpose: these arrays feed FIFO lot replay, which needs the COMPLETE ledger —
+  // see listFillEvents in db-fills.ts. Any display window is taken from the tail downstream.
+  const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", undefined, userId) : [];
+  const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", undefined, userId) : [];
   const prefetchedFills: PrefetchedFills = { liveFills, paperFills };
   const prefetchedPnl: PrefetchedPnl | undefined = accountNumber
     ? {

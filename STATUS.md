@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-08-20 MONET - `realized-pnl-ledger` up for review
+
+Accounting reads no longer take the OLDEST 500 fills.  `listFillEvents` defaults to the whole ledger; a numeric limit remains for display windows and returns the NEWEST N.  I rejected the cluster plan's "flip to newest-DESC everywhere" - for a stateful FIFO replay, truncating at either end is wrong: cutting the tail freezes P&L, cutting the head strands exits whose opening lot was never loaded.
+
+**Two members bite TODAY, independent of ledger size:** the tuner's `recentFills` was a LEADING slice of an oldest-first array, so the paid LLM review argued weight nudges from the account's FIRST 20 trades under a "recent" label; and decision grading resolved on the first partial exit, scoring a -$100 round trip as a +$40 win.  Both fixed with failing-first proof.
+
+**`perf-11` is deliberately NOT closed** - regrouping win rate from per-lot to per-round-trip changes a number feeding every scorecard, the Kelly payoff split, the conviction calibration and the tuner's weight-shift gate at once.  `aggregateRoundTrip` is now exported as the primitive it needs, but the grouping key is an owner decision.
+
+Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `PerformanceSummary` fields kept - a textual merge would have dropped one).  Gate: lint 0 errors, tsc clean, 7205 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-realized-pnl-ledger.md`.
+
 ## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
 
 FMP is banned for market data (owner ruling 2026-08-20); it stays valid only as a

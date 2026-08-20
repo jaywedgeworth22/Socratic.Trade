@@ -2906,6 +2906,13 @@ export interface PerformanceSummary {
    *  the value itself (an account with exactly one break-even closed lot has a genuine 0%). */
   liveClosedLotCount: number;
   paperClosedLotCount: number;
+  /** Closing fills in the live ledger with no opening lot to close against (pre-app, manual or MCP
+   *  positions exited through the broker). Their P&L is NOT in liveRealizedPnl — there is no cost
+   *  basis in this app to compute one from — so the figure discloses the count instead of quietly
+   *  omitting them. 0 when the ledger reconciles. */
+  liveUnmatchedClosingFills: number;
+  /** Same, for the paper ledger. */
+  paperUnmatchedClosingFills: number;
   attribution: RunAttribution[];
   fills: FillEvent[];
 }

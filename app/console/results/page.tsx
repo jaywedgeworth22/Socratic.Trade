@@ -161,6 +161,7 @@ export default function ResultsPage() {
       closedLotCount={perf?.paperClosedLotCount ?? 0}
       curve={perf?.paperEquityCurve ?? []}
       netOfTax={subtractFromResults}
+      unmatchedClosingFills={perf?.paperUnmatchedClosingFills ?? 0}
     />
   );
   const liveBucket = (
@@ -174,6 +175,7 @@ export default function ResultsPage() {
       closedLotCount={perf?.liveClosedLotCount ?? 0}
       curve={perf?.liveEquityCurve ?? []}
       netOfTax={subtractFromResults}
+      unmatchedClosingFills={perf?.liveUnmatchedClosingFills ?? 0}
     />
   );
 
@@ -964,7 +966,8 @@ function BucketCard({
   avgReturn,
   closedLotCount,
   curve,
-  netOfTax = false
+  netOfTax = false,
+  unmatchedClosingFills = 0
 }: {
   title: string;
   tone: "paper" | "live";
@@ -979,6 +982,7 @@ function BucketCard({
   closedLotCount: number;
   curve: Array<{ timestamp: string; equity: number; source: "live" | "paper" }>;
   netOfTax?: boolean;
+  unmatchedClosingFills?: number;
 }) {
   const realizedBasisNote =
     "All-time, app-booked closed lots (this app's own FIFO lot ledger). Exits of positions this app did not open — pre-app holdings, manual trades — are not included.";
@@ -997,6 +1001,15 @@ function BucketCard({
           <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
             {typeof realized === "number" ? <SignedText value={realized}>{fmtSignedMoney(realized)}</SignedText> : <Dash />}
           </div>
+          {unmatchedClosingFills > 0 && (
+            <p
+              className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+              title={`These exits closed positions this app never recorded an opening fill for, so there is no cost basis here to compute their gain or loss from.${SENTENCE_GAP}Their P&L is not included above.`}
+            >
+              Excludes {unmatchedClosingFills} closing {unmatchedClosingFills === 1 ? "fill" : "fills"} with no opening lot
+              on record.{SENTENCE_GAP}Pre-app or manually traded positions.
+            </p>
+          )}
         </div>
         <div>
           <div className="con-card-title" title={unrealizedBasisNote}>

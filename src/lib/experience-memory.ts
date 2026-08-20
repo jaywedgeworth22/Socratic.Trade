@@ -260,7 +260,7 @@ export async function recordClosedLotExperience(
       import("./performance"),
       import("./vector-db")
     ]);
-    const fills = listFillEvents(input.accountNumber, input.source, 500, userId);
+    const fills = listFillEvents(input.accountNumber, input.source, undefined, userId);
     const { closedLots } = calculatePnl(fills);
     const closingSymbol = normalizeSymbol(input.closingFill.symbol);
     const matched = closedLots.filter(
@@ -347,7 +347,7 @@ export async function listClosedLotExperienceDocumentsForAccount(input: {
     import("./db"),
     import("./performance")
   ]);
-  const fills = listFillEvents(input.accountNumber, input.accountEnvironment, 5000, input.userId);
+  const fills = listFillEvents(input.accountNumber, input.accountEnvironment, undefined, input.userId);
   const { closedLots } = calculatePnl(fills);
 
   return closedLots

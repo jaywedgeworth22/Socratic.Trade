@@ -80,7 +80,7 @@ import {
   type NormalizedDailyBar,
   type ResolvedBenchmark
 } from "./outcome-horizons";
-import { calculatePnl, type ClosedLot } from "./performance";
+import { aggregateRoundTrip, calculatePnl, type ClosedLot } from "./performance";
 import {
   containPromptDataTree,
   scanForInjectionAttempts,
@@ -958,14 +958,26 @@ function pickHeadlineRow(okRows: SocraticOutcomeHorizonRow[]): SocraticOutcomeHo
   return undefined;
 }
 
-/** FIFO closed lot opened by this exact fill (symbol + entry timestamp join), if the lot closed. */
+/**
+ * The COMPLETED round trip opened by this exact fill (symbol + entry timestamp join), if the whole
+ * entry quantity has been closed.
+ *
+ * A scaled-out position closes across several exits, producing one ClosedLot per exit against the
+ * same opening lot. Taking the first of those graded the decision on its first trim: two profitable
+ * trims followed by a stopped-out remainder read as "won" at the trim's P&L, and the case went
+ * terminal before the trade was over. So: aggregate EVERY exit against this entry, and only grade
+ * once they add up to the entry quantity. Until then the position is still open and the horizon
+ * returns (measured from the entry fill) remain the honest read.
+ */
 function findRealizedLot(entryFill: FillEvent, userId: string): ClosedLot | undefined {
   try {
-    const fills = listFillEvents(entryFill.accountNumber, entryFill.source, 500, userId);
+    // Unbounded: FIFO replay needs the COMPLETE ledger — see listFillEvents in db-fills.ts.
+    const fills = listFillEvents(entryFill.accountNumber, entryFill.source, undefined, userId);
     const { closedLots } = calculatePnl(fills);
-    return closedLots.find(
+    const exits = closedLots.filter(
       (lot) => normalizeSymbol(lot.symbol ?? "") === normalizeSymbol(entryFill.symbol) && lot.entryAt === entryFill.filledAt
     );
+    return aggregateRoundTrip(exits, entryFill.quantity);
   } catch {
     return undefined;
   }
