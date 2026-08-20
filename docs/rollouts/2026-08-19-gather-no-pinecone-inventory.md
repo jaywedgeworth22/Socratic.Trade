@@ -4,7 +4,7 @@
 
 Same Roth Manual Run once `9d71dda4-1383-4a27-814c-fd80fa44e314` as #2852/#2853.  Robinhood `too many symbols (max 10, got 250)` at 00:59:15Z (+18s) remains the first hard fail.  The same window also listed/fetched the whole Pinecone index, 502'd congress.trade, and 429'd Massive.  There was no OpenRouter strategy/completion call — only run-scoped `usage_budget_status` at +10s, then the crash.  Green never started.  Fold in the Robinhood ≤10 chunk; do not replace it.
 
-2026-08-20 rebase: #2854 was CONFLICTING/DIRTY against later `origin/main` (`ce31c367`) while Jay lands open issue PRs.  `git merge-tree --write-tree` exited 0 (phantom / docs-union).  Rebased `cursor/gather-no-pinecone-inventory-befc` onto `ce31c367` (5/5 clean).  Kept gather skip + 502/429 fail-open.  Did not absorb other clusters.  Did not open a second PR.  Did not merge.
+2026-08-20 rebase: #2854 was CONFLICTING/DIRTY against later `origin/main` while Jay lands open issue PRs.  `git merge-tree --write-tree` exited 0 (phantom / docs-union).  Rebased `cursor/gather-no-pinecone-inventory-befc` onto `ce31c367` then `44e9ef06`.  Kept gather skip + 502/429 fail-open.  Did not absorb other clusters.  Did not open a second PR.  Did not merge.
 
 ## Changes Made
 

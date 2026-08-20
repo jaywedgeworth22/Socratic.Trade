@@ -21,8 +21,9 @@ PR **#2813** (`cursor/roic-individual-archive-9ad4`) rebased onto `origin/main` 
 
 Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 ## 2026-08-20 CURSOR — #2854 rebased onto main (`ce31c367`)
+## 2026-08-20 CURSOR — #2854 rebased onto main (`44e9ef06`)
 
-#2854 was CONFLICTING/DIRTY against `origin/main` again (Jay landing open issue PRs tonight).  `git merge-tree --write-tree` exited 0 (phantom / docs-union).  Rebased `cursor/gather-no-pinecone-inventory-befc` onto `ce31c367` (5/5 clean).  Kept gather skip + congress 502 / Massive 429 fail-open only.  Did not absorb other clusters.  Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune.  Did not merge / deploy / bounce / TF.
+#2854 was CONFLICTING/DIRTY against `origin/main` (Jay landing open issue PRs tonight).  `git merge-tree --write-tree` exited 0 (phantom / docs-union).  Rebased onto `ce31c367` then `44e9ef06` after those landed.  Kept gather skip + congress 502 / Massive 429 fail-open only.  Account-deletion inventory no longer queries `strategy_runs` first.  Vector-db asof/scope tests stub idle `getDb`.  Did not absorb other clusters.  Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune.  Did not merge.
 
 PR **#2854**.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
 
