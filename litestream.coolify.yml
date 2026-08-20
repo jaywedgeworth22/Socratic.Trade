@@ -7,6 +7,22 @@
 # do not delete R2 until B2 restore is proven. Active replication no longer
 # writes to R2.
 #
+# 2026-08-20 (owner, in conversation): THE B2 RESTORE HAS BEEN PROVEN. That condition is
+# satisfied, so the historic R2 replica is now safe to prune. It is also the answer to
+# "why is R2 bigger than a one-week snapshot should be": the bucket still holds the whole
+# pre-cutover litestream object set (see the ~90k-object L1 backlog noted further down)
+# ON TOP of cold-snapshots/app-<date>.db.
+#
+# !! FOOTGUN — READ BEFORE ANY PRUNE !!  BOTH replicas use the IDENTICAL object path
+# `trading-live/app.db`; only bucket + endpoint differ:
+#     R2  (DEAD, prunable)     bucket socratic-trade-bucket,   endpoint *.r2.cloudflarestorage.com
+#     B2  (LIVE, DO NOT TOUCH) bucket jays-socratic-trade-eu,  endpoint s3.eu-central-003.backblazeb2.com
+# Deleting `trading-live/**` against the wrong endpoint destroys the ACTIVE backup.
+# Echo and eyeball endpoint + bucket before any delete; prune ONLY the R2 one.
+#
+# KEEP `cold-snapshots/**` in R2 — that prefix is the LIVE weekly second-provider DR lane
+# (src/lib/r2-cold-snapshot.ts), not historic. Only `trading-live/**` is dead.
+#
 # All ${VARS} are injected at runtime by scripts/infisical-run.mjs (Infisical
 # `prod` env) — no secrets live in this file. Used only by
 # scripts/coolify-prod-start.sh; harmless everywhere else.

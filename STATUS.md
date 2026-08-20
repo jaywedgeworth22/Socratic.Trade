@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-08-20 MONET - R2 is not storing one week; the B2 restore is proven
+
+Owner asked why R2 exceeds a one-week snapshot.  `socratic-trade-bucket` holds TWO unrelated sets: `cold-snapshots/app-<date>.db` (LIVE weekly second-provider DR, retain 1, DB ~4.2 GB) and `trading-live/**` - the ENTIRE pre-cutover litestream replica kept since active replication moved to Backblaze B2 on 2026-08-07, including the ~90k-object L1 backlog the config itself notes.  The second set is the surprise, and it is now prunable: the owner confirmed the B2 restore has been PROVEN, lifting the config's own blocker.
+
+**FOOTGUN before anyone prunes:** both replicas use the IDENTICAL object path `trading-live/app.db`; only bucket + endpoint differ (R2 `socratic-trade-bucket` = dead/prunable, B2 `jays-socratic-trade-eu` = LIVE).  A prune against the wrong endpoint destroys the active backup.  `cold-snapshots/` must survive.
+
+Prune NOT executed here - no object-level R2 delete tooling and deleting backups needs an explicit human decision.  Runbook in `docs/rollouts/2026-08-20-r2-historic-prune-unblocked.md`.
+
 ## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
 
 FMP is banned for market data (owner ruling 2026-08-20); it stays valid only as a
