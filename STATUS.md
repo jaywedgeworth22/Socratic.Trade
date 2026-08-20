@@ -132,6 +132,11 @@ PR **#2874**.  Branch `cursor/coach-tools-fail-closed-1c54`.  Rollout: `docs/rol
 ## 2026-08-19 CURSOR — iOS session snapshot, edit alerts, nested stop-loss decode
 
 Part II clusters `ios-state-outcome-truth` + `web-ios-contract-drift` (stop-loss only).  `clearLocalSession` now wipes the UserDefaults snapshot; init uses the persisted capture time; guardrail/command feedback is modal alerts (not a scroll-top banner `load()` clears); `FullPolicy` reads stop percents from nested `riskRules`.  No TF upload.  PR on `cursor/ios-session-stop-loss-03c2`.  Rollout: `docs/rollouts/2026-08-19-ios-session-stop-loss.md`.
+## 2026-08-19 CURSOR — CI docs-only fast path excludes build-imported benchmarks JSON
+
+Expert review `qa-test-strategy:qa-03` (narrowed `merge-gate-blindspots`): classify regex in `ci.yml` / `e2e.yml` treated all `docs/**` as documentation, but `app/api/llm-usage/model-stats/route.ts` imports `docs/benchmarks/*.json` at build time.  Changed paths under `docs/benchmarks/` now force the full verify/smoke gate.  No Swift required gate; `land.sh` unchanged (no docs-only regex there).
+
+Branch `cursor/fix-ci-docs-benchmarks-skip-e4ac`.  Rollout: `docs/rollouts/2026-08-19-ci-benchmarks-docs-only-fix.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
