@@ -9,8 +9,8 @@ This app now has opt-in scaffolding for the seven selected tools:
   `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity pair/token. Do not commit
   `.env.local`.
 - **Gitleaks**: `npm run gitleaks` runs a local secret scan. The GitHub Actions
-  Security workflow runs the pinned gitleaks action on the self-hosted runner
-  and clears stale macOS installer temp files before invoking the action.
+  Security workflow runs the pinned gitleaks action on GitHub-hosted
+  `ubuntu-latest` (self-hosted Mac / Oracle runner labels are retired).
 - **Sentry**: full Next.js coverage across all three runtimes, env-gated and off by
   default. Set `SENTRY_DSN` for the server + edge runtimes
   (`sentry.server.config.ts` / `sentry.edge.config.ts`, loaded via the instrumentation
@@ -49,15 +49,17 @@ This app now has opt-in scaffolding for the seven selected tools:
   `STATUS.md` for the current runner policy.
 - **Audit hardening**: npm overrides pin transitive Axios and PostCSS to patched
   releases, and Vitest is on the current major so its Vite dependency is patched.
-- **Litestream**: continuous WAL replication of `data/app.db` to Cloudflare R2, run as
-  a PM2 sidecar (`litestream`) via `scripts/run-litestream.sh` against `litestream.yml`.
-  Restore with `scripts/litestream-restore.sh`. Full setup, monitoring, and DR steps are
-  in `docs/litestream.md`.
+- **Litestream**: production WAL replication runs **in the Coolify container** via
+  `litestream.coolify.yml` (live replica is Backblaze B2; R2 is the weekly cold
+  snapshot).  The Mac PM2 `litestream` sidecar against `litestream.yml` is retired
+  rollback/dev history — do not start it while Coolify runs `DB_BOOTSTRAP=live`.
+  Restore steps: `docs/litestream.md`.
 - **Playwright**: `npm run test:e2e` runs a browser smoke test against a production
   `next build && next start` server on `PLAYWRIGHT_PORT`, or against
-  `PLAYWRIGHT_BASE_URL` if one is supplied. If the Codex PM2 `next dev` preview is
-  running in the same worktree, stop it before build/e2e checks and restart it
-  afterward so both processes do not mutate `.next` at the same time.
+  `PLAYWRIGHT_BASE_URL` if one is supplied.  If a local `npm run dev` is running
+  in the same worktree, stop it before build/e2e checks and restart it afterward
+  so both processes do not mutate `.next` at the same time.  Per-agent PM2
+  preview lanes are retired.
 
 ## Local Setup
 

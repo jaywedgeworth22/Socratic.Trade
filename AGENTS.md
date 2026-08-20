@@ -300,6 +300,8 @@ API for ANY reason, you own starting it again — docker will not.
 
 ### Preview freshness policy (RETIRED 2026-07-08 — historical; previews no longer exist)
 
+Present-tense sentences in this subsection are July 2026 archive.  Those hostnames are gone.
+
 `trading-beta.jays.services` is the integration source of truth. Agent preview
 sites (`codex.jays.services`, `claude.jays.services`, and
 `antigravity.jays.services`) are useful for in-progress branch review, but they
@@ -349,12 +351,13 @@ must not silently drift behind beta after work lands.
     and `git push origin agent/foo:main`).
   - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
   - Emergency human override (use sparingly): `HOOKS_ALLOW_MAIN_PUSH=1 git push origin ...`
-- **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and your live
-  preview starts erroring (`ENOENT .next/...`), restart it: `pm2 restart trading-<you>`.
-- **PM2:** `pm2 restart trading-<you>` / `pm2 list` are fine; do **not** `pm2 delete`/rename
-  another agent's app or `trading`; run `pm2 save` after intentional changes. Never run a
-  build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
-  via its release steps only.
+- **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and a local
+  `npm run dev` starts erroring (`ENOENT .next/...`), restart that worktree's dev server.
+- **PM2:** leftover `pm2 restart trading-<you>` / `pm2 list` are fine on the Mac if those
+  apps still exist; do **not** `pm2 delete`/rename another agent's app or `trading`; run
+  `pm2 save` after intentional changes.  Never run a build/`next dev` *inside*
+  `~/apps/trading-live` — that Mac lane is retired rollback only.  Production is Coolify
+  at socratictrade.com.
 
 ### Cursor: peer agent lane (DeepSeek) *and* human review seat
 
@@ -364,8 +367,8 @@ called Cursor "not a 4th agent lane" — that's outdated; corrected 2026-07-06, 
 
 1. **A full peer autonomous lane**, on par with Claude Code, Codex, and Antigravity/Gemini.
    The owner runs Cursor's background/agent mode on **DeepSeek**, producing work in its own
-   worktree (`~/apps/trading-cursor`), on its own branch (`agent/cursor`), with its own
-   PM2-hosted preview (`cursor.jays.services`, port **4103**) — see the hosting table above.
+   worktree (`~/apps/trading-cursor`), on its own branch (`agent/cursor`).  Preview
+   hostnames are retired — check work with `npm run dev` locally plus the verify CI gate.
    Treat it exactly like the Claude/Codex/Antigravity/Monet rows: don't edit in it from
    another agent, land via `scripts/land.sh`, keep the Pre-Commit/Handoff Protocol current
    from it like any other lane.
@@ -385,12 +388,11 @@ called Cursor "not a 4th agent lane" — that's outdated; corrected 2026-07-06, 
   `PLAN.md` like every other tool.
 
 ### A running port is NOT a work lock
-A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not
-infer "someone is working" from an open 4000/4001/4100/4101/4102/4103/4104 (or a stray
-3000/3001/3002). Coordinate ONLY via `git status` / `git log` / the branch list and
-`STATUS.md` — never by inspecting ports. The legacy per-agent ephemeral dev lanes (Claude
-3000 / Codex 3001 via `npm run dev:codex` / Antigravity 3002) are superseded by the PM2
-worktree previews above; use them only as a one-off and treat them as disposable.
+A local `next dev` listening on a port does **not** mean another agent is mid-task. Do not
+infer "someone is working" from an open 3000/3001/3002 (or a leftover 4000/4001/4100-4104).
+Coordinate ONLY via `git status` / `git log` / the branch list and `STATUS.md` — never by
+inspecting ports.  Per-agent PM2 preview lanes and `*.jays.services` preview hostnames are
+retired; use `npm run dev` in your own worktree only.
 
 Host-local deployment details (tunnel, pm2 ecosystem) live in `~/apps/README.md` on the
 deployment machine.
@@ -727,7 +729,7 @@ with the Hetzner servers it monitored.
 **One-time owner setup (both sides must use the same token):**
 
 1. Generate: `openssl rand -hex 32`
-2. **trading-live:** set `OPS_DIAGNOSTIC_TOKEN=<token>` in Infisical / `.env.local`, `pm2 restart trading`
+2. **Production (Coolify `socratic-app`):** set `OPS_DIAGNOSTIC_TOKEN=<token>` in Infisical, then restart the Coolify app so the container picks it up.  Do not `pm2 restart trading` on the Mac — that lane is retired.
 3. **Cursor Cloud Secrets** (Dashboard -> Cloud Agents -> Secrets): add `OPS_DIAGNOSTIC_TOKEN` as a
    **Runtime Secret**, scoped to this repo. Value must match production.
 
@@ -782,7 +784,7 @@ Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh
 ## Two spaces between sentences (owner — ALL contexts)
 
 Two spaces after sentence terminators in **all** human-readable prose for every
-agent: web, PWA, iOS UI, **every App Store Connect field** (description,
+agent: web, iOS UI, **every App Store Connect field** (description,
 promotional text, What's New, **App Review notes**, **IAP / subscription
 review notes**, subscription localization descriptions), push/email, help,
 privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
