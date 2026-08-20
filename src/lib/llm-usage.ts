@@ -38,6 +38,11 @@ export interface LlmUsageEntry {
    *  /api/v1/generation?id=... to verify reported cost against the provider's own ledger. Only
    *  meaningful when `provider === "openrouter"` — see `providerRequestIdFromPayload`. */
   providerRequestId?: string;
+  /** The amount the transport actually BILLED for this call, in USD, as reported by the response
+   *  itself (`usage.cost`).  Only OpenRouter reports one, so `recordLlmUsage` only trusts it when
+   *  `provider === "openrouter"`; every other provider leaves the ledger on the estimate.  When
+   *  present it REPLACES the price-table estimate and the row is stamped `cost_source = 'billed'`. */
+  billedCostUsd?: number;
 }
 
 export interface LlmTokenUsage {
@@ -51,7 +56,24 @@ export interface LlmTokenUsage {
   /** Anthropic-only: usage.cache_creation_input_tokens (cache-write premium tokens).
    *  Subset of promptTokens (which is normalized to the FULL prompt across providers). */
   cacheCreationTokens?: number;
+  /**
+   * `usage.cost` — the exact amount the transport charged for this call, in USD.  OpenRouter is
+   * the only provider in this app that reports one (credits are 1:1 with USD), and it reports it
+   * on EVERY response: usage accounting is always on there now, and the `usage: {include: true}`
+   * request field that used to switch it on is documented as deprecated and inert, so no
+   * request-side change is needed to receive it.  Undefined when the response omits it.
+   *
+   * `recordLlmUsage` gates this on `provider === "openrouter"` before trusting it as money, so a
+   * hypothetical non-OpenRouter provider echoing an unrelated `cost` field can never silently
+   * redefine the ledger.
+   */
+  billedCostUsd?: number;
 }
+
+/** Cost provenance for one ledger row.  `billed` = the transport's own `usage.cost`; `estimated`
+ *  = derived from the hand-maintained `MODEL_PRICE_PER_M` table.  The two must never be added
+ *  together and presented as one authoritative number — the Usage page shows the split. */
+export type LlmCostSource = "billed" | "estimated";
 
 // USD per 1M tokens, [input, output]. Best-effort; unknown models fall back to a
 // conservative env-configurable default (LLM_UNPRICED_MODEL_COST_PER_M) so unpriced
@@ -193,12 +215,17 @@ export function extractLlmUsage(responseJson: unknown): LlmTokenUsage {
     (anthropicIn !== undefined ? anthropicIn + (num(u.cache_read_input_tokens) ?? 0) + (cacheCreationTokens ?? 0) : undefined);
   const completionTokens = num(u.completion_tokens) ?? num(u.output_tokens);
   const totalTokens = num(u.total_tokens) ?? (promptTokens !== undefined || completionTokens !== undefined ? (promptTokens ?? 0) + (completionTokens ?? 0) : undefined);
+  // OpenRouter's own billed amount for this generation.  Negative values are nonsense (a refund is
+  // not a call cost) so they are dropped rather than allowed to reduce a running total.
+  const rawCost = num(u.cost);
+  const billedCostUsd = rawCost !== undefined && rawCost >= 0 ? rawCost : undefined;
   return {
     promptTokens,
     completionTokens,
     totalTokens,
     ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
-    ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {})
+    ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+    ...(billedCostUsd !== undefined ? { billedCostUsd } : {})
   };
 }
 
@@ -255,7 +282,19 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
     const occurredAt = new Date().toISOString();
     const total =
       entry.promptTokens !== undefined || entry.completionTokens !== undefined ? (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0) : undefined;
-    const cost = estimateLlmCostUsd(canonical.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
+    // Money precedence: the transport's OWN billed amount beats our price table.  Only OpenRouter
+    // reports one, so the provider gate keeps a stray `usage.cost` on some other provider from
+    // silently redefining spend.  A billed 0 is a real answer (a free/promotional model), so the
+    // check is `>= 0`, not truthiness.
+    const billedCostUsd =
+      entry.provider === "openrouter" && typeof entry.billedCostUsd === "number" && Number.isFinite(entry.billedCostUsd) && entry.billedCostUsd >= 0
+        ? entry.billedCostUsd
+        : undefined;
+    const estimatedCostUsd = estimateLlmCostUsd(canonical.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
+    const cost = billedCostUsd ?? estimatedCostUsd;
+    // Provenance travels with the row so the Usage page can label an estimate as an estimate
+    // instead of mixing it into a "billed" total.  Null only when there is no cost at all.
+    const costSource: LlmCostSource | null = billedCostUsd !== undefined ? "billed" : estimatedCostUsd !== undefined ? "estimated" : null;
     // Prompt-cache visibility (no schema change): when the provider served part of the prompt from
     // cache, write an audit row so cache hit rates + savings are observable per provider/model/context.
     if ((entry.cachedPromptTokens ?? 0) > 0 || (entry.cacheCreationTokens ?? 0) > 0) {
@@ -268,7 +307,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
           promptTokens: entry.promptTokens,
           cachedPromptTokens: entry.cachedPromptTokens,
           cacheCreationTokens: entry.cacheCreationTokens,
-          costUsd: cost
+          costUsd: cost,
+          costSource
         },
         entry.userId,
         entry.connectedAccountId
@@ -276,8 +316,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
     }
     getDb()
       .prepare(
-        `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, connected_account_id, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, connected_account_id, prompt_tokens, completion_tokens, total_tokens, cost_usd, cost_source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         usageId,
@@ -292,6 +332,7 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
         entry.completionTokens ?? null,
         total ?? null,
         cost ?? null,
+        costSource,
         occurredAt
       );
     // Fire-and-forget forward to the API Usage Monitor (no-op unless configured; never throws).
@@ -338,7 +379,19 @@ export interface LlmUsageRow {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Total spend for the group.  This is the SUM of `billedCostUsd` and `estimatedCostUsd`, so it
+   *  is only fully authoritative when `estimatedCalls === 0` — surfaces that show it must say so
+   *  rather than presenting a mixed figure as billed truth. */
   costUsd: number;
+  /** Portion of `costUsd` that came from the transport's own `usage.cost` (OpenRouter). */
+  billedCostUsd: number;
+  /** Portion of `costUsd` derived from the hand-maintained price table.  Legacy rows written
+   *  before cost provenance existed count here — they were estimates. */
+  estimatedCostUsd: number;
+  /** Calls whose cost is the transport's billed amount. */
+  billedCalls: number;
+  /** Calls whose cost is a price-table estimate (including pre-provenance legacy rows). */
+  estimatedCalls: number;
 }
 
 /**
@@ -390,7 +443,13 @@ export function getLlmUsageSummary(opts: {
               COALESCE(SUM(lu.prompt_tokens),0) AS prompt_tokens,
               COALESCE(SUM(lu.completion_tokens),0) AS completion_tokens,
               COALESCE(SUM(lu.total_tokens),0) AS total_tokens,
-              COALESCE(SUM(lu.cost_usd),0) AS cost_usd
+              COALESCE(SUM(lu.cost_usd),0) AS cost_usd,
+              -- Cost provenance split.  Rows written before the cost_source column existed have
+              -- NULL there and were estimates, so "not billed" is the honest bucket for them.
+              COALESCE(SUM(CASE WHEN lu.cost_source = 'billed' THEN lu.cost_usd ELSE 0 END),0) AS billed_cost_usd,
+              COALESCE(SUM(CASE WHEN lu.cost_source = 'billed' THEN 0 ELSE COALESCE(lu.cost_usd,0) END),0) AS estimated_cost_usd,
+              COALESCE(SUM(CASE WHEN lu.cost_source = 'billed' THEN 1 ELSE 0 END),0) AS billed_calls,
+              COALESCE(SUM(CASE WHEN lu.cost_source = 'billed' THEN 0 ELSE 1 END),0) AS estimated_calls
        FROM llm_usage lu
        LEFT JOIN connected_accounts ca ON ca.id = lu.connected_account_id
        ${clause}
@@ -414,7 +473,11 @@ export function getLlmUsageSummary(opts: {
     promptTokens: Number(r.prompt_tokens),
     completionTokens: Number(r.completion_tokens),
     totalTokens: Number(r.total_tokens),
-    costUsd: Number(r.cost_usd)
+    costUsd: Number(r.cost_usd),
+    billedCostUsd: Number(r.billed_cost_usd ?? 0),
+    estimatedCostUsd: Number(r.estimated_cost_usd ?? 0),
+    billedCalls: Number(r.billed_calls ?? 0),
+    estimatedCalls: Number(r.estimated_calls ?? 0)
   }));
 }
 

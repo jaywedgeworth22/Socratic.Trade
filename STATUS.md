@@ -14,6 +14,15 @@ Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `Performa
 #2853 adopted a `strategy_run_requests` row when the in-process heartbeat was older than 90s.  An event-loop freeze (SQLite `busy_timeout` 60s; measured >120s back-to-back) stops the 15s beat without killing `runStrategyOnce`.  Drain then `releaseStrategyLock` and starts a second gather/place on the same run id.  The still-running worker can already have passed `assertOwned` before `placeEquityOrder`, so the adopted run double-places.
 
 Fix: treat a map entry on this process as live, regardless of beat age.  Only a missing entry (process restart) is an orphan.  Rollout: `docs/rollouts/2026-08-20-drain-adopt-live-heartbeat.md`.
+## 2026-08-20 MONET - LLM cost is now the provider's number, not our price table
+
+The review told us to add `usage:{include:true}` to every OpenRouter request.  That parameter is deprecated and inert -- usage is always returned now -- so it was deliberately NOT added; adding it would also risk the endpoint-filtering 404 class, since `require_parameters:true` filters on advertised request fields.  The real defect was read-side: `usage.cost` was arriving on every response and being thrown away.
+
+The number that justifies the work: on 100k in / 20k out of claude-opus-5 the price table said $1.00 where the transport billed $0.25.  A 4x overstatement on a single call, and the whole Usage page was derived from that table.  Billed and estimated are now separate columns and separate sums, never added together and labelled billed.
+
+Also landed in the same change: late post-soft-timeout replies are metered rather than only audited, the approval receipt no longer claims "not a failover" when a fallback actually answered, rotation reads the live catalog instead of a hardcoded dead list, and the Red Team payload is compacted to its documented subset.
+
+Two defects found that the review did not have: migrations 2 and 14 use `PRAGMA table_info` as an existence check (returns empty, not an error, for a missing table -- filed #2964), and a test fixture matching on a substring of the entire payload caused genuine cross-test contamination.
 
 ## 2026-08-20 MONET - R2 is not storing one week; the B2 restore is proven
 
