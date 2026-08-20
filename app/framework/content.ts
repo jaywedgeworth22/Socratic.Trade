@@ -35,11 +35,16 @@ export type FrameworkContent = {
   humanOnlyNote: string;
 };
 
+import {
+  FRAMEWORK_SIZING_INVARIANT,
+  FRAMEWORK_VERDICT_INVARIANT
+} from "@/lib/guardrail-copy";
+
 export const FRAMEWORK_CONTENT: FrameworkContent = {
   kicker: "Trading framework",
   title: "How market data becomes an accountable trading decision",
   intro: [
-    "Socratic Trade is organized as a dialectic: one model argues for a trade, a second model argues against it, and deterministic code — never a model — controls sizing, risk gates, and order placement. The name is the method: every position must survive questioning before it exists, and every outcome is examined afterward so the framework itself improves.",
+    "Socratic Trade is organized as a dialectic: one model argues for a trade, a second model argues against it, and deterministic code sizes every opening by default — with an optional, logged Socratic override when you enable it.  The name is the method: every position must survive questioning before it exists, and every outcome is examined afterward so the framework itself improves.",
     "This page describes the framework, not any particular account: the pipeline every strategy run flows through, the safety architecture around it, and the learning loop that closes it."
   ],
   pipelineDiagram: [
@@ -67,7 +72,7 @@ export const FRAMEWORK_CONTENT: FrameworkContent = {
     },
     {
       title: "4 · Code sizes the trade",
-      body: "Deterministic code — not the model — sizes every opening from realized per-thesis statistics: shrunk win rates, capped and calibrated conviction, reduce-only Kelly, volatility and portfolio-heat tapers. Thin evidence pins size to an exploratory floor; proven losers get zero."
+      body: "Deterministic code — not the model — sizes every opening from realized per-thesis statistics: shrunk win rates, capped and calibrated conviction, reduce-only Kelly, volatility and portfolio-heat tapers.  Thin evidence pins size to an exploratory floor; proven losers get zero.  A logged Socratic override may request a larger deployment when you enable that mode."
     },
     {
       title: "5 · Red Team challenges",
@@ -222,8 +227,8 @@ export const FRAMEWORK_CONTENT: FrameworkContent = {
   invariants: [
     "No connected broker account means no orders — there is no simulation fallback.",
     "Every risk-adding opening is adversarially reviewed or held for a human; reviewer failure fails closed.",
-    "Verdicts and calibration are down-only: dissent and learning can shrink risk, never enlarge it.",
-    "Sizing is deterministic and code-side; advisory or learned context cannot reach it.",
+    FRAMEWORK_VERDICT_INVARIANT,
+    FRAMEWORK_SIZING_INVARIANT,
     "Exits are never trapped — not by universe rules, caps, budgets, staleness, or adversary outages.",
     "Nothing is fabricated: missing data renders blank, statistics are sample-gated, unresolved outcomes are disclosed.",
     "Placement is intent-first and idempotent; uncertain broker outcomes are reconciled, never guessed.",

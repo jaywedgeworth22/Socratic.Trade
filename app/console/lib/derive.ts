@@ -24,6 +24,7 @@ import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/
 // imported by every "use client" console component, so the whole server graph followed it into
 // the browser bundle. @/lib/cash-flows is the dependency-free extraction of the same function.
 import { inferExternalCashFlows, isInferredFlowUnverified } from "@/lib/cash-flows";
+import { REALITY_PAPER_WORD } from "@/lib/guardrail-copy";
 import { dayKey, startOfCentralDay } from "./format";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ export interface RealityInfo {
   mode?: ExecutionMode;
   tone: RealityTone;
   /** The load-bearing word. */
-  word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
+  word: "NO ACCOUNT" | typeof REALITY_PAPER_WORD | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
   phrase: "nothing connected yet" | "broker practice account" | "live orders";
   /** One-sentence honest clarification. */
@@ -52,10 +53,10 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
       return {
         mode,
         tone: "paper",
-        word: "PAPER",
+        word: REALITY_PAPER_WORD,
         phrase: "broker practice account",
         clarification:
-          "Same broker-mediated trading path as live — practice dollars at the broker. Useful for reps and system training; live is the primary focus."
+          "Same broker-mediated trading path as a brokerage account — practice dollars at the broker."
       };
     case "broker/live":
       return {
@@ -73,7 +74,7 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         // Not "no account connected" — the banner renders "WORD · phrase", and
         // repeating the word's meaning made it a tautology.
         phrase: "nothing connected yet",
-        clarification: "Connect a broker account before the app can place orders. Prefer live when ready; paper is for training reps."
+        clarification: "Connect a broker account before the app can place orders."
       };
   }
 }

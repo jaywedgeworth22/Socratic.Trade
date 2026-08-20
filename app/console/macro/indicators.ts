@@ -680,6 +680,12 @@ export interface RegimeInfo {
 // a substring match for anything `regimeFromLabel` doesn't recognize as one of the five canonical
 // labels (older snapshot payloads, or a future/unexpected label) so this card degrades gracefully
 // instead of collapsing every unrecognized string to "no data".
+import {
+  REGIME_BELOW_MEDIAN_CRISIS,
+  REGIME_BELOW_MEDIAN_RISK_OFF,
+  REGIME_GATES_ENTRIES
+} from "@/lib/guardrail-copy";
+
 export function regimeInfo(regime: string): RegimeInfo {
   const enumRegime = regimeFromLabel(regime);
   const l = regime.toLowerCase();
@@ -694,16 +700,14 @@ export function regimeInfo(regime: string): RegimeInfo {
     return {
       chipTone: "neg",
       chipWord: "escalation",
-      meaning:
-        "VIX above 30 — panic-level volatility. Buy ideas scoring below the scan median are hard-vetoed, and the optional crisis exposure cap can shrink every newly opened position."
+      meaning: REGIME_BELOW_MEDIAN_CRISIS
     };
   }
   if (isRiskOff) {
     return {
       chipTone: "neg",
       chipWord: "escalation",
-      meaning:
-        "VIX above 20 (or above 17 with an inverted yield curve) — stressed markets. Buy ideas scoring below the scan median are hard-vetoed, and a flip into this regime can trigger an immediate strategy run."
+      meaning: REGIME_BELOW_MEDIAN_RISK_OFF
     };
   }
   if (isCautiousInverted) {
@@ -750,7 +754,7 @@ export const REGIME_USAGE: Array<{ title: string; body: string }> = [
   },
   {
     title: "It gates entries",
-    body: "In Risk-Off or Crisis, buys scoring below the scan median are vetoed outright, and an optional cap limits how large any new position may open in Crisis/Inverted regimes."
+    body: REGIME_GATES_ENTRIES
   },
   {
     title: "Flips are watched",
