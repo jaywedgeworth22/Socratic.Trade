@@ -26,6 +26,11 @@ Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 #2854 was CONFLICTING/DIRTY against `origin/main` (Jay landing open issue PRs tonight).  First rebase onto `ce31c367`/`44e9ef06` was phantom.  After #2813 landed, the only real conflict was `test/roic-transcripts.test.ts`.  Kept this PR's `shouldSkipWholeIndexInventory` test and main's `planRoicSymbolWork` skip-covered test.  Did not absorb #2813 product.  Gather skip + 502/429 fail-open only.  Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune.  Did not merge.
 
 PR **#2854**.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
+## 2026-08-20 CURSOR — Rebase #2841 onto current main (notification history)
+
+PR **#2841** (`cursor/notification-history-parity-4bbc`) rebased onto `origin/main` `ce31c367`.  Scope unchanged: website header inbox + Activity unread, iOS Activity notifications, last-100 `notification_events` on the mobile snapshot.  Three conflicts: `app/api/mobile/snapshot/route.ts`, `docs/phase-6-customization-risk-notifications.md`, `ios/SocraticTradeTests/MobileModelsTests.swift`.  Kept this PR's inbox fields and main's `latestScan` / alert-fingerprint acceptance.  Did not absorb other clusters.  Did not merge.
+
+Branch `cursor/notification-history-parity-4bbc`.  Rollout: `docs/rollouts/2026-08-18-notification-history-parity.md`.
 
 ## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
 

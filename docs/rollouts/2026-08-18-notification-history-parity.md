@@ -68,6 +68,18 @@ Full `npm test` on this Linux VM hits leftover Yahoo/SEC/Alpaca 404s and strateg
 
 Did not recreate the PR.  Did not merge.  Did not deploy.  Did not touch #2831, #2812, #2840, trading, broker, OpenRouter, RAG, or the health gate.
 
+## Rebase onto origin/main (2026-08-20)
+
+`origin/main` moved to `ce31c367` (31 commits past the prior rebase base `13b60747`).  This branch rebased onto that SHA.  Real conflicts (rebase commit 1/4):
+
+- `app/api/mobile/snapshot/route.ts` — kept this PR's `notifications: buildNotificationHistory(...)` and main's `latestScan: compactMobileMarketScan(...)`.
+- `docs/phase-6-customization-risk-notifications.md` — kept both the last-100 inbox acceptance bullet and main's 60s alert-fingerprint bullet.
+- `ios/SocraticTradeTests/MobileModelsTests.swift` — kept this PR's inbox decode tests and main's compact `latestScan` decode tests.
+
+`MobileModels.swift` auto-merged: both `notifications` and `latestScan` remain.  `MobileStore.swift` still has a single `acknowledgeNotifications`.  Commits 2–4 applied clean.
+
+Did not recreate the PR.  Did not merge.  Did not deploy.  Did not absorb other clusters.
+
 ## Next Steps & Blockers
 
 - Done when GitHub reports #2841 MERGEABLE.  Leave auto-merge as Jay left it.
