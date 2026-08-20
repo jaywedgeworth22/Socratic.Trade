@@ -1,5 +1,12 @@
 # Current Handoff
 
+## 2026-08-20 MONET - `pnl-basis-labels` up for review
+
+Every performance number now says what it measures.  Basis and window travel with the value through `performance.ts` / `benchmark.ts` to both the console and iOS, so "Unrealized P&L" stops meaning three different things across Results, Home and the phone; an empty sample reads as no-data rather than a confident `0%`; and mark-to-market sums a book with shorts on `|basis|` instead of netting short against long (`costBasis` changed meaning net -> gross; identical for an all-long book, and the single consumer was grep-confirmed).  `-` (unavailable) vs `n/a` (computed no-ratio) preserved.
+
+**Not closed, stated openly:** `perf-17` - the SPY benchmark is total-return or price-return depending on which history provider answered, and an intraday tip is compared against an EOD close.  Confirmed by reading the provider cascade, not papered over; normalising that is its own change.  Also open: the coach tool context still passes raw win rate with no sample count.
+
+Gate: lint 0 errors, tsc clean, 7140 tests, build 0, `xcodebuild build` 0.  Rollout: `docs/rollouts/2026-08-20-pnl-basis-labels.md`.
 ## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on lookup miss
 
 `cancelWorkingOrder` only tombstoned an owner-cancelled app-managed stop when the advisory pre-cancel broker read returned the order.  Console cancel is fail-open on that read (timeout, throw, or a working GTC stop missing from scoped `getEquityOrders`).  The broker cancel still ran, but `cancelledSymbol` stayed empty, so the do-not-replace tombstone and `broker_protective_stops` delete were skipped.  The next reconcile tick then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.

@@ -39,6 +39,26 @@ struct ResultsView: View {
         return AccountMetrics.displayedUnrealized(positions: snapshot.positions, ledger: ledger)
     }
 
+    private func closedLotCount(_ snapshot: MobileSnapshot) -> Int? {
+        snapshot.performance.flatMap {
+            usesLiveMetrics(snapshot) ? $0.liveClosedLotCount : $0.paperClosedLotCount
+        }
+    }
+
+    private func winRate(_ snapshot: MobileSnapshot) -> Double? {
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics(snapshot) ? $0.liveWinRate : $0.paperWinRate
+        }
+        return AccountMetrics.displayedRateMetric(ledger: ledger, closedLotCount: closedLotCount(snapshot))
+    }
+
+    private func avgReturn(_ snapshot: MobileSnapshot) -> Double? {
+        let ledger = snapshot.performance.flatMap {
+            usesLiveMetrics(snapshot) ? $0.liveAverageReturnPct : $0.paperAverageReturnPct
+        }
+        return AccountMetrics.displayedRateMetric(ledger: ledger, closedLotCount: closedLotCount(snapshot))
+    }
+
     private func headline(_ snapshot: MobileSnapshot) -> some View {
         AppCard {
             VStack(alignment: .leading, spacing: 8) {
@@ -55,8 +75,7 @@ struct ResultsView: View {
     }
 
     private func metrics(_ snapshot: MobileSnapshot) -> some View {
-        let performance = snapshot.performance
-        return LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
             MetricTile(
                 title: "Realized P&L",
                 value: AppFormat.money(realized(snapshot)),
@@ -67,16 +86,15 @@ struct ResultsView: View {
                 value: AppFormat.money(unrealized(snapshot)),
                 tint: pnlColor(unrealized(snapshot))
             )
+            // Win rate / avg return render "—" (not a fabricated 0%) until this bucket has
+            // closed at least one lot — see AccountMetrics.displayedRateMetric.
             MetricTile(
                 title: "Win Rate",
-                value: AppFormat.percent(usesLiveMetrics(snapshot) ? performance?.liveWinRate : performance?.paperWinRate)
+                value: AppFormat.percent(winRate(snapshot))
             )
             MetricTile(
                 title: "Avg. Return",
-                value: AppFormat.percent(
-                    usesLiveMetrics(snapshot) ? performance?.liveAverageReturnPct : performance?.paperAverageReturnPct,
-                    signed: true
-                )
+                value: AppFormat.percent(avgReturn(snapshot), signed: true)
             )
         }
     }
