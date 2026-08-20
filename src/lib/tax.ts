@@ -337,7 +337,9 @@ export function getTaxSummary(
   // Prefer the pre-fetched source-matching fills so a shared request replays them once; the direct
   // `detectWashSales` read here reuses the same array instead of a third SELECT for the same source.
   const prefetchedSourceFills = source === "live" ? prefetched?.liveFills : source === "paper" ? prefetched?.paperFills : undefined;
-  const fills = prefetchedSourceFills ?? listFillEvents(accountNumber, source, 500, userId);
+  // Unbounded: wash-sale detection has to see every replacement buy in the ledger, and the closed
+  // lots it is matched against come from a full-ledger FIFO replay — see db-fills.ts.
+  const fills = prefetchedSourceFills ?? listFillEvents(accountNumber, source, undefined, userId);
   const closedLots = getClosedLotsDetailed(accountNumber, source, userId, prefetched, prefetchedPnl);
   const openLotsRaw = getOpenLots(accountNumber, source, userId, prefetched, prefetchedPnl);
 
@@ -352,10 +354,17 @@ export function getTaxSummary(
   let shortTermRealized = 0;
   let longTermRealized = 0;
   for (const lot of closedLots) {
-    if (lot.side !== "long" || !lot.exitAt || new Date(lot.exitAt).getFullYear() !== taxYear) continue;
-    const disallowed = lot.pnl < 0 && lot.symbol && disallowedKeys.has(`${normalizeSymbol(lot.symbol)}:${lot.exitAt}`);
+    if (!lot.exitAt || new Date(lot.exitAt).getFullYear() !== taxYear) continue;
+    // Wash-sale flags are LONG-only by construction (detectWashSales skips shorts — IRC 1091's
+    // short-sale rules are a different regime this app does not model), so never let a same-symbol,
+    // same-timestamp long flag disallow a short's loss.
+    const disallowed =
+      lot.side !== "short" && lot.pnl < 0 && lot.symbol && disallowedKeys.has(`${normalizeSymbol(lot.symbol)}:${lot.exitAt}`);
     const effective = disallowed ? 0 : lot.pnl; // disallowed wash-sale losses aren't deductible this year
-    if (holdingDays(lot.entryAt, lot.exitAt) > LONG_TERM_DAYS) longTermRealized += effective;
+    // A COVERED SHORT is short-term however long the position was open: under IRC 1233 the holding
+    // period runs from the property used to close it, which this app buys at cover. Shorts used to
+    // be skipped outright here, so "Short-term realized" silently excluded every covered short.
+    if (lot.side !== "short" && holdingDays(lot.entryAt, lot.exitAt) > LONG_TERM_DAYS) longTermRealized += effective;
     else shortTermRealized += effective;
   }
 

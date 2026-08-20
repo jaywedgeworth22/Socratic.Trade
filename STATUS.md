@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-08-20 MONET - `realized-pnl-ledger` up for review
+
+Accounting reads no longer take the OLDEST 500 fills.  `listFillEvents` defaults to the whole ledger; a numeric limit remains for display windows and returns the NEWEST N.  I rejected the cluster plan's "flip to newest-DESC everywhere" - for a stateful FIFO replay, truncating at either end is wrong: cutting the tail freezes P&L, cutting the head strands exits whose opening lot was never loaded.
+
+**Two members bite TODAY, independent of ledger size:** the tuner's `recentFills` was a LEADING slice of an oldest-first array, so the paid LLM review argued weight nudges from the account's FIRST 20 trades under a "recent" label; and decision grading resolved on the first partial exit, scoring a -$100 round trip as a +$40 win.  Both fixed with failing-first proof.
+
+**`perf-11` is deliberately NOT closed** - regrouping win rate from per-lot to per-round-trip changes a number feeding every scorecard, the Kelly payoff split, the conviction calibration and the tuner's weight-shift gate at once.  `aggregateRoundTrip` is now exported as the primitive it needs, but the grouping key is an owner decision.
+
+Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `PerformanceSummary` fields kept - a textual merge would have dropped one).  Gate: lint 0 errors, tsc clean, 7205 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-realized-pnl-ledger.md`.
 ## 2026-08-20 MONET - R2 is not storing one week; the B2 restore is proven
 
 Owner asked why R2 exceeds a one-week snapshot.  `socratic-trade-bucket` holds TWO unrelated sets: `cold-snapshots/app-<date>.db` (LIVE weekly second-provider DR, retain 1, DB ~4.2 GB) and `trading-live/**` - the ENTIRE pre-cutover litestream replica kept since active replication moved to Backblaze B2 on 2026-08-07, including the ~90k-object L1 backlog the config itself notes.  The second set is the surprise, and it is now prunable: the owner confirmed the B2 restore has been PROVEN, lifting the config's own blocker.

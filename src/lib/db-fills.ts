@@ -327,14 +327,59 @@ function isUniqueConstraintError(e: unknown): boolean {
   return typeof code === "string" && code.includes("SQLITE_CONSTRAINT");
 }
 
-export function listFillEvents(accountNumber: string, source?: FillSource, limit = 500, userId: string = "local"): FillEvent[] {
+/**
+ * The fill ledger for one account, oldest-first.
+ *
+ * `limit` is OPTIONAL and defaults to UNBOUNDED — the complete ledger. That default is the
+ * accounting-correct one and it is not negotiable for any caller that replays lots: FIFO lot
+ * matching (calculatePnl) is a STATEFUL walk from the first fill, so truncating the window at
+ * EITHER end corrupts it. Cutting the tail (the old `ORDER BY filled_at ASC LIMIT 500`) froze
+ * realized P&L, open lots, tax, win rate and model stats at the pre-cap state once an
+ * (account, source) passed the cap. Cutting the head is no better — it would start the replay
+ * mid-history, so exits of lots opened before the window would find no opening lot and their
+ * realized P&L would vanish instead. An account holds at most a few thousand rows and the read
+ * is indexed, so the whole ledger is the cheap answer as well as the right one.
+ *
+ * Pass a numeric `limit` ONLY for a display/context window that genuinely wants "the most recent
+ * N fills" and does no lot replay. Those get the NEWEST `limit` rows, returned in chronological
+ * order — the same newest-DESC-subquery pattern `listPortfolioSnapshots` above already uses.
+ *
+ * Every variant breaks `filled_at` ties on `rowid` (insertion order), and the windowed variants
+ * reverse that tiebreak in the inner DESC pass so the outer ASC pass restores it. This is load
+ * bearing, not tidiness: an entry and its partial exit booked in the SAME millisecond (one strategy
+ * run placing both legs) are indistinguishable by `filled_at` alone, and if the exit replays first
+ * the FIFO walk finds no lot to close and books the position at the wrong size.
+ */
+export function listFillEvents(accountNumber: string, source?: FillSource, limit?: number, userId: string = "local"): FillEvent[] {
+  const database = getDb();
+  const bounded = typeof limit === "number" && Number.isFinite(limit);
   const rows = source
-    ? (getDb()
-        .prepare("SELECT * FROM fill_events WHERE account_number = ? AND source = ? AND user_id = ? ORDER BY filled_at ASC LIMIT ?")
-        .all(accountNumber, source, userId, limit) as RawFillEvent[])
-    : (getDb()
-        .prepare("SELECT * FROM fill_events WHERE account_number = ? AND user_id = ? ORDER BY filled_at ASC LIMIT ?")
-        .all(accountNumber, userId, limit) as RawFillEvent[]);
+    ? bounded
+      ? (database
+          .prepare(
+            `SELECT * FROM (
+               SELECT *, rowid AS booked_seq FROM fill_events
+               WHERE account_number = ? AND source = ? AND user_id = ?
+               ORDER BY filled_at DESC, rowid DESC LIMIT ?
+             ) newest ORDER BY filled_at ASC, booked_seq ASC`
+          )
+          .all(accountNumber, source, userId, limit) as RawFillEvent[])
+      : (database
+          .prepare("SELECT * FROM fill_events WHERE account_number = ? AND source = ? AND user_id = ? ORDER BY filled_at ASC, rowid ASC")
+          .all(accountNumber, source, userId) as RawFillEvent[])
+    : bounded
+      ? (database
+          .prepare(
+            `SELECT * FROM (
+               SELECT *, rowid AS booked_seq FROM fill_events
+               WHERE account_number = ? AND user_id = ?
+               ORDER BY filled_at DESC, rowid DESC LIMIT ?
+             ) newest ORDER BY filled_at ASC, booked_seq ASC`
+          )
+          .all(accountNumber, userId, limit) as RawFillEvent[])
+      : (database
+          .prepare("SELECT * FROM fill_events WHERE account_number = ? AND user_id = ? ORDER BY filled_at ASC, rowid ASC")
+          .all(accountNumber, userId) as RawFillEvent[]);
   return rows.map(toFillEvent);
 }
 

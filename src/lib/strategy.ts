@@ -823,8 +823,10 @@ export async function runStrategyOnce(
           source: learningSource
         })
       : [];
-    const runLiveFills = listFillEvents(policy.accountNumber, "live", 500, userId);
-    const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
+    // Unbounded: these prefetched arrays are replayed FIFO downstream, which needs the COMPLETE
+    // ledger — see listFillEvents in db-fills.ts.
+    const runLiveFills = listFillEvents(policy.accountNumber, "live", undefined, userId);
+    const runPaperFills = listFillEvents(policy.accountNumber, "paper", undefined, userId);
     const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     lockGuard.assertOwned();
 
