@@ -567,7 +567,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
     }
     const sinceIso = options?.since ?? equityOrdersDefaultSinceIso();
     const sinceMs = Date.parse(sinceIso);
-    return this.callMcp<any>("get_orders", { status: "open", limit: 500 }, async () => {
+    // MCP must request status:"all".  status:"open" is live-only, but
+    // ordersListIncludesTerminal=true tells reconcilePlacementError that a
+    // missing refId means never-placed (safe to retry).  A market fill that
+    // leaves "open" before the place deadline returns would then double-submit.
+    // REST fallback stays open + closed-since (bounded).
+    return this.callMcp<any>("get_orders", { status: "all", limit: 500 }, async () => {
       const open = await this.fetchAlpacaOrderPages({ status: "open" });
       const closed = await this.fetchAlpacaOrderPages({
         status: "closed",
