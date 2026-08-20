@@ -29,6 +29,7 @@ Touched files:
 ## Decisions & Trade-offs
 
 - `ALPACA_BROKER_IO_DEADLINE_MS = 30_000` deliberately exceeds the existing 16s+8s read retry window so `awaitWithFirstCallRetry` wins the race on account reads; writes and unbounded SDK calls get the inner deadline only.
+- `withDeadline` lives in `inflight-deadline.ts` (not `safety-maintenance.ts`) so `alpaca.ts` / `tradier.ts` do not circular-import through `broker.ts` → broken health probes in full vitest.
 - Default terminal lookback = 24h (`EQUITY_ORDERS_TERMINAL_LOOKBACK_MS`).  Callers needing lifetime history must pass `{ fullHistory: true }` explicitly.
 - Scheduler lane timeout stays 15s (`SCHEDULER_BROKER_TIMEOUT_MS`), matching existing safety-maintenance pattern — not a new invented number.
 - Out of scope (separate clusters): scheduler tick re-entrancy guard, trade-updates stream idle watchdog, order-replacement provenance.
