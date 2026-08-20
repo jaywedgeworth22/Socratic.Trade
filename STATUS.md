@@ -135,6 +135,11 @@ ops/litestream/UX-program current-truth lines.  No product code.
 
 **IN PR #2945.**  Branch `cursor/stale-hosting-docs-b392`.  Rollout:
 `docs/rollouts/2026-08-20-stale-hosting-docs.md`.
+## 2026-08-20 CURSOR-BUGBOT — Tradier 5-page order cap hides GTC equity stops
+
+#2886 scoped default `getEquityOrders` to 5 Tradier pages.  Newest-first option/combo pages can fill that window and hide a later-page GTC equity protective stop.  `liveExitOrderCoverage` then sees no exit and the synthetic-stop monitor double-sells.  Fix: walk 50 pages again; keep the 24h *terminal* filter.  Did not change Alpaca (already splits `status:open`).  Did not touch #2861.
+
+PR **#2947**.  Branch `cursor/tradier-orders-page-cap-4f2a`.  Rollout: `docs/rollouts/2026-08-20-tradier-orders-page-cap.md`.
 
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
 
