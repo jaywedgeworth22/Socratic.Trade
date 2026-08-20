@@ -821,6 +821,7 @@ private struct AccountSettingsView: View {
             .sheet(isPresented: $showingAdminPortal) {
                 AdminPortalView()
             }
+            .storeTransientAlerts()
         }
     }
 

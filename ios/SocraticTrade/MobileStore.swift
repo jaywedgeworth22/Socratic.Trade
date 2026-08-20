@@ -106,6 +106,7 @@ enum ProposalActionFeedback: Equatable {
 final class MobileStore: ObservableObject {
     @Published private(set) var snapshot: MobileSnapshot?
     @Published var error: String?
+    @Published var successMessage: String?
     @Published private(set) var isAuthenticated = false
     @Published private(set) var hasInitialized = false
     @Published private(set) var isRefreshing = false
@@ -134,14 +135,22 @@ final class MobileStore: ObservableObject {
     private var commandAttemptTracker = CommandAttemptTracker()
 
     private static let cacheKey = "cached_mobile_snapshot_data"
+    private static let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
 
     private static func loadCachedSnapshot() -> MobileSnapshot? {
         guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
         return try? JSONDecoder().decode(MobileSnapshot.self, from: data)
     }
 
+    private static func loadCachedSnapshotSavedAt() -> Date? {
+        let interval = UserDefaults.standard.double(forKey: cacheTimestampKey)
+        guard interval > 0 else { return nil }
+        return Date(timeIntervalSince1970: interval)
+    }
+
     private static func saveCachedSnapshot(_ data: Data) {
         UserDefaults.standard.set(data, forKey: cacheKey)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: cacheTimestampKey)
     }
 
     init(client: MobileAPIClient, previewSnapshot: MobileSnapshot? = nil) {
@@ -150,7 +159,13 @@ final class MobileStore: ObservableObject {
         snapshot = cached
         isAuthenticated = cached != nil
         hasInitialized = previewSnapshot != nil
-        lastUpdatedAt = cached == nil ? nil : Date()
+        if cached == nil {
+            lastUpdatedAt = nil
+        } else if previewSnapshot != nil {
+            lastUpdatedAt = Date()
+        } else {
+            lastUpdatedAt = Self.loadCachedSnapshotSavedAt()
+        }
     }
 
     var isInitialLoading: Bool {
@@ -280,6 +295,7 @@ final class MobileStore: ObservableObject {
                 hasInitialized = true
             }
         }
+        let wasLoadFailed = snapshotLoadFailed
         do {
             let timeout: TimeInterval = pendingAccountId == nil ? 30 : 45
             let (loadedSnapshot, rawData) = try await client.snapshotData(timeout: timeout)
@@ -289,7 +305,9 @@ final class MobileStore: ObservableObject {
             lastUpdatedAt = Date()
             snapshotLoadFailed = false
             isAuthenticated = true
-            error = nil
+            if wasLoadFailed {
+                error = nil
+            }
             if let pendingAccountId,
                loadedSnapshot.connectedAccounts.contains(where: { $0.id == pendingAccountId && $0.isActive == true })
                 || loadedSnapshot.readiness.activeConnectedAccount?.id == pendingAccountId {
@@ -602,6 +620,10 @@ final class MobileStore: ObservableObject {
         error = nil
     }
 
+    func dismissSuccess() {
+        successMessage = nil
+    }
+
     /// Re-register this device's APNs token under the session that just began.
     ///
     /// Registration is otherwise only attempted at cold start, for a session that was ALREADY
@@ -633,6 +655,8 @@ final class MobileStore: ObservableObject {
         for cookie in HTTPCookieStorage.shared.cookies ?? [] where client.ownsCookie(cookie) {
             HTTPCookieStorage.shared.deleteCookie(cookie)
         }
+        UserDefaults.standard.removeObject(forKey: Self.cacheKey)
+        UserDefaults.standard.removeObject(forKey: Self.cacheTimestampKey)
         loadGeneration &+= 1
         snapshot = nil
         lastUpdatedAt = nil
@@ -647,6 +671,7 @@ final class MobileStore: ObservableObject {
         isAuthenticated = false
         hasInitialized = true
         error = nil
+        successMessage = nil
     }
 
     private func scheduleReload() {
@@ -669,6 +694,11 @@ final class MobileStore: ObservableObject {
         let resolutions = commandAttemptTracker.reconcile(commands)
         for resolution in resolutions {
             busyOperations.remove(resolution.operationID)
+            if resolution.status == "succeeded",
+               resolution.operationID.hasPrefix(PolicyTightening.commandType) {
+                successMessage = "Guardrails updated."
+                continue
+            }
             guard resolution.status == "failed" || resolution.status == "cancelled" else { continue }
             let detail = resolution.error?.trimmingCharacters(in: .whitespacesAndNewlines)
             error = detail?.isEmpty == false

@@ -247,6 +247,27 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertTrue(DeskCopy.isIraTaxation(policy.taxSettings?.taxationType))
     }
 
+    func testFullPolicyDecodesNestedRiskRulesStopPercents() throws {
+        let json = Data(#"""
+        {
+          "systemState": "enabled",
+          "strategyAuthority": "propose",
+          "holdingHorizon": "swing",
+          "runCadenceMinutes": 60,
+          "maxDailyOrders": 20,
+          "riskRules": {
+            "stopLossPct": 8,
+            "trailingStopPct": 5,
+            "shortStopLossPct": 10
+          }
+        }
+        """#.utf8)
+        let policy = try JSONDecoder().decode(FullPolicy.self, from: json)
+        XCTAssertEqual(policy.stopLossPct, 8)
+        XCTAssertEqual(policy.trailingStopPct, 5)
+        XCTAssertEqual(policy.shortStopLossPct, 10)
+    }
+
     func testModelSeatValueNeverShowsTheRotateSentinel() {
         XCTAssertEqual(DeskCopy.modelSeatValue("__rotate__"), "rotate models")
         XCTAssertEqual(DeskCopy.modelSeatValue(" __ROTATE__ "), "rotate models")

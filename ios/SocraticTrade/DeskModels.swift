@@ -365,10 +365,18 @@ struct FullPolicy: Decodable {
         llmFallbackModels = try values.decodeIfPresent([String].self, forKey: .llmFallbackModels)
         sellToFundBuy = try values.decodeIfPresent(String.self, forKey: .sellToFundBuy)
         socraticOverrideMode = try values.decodeIfPresent(String.self, forKey: .socraticOverrideMode)
-        stopLossPct = try values.decodeIfPresent(Double.self, forKey: .stopLossPct)
-        trailingStopPct = try values.decodeIfPresent(Double.self, forKey: .trailingStopPct)
-        shortStopLossPct = try values.decodeIfPresent(Double.self, forKey: .shortStopLossPct)
+        let riskRules = try? values.nestedContainer(keyedBy: RiskRulesCodingKeys.self, forKey: .riskRules)
+        stopLossPct = try riskRules?.decodeIfPresent(Double.self, forKey: .stopLossPct)
+            ?? values.decodeIfPresent(Double.self, forKey: .stopLossPct)
+        trailingStopPct = try riskRules?.decodeIfPresent(Double.self, forKey: .trailingStopPct)
+            ?? values.decodeIfPresent(Double.self, forKey: .trailingStopPct)
+        shortStopLossPct = try riskRules?.decodeIfPresent(Double.self, forKey: .shortStopLossPct)
+            ?? values.decodeIfPresent(Double.self, forKey: .shortStopLossPct)
         taxSettings = try values.decodeIfPresent(PolicyTaxSettings.self, forKey: .taxSettings)
+    }
+
+    private enum RiskRulesCodingKeys: String, CodingKey {
+        case stopLossPct, trailingStopPct, shortStopLossPct
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -377,6 +385,7 @@ struct FullPolicy: Decodable {
         case maxDailyNotional, maxDailyPctOfNav, maxDailyOrders
         case requireTypedConfirmation, includedIndices, additionalSymbols, blocklist
         case llmModel, redTeamLlmModel, llmFallbackModels, sellToFundBuy, socraticOverrideMode
+        case riskRules
         case stopLossPct, trailingStopPct, shortStopLossPct, taxSettings
     }
 }
