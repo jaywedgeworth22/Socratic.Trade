@@ -105,7 +105,20 @@ afterEach(async () => {
   delete process.env.SENTRY_DSN;
   delete process.env.HEALTH_LANE_REPROBE_ENABLED;
   delete process.env.HEALTH_LANE_REPROBE_INTERVAL_HOURS;
+  delete process.env.DB_BOOTSTRAP;
+  delete process.env.HEALTH_ALERT_STARTUP_GRACE_SECONDS;
   vi.unstubAllGlobals();
+});
+
+describe("connection-health startup grace (live Coolify only)", () => {
+  it("never suppresses outside DB_BOOTSTRAP=live", async () => {
+    const { shouldSuppressConnectionAlertForStartup } = await import("../src/lib/db-health");
+    expect(shouldSuppressConnectionAlertForStartup(0, {})).toBe(false);
+    expect(shouldSuppressConnectionAlertForStartup(0, { DB_BOOTSTRAP: "fresh" })).toBe(false);
+    expect(shouldSuppressConnectionAlertForStartup(10, { DB_BOOTSTRAP: "live" })).toBe(true);
+    expect(shouldSuppressConnectionAlertForStartup(400, { DB_BOOTSTRAP: "live" })).toBe(false);
+    expect(shouldSuppressConnectionAlertForStartup(10, { DB_BOOTSTRAP: "live", HEALTH_ALERT_STARTUP_GRACE_SECONDS: "0" })).toBe(false);
+  });
 });
 
 describe("connection-health alert gate: hard streak required", () => {
@@ -178,6 +191,30 @@ describe("connection-health alert gate: hard streak required", () => {
     }
     await settleAlerts();
     expect(await alertKinds()).toEqual([]);
+  });
+
+  it("live boot window does not page a hard streak", async () => {
+    process.env.DB_BOOTSTRAP = "live";
+    process.env.HEALTH_ALERT_STARTUP_GRACE_SECONDS = "3600";
+    const { logApiHealth, shouldSuppressConnectionAlertForStartup } = await import("../src/lib/db-health");
+    expect(shouldSuppressConnectionAlertForStartup(10, process.env)).toBe(true);
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service: "nasdaq-quote", ok: false, errorText: `HTTP 500 boot-${i}` });
+    }
+    await settleAlerts();
+    expect(await alertKinds()).toEqual([]);
+    expect(sentry.captureMessage).not.toHaveBeenCalled();
+  });
+
+  it("live after the boot grace still pages a hard streak", async () => {
+    process.env.DB_BOOTSTRAP = "live";
+    process.env.HEALTH_ALERT_STARTUP_GRACE_SECONDS = "0";
+    const { logApiHealth, shouldSuppressConnectionAlertForStartup } = await import("../src/lib/db-health");
+    expect(shouldSuppressConnectionAlertForStartup(10, process.env)).toBe(false);
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service: "congress-trade", ok: false, errorText: `HTTP 502 after-boot-${i}`, keySource: "env" });
+    }
+    await vi.waitFor(async () => expect(await alertKinds()).toEqual(["congress-trade"]));
   });
 
   it("quotaResetAt still alerts on the very first row (single 'pool exhausted' signal)", async () => {
