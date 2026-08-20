@@ -292,8 +292,7 @@ describe("enrichment cache consent gate", () => {
 
     const userA = `cg-priv-a-${randomUUID()}`;
     const userB = `cg-priv-b-${randomUUID()}`;
-    // Explicit decline required: pool consent defaults ON (owner 2026-08-05). Without this,
-    // user-keyed writes go to pool and any default-consent reader can see them.
+    // Unset users no longer silently share.  Explicit decline keeps user-keyed writes private.
     setDataPoolConsent(userA, false);
     setDataPoolConsent(userB, false);
     // userA has their own API key; userB does NOT have an API key
@@ -3110,6 +3109,31 @@ describe("enrichment short-circuit (App A coverage hint → paid providers skip 
     // Two distinct votes (yahoo 80 + fmp 20) → blended ~50, NOT App A's 80 alone.
     expect(out.AAA.analystScore).toBe(50);
     expect(out.AAA.analystBySource && Object.keys(out.AAA.analystBySource).sort()).toEqual(["fmp", "yahoo-finance"]);
+  });
+
+  it("does not fail the free wave when congress.trade 404s", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const cascade = new CascadingEnrichmentProvider([
+      {
+        name: "congress.trade",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          throw new Error("HTTP 404");
+        }
+      },
+      {
+        name: "yahoo-finance",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          return { AAA: { peRatio: 12 } };
+        }
+      }
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(out.AAA.peRatio).toBe(12);
   });
 
   it("passes NO coverage hint when the flag is OFF (default)", async () => {

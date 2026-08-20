@@ -118,6 +118,18 @@ export default function LoginPage() {
             </p>
           </div>
         )}
+
+        <p className="text-xs text-muted leading-relaxed">
+          By signing in you agree to the{" "}
+          <a href="/terms-and-conditions" className="underline underline-offset-2 hover:text-fg">
+            Terms
+          </a>{" "}
+          and{" "}
+          <a href="/privacy-policy" className="underline underline-offset-2 hover:text-fg">
+            Privacy Policy
+          </a>
+          .  Not investment advice.  You set authority.
+        </p>
       </div>
     </main>
   );

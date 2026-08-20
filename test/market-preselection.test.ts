@@ -17,7 +17,11 @@ vi.mock("../src/lib/data-providers", () => ({
     configured: true,
     activeSources: ["test-enrichment"],
     enrich: mocks.enrich
-  })
+  }),
+  // scanMarket now fetches the Nasdaq screener through fetchWithRetry.  Tests
+  // stub global fetch with nasdaqRows(); forward so those stubs still apply.
+  fetchWithRetry: async (url: string | URL | Request, init?: RequestInit) =>
+    globalThis.fetch(url as string, init)
 }));
 
 vi.mock("../src/lib/web-sources", () => ({

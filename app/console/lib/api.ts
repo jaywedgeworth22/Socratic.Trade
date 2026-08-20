@@ -8,7 +8,7 @@ import { beginConsoleMutation, endConsoleMutation, isConsoleMutationMethod } fro
 import type { LookaheadAuditFindingRow } from "@/lib/db-lookahead-audit";
 import type { SignalHealthSnapshotRow } from "@/lib/db-signal-health";
 import type { LookaheadVerdict } from "@/lib/lookahead-audit";
-import type { LlmReasoningEffort, PerformanceSummary, StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
+import type { LlmReasoningEffort, PerformanceSummary, ScoringWeights, StrategyProfile, StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
 
 export class ConsoleApiError extends Error {
   status: number;
@@ -443,6 +443,32 @@ export function importAccountSettings(
     method: "POST",
     body: JSON.stringify({ sourceConnectedAccountId })
   });
+}
+
+export function createProfile(input: {
+  name: string;
+  prompt?: string;
+  policy?: Partial<TradingPolicy>;
+  active?: boolean;
+}): Promise<StrategyProfile> {
+  return request<StrategyProfile>("/api/profiles", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateProfile(
+  id: string,
+  patch: { name?: string; prompt?: string; policy?: Partial<TradingPolicy>; scoringWeights?: Partial<ScoringWeights> }
+): Promise<StrategyProfile> {
+  return request<StrategyProfile>(`/api/profiles/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(patch)
+  });
+}
+
+export function deleteProfile(id: string): Promise<void> {
+  return request<void>(`/api/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /** Library-activate a preset (flips the library's active flag and writes the

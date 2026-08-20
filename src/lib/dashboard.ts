@@ -31,6 +31,7 @@ import { getSymbolLatestPrices } from "./db-fundamentals";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
+import { isUnusableEmptyMarketScan } from "./scan-singleflight";
 import { normalizeSymbol } from "./money";
 import {
   calculatePnl,
@@ -43,8 +44,19 @@ import {
   type PrefetchedPnl
 } from "./performance";
 import { computeSpyBenchmarkDetailed, type SpyBenchmarkResult } from "./benchmark";
-import { getTaxSummary } from "./tax";
+import { getTaxSummary, overlayAccountTaxationType } from "./tax";
 import { getBrokerGateway } from "./broker";
+import {
+  GET_ACCOUNTS_FIRST_MS,
+  GET_ACCOUNTS_RETRY_MS,
+  PORTFOLIO_BUNDLE_FIRST_MS,
+  PORTFOLIO_BUNDLE_RETRY_MS,
+  EQUITY_QUOTES_MS,
+  OPTION_POSITIONS_MS,
+  awaitWithFirstCallRetry,
+  getAccountsTimeoutMessage,
+  portfolioBundleTimeoutMessage
+} from "./inflight-deadline";
 import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
 import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
@@ -110,8 +122,11 @@ const BLANK_MACRO_FALLBACK: MacroData = {
  * IPv6-blackhole failure mode — see docs/rollouts/2026-07-06-api-health-timeouts.md) can never block
  * the whole dashboard snapshot indefinitely. Does NOT abort the underlying promise — it keeps
  * running in the background and its eventual resolution/rejection is simply ignored once the
- * deadline has already produced a fallback. Existing `.catch(...)` fallbacks in this file still
- * handle real rejections; this only guards against a promise that never settles at all.
+ * deadline has already produced a fallback.  Live 581467e1: alpaca-broker logged ok at
+ * 6570–6600ms after `gateway.getAccounts timed out after 6000ms — serving degraded snapshot`
+ * and `Failed to fetch accounts`.  That is the race — the SDK finished after the abort.
+ * Existing `.catch(...)` fallbacks in this file still handle real rejections; this only guards
+ * against a promise that never settles at all.
  */
 function withDeadline<T>(
   promise: Promise<T>,
@@ -401,15 +416,22 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     const accountsPromise = (async () => {
       if (!gateway) return [];
       try {
-        return await withDeadline(
-          gateway.getAccounts(),
-          6000,
-          () => {
-            handleAccountsReadFailure("Timed out waiting for gateway.getAccounts after 6000ms.");
-            return [];
-          },
-          "gateway.getAccounts",
-          timedOutSections
+        // Live alpaca-broker p95 is above 6s (191/500 ≥6s, max 14s) on the same
+        // in-process event loop that ftsMirrorSlice can pin for 6–12s.  First wait
+        // is 16s; a pending call starts one retry.  A credential / 401 throw still
+        // fails immediately.
+        return await awaitWithFirstCallRetry(
+          () => gateway.getAccounts(),
+          {
+            firstMs: GET_ACCOUNTS_FIRST_MS,
+            retryMs: GET_ACCOUNTS_RETRY_MS,
+            onFinalTimeout: () => {
+              handleAccountsReadFailure(getAccountsTimeoutMessage());
+              return [];
+            },
+            label: "gateway.getAccounts",
+            timedOutSections
+          }
         );
       } catch (error) {
         handleAccountsReadFailure(messageFromUnknownError(error));
@@ -460,19 +482,23 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
 
       if (targetAccountNumber && gateway) {
         try {
-          [portfolio, positions, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
-            Promise.all([
-              gateway.getPortfolio(targetAccountNumber),
-              gateway.getEquityPositions(targetAccountNumber),
-              gateway.getEquityOrders(targetAccountNumber)
-            ]),
-            8000,
-            () => {
-              handlePortfolioReadFailure(targetAccountNumber as string, "Timed out waiting for portfolio, positions, and orders after 8000ms.");
-              return [undefined, [], []];
-            },
-            "portfolio/positions/orders",
-            timedOutSections
+          [portfolio, positions, orders] = await awaitWithFirstCallRetry<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
+            () =>
+              Promise.all([
+                gateway.getPortfolio(targetAccountNumber),
+                gateway.getEquityPositions(targetAccountNumber),
+                gateway.getEquityOrders(targetAccountNumber)
+              ]),
+            {
+              firstMs: PORTFOLIO_BUNDLE_FIRST_MS,
+              retryMs: PORTFOLIO_BUNDLE_RETRY_MS,
+              onFinalTimeout: () => {
+                handlePortfolioReadFailure(targetAccountNumber as string, portfolioBundleTimeoutMessage());
+                return [undefined, [], []];
+              },
+              label: "portfolio/positions/orders",
+              timedOutSections
+            }
           );
         } catch (error) {
           handlePortfolioReadFailure(targetAccountNumber, messageFromUnknownError(error));
@@ -482,7 +508,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
           try {
             options = await withDeadline<OptionPosition[]>(
               gateway.getOptionPositions(targetAccountNumber),
-              8000,
+              OPTION_POSITIONS_MS,
               () => [],
               "gateway.getOptionPositions",
               timedOutSections
@@ -502,7 +528,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
           const quotes: Record<string, BrokerQuote> = priceSymbols.length > 0
             ? await withDeadline(
                 gateway.getEquityQuotes(targetAccountNumber, priceSymbols),
-                6000,
+                EQUITY_QUOTES_MS,
                 () => ({}),
                 "gateway.getEquityQuotes",
                 timedOutSections
@@ -757,7 +783,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         accountNumber,
         scorecardSource,
         currentPrices,
-        { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType },
+        overlayAccountTaxationType(policy.taxSettings, activeAccount?.taxationType),
         new Date(),
         userId,
         prefetchedFills,
@@ -785,13 +811,18 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     : undefined) ?? latestAuditByKind("market_scan", userId);
   
   const standaloneScanPayload = latestScanAudit?.payload as { scan?: MarketScan } | undefined;
-  const standaloneScan = standaloneScanPayload?.scan
+  const standaloneScanRaw = standaloneScanPayload?.scan
     ? { ...standaloneScanPayload.scan, createdAt: latestScanAudit!.createdAt }
     : undefined;
+  // Abort/empty 200s (d0359642: 505 scanned, 0 quotes) must not replace last-good.
+  const standaloneScan = standaloneScanRaw && !isUnusableEmptyMarketScan(standaloneScanRaw)
+    ? standaloneScanRaw
+    : undefined;
 
-  const runScan = latestStrategyRun?.marketScan
+  const runScanRaw = latestStrategyRun?.marketScan
     ? { ...(latestStrategyRun.marketScan as MarketScan), createdAt: latestStrategyRun.createdAt }
     : undefined;
+  const runScan = runScanRaw && !isUnusableEmptyMarketScan(runScanRaw) ? runScanRaw : undefined;
 
   let newestScan = runScan;
   if (standaloneScan) {

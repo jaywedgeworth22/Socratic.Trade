@@ -5,6 +5,7 @@ import Security
 enum MobileAPIError: Error, LocalizedError {
     case unauthorized(statusCode: Int)
     case serverError(statusCode: Int, message: String?)
+    case scanQuotesUnavailable(MarketScanResponse)
     case network(Error)
     case decoding(Error)
 
@@ -13,18 +14,26 @@ enum MobileAPIError: Error, LocalizedError {
         case .unauthorized:
             return "Your session expired.  Sign in again."
         case .serverError(let statusCode, let message):
-            // Cloudflare edge codes when the origin (socratictrade.com backend) is unreachable.
+            // Cloudflare 521-523: origin unreachable.  Keep the reason, drop the vendor and code.
             if (521...523).contains(statusCode) {
-                return "Socratic Trade servers are unreachable right now (Cloudflare \(statusCode)).  Try again in a few minutes."
+                return "Socratic Trade is unreachable right now.  Try again in a few minutes."
             }
             if let message, !message.isEmpty {
-                return "\(message) (\(statusCode))"
+                return message
             }
-            return "The server returned an error (\(statusCode)).  Try again."
-        case .network(let error):
-            return "Network error: \(error.localizedDescription)"
+            return "Something went wrong.  Try again."
+        case .scanQuotesUnavailable(let scan):
+            let reasons = scan.warnings
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !reasons.isEmpty {
+                return reasons.joined(separator: "  ")
+            }
+            return "Quotes were unavailable for this universe.  Refresh after the quote feed recovers."
+        case .network:
+            return "Check your connection and try again."
         case .decoding:
-            return "The app could not read the latest server response."
+            return "Couldn’t load your workspace.  Try again."
         }
     }
 }
@@ -120,9 +129,34 @@ struct MobileAPIClient {
         return envelope.providers
     }
 
-    /// Interactive market scan — GET `/api/scan`.  The server budget is 20s.
+    /// Interactive market scan — GET `/api/scan`.  The server budget is 35s.
+    /// Client wait is longer so a late seed/200 is not dropped as a dead table.
+    /// A 503 `scan_quotes_unavailable` body still carries scanned/quotes/warnings
+    /// so Scan can show the abort instead of "No Candidates."
     func marketScan() async throws -> MarketScanResponse {
-        try await get("/api/scan", retries: 0, timeout: 25)
+        var req = request(path: "/api/scan")
+        req.timeoutInterval = 50
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MobileAPIError.network(error)
+        }
+        if let http = response as? HTTPURLResponse, http.statusCode == 503 {
+            if let failed = try? JSONDecoder().decode(MarketScanResponse.self, from: data),
+               (failed.scannedSymbols ?? 0) > 0 || !failed.warnings.isEmpty {
+                throw MobileAPIError.scanQuotesUnavailable(failed)
+            }
+        }
+        try Self.requireSuccess(response, body: data)
+        do {
+            return try JSONDecoder().decode(MarketScanResponse.self, from: data)
+        } catch {
+            throw MobileAPIError.decoding(error)
+        }
     }
 
     func fullPolicy() async throws -> FullPolicy {
@@ -140,6 +174,14 @@ struct MobileAPIClient {
             body: ["settings": settings]
         )
         return try await sourceFeatures()
+    }
+
+    func llmBudget() async throws -> LlmBudgetResponse {
+        try await get("/api/settings/llm-budget")
+    }
+
+    func patchLlmBudget(_ body: [String: Any]) async throws -> LlmBudgetResponse {
+        try await sendJSON("/api/settings/llm-budget", method: "PATCH", body: body)
     }
 
     /// On-demand single-symbol quote + fundamentals for `SymbolInfoSheet` — GET
@@ -189,6 +231,13 @@ struct MobileAPIClient {
         var request = request(path: "/api/mobile/push/register", method: "DELETE")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["token": token])
+        _ = try await successfulResponseData(for: request)
+    }
+
+    func acceptAppConsent() async throws {
+        var request = request(path: "/api/mobile/consent", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["accepted": true])
         _ = try await successfulResponseData(for: request)
     }
 

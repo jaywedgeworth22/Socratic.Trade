@@ -20,6 +20,15 @@ import {
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
+import {
+  ALPACA_BROKERAGE_LABEL,
+  ALPACA_CONNECTED_TOAST_BROKERAGE,
+  ALPACA_CONNECTED_TOAST_PAPER,
+  ALPACA_PAPER_LABEL,
+  REALITY_PAPER_WORD,
+  TRADIER_PRODUCTION_LABEL,
+  TRADIER_SANDBOX_LABEL
+} from "@/lib/guardrail-copy";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
 import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X, Info } from "lucide-react";
 import {
@@ -319,7 +328,7 @@ export function BrokerAccountsCard() {
               >
                 {busy === account.id ? "Loading…" : r.tone === "paper" ? (
                   <>
-                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[length:var(--con-fs-2xs)] leading-tight uppercase font-semibold">PAPER</Chip>
+                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[length:var(--con-fs-2xs)] leading-tight lowercase font-medium">{REALITY_PAPER_WORD}</Chip>
                   </>
                 ) : r.tone === "live" ? (
                   <>
@@ -602,7 +611,7 @@ function AlpacaConnectSheet({
         apiSecret: apiSecret.trim() || undefined,
         taxationType: taxationType || undefined
       });
-      toast.push("pos", "Alpaca account connected", inferredPaper ? "Connected as Alpaca PAPER Account (NOT Real Money)." : "Connected as a brokerage account.");
+      toast.push("pos", "Alpaca account connected", inferredPaper ? ALPACA_CONNECTED_TOAST_PAPER : ALPACA_CONNECTED_TOAST_BROKERAGE);
       setLabel("");
       setAccountNumber("");
       setApiKey("");
@@ -623,7 +632,7 @@ function AlpacaConnectSheet({
           Paste the API key pair from your Alpaca dashboard. Paper accounts are inferred from the credentials
           (&quot;PA…&quot; account numbers and &quot;PK…&quot; keys are paper) — currently reading as{" "}
           <span className={inferredPaper ? "font-bold text-[color:var(--con-paper)]" : "font-bold text-[color:var(--con-accent)]"}>
-            {inferredPaper ? "Alpaca PAPER Account (NOT Real Money)" : "Brokerage Account"}
+            {inferredPaper ? ALPACA_PAPER_LABEL : ALPACA_BROKERAGE_LABEL}
           </span>
           . Credentials are stored server-side and never shown again.
         </p>
@@ -768,7 +777,7 @@ function TradierConnectSheet({
           against Tradier&apos;s sandbox and a production token only against the live API, so you
           choose the environment explicitly — currently reading as{" "}
           <span className={isLive ? "font-bold text-[color:var(--con-accent)]" : "font-bold text-[color:var(--con-paper)]"}>
-            {isLive ? "Tradier Production (LIVE — Real Money)" : "Tradier Sandbox (Paper — NOT Real Money)"}
+            {isLive ? TRADIER_PRODUCTION_LABEL : TRADIER_SANDBOX_LABEL}
           </span>
           . The token is stored server-side and never shown again.
         </p>

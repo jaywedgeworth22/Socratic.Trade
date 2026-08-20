@@ -1,10 +1,14 @@
 import { peekBrokerMutationLease } from "./account-mutation";
 import { describeCancelDustRisk, shouldAlertCancelDustRisk } from "./broker-minimum-guard";
 import { isWorkingOrderState } from "./broker-held-orders";
-import { audit, getPolicy } from "./db";
+import { audit, deleteBrokerProtectiveStop, getPolicy, listBrokerProtectiveStops } from "./db";
 import { getBrokerGateway } from "./broker";
 import { emitDashboardEvent } from "./events";
 import { normalizeSymbol } from "./money";
+import {
+  isAppManagedProtectiveStopClientOrderId,
+  recordOwnerCancelledProtectiveStop
+} from "./order-provenance";
 import { sendNotification } from "./notifications";
 import type { BrokerGateway, EquityOrder, ExecutedOrder, TradingPolicy } from "./types";
 
@@ -196,6 +200,22 @@ export async function cancelWorkingOrder(input: CancelWorkingOrderInput): Promis
   // ADVISORY ONLY — the cancel always executes regardless of `dust`. Cancel is the operator's
   // emergency lever and must never be blocked or delayed by this warning.
   const result = await gateway.cancelEquityOrder(policy.accountNumber, orderId);
+  const cancelledSymbol = lookup.order ? normalizeSymbol(lookup.order.symbol) : undefined;
+  const managedStopRow = listBrokerProtectiveStops(policy.accountNumber, userId).find((row) => row.brokerOrderId === orderId);
+  const managedStopClientOrderId = lookup.order?.clientOrderId;
+  if (
+    cancelledSymbol
+    && (managedStopRow || isAppManagedProtectiveStopClientOrderId(managedStopClientOrderId))
+  ) {
+    recordOwnerCancelledProtectiveStop(userId, policy.accountNumber, cancelledSymbol);
+    if (managedStopRow) deleteBrokerProtectiveStop(managedStopRow.id, userId);
+    audit(
+      "owner_cancelled_protective_stop",
+      { accountNumber: policy.accountNumber, orderId, symbol: cancelledSymbol, source, brokerStopRowId: managedStopRow?.id },
+      userId,
+      policy.connectedAccountId
+    );
+  }
   audit("order_cancel", { accountNumber: policy.accountNumber, orderId, result, source }, userId);
   emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { orderId, action: "cancel" } });
   if (dust && shouldAlertCancelDustRisk(userId, policy.accountNumber, dust.symbol)) {
@@ -208,6 +228,5 @@ export async function cancelWorkingOrder(input: CancelWorkingOrderInput): Promis
       { policy, userId }
     );
   }
-  const symbol = lookup.order ? normalizeSymbol(lookup.order.symbol) : undefined;
-  return { ...result, ...(dust ? { dustWarning: dust.warning } : {}), ...(symbol ? { symbol } : {}) };
+  return { ...result, ...(dust ? { dustWarning: dust.warning } : {}), ...(cancelledSymbol ? { symbol: cancelledSymbol } : {}) };
 }

@@ -398,9 +398,16 @@ export function mergeStrategyDirectiveBlock(currentPrompt: string, id: string, v
  */
 export function applyApprovedPending(pending: LearnedContextPendingRow, assertedAt: string = new Date().toISOString()): void {
   if (pending.riskTier === "strategy-directive") {
-    const current = getStrategyPrompt(pending.userId);
+    // Read AND write the prompt of the account this directive was queued against — the same
+    // pending.connectedAccountId the risk-tier branch below persists. Omitting it made both calls
+    // resolve to whichever account was active in the console at approval time, so the daily
+    // learning review (a RUN, src/lib/learning-review.ts) could append account A's approved
+    // directive onto account B's strategy prompt. A null id is a genuinely user-level directive
+    // and keeps the existing active-account behavior.
+    const accountId = pending.connectedAccountId ?? undefined;
+    const current = getStrategyPrompt(pending.userId, accountId);
     const merged = mergeStrategyDirectiveBlock(current, pending.id, pending.value, assertedAt);
-    setStrategyPrompt(merged, pending.userId);
+    setStrategyPrompt(merged, pending.userId, accountId);
     return;
   }
 

@@ -71,6 +71,9 @@ describe("pinecone monthly write-unit breaker", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete process.env.PINECONE_TRIAL_ENDS_AT;
+    delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
+    delete process.env.PINECONE_MONTHLY_WU_BUDGET;
   });
 
   it("detects ONLY the monthly WU exhaustion error shape", async () => {
@@ -138,6 +141,23 @@ describe("pinecone monthly write-unit breaker", () => {
     const again = await storeContexts([doc], "local");
     expect(again.wuExhausted).toBe(true);
     expect(await auditCount("pinecone_wu_gate_skip")).toBe(1);
+  });
+
+  it("does not latch a Starter 2M monthly-WU 429 while the Standard trial is active", async () => {
+    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { tripPineconeWuBreaker, pineconeWuExhaustedUntil, PINECONE_WU_EXHAUSTED_UNTIL_KEY } =
+      await loadBreaker();
+    const { setInternalSetting } = await import("../src/lib/db");
+    setInternalSetting(PINECONE_WU_EXHAUSTED_UNTIL_KEY, "2026-09-01T00:00:00.000Z");
+    const augNow = Date.UTC(2026, 7, 17, 16, 0, 0);
+    expect(pineconeWuExhaustedUntil(augNow)).toBeNull();
+    const res = await tripPineconeWuBreaker({ message: PROD_WU_ERROR, operation: "upsert" }, augNow);
+    expect(res.tripped).toBe(false);
+    expect(pineconeWuExhaustedUntil(augNow)).toBeNull();
+    expect(mocks.alertStorageWarning).not.toHaveBeenCalled();
+    delete process.env.PINECONE_TRIAL_ENDS_AT;
+    delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
   });
 
   it("clears the marker eagerly on a successful Pinecone WRITE, but never on reads", async () => {

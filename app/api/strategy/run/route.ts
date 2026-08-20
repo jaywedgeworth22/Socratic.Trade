@@ -13,7 +13,7 @@ import {
   LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE,
   LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE
 } from "@/lib/llm-required";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
@@ -70,9 +70,21 @@ export async function POST(request: Request) {
   // app restart and has a real run id the client can poll.  The route only kicks a worker;
   // scheduler ticks drain any queued request left behind by a crash/redeploy.
   const queued = queueStrategyRunRequest({ userId, manual: body?.manual === true });
-  void processPendingStrategyRunRequests({ limit: 1 }).catch((error) => {
-    console.error("[api/strategy/run] durable run worker kick failed:", error);
-  });
+  // Immediate kick starts gather/Green in this process.  `after()` keeps a
+  // second kick after the 202 so Next request teardown cannot leave a claimed
+  // `running` row with no worker (live Roth `9d71dda4`: drain only selected
+  // `queued`, so every later tick journaled skipped and Green never started).
+  const kick = (): void => {
+    void processPendingStrategyRunRequests({ limit: 1 }).catch((error) => {
+      console.error("[api/strategy/run] durable run worker kick failed:", error);
+    });
+  };
+  kick();
+  try {
+    after(kick);
+  } catch {
+    /* route unit tests call POST without a Next request scope */
+  }
   return NextResponse.json(
     {
       runId: queued.request.id,

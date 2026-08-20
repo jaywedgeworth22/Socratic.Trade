@@ -34,7 +34,10 @@ describe("source-settings", () => {
         "fmpFundamentalsDataEnabled",
         "WEB_SOURCE_SEC8K_FULL_BODY",
         "SEC_FILING_RAG_MAX_PER_RUN",
-        "RAG_EMBED_DISCLOSURES"
+        "RAG_EMBED_DISCLOSURES",
+        "RAG_RUN_BUDGET_ENABLED",
+        "RAG_RUN_BUDGET_CEILING",
+        "RAG_RUN_BUDGET_WINDOW_MS"
       ])
     );
   });
@@ -94,5 +97,15 @@ describe("source-settings", () => {
       RAG_MULTIQUERY: null,
       RAG_HYDE: null
     });
+  });
+
+  it("user override beats env for RAG run-budget knobs", () => {
+    process.env.RAG_RUN_BUDGET_CEILING = "5000";
+    process.env.RAG_RUN_BUDGET_ENABLED = "on";
+    expect(resolveSourceNumber("RAG_RUN_BUDGET_CEILING")).toBe(5000);
+    patchUserSourceSettings("local", { RAG_RUN_BUDGET_CEILING: 250, RAG_RUN_BUDGET_ENABLED: false });
+    expect(resolveSourceNumber("RAG_RUN_BUDGET_CEILING", "local")).toBe(250);
+    expect(resolveSourceBool("RAG_RUN_BUDGET_ENABLED", "local")).toBe(false);
+    patchUserSourceSettings("local", { RAG_RUN_BUDGET_CEILING: null, RAG_RUN_BUDGET_ENABLED: null });
   });
 });

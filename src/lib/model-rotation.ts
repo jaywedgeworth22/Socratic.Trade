@@ -75,6 +75,35 @@ export const DEAD_OPENROUTER_ROTATION_MODELS: readonly string[] = [
   "claude-fable-5"
 ];
 
+/**
+ * Catalog ids that exist on public /models but OpenRouter cannot serve as a
+ * first Green seat today (live 2026-08-18 Paper: gpt-5.6-terra →
+ * openai/gpt-5.6-terra HTTP 400 "Provider returned error", 881ms).  They stay
+ * in the rotation pool and implicit failover tail.  They must not win the
+ * first pick while Gemini Flash / Mistral Medium class seats remain.
+ */
+export const UNSERVABLE_OPENROUTER_FIRST_PICKS: readonly string[] = [
+  "gpt-5.6-terra"
+];
+
+/** Seats that completed before the 404 week and that #2829 unblocked. */
+export const PREFERRED_GREEN_FAILOVER_SEATS: readonly string[] = [
+  "gemini-flash-latest",
+  "mistral-medium-latest",
+  "gemini-flash-lite-latest",
+  "mistral-small-latest"
+];
+
+export function isUnservableOpenRouterFirstPick(model: string): boolean {
+  return UNSERVABLE_OPENROUTER_FIRST_PICKS.includes(model);
+}
+
+/** First-pick pool: drop unservable slugs when any better seat remains. */
+export function greenFirstPickPool(pool: readonly string[]): string[] {
+  const preferred = pool.filter((model) => !isUnservableOpenRouterFirstPick(model));
+  return preferred.length > 0 ? preferred : [...pool];
+}
+
 export function isDeadOpenRouterRotationModel(model: string): boolean {
   return DEAD_OPENROUTER_ROTATION_MODELS.includes(model);
 }
@@ -82,6 +111,33 @@ export function isDeadOpenRouterRotationModel(model: string): boolean {
 /** Credential pool after dropping known-dead slugs. Used when /models/user is down. */
 export function applyRotationAvailabilityFailOpen(credentialPool: readonly string[]): string[] {
   return credentialPool.filter((model) => !isDeadOpenRouterRotationModel(model));
+}
+
+/**
+ * Keep catalog models whose `/models/user` row matches (alias/version-aware).
+ * Known-dead slugs stay dropped.  If the allowlist would empty an otherwise
+ * usable credential pool, fail OPEN to that pool minus the dead slugs — a
+ * successful list that omitted `*-latest` aliases must not abort rotation.
+ */
+export function applyRotationUserModelAllowlist(
+  credentialPool: readonly string[],
+  modelIds: ReadonlySet<string>
+): { pool: string[]; skipped: string[]; emptiedByAllowlist: boolean } {
+  const matched: string[] = [];
+  const skipped: string[] = [];
+  for (const model of credentialPool) {
+    if (isDeadOpenRouterRotationModel(model)) {
+      skipped.push(model);
+      continue;
+    }
+    if (isOpenRouterModelAvailable(model, modelIds)) matched.push(model);
+    else skipped.push(model);
+  }
+  const usable = applyRotationAvailabilityFailOpen(credentialPool);
+  if (matched.length === 0 && usable.length > 0) {
+    return { pool: usable, skipped: credentialPool.filter((model) => isDeadOpenRouterRotationModel(model)), emptiedByAllowlist: true };
+  }
+  return { pool: matched, skipped, emptiedByAllowlist: false };
 }
 
 export const MODEL_ROTATION_POOL: readonly string[] = [
@@ -123,14 +179,21 @@ export const ROTATION_REPRESENTED_WEIGHT = 1;
 export const ROTATION_IMPLICIT_GREEN_FAILOVERS = 2;
 
 /** Other rotation-pool models to try after a rotating Green primary, excluding the pick
- *  and any owner-configured fallbacks.  Order follows the curated pool (provider-interleaved). */
+ *  and any owner-configured fallbacks.  Prefer Gemini Flash / Mistral Medium class
+ *  seats; demote slugs OpenRouter cannot serve as a first pick to the tail. */
 export function implicitGreenRotationFallbacks(
   pool: readonly string[],
   primary: string,
   explicit: readonly string[] = []
 ): string[] {
   const taken = new Set([primary, ...explicit].map((m) => m.trim()).filter(Boolean));
-  return pool.filter((model) => !taken.has(model)).slice(0, ROTATION_IMPLICIT_GREEN_FAILOVERS);
+  const remaining = pool.filter((model) => !taken.has(model));
+  const preferred = PREFERRED_GREEN_FAILOVER_SEATS.filter((model) => remaining.includes(model));
+  const otherReady = remaining.filter(
+    (model) => !PREFERRED_GREEN_FAILOVER_SEATS.includes(model) && !isUnservableOpenRouterFirstPick(model)
+  );
+  const demoted = remaining.filter((model) => isUnservableOpenRouterFirstPick(model));
+  return [...preferred, ...otherReady, ...demoted].slice(0, ROTATION_IMPLICIT_GREEN_FAILOVERS);
 }
 /** Trailing window for representation counts — safely inside the 90-day audit_events retention
  *  (`model_rotation_pick` is not an observability-pruned kind; src/lib/audit-prune.ts). */
@@ -211,7 +274,6 @@ export interface EligibleRotationPool {
 }
 
 export async function eligibleRotationPool(userId: string): Promise<EligibleRotationPool> {
-  const pool: string[] = [];
   const skipped: string[] = [];
   const isTest = process.env.NODE_ENV === "test";
   const credentialPool: string[] = [];
@@ -245,11 +307,13 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
     };
   }
   if (availability.status === "available") {
-    for (const model of credentialPool) {
-      if (isOpenRouterModelAvailable(model, availability.modelIds)) pool.push(model);
-      else skipped.push(model);
-    }
-    return { pool, skipped, availability: "checked" };
+    const allowlist = applyRotationUserModelAllowlist(credentialPool, availability.modelIds);
+    return {
+      pool: allowlist.pool,
+      skipped: [...skipped, ...allowlist.skipped],
+      availability: "checked",
+      ...(allowlist.emptiedByAllowlist ? { availabilityError: "allowlist_emptied_pool" } : {})
+    };
   }
   return { pool: credentialPool, skipped, availability: "not_checked" };
 }
@@ -368,10 +432,11 @@ export async function resolveModelRotationForRun(input: {
       };
     }
     const random = input.random ?? Math.random;
+    const greenPickCandidates = greenFirstPickPool(pool);
     const greenPick = rotateGreen
       ? weightedRotationPick({
-          pool,
-          counts: rotationSeatRepresentation(input.userId, input.accountId, "green", pool),
+          pool: greenPickCandidates,
+          counts: rotationSeatRepresentation(input.userId, input.accountId, "green", greenPickCandidates),
           random
         })
       : undefined;
@@ -419,7 +484,10 @@ export async function resolveModelRotationForRun(input: {
             weight: pick.weight,
             representation: pick.representation,
             poolSize: pool.length,
-            skippedNoCredential: skipped
+            skipped,
+            skippedNoCredential: skipped,
+            availability,
+            availabilityError
           },
           input.userId,
           input.accountId

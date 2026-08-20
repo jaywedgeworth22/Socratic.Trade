@@ -38,7 +38,7 @@ export interface StrategyDecisionLike {
     | "skipped_market_closed"
     | "skipped_broker_unhealthy";
   summary: string;
-  proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
+  proposals: Array<{ id?: string; proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: {
     topCandidates: Array<{ symbol: string; companyName?: string }>;
     quotesBySymbol?: Record<string, { symbol: string; companyName?: string }>;

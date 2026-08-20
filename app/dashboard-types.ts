@@ -46,7 +46,7 @@ export interface StrategyDecision {
     | "skipped_market_closed"
     | "skipped_broker_unhealthy";
   summary: string;
-  proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
+  proposals: Array<{ id?: string; proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string;
 }

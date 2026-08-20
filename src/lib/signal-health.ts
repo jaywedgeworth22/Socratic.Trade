@@ -15,6 +15,7 @@
 // consumer: while an alarm is active it caps conviction upside in strategy-risk.ts with a
 // dataAdjustments receipt; off, the alarm only notifies/logs.
 import { spearmanRankIC } from "./backtest";
+import { OOS_ROUND_TRIP_COST_BPS } from "./execution-cost";
 import {
   listSignalHealthDecisionRows,
   listSignalHealthSnapshots,
@@ -29,8 +30,8 @@ import { marketDateOf } from "./market-calendar";
 export const SIGNAL_HEALTH_MIN_OBSERVATIONS = 20;
 /** Outcome horizons the monitor snapshots (daily lane; intraday horizons are too noisy here). */
 export const SIGNAL_HEALTH_HORIZONS = ["1d", "1w"] as const;
-/** Round-trip transaction cost estimate in bps — mirrors backtest.ts's OOS default (10 bps/leg). */
-export const SIGNAL_HEALTH_COST_ROUND_TRIP_BPS = 20;
+/** Round-trip transaction cost estimate in bps — same named OOS / paper constant. */
+export const SIGNAL_HEALTH_COST_ROUND_TRIP_BPS = OOS_ROUND_TRIP_COST_BPS;
 /** Top-K decision set size for the consecutive-day churn diagnostic. */
 export const SIGNAL_HEALTH_TOP_K = 3;
 const QUANTILE_COUNT = 5;

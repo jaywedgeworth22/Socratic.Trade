@@ -58,13 +58,38 @@ export interface TaxSummary {
   ledgerMismatchedSymbols?: string[];
 }
 
+export function isIraTaxationType(taxationType?: TaxationType): boolean {
+  return taxationType === "roth_ira" || taxationType === "traditional_ira";
+}
+
+/** Prefer the ConnectedAccount row's taxationType over policy taxSettings (dashboard + strategy). */
+export function overlayAccountTaxationType(
+  settings: Partial<TaxSettings> | undefined,
+  accountTaxationType?: TaxationType
+): Partial<TaxSettings> {
+  return {
+    ...(settings ?? {}),
+    taxationType: accountTaxationType ?? settings?.taxationType
+  };
+}
+
+/** When `subtractFromResults` is on, show realized P&L net of estimated tax liability. */
+export function realizedPnlNetOfEstimatedTax(
+  realized: number | undefined,
+  estimatedTaxLiability: number | undefined,
+  subtractFromResults: boolean
+): number | undefined {
+  if (typeof realized !== "number" || !subtractFromResults) return realized;
+  return Number((realized - (estimatedTaxLiability ?? 0)).toFixed(2));
+}
+
 export function resolveTaxSettings(settings?: Partial<TaxSettings>): TaxSettings {
   const merged = { ...DEFAULT_TAX_SETTINGS, ...(settings ?? {}) };
-  // Tax-sheltered IRAs: no annual capital-gains tax, and the IRC §1091 wash-sale lockout has no
-  // benefit within the account — so zero the rates and disable the per-account guard. (A loss in a
-  // TAXABLE account still locks rebuys across all accounts; that is enforced separately via
-  // getWashSaleLockedSymbolsForUser, not this per-account flag.)
-  if (merged.taxationType === "roth_ira" || merged.taxationType === "traditional_ira") {
+  // Tax-sheltered IRAs: no annual capital-gains tax, no deductible loss to harvest, and the
+  // IRC §1091 wash-sale lockout has no benefit within the account — so zero the rates and disable
+  // the per-account guard. (A loss in a TAXABLE account still locks rebuys across all accounts;
+  // that is enforced separately via getWashSaleLockedSymbolsForUser, not this per-account flag.)
+  if (isIraTaxationType(merged.taxationType)) {
     return { ...merged, washSaleGuard: false, shortTermRatePct: 0, longTermRatePct: 0 };
   }
   return merged;
@@ -183,7 +208,7 @@ export interface AccountTaxContext {
 export function getWashSaleLockProvenanceForUser(accounts: AccountTaxContext[], now = new Date(), userId: string = "local"): WashSaleLockMap {
   const locked: WashSaleLockMap = new Map();
   for (const acct of accounts) {
-    if (acct.taxationType === "roth_ira" || acct.taxationType === "traditional_ira") continue;
+    if (isIraTaxationType(acct.taxationType)) continue;
     if (!acct.accountNumber) continue;
     for (const [sym, lock] of getWashSaleLockProvenance(acct.accountNumber, acct.source, now, userId, undefined, acct.washSaleMinLossUsd)) {
       mergeWashSaleLock(locked, sym, lock);
@@ -371,24 +396,30 @@ export function getTaxSummary(
     })
     .sort((a, b) => a.daysToLongTerm - b.daysToLongTerm);
 
-  const harvestMap = new Map<string, { quantity: number; loss: number }>();
-  for (const lot of openLotsRaw) {
-    if (lot.side !== "long") continue;
-    const sym = normalizeSymbol(lot.symbol);
-    if (mismatched.has(sym)) continue; // wrong lots would suggest a wrong-size harvest
-    const price = currentPrices[sym];
-    if (!price || price <= 0) continue;
-    const unrealized = lot.quantity * (price - lot.entryPrice);
-    if (unrealized < 0) {
-      const cur = harvestMap.get(sym) ?? { quantity: 0, loss: 0 };
-      cur.quantity += lot.quantity;
-      cur.loss += unrealized;
-      harvestMap.set(sym, cur);
+  const harvestCandidates: HarvestCandidate[] = [];
+  // An IRA cannot deduct a realized loss, so "harvest candidates" are not a tax action here.
+  if (!isIraTaxationType(tax.taxationType)) {
+    const harvestMap = new Map<string, { quantity: number; loss: number }>();
+    for (const lot of openLotsRaw) {
+      if (lot.side !== "long") continue;
+      const sym = normalizeSymbol(lot.symbol);
+      if (mismatched.has(sym)) continue; // wrong lots would suggest a wrong-size harvest
+      const price = currentPrices[sym];
+      if (!price || price <= 0) continue;
+      const unrealized = lot.quantity * (price - lot.entryPrice);
+      if (unrealized < 0) {
+        const cur = harvestMap.get(sym) ?? { quantity: 0, loss: 0 };
+        cur.quantity += lot.quantity;
+        cur.loss += unrealized;
+        harvestMap.set(sym, cur);
+      }
     }
+    harvestCandidates.push(
+      ...Array.from(harvestMap.entries())
+        .map(([symbol, v]) => ({ symbol, quantity: v.quantity, unrealizedLoss: Number(v.loss.toFixed(2)) }))
+        .sort((a, b) => a.unrealizedLoss - b.unrealizedLoss)
+    );
   }
-  const harvestCandidates: HarvestCandidate[] = Array.from(harvestMap.entries())
-    .map(([symbol, v]) => ({ symbol, quantity: v.quantity, unrealizedLoss: Number(v.loss.toFixed(2)) }))
-    .sort((a, b) => a.unrealizedLoss - b.unrealizedLoss);
 
   return {
     taxYear,

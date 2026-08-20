@@ -124,7 +124,7 @@ function estimateRagCost(
 // ── Approximate token counting ───────────────────────────────────────────────
 
 /** Crude token estimate from UTF-8 text length (Voyage uses a tokenizer; this is still approximate). */
-function approxTokens(texts: string[]): number {
+export function approxTokens(texts: string[]): number {
   return texts.reduce((sum, t) => sum + Math.max(1, Math.ceil(Buffer.byteLength(t, "utf8") / 4)), 0);
 }
 

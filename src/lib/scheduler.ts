@@ -18,12 +18,13 @@ import { runProviderTierCheckIfDue } from "./provider-tier";
 import { refreshLitestreamRemoteInventoryIfDue } from "./litestream-remote-inventory";
 import { runR2UsageCheckIfDue, runR2UsageDailyDigestIfDue } from "./r2-usage";
 import { maybeAdvisePineconeTrialRollback } from "./pinecone-trial-window";
+import { pineconeWuExhaustedUntil } from "./pinecone-wu-breaker";
 import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
-import { markStaleRunningRuns } from "./db-execution";
+import { hasInFlightStrategyWork, markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
@@ -413,7 +414,8 @@ export function startScheduler(): void {
 }
 
 async function tick(): Promise<void> {
-  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill.
+  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill,
+  // and close the matching strategy_run_requests row so Manual Run once is not left locked.
   // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
   // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
   try {
@@ -559,6 +561,11 @@ async function tick(): Promise<void> {
 
   void journalLane("pinecone-trial-rollback", {}, () => maybeAdvisePineconeTrialRollback())
     .catch((err) => console.error("[scheduler] pinecone trial rollback error:", err));
+  // Cheap: while the Standard trial is open, drop a leftover Starter 2M monthly-WU marker
+  // so ingest is not parked behind a free-tier latch the write-success path can never clear.
+  void journalLane("pinecone-wu-breaker-trial-clear", {}, async () => {
+    pineconeWuExhaustedUntil();
+  }).catch((err) => console.error("[scheduler] pinecone wu-breaker trial-clear error:", err));
 
   // Daily R2 free-tier digest (owner opt-in 2026-07-31): fresh check + notify()
   // summary of MTD usage and month-end pace, whether or not anything crossed.
@@ -627,7 +634,7 @@ async function tick(): Promise<void> {
   // Prefer this over free EarningsCalls previews when the ROIC individual plan is configured.
   // Holdings → watchlist, last N fiscal quarters, cap ROIC_TRANSCRIPTS_MAX_PER_RUN.
   // Library helpers existed earlier without a scheduler caller — that left zero ROIC saves.
-  if (isRoicTranscriptRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
+  if (isRoicTranscriptRefreshDue() && !hasInFlightStrategyWork() && checkMonthlyLlmSpendCeiling().ok) {
     void journalLane("roic-transcript-refresh", {}, () => refreshRoicTranscriptsIfDue()).catch((err) =>
       console.error("[scheduler] roic transcript refresh error:", err instanceof Error ? err.message : err)
     );
@@ -713,7 +720,11 @@ async function tick(): Promise<void> {
     .then(({ processPendingStrategyRunRequests }) =>
       journalLane("strategy-run-drain", {}, async () => {
         const result = await processPendingStrategyRunRequests({ limit: 1 });
-        return { status: result.processed > 0 ? ("ok" as const) : ("skipped" as const), summary: `processed=${result.processed}` };
+        const working = result.processed > 0 || result.liveRunning > 0;
+        return {
+          status: working ? ("ok" as const) : ("skipped" as const),
+          summary: `processed=${result.processed} adopted=${result.adopted} live=${result.liveRunning}`
+        };
       })
     )
     .catch((err) => console.error("[scheduler] strategy-run worker error:", err));

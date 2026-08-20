@@ -118,6 +118,7 @@ final class MobileStore: ObservableObject {
     @Published private(set) var pendingAccountId: String?
     @Published private(set) var deletionRequest: AccountDeletionRequest?
     @Published private(set) var isDeletingAccount = false
+    @Published private(set) var isAcceptingConsent = false
     @Published private(set) var isSigningIn = false
     @Published private(set) var snapshotLoadFailed = false
     /// proposalId → queued command id so cards can follow approve/reject through recentCommands.
@@ -499,6 +500,31 @@ final class MobileStore: ObservableObject {
         try await client.patchSourceFeatures(settings)
     }
 
+    func fetchLlmBudget() async throws -> LlmBudgetResponse {
+        try await client.llmBudget()
+    }
+
+    func patchLlmBudget(_ body: [String: Any]) async throws -> LlmBudgetResponse {
+        try await client.patchLlmBudget(body)
+    }
+
+    var needsAppConsent: Bool {
+        snapshot?.readiness.requiresAppConsent == true
+    }
+
+    func acceptAppConsent() async {
+        guard !isAcceptingConsent else { return }
+        isAcceptingConsent = true
+        defer { isAcceptingConsent = false }
+        do {
+            try await client.acceptAppConsent()
+            error = nil
+            await load()
+        } catch {
+            applyAuthAwareError(error)
+        }
+    }
+
     func loadAccountDeletionPreview() async {
         guard !isDeletingAccount else { return }
         isDeletingAccount = true
@@ -669,7 +695,7 @@ final class MobileStore: ObservableObject {
     private func shouldReleaseCommandAttempt(after error: Error) -> Bool {
         guard let apiError = error as? MobileAPIError else { return false }
         switch apiError {
-        case .serverError, .unauthorized:
+        case .serverError, .unauthorized, .scanQuotesUnavailable:
             return true
         case .network, .decoding:
             return false
@@ -678,14 +704,14 @@ final class MobileStore: ObservableObject {
 
     private func unavailableMessage(for commandType: String) -> String {
         if !serverAdvertises(commandType) {
-            return "This server build does not offer \(AppFormat.commandLabel(commandType)).  Use the web console for it."
+            return "This version cannot run \(AppFormat.commandLabel(commandType)) yet."
         }
         if Self.readinessDependentCommands.contains(commandType),
            let snapshot,
            !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
             return "Connect an account and configure a symbol universe before running the agent."
         }
-        return "Refresh the latest server state before submitting this action.  Stop remains available."
+        return "Pull to refresh, then try again.  Stop remains available."
     }
 
     private static let protectiveCommands: Set<String> = [

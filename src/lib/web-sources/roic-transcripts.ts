@@ -15,6 +15,7 @@
 
 import { fetchWithRetry } from "../data-providers";
 import { audit } from "../db";
+import { hasInFlightStrategyWork, shouldDeferBackgroundRagForStrategy } from "../db-execution";
 import {
   getUserApiKey,
   LOCAL_USER,
@@ -38,6 +39,9 @@ import {
 } from "../roic-transcripts-gate";
 import { resolveSourceNumber } from "../source-settings";
 import { rankDemandFirstSymbols, rankHighInterestSymbols } from "../rag/demand-first-symbols";
+import { chunkDocument } from "../rag/chunk";
+import { storeSignalSectionDocuments } from "../rag/processed-corpus-write";
+import { yieldEventLoop } from "../slow-sync-guard";
 import { hasPineconeWriteBudget, storeDocument } from "../vector-db";
 
 export { ROIC_TRANSCRIPT_DOC_TYPE, ROIC_TRANSCRIPT_SOURCE, roicTranscriptsKillSwitchOn };
@@ -271,6 +275,8 @@ export interface RoicTranscriptRefreshResult {
   enabled: boolean;
   remaining: number;
   phase: RoicIngestPhase;
+  /** Walk paused so a Manual Run once / strategy run can reach Green. */
+  pausedForStrategyRun?: boolean;
 }
 
 const roicRefreshHost = globalThis as unknown as {
@@ -655,8 +661,39 @@ export async function ingestRoicTranscriptToRag(
   }
 
   const summaryOk = await storeRoicEarningsSummary(transcript, accession, published, observed);
+  const signalChunks = chunkDocument(
+    {
+      doc_id: `${doc_id}:signal`,
+      title,
+      doc_type: ROIC_TRANSCRIPT_DOC_TYPE,
+      source: ROIC_TRANSCRIPT_SOURCE,
+      text: transcript.content,
+      ticker: transcript.symbol,
+      published_at: published,
+      acceptance_datetime: observed,
+      sections: speakerSections(transcript)
+    },
+    {}
+  );
+  const signal = await storeSignalSectionDocuments(
+    {
+      ticker: transcript.symbol,
+      accession,
+      form: "earnings-transcript",
+      title,
+      publishedAt: published,
+      acceptanceDatetime: observed,
+      source: ROIC_TRANSCRIPT_SOURCE,
+      chunks: signalChunks,
+      userId: userId ?? "local"
+    },
+    storeDocument
+  );
   if (writeClass === "highlight-only" && summaryOk) {
-    insertIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE, transcript.symbol, 8);
+    insertIngestedAccession(accession, ROIC_TRANSCRIPT_DOC_TYPE, transcript.symbol, 8 + signal.indexed, {
+      pineconeWriteClass: "highlight-only",
+      pineconeVectorCount: 8 + signal.indexed
+    });
   }
 
   const ragOk = writeClass === "full-body" ? fullBodyOk : summaryOk;
@@ -714,6 +751,19 @@ export async function refreshRoicTranscriptsIfDue(options?: {
   };
   if (!enabled) return base;
   if (!options?.force && !isRoicTranscriptRefreshDue(now)) return base;
+  if (
+    shouldDeferBackgroundRagForStrategy({
+      strategyWorkInFlight: hasInFlightStrategyWork(),
+      force: options?.force
+    })
+  ) {
+    return {
+      ...base,
+      due: true,
+      remaining: readRoicCursor()?.queue.length ?? 0,
+      pausedForStrategyRun: true
+    };
+  }
   if (!options?.force && roicRefreshHost.__roicTranscriptRefreshInFlight) {
     return {
       ...base,
@@ -793,6 +843,17 @@ async function runRoicTranscriptRefresh(
   const walkQueue = async (): Promise<void> => {
     const depth = roicDepthForPhase(phase, options?.userId);
     while (queue.length > 0 && remainingBudget > 0) {
+      await yieldEventLoop();
+      if (
+        shouldDeferBackgroundRagForStrategy({
+          strategyWorkInFlight: hasInFlightStrategyWork(),
+          force: options?.force
+        })
+      ) {
+        writeRoicCursor(queue, nowIso, phase);
+        base.pausedForStrategyRun = true;
+        return;
+      }
       const symbol = queue[0]!;
       let index: RoicCallIndexRow[] = [];
       try {
@@ -812,6 +873,17 @@ async function runRoicTranscriptRefresh(
 
       let symbolDone = true;
       for (let periodIndex = 0; periodIndex < periods.length; periodIndex++) {
+        await yieldEventLoop();
+        if (
+          shouldDeferBackgroundRagForStrategy({
+            strategyWorkInFlight: hasInFlightStrategyWork(),
+            force: options?.force
+          })
+        ) {
+          writeRoicCursor(queue, nowIso, phase);
+          base.pausedForStrategyRun = true;
+          return;
+        }
         const period = periods[periodIndex]!;
         const accession = roicTranscriptAccession(symbol, period.year, period.quarter);
         const writeClass = roicPineconeWriteClass({

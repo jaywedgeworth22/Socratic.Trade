@@ -30,19 +30,21 @@ export const FTS_MIRROR_HEARTBEAT_MS = 20_000;
 
 /**
  * Max chunks the worker may write across one embed_queued tick.
- * Chosen so production incident latency stays inside the tick wall budget:
- * 20 * (279522 / 933) = 5991.9ms <= 6000ms.
+ * Kept small so one tick cannot occupy the serving event loop for the
+ * dashboard getAccounts first wait (live ftsMirrorSlice logs were 6–12s
+ * under the old 20-chunk / 6000ms cap).
  */
-export const FTS_MIRROR_MAX_CHUNKS_PER_TICK = 20;
+export const FTS_MIRROR_MAX_CHUNKS_PER_TICK = 6;
 
 /** Hard wall-clock budget for FTS work per embed_queued tick. */
-export const FTS_MIRROR_TICK_BUDGET_MS = 6_000;
+export const FTS_MIRROR_TICK_BUDGET_MS = 2_000;
 
 /**
  * Inner feed size so the tick can re-check the wall clock between calls.
- * Matches `insertDocumentChunkFtsBatch`'s starting group size.
+ * 1 = one FTS row, then yield.  The old 8-row first group is what pinned
+ * the loop for 6–12s before any yield (250ms stretch only adapts after).
  */
-export const FTS_MIRROR_INNER_GROUP = 8;
+export const FTS_MIRROR_INNER_GROUP = 1;
 
 export type FtsMirrorStopReason = "done" | "max-chunks" | "tick-budget" | "none";
 
@@ -124,8 +126,23 @@ export function planFtsMirrorSlice(input: {
   }
 
   const remainingBudgetMs = tickBudget - elapsed;
+  // Do not start a slice that is expected to blow the remaining budget.
+  // Math.max(1, floor(...)) was the 6–12s overshoot: 1ms remaining still
+  // scheduled a chunk that could take hundreds of ms to seconds.
   const budgetChunks =
-    msPerChunk > 0 ? Math.max(1, Math.floor(remainingBudgetMs / msPerChunk)) : remaining;
+    msPerChunk > 0 ? Math.floor(remainingBudgetMs / msPerChunk) : remaining;
+  if (budgetChunks <= 0) {
+    return {
+      offset,
+      end: offset,
+      chunkCount: 0,
+      remainingAfter: remaining,
+      complete: false,
+      stopReason: "tick-budget",
+      worstCaseSyncStretchMs,
+      worstCaseTickWallMs: elapsed
+    };
+  }
   const chunkCount = Math.min(remaining, maxChunks - doneThisTick, budgetChunks, inner);
   const end = offset + chunkCount;
   const remainingAfter = total - end;

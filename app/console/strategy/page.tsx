@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Lock, Unlock } from "lucide-react";
-import type { LlmReasoningEffort, ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
+import type { ConnectedAccount, LlmReasoningEffort, ScoringWeights, StrategyProfile, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
 import { isDisallowedInteractiveStrategyReasoningConfig, reasoningCapabilityForModel } from "@/lib/llm-request";
 import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/lib/model-reasoning-recommendations";
 import type { DashboardSnapshot } from "../../dashboard-types";
@@ -30,11 +30,14 @@ import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED, 
 import {
   activateProfile,
   copyProfileToAccount,
+  createProfile,
+  deleteProfile,
   fetchLatestTuneReview,
   importAccountSettings,
   resolveTuneReview,
   savePolicy,
   tuneStrategy,
+  updateProfile,
   ConsoleApiError,
   type StrategyTuneResult
 } from "../lib/api";
@@ -927,64 +930,197 @@ function AccountScopedStrategyPage() {
           Applying a preset copies its policy, prompt, and weights onto the active account — copy, not link: later edits
           to the preset never follow. A preset can never start or stop the strategy; your run state is always preserved.
         </p>
-        {snapshot.profiles.length === 0 ? (
-          <Empty>No presets saved yet.</Empty>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {snapshot.profiles.map((profile) => {
-              // "applied" = what THIS account is running (policy.activeProfileId,
-              // stamped by the copy/apply path). Fall back to the library active
-              // flag only when the account has never had a preset applied.
-              const applied = policy.activeProfileId ? policy.activeProfileId === profile.id : profile.active;
-              return (
-                <div key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-[color:var(--con-line)] p-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{profile.name || EM_DASH}</span>
-                      {applied && <Chip tone="accent">applied here</Chip>}
-                    </div>
-                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                      updated <Ago iso={profile.updatedAt} />
-                    </div>
-                  </div>
-                  {!applied && (
-                    <Btn
-                      size="sm"
-                      disabled={busy !== null}
-                      onClick={async () => {
-                        setBusy(`profile-${profile.id}`);
-                        try {
-                          if (activeAccount) {
-                            // Preferred path: POST /api/profiles/[id]/copy — writes ONLY this
-                            // account's live strategy state and preserves its run-state and the
-                            // library active flag (applyProfileToAccount, server-enforced).
-                            await copyProfileToAccount(profile.id, activeAccount.id);
-                            toast.push("pos", `Applied “${profile.name}”`, "Copied onto this account. Run state unchanged.");
-                          } else {
-                            // No connected account (fresh local install): the copy route has no
-                            // target, so fall back to library activation of the base policy.
-                            await activateProfile(profile.id);
-                            toast.push("pos", `Activated “${profile.name}”`, "Applied as the base strategy for new account scope.");
-                          }
-                          await refresh();
-                        } catch (error) {
-                          toast.push("neg", "Preset not applied", error instanceof ConsoleApiError ? error.message : String(error));
-                        } finally {
-                          setBusy(null);
-                        }
-                      }}
-                    >
-                      {busy === `profile-${profile.id}` ? "Applying…" : "Apply to this account"}
-                    </Btn>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <PresetLibrary
+          profiles={snapshot.profiles}
+          policy={policy}
+          strategyPrompt={snapshot.strategyPrompt}
+          activeAccount={activeAccount}
+          busy={busy}
+          setBusy={setBusy}
+          refresh={refresh}
+        />
       </Card>
       </div>
     </div>
+  );
+}
+
+function PresetLibrary({
+  profiles,
+  policy,
+  strategyPrompt,
+  activeAccount,
+  busy,
+  setBusy,
+  refresh
+}: {
+  profiles: StrategyProfile[];
+  policy: TradingPolicy;
+  strategyPrompt: string;
+  activeAccount?: ConnectedAccount;
+  busy: string | null;
+  setBusy: (value: string | null) => void;
+  refresh: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  const createPreset = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setCreating(true);
+    try {
+      await createProfile({ name, prompt: strategyPrompt, policy, active: false });
+      setNewName("");
+      toast.push("pos", "Preset saved", `“${name}” captures this account’s current strategy.`);
+      await refresh();
+    } catch (error) {
+      toast.push("neg", "Preset not saved", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const applyPreset = async (profile: StrategyProfile) => {
+    setBusy(`profile-${profile.id}`);
+    try {
+      if (activeAccount) {
+        await copyProfileToAccount(profile.id, activeAccount.id);
+        toast.push("pos", `Applied “${profile.name}”`, "Copied onto this account. Run state unchanged.");
+      } else {
+        await activateProfile(profile.id);
+        toast.push("pos", `Activated “${profile.name}”`, "Applied as the base strategy for new account scope.");
+      }
+      await refresh();
+    } catch (error) {
+      toast.push("neg", "Preset not applied", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const commitRename = async (profile: StrategyProfile) => {
+    const name = renameDraft.trim();
+    setRenameId(null);
+    if (!name || name === profile.name) return;
+    setBusy(`rename-${profile.id}`);
+    try {
+      await updateProfile(profile.id, { name });
+      toast.push("pos", "Preset renamed", `Now “${name}”.`);
+      await refresh();
+    } catch (error) {
+      toast.push("neg", "Rename failed", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removePreset = async (profile: StrategyProfile) => {
+    if (!window.confirm(`Delete preset “${profile.name}”? This cannot be undone.`)) return;
+    setBusy(`delete-${profile.id}`);
+    try {
+      await deleteProfile(profile.id);
+      toast.push("pos", "Preset deleted", `“${profile.name}” removed from the library.`);
+      await refresh();
+    } catch (error) {
+      toast.push("neg", "Delete failed", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <div className="min-w-[12rem] flex-1">
+          <Field label="Save current as preset" htmlFor="new-preset-name">
+            <TextInput
+              id="new-preset-name"
+              value={newName}
+              placeholder="e.g. Momentum swing"
+              disabled={creating || busy !== null}
+              onChange={(event) => setNewName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void createPreset();
+              }}
+            />
+          </Field>
+        </div>
+        <Btn size="sm" disabled={creating || busy !== null || !newName.trim()} onClick={() => void createPreset()}>
+          {creating ? "Saving…" : "Create preset"}
+        </Btn>
+      </div>
+      {profiles.length === 0 ? (
+        <Empty>No presets saved yet.</Empty>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {profiles.map((profile) => {
+            const applied = policy.activeProfileId ? policy.activeProfileId === profile.id : profile.active;
+            const renaming = renameId === profile.id;
+            return (
+              <div key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-[color:var(--con-line)] p-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {renaming ? (
+                      <TextInput
+                        aria-label="Preset name"
+                        value={renameDraft}
+                        autoFocus
+                        disabled={busy !== null}
+                        className="max-w-xs"
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        onBlur={() => void commitRename(profile)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void commitRename(profile);
+                          if (event.key === "Escape") setRenameId(null);
+                        }}
+                      />
+                    ) : (
+                      <span className="font-semibold">{profile.name || EM_DASH}</span>
+                    )}
+                    {applied && <Chip tone="accent">applied here</Chip>}
+                  </div>
+                  <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                    updated <Ago iso={profile.updatedAt} />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {!applied && (
+                    <Btn size="sm" disabled={busy !== null} onClick={() => void applyPreset(profile)}>
+                      {busy === `profile-${profile.id}` ? "Applying…" : "Apply to this account"}
+                    </Btn>
+                  )}
+                  {!renaming && (
+                    <Btn
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy !== null}
+                      onClick={() => {
+                        setRenameId(profile.id);
+                        setRenameDraft(profile.name);
+                      }}
+                    >
+                      Rename
+                    </Btn>
+                  )}
+                  <Btn
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy !== null}
+                    onClick={() => void removePreset(profile)}
+                  >
+                    {busy === `delete-${profile.id}` ? "Deleting…" : "Delete"}
+                  </Btn>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }
 

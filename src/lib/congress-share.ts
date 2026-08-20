@@ -55,6 +55,7 @@ import { fetchGroupedDailyBarsRange } from "./market-signals/massive-s3";
 import { normalizeSymbol } from "./money";
 import type { MarketQuote, MarketScan } from "./types";
 import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSignals } from "./web-sources";
+import { fetchNasdaqScreenerResponse } from "./nasdaq-screener-fetch";
 const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf anchors per call — give it room
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
@@ -909,14 +910,8 @@ export async function runCongressDailyShare(
 }
 
 async function fetchNasdaqScreenerRefs(): Promise<CongressRef[]> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
-    const response = await fetch("https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0", {
-      cache: "no-store",
-      signal: controller.signal,
-      headers: { accept: "application/json", "user-agent": "Mozilla/5.0" }
-    });
+    const response = await fetchNasdaqScreenerResponse("congress-nasdaq-screener");
     if (!response.ok) return [];
     const payload = await response.json();
     const rows = Array.isArray(payload?.data?.table?.rows) ? payload.data.table.rows : [];
@@ -951,8 +946,6 @@ async function fetchNasdaqScreenerRefs(): Promise<CongressRef[]> {
   } catch (err) {
     console.error("[congress-share] failed to fetch screener refs:", err);
     return [];
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

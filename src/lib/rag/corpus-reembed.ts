@@ -372,7 +372,46 @@ function liveSecFilingCommittedInCurrentSpace(
       )
     LIMIT 1
   `).get(embedRevision, liveDocId, liveDocId, accession, accession, workerPrefix, workerPrefix);
-  return Boolean(row);
+  if (row) return true;
+  return processedCommitCoversAccession(symbol, accession, embedRevision);
+}
+
+/** Highlight / signal-section commits cover leftover FTS body rows.  No free-text CONTAINS. */
+export function processedCommitCoversAccession(
+  symbol: string,
+  accession: string,
+  embedRevision: string
+): boolean {
+  const sectionGlob = `*:${accession}:*:section:*`;
+  const sectionPrefixGlob = `${accession}:*:section:*`;
+  const abstractK = `abstract:10k-delta:${symbol}:${accession}`;
+  const abstractQ = `abstract:10q-delta:${symbol}:${accession}`;
+  const commit = getDb().prepare(`
+    SELECT 1 FROM vector_ingest_commits
+    WHERE embed_revision = ?
+      AND state = 'committed'
+      AND (
+        document_key GLOB ?
+        OR document_key GLOB ?
+        OR document_key = ?
+        OR document_key = ?
+        OR accession GLOB ?
+        OR accession GLOB ?
+      )
+    LIMIT 1
+  `).get(embedRevision, sectionGlob, sectionPrefixGlob, abstractK, abstractQ, sectionGlob, sectionPrefixGlob);
+  if (commit) return true;
+  try {
+    const ledger = getDb().prepare(`
+      SELECT 1 FROM ingested_accessions
+      WHERE accession = ?
+        AND pinecone_write_class IN ('highlight+signal', 'highlight-only')
+      LIMIT 1
+    `).get(accession);
+    return Boolean(ledger);
+  } catch {
+    return false;
+  }
 }
 
 async function reembedSecFilings(ctx: RunContext, state: DocTypeRunState): Promise<void> {

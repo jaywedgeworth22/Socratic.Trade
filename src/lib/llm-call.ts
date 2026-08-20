@@ -9,7 +9,7 @@
 // JSON, content-block responses). Centralizing the per-transport shaping here lets Claude be a
 // first-class Green/Red team model everywhere those sites run, instead of OpenAI-only.
 
-import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
+import { reasoningCapabilityForModel, withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
 import { getGitSha } from "./git-sha";
@@ -134,22 +134,47 @@ export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown
       err instanceof Error ? err.message : String(err)
     );
   }
-  // Independent of classifier telemetry: OpenRouter's default router will still pick a
-  // provider that does not advertise every parameter we send. GPT-5.4 nano's OpenAI
-  // endpoint (status -2 on 2026-08-17) lists `max_tokens` but not `max_completion_tokens`;
-  // we send the latter on reasoning chat-completions, so the call 400s as "Provider
-  // returned error" instead of failing over to healthy Azure. require_parameters skips
-  // incompatible endpoints; allow_fallbacks still lets a later healthy provider serve
-  // if the first preferred one dies. Always apply this, even when enrichment failed.
+}
+
+/**
+ * OpenRouter `require_parameters` (docs 2026-08-18, default false): when true,
+ * endpoints that do not advertise EVERY request field never receive the call,
+ * then chat/completions 404s "No endpoints found matching your request" in
+ * ~80ms.  `allow_fallbacks` only covers 5xx / rate-limit within a model — it
+ * does not revive that empty set.
+ *
+ * Coolify receipts 2026-08-18 (sha cda485ff, SELECT-only): Green 404'd valid
+ * public slugs `google/gemini-3.7-flash` (86ms) and `mistralai/mistral-medium-3-5`
+ * (82ms).  7d also `mistralai/mistral-small-2603`.  Those ids exist on
+ * /api/v1/models.  Live #2771 set require_parameters=true on every OpenRouter
+ * body; strategy also sends response_format + max_completion_tokens +
+ * classifier user/session_id/trace.  That is today's Green fail, not a missing
+ * tilde and not an account allowlist miss.
+ *
+ * Keep require_parameters only for the #2771 nano case: OpenAI reasoning models
+ * send `max_completion_tokens`, and the native OpenAI endpoint may only list
+ * `max_tokens` (that was a 400, not today's 404).  Gemini / Mistral / Claude
+ * omit the flag so OpenRouter's default false can pick an endpoint.
+ */
+export function shouldRequireOpenRouterParameters(body: Record<string, unknown>): boolean {
+  if (typeof body.max_completion_tokens !== "number") return false;
+  const model = typeof body.model === "string" ? body.model : "";
+  return reasoningCapabilityForModel(model)?.provider === "openai";
+}
+
+export function applyOpenRouterProviderRouting(base: Record<string, unknown>): void {
   const existingProvider =
     base.provider && typeof base.provider === "object" && !Array.isArray(base.provider)
       ? (base.provider as Record<string, unknown>)
       : {};
-  base.provider = {
+  const requireParameters = shouldRequireOpenRouterParameters(base);
+  const provider: Record<string, unknown> = {
     ...existingProvider,
-    require_parameters: existingProvider.require_parameters ?? true,
     allow_fallbacks: existingProvider.allow_fallbacks ?? true
   };
+  if (requireParameters) provider.require_parameters = true;
+  else delete provider.require_parameters;
+  base.provider = provider;
 }
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */
@@ -326,7 +351,9 @@ export function buildLlmRequestBody(
       base.tool_choice = { type: "tool", name: schema.name };
     }
     injectCommonFields(base);
-    return withLlmRequestBounds(base, transport, bounds);
+    const bounded = withLlmRequestBounds(base, transport, bounds);
+    if (endpoint.provider === "openrouter") applyOpenRouterProviderRouting(bounded);
+    return bounded;
   }
 
   const messages = [
@@ -339,7 +366,9 @@ export function buildLlmRequestBody(
     const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject, spec.model);
     if (responseFormat) base.response_format = responseFormat;
     injectCommonFields(base);
-    return withLlmRequestBounds(base, transport, bounds);
+    const bounded = withLlmRequestBounds(base, transport, bounds);
+    if (endpoint.provider === "openrouter") applyOpenRouterProviderRouting(bounded);
+    return bounded;
   }
 
   // responses transport (OpenAI)
@@ -347,7 +376,9 @@ export function buildLlmRequestBody(
   const textFormat = openAiResponsesTextFormat(schema, openAiJsonObject);
   if (textFormat) base.text = { format: textFormat };
   injectCommonFields(base);
-  return withLlmRequestBounds(base, transport, bounds);
+  const bounded = withLlmRequestBounds(base, transport, bounds);
+  if (endpoint.provider === "openrouter") applyOpenRouterProviderRouting(bounded);
+  return bounded;
 }
 
 /**

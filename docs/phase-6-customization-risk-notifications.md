@@ -30,6 +30,25 @@ strategy generation, deterministic review, broker-minimum bumps, approval-time r
 utilization. Migration v26 changes only the exact former $500 product default to 20% NAV; other
 dollar values remain owner-selected dollar mode.
 
+iOS Guardrails (owner cut 2026-08-17) edits the same exclusive caps in either
+direction: Ask-First ↔ Autopilot, raise or lower notional, and edit or switch
+the binding % of NAV cap.  Returning to Autopilot types `AUTOPILOT`.  Raising a
+cap or switching modes on a live account types `CONFIRM` when typed-confirm is
+on.  IRA / Roth tax cards show same-account wash sales as not applicable and do
+not render the taxable Wash-Sale Guard as On.  User-facing iOS copy is ordinary
+  app language: `__rotate__` reads as lowercase “rotate models”; route names,
+command types, SSE/APNs, and console-only notes stay out of the UI.
+
+Included-index storage slugs (`sp500`, `nasdaqComposite`, …) stay on
+`IndexUniverse` / `includedIndices`.  Every user-facing Indices surface
+(Guardrails selected-set and checkbox grid, policy-diff, Scan
+`${id}-universe` chips, iOS Guardrails, Desk Current Policy) uses
+`indexUniverseLabel` / `formatIndexUniverseList` /
+`DeskCopy.joinedIndexList` (`S&P 500`, `Nasdaq Composite`, `Dow 30`,
+`NYSE Composite`, …).  Snapshot / API payloads are unchanged.  iOS empty-universe
+copy uses that same `S&P 500` example and points at Guardrails (web's
+`/console/guardrails`), not a Strategy page the phone does not have.
+
 Policy enforcement includes:
 
 - sector exposure caps for buys
@@ -60,6 +79,24 @@ path now also mirrors enabled events into direct delivery for email/push/SMS
 skipping `price_alert` and `provider_degraded` because those flows already call
 the direct dispatcher explicitly.
 
+## Repeat lock (2026-08-20)
+
+`sendNotification` suppresses a second *delivery* of the same fingerprint within
+a window, using `notification_events` rows with `status='sent'` only (skipped or
+failed never latch):
+
+- `block` / `pending_approval`: existing 6h situation fingerprint (symbol, side,
+  digit-normalized reason). Override via `NOTIFICATION_REPEAT_DEDUP_MS`.
+- `price_alert`: 60s default, fingerprint `price_alert|{alert.id}` so two rules
+  on the same symbol both fire. Same env override.
+- `provider_degraded` / `budget_alert` / `kill_switch`: 60s same-fingerprint lock
+  so a still-true condition cannot page twice in one scheduler tick.
+
+Health / usage-limit still keep their longer existing cooldowns (6h). Those
+callers no longer re-send the same payload on a channel `sendNotification`
+already has in prefs (Pushover-twice-in-one-minute). Usage-limit writes its 6h
+watermark only after a `sent` user delivery or a successful operator fallback.
+
 ## Acceptance
 
 - Active profile controls policy and prompt used by strategy runs.
@@ -67,3 +104,5 @@ the direct dispatcher explicitly.
 - Risk-rule blocks include clear reasons.
 - Legacy strategy/feed notifications are stored in `notification_events`; direct
   channel delivery is mirrored in audit events (`notify.sent` / `notify.error`).
+- The same alert fingerprint is not delivered more than once per 60s
+  (`price_alert` by id; other lock types by stable payload identity).

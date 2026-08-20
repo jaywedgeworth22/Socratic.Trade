@@ -313,7 +313,7 @@ describe("nextFtsBatchGroupSize (2026-08-13 adaptive stretch budget)", () => {
 });
 
 describe("planFtsMirrorSlice (2026-08-14 bound above the 250ms yield)", () => {
-  it("computes the production 933/279522 receipt into a tick that stays inside 6s and 250ms sync", async () => {
+  it("computes the production 933/279522 receipt into a tick that stays inside the wall budget and 250ms sync", async () => {
     const {
       FTS_MIRROR_INCIDENT_CHUNKS,
       FTS_MIRROR_INCIDENT_WALL_MS,
@@ -400,16 +400,38 @@ describe("planFtsMirrorSlice (2026-08-14 bound above the 250ms yield)", () => {
   });
 
   it("stops on wall-clock even when chunks remain (whichever first)", async () => {
-    const { planFtsMirrorSlice } = await import("../src/lib/rag/fts-mirror-bound");
+    const { planFtsMirrorSlice, FTS_MIRROR_TICK_BUDGET_MS } = await import("../src/lib/rag/fts-mirror-bound");
     const plan = planFtsMirrorSlice({
       totalChunks: 933,
       offset: 0,
-      elapsedMs: 6_000,
-      tickBudgetMs: 6_000
+      elapsedMs: FTS_MIRROR_TICK_BUDGET_MS,
+      tickBudgetMs: FTS_MIRROR_TICK_BUDGET_MS
     });
     expect(plan.chunkCount).toBe(0);
     expect(plan.stopReason).toBe("tick-budget");
     expect(plan.complete).toBe(false);
+  });
+
+  it("does not start a chunk when remaining budget is below expected ms/chunk", async () => {
+    const { planFtsMirrorSlice, FTS_MIRROR_INCIDENT_MS_PER_CHUNK } = await import(
+      "../src/lib/rag/fts-mirror-bound"
+    );
+    const plan = planFtsMirrorSlice({
+      totalChunks: 933,
+      offset: 0,
+      elapsedMs: 1_900,
+      tickBudgetMs: 2_000,
+      msPerChunk: FTS_MIRROR_INCIDENT_MS_PER_CHUNK
+    });
+    expect(FTS_MIRROR_INCIDENT_MS_PER_CHUNK).toBeGreaterThan(100);
+    expect(plan.chunkCount).toBe(0);
+    expect(plan.stopReason).toBe("tick-budget");
+  });
+
+  it("keeps the FTS tick budget below the getAccounts first wait", async () => {
+    const { FTS_MIRROR_TICK_BUDGET_MS } = await import("../src/lib/rag/fts-mirror-bound");
+    const { GET_ACCOUNTS_FIRST_MS } = await import("../src/lib/inflight-deadline");
+    expect(FTS_MIRROR_TICK_BUDGET_MS).toBeLessThan(GET_ACCOUNTS_FIRST_MS);
   });
 });
 
@@ -549,7 +571,9 @@ describe("embed_queued FTS slice + durable resume", () => {
       .all(vectorDocId) as Array<{ content_hash: string }>;
     expect(firstRows.length).toBe(FTS_MIRROR_MAX_CHUNKS_PER_TICK);
     expect(firstRows[0]!.content_hash).toBe(`hash-${accession}-0000`);
-    expect(firstRows.at(-1)!.content_hash).toBe(`hash-${accession}-0019`);
+    expect(firstRows.at(-1)!.content_hash).toBe(
+      `hash-${accession}-${String(FTS_MIRROR_MAX_CHUNKS_PER_TICK - 1).padStart(4, "0")}`
+    );
     expect(vi.mocked(storeDocument)).toHaveBeenCalledTimes(1);
 
     const reclaimed = claimSecIngestTasks(jobId, {
@@ -566,10 +590,12 @@ describe("embed_queued FTS slice + durable resume", () => {
       .prepare("SELECT content_hash FROM document_chunks_fts WHERE accession = ? ORDER BY content_hash")
       .all(vectorDocId) as Array<{ content_hash: string }>;
     expect(secondRows.length).toBe(FTS_MIRROR_MAX_CHUNKS_PER_TICK * 2);
-    expect(secondRows.slice(0, 20).map((r) => r.content_hash)).toEqual(
+    expect(secondRows.slice(0, FTS_MIRROR_MAX_CHUNKS_PER_TICK).map((r) => r.content_hash)).toEqual(
       firstRows.map((r) => r.content_hash)
     );
-    expect(secondRows[20]!.content_hash).toBe(`hash-${accession}-0020`);
+    expect(secondRows[FTS_MIRROR_MAX_CHUNKS_PER_TICK]!.content_hash).toBe(
+      `hash-${accession}-${String(FTS_MIRROR_MAX_CHUNKS_PER_TICK).padStart(4, "0")}`
+    );
     // storeDocument must not run again on the FTS-only resume.
     expect(vi.mocked(storeDocument)).toHaveBeenCalledTimes(1);
   });
@@ -652,6 +678,53 @@ describe("embed_queued FTS slice + durable resume", () => {
     await worker.runTick();
     expect(processed).toHaveLength(SEC_INGEST_TASKS_PER_TICK);
     expect(SEC_INGEST_TASKS_PER_TICK).toBe(5);
+  });
+
+  it("does not claim FTS / ingest work while a strategy run is in flight", async () => {
+    const { insertStrategyRun, hasInFlightStrategyWork, finishStrategyRun } = await import(
+      "../src/lib/db-execution"
+    );
+    const processed: string[] = [];
+    const worker = new SecIngestWorker();
+    worker.processTask = async (task) => {
+      processed.push(task.id);
+    };
+
+    const job = createSecIngestJob({
+      idempotencyKey: `tick-strategy-${randomUUID()}`,
+      corpusRevision: "corp-v1"
+    });
+    transitionSecIngestJob(job.id, "running");
+    enqueueSecIngestTask({
+      jobId: job.id,
+      accession: "0000320193-26-000301",
+      cik: "0000320193",
+      symbol: "RJF",
+      payload: { url: "https://www.sec.gov/x", docType: "10-K", filedAt: "2026-07-15" }
+    });
+
+    const runId = randomUUID();
+    const userId = `sec-yield-${randomUUID()}`;
+    insertStrategyRun(runId, userId);
+    expect(hasInFlightStrategyWork()).toBe(true);
+    await worker.runTick();
+    expect(processed).toHaveLength(0);
+
+    finishStrategyRun(runId, "failed", "test release", userId);
+    expect(hasInFlightStrategyWork()).toBe(false);
+  });
+
+  it("treats a queued Manual Run request as in-flight strategy work", async () => {
+    const { hasInFlightStrategyWork } = await import("../src/lib/db-execution");
+    const { queueStrategyRunRequest } = await import("../src/lib/strategy-run-requests");
+    const userId = `queued-run-${randomUUID()}`;
+    const queued = queueStrategyRunRequest({ userId, manual: true });
+    expect(queued.deduped).toBe(false);
+    expect(hasInFlightStrategyWork()).toBe(true);
+    getDb()
+      .prepare("UPDATE strategy_run_requests SET status = 'failed', finished_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), queued.request.id);
+    expect(hasInFlightStrategyWork()).toBe(false);
   });
 
   it("defers a daily write-fuse skip instead of throwing capacity-exceeded", async () => {

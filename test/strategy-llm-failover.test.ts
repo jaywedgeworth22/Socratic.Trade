@@ -53,6 +53,15 @@ function geminiOk(): Response {
   });
 }
 
+function geminiRedOk(): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ verdict: "approve", reason: "Size is fine." }) } }]
+    }),
+    { status: 200, headers: { "content-type": "application/json" } }
+  );
+}
+
 async function setup(withFallback: boolean): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
   upsertUserApiKey("local", "openrouter", "test-openai-key", "fixture");
@@ -240,6 +249,63 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     const failed = listNotificationEvents("local").filter((e) => e.type === "run_failed");
     expect(failed.length).toBeGreaterThan(0);
     expect(String((failed[0]?.payload as { summary?: string })?.summary ?? "")).toMatch(/credits look exhausted/);
+  }, 30_000);
+
+  it("a 400 Provider returned error on Green fails over and records each stored call", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+    let greenCalls = 0;
+    let redCalls = 0;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com") || href.includes("generativelanguage.googleapis.com")) {
+        const bodyStr = init?.body ? String(init.body) : "";
+        if (bodyStr.includes("red_team_verdict")) {
+          redCalls += 1;
+          return geminiRedOk();
+        }
+        if (bodyStr.includes("claude") || bodyStr.includes("gpt-")) {
+          greenCalls += 1;
+          return new Response(JSON.stringify({ error: { message: "Provider returned error", code: 400 } }), {
+            status: 400,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        greenCalls += 1;
+        return geminiOk();
+      }
+      if (href.includes("nasdaq.com")) return nasdaqRow();
+      return new Response("not found", { status: 404 });
+    });
+    await setup(true);
+    const { setPolicy, getPolicy } = await import("../src/lib/db");
+    setPolicy({ ...getPolicy("local"), llmModel: "openrouter/anthropic/claude-3-haiku" });
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listAudit } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+
+    expect(result.status).toBe("completed");
+    const failoverRows = listAudit(5000).filter(
+      (e) => (e.payload as { runId?: string })?.runId === result.runId && e.kind === "strategy_llm_failover"
+    );
+    expect(failoverRows.length).toBeGreaterThan(0);
+    expect((failoverRows[0]?.payload as { httpStatus?: number })?.httpStatus).toBe(400);
+    const bullLatency = listAudit(5000).filter(
+      (e) =>
+        (e.payload as { runId?: string; step?: string })?.runId === result.runId &&
+        e.kind === "llm_call_latency" &&
+        (e.payload as { step?: string }).step === "bull"
+    );
+    expect(bullLatency.length).toBeGreaterThanOrEqual(2);
+    expect(bullLatency.map((e) => (e.payload as { status?: number }).status)).toContain(400);
+    expect(result.proposals.length).toBeGreaterThan(0);
+    for (const p of result.proposals) {
+      expect(p.proposal.proposedByModel).toBe("openrouter/google/gemini-2.5-flash");
+    }
+    expect(redCalls).toBeGreaterThanOrEqual(1);
+    expect(result.proposals.some((p) => p.proposal.redTeamVerdict?.available)).toBe(true);
+    expect(greenCalls).toBeGreaterThanOrEqual(2);
   }, 30_000);
 
   it("flag OFF (default): a primary 429 is a hard failure — no failover, behavior unchanged", async () => {

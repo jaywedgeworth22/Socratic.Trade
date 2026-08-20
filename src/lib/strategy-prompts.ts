@@ -1,4 +1,5 @@
 import { OPENING_ORDER_HEADROOM_PCT } from "./policy";
+import { STRATEGY_LEGAL_SENTENCE } from "./legal-notice";
 import type { WashSaleHandling } from "./types";
 
 /**
@@ -16,7 +17,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.10.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.12.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -81,6 +82,11 @@ export interface BullSystemParams {
    * forbidding — takes precedence over washSaleHandling, which governs the taxable-buyer case.
    */
   iraWashSaleDisregard?: boolean;
+  /**
+   * True when this run's buyer is a Roth or Traditional IRA. Suppresses taxable-only harvest and
+   * long-term-rate guidance. Also implied by `iraWashSaleDisregard`.
+   */
+  isIraAccount?: boolean;
   /** policy.holdingHorizon ?? "swing". */
   holdingHorizon: string;
   /** policy.maxSymbolExposurePct. */
@@ -102,8 +108,34 @@ export interface BullSystemParams {
  * message as a fenced <reflection_summary> DATA field, and a single data-not-command boundary
  * clause below enumerates every untrusted text block. Advisory hardening only — no gate, no block.
  */
+function taxEfficiencyLines(p: BullSystemParams): string[] {
+  if (!p.hasTaxContext) return [];
+  const isIra = Boolean(p.isIraAccount || p.iraWashSaleDisregard);
+  const washSaleLine = p.iraWashSaleDisregard
+    ? "- This is an IRA and the owner has chosen to DISREGARD wash-sale lockouts for it (brokers do not report cross-account IRA wash sales to the IRS; permanently forfeiting the loss deduction is the owner's accepted trade-off). You MAY propose a BUY of a symbol in `washSaleLockedSymbols`; each such purchase is annotated as a technically-forfeited wash sale and audited. Judge the setup on its own merits and note the forfeited deduction in the rationale."
+    : p.washSaleHandling === "ask"
+      ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). Strongly prefer NOT to rebuy them; if you do propose one, it is routed to the owner for approval carrying the priced tax cost from `taxContext.washSaleRebuyCosts` — only propose it when the setup clearly justifies forfeiting that deduction, and say so in the rationale."
+      : p.washSaleHandling === "auto"
+        ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the policy gate — it is YOUR judgment call, not a deterministic threshold: weigh the priced forfeited deduction in `taxContext.washSaleRebuyCosts` (per-symbol: `estimatedTaxCostUsd`, `clearsOn`) against the setup's conviction and catalyst, and explicitly account for that tax cost in the rationale. Only propose one when the trade clearly justifies forfeiting the deduction."
+        : "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).";
+  return [
+    "",
+    isIra
+      ? "Tax efficiency (US, in the user message as `taxContext`): this is an IRA (Roth or Traditional). Realized gains and losses here do not appear on a tax return and cannot offset taxable-account gains. Do NOT sell to harvest a tax loss — there is no deductible loss inside an IRA. Judge exits on thesis, risk, and allocation only."
+      : "Tax efficiency (US, in the user message as `taxContext`): you trade in a taxable account, so factor the after-tax cost of churn.",
+    washSaleLine,
+    ...(isIra
+      ? []
+      : [
+          "- For winners in `positionsNearLongTerm`, prefer holding past the 1-year mark (long-term rate is much lower than the short-term ordinary rate) unless the thesis has clearly broken.",
+          "- When realized short-term gains are large, you may harvest names in `harvestableLosses` (sell to realize the loss, offsetting gains) — but do not rebuy them within 30 days."
+        ])
+  ];
+}
+
 export function buildBullSystem(p: BullSystemParams): string {
   return [
+    STRATEGY_LEGAL_SENTENCE,
     ...(p.venueLines && p.venueLines.length > 0
       ? p.venueLines
       : [
@@ -135,21 +167,7 @@ export function buildBullSystem(p: BullSystemParams): string {
     "- `sectorOutcomes`: realized win/return grouped by the SECTOR each position was opened in. Lean toward sectors where your shrunk record is positive; demand more conviction in sectors that have repeatedly lost for you.",
     "- `factorOutcomes`: realized outcomes grouped by the dominant deterministic factor at entry. Use this to calibrate which scoring dimensions have actually paid off for this account.",
     "- `skippedCounterfactuals`: matured outcomes of high-scoring candidates you previously skipped, labeled per row. `label: \"missed_winner\"` = it subsequently ROSE from its decision-time `refPrice` (regret evidence — you were too cautious there). `label: \"avoided_loser\"` = it subsequently FELL (vindication — the skip was right). When `benchmarkReturnPct` is present it is SPY's return over that row's same entry→now window; judge the row's move relative to it. Weigh BOTH labels — use them as calibration evidence, never as automatic buys or automatic vetoes.",
-    ...(p.hasTaxContext
-      ? [
-          "",
-          "Tax efficiency (US, in the user message as `taxContext`): you trade in a taxable account, so factor the after-tax cost of churn.",
-          p.iraWashSaleDisregard
-            ? "- This is an IRA and the owner has chosen to DISREGARD wash-sale lockouts for it (brokers do not report cross-account IRA wash sales to the IRS; permanently forfeiting the loss deduction is the owner's accepted trade-off). You MAY propose a BUY of a symbol in `washSaleLockedSymbols`; each such purchase is annotated as a technically-forfeited wash sale and audited. Judge the setup on its own merits and note the forfeited deduction in the rationale."
-            : p.washSaleHandling === "ask"
-            ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). Strongly prefer NOT to rebuy them; if you do propose one, it is routed to the owner for approval carrying the priced tax cost from `taxContext.washSaleRebuyCosts` — only propose it when the setup clearly justifies forfeiting that deduction, and say so in the rationale."
-            : p.washSaleHandling === "auto"
-              ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the policy gate — it is YOUR judgment call, not a deterministic threshold: weigh the priced forfeited deduction in `taxContext.washSaleRebuyCosts` (per-symbol: `estimatedTaxCostUsd`, `clearsOn`) against the setup's conviction and catalyst, and explicitly account for that tax cost in the rationale. Only propose one when the trade clearly justifies forfeiting the deduction."
-              : "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).",
-          "- For winners in `positionsNearLongTerm`, prefer holding past the 1-year mark (long-term rate is much lower than the short-term ordinary rate) unless the thesis has clearly broken.",
-          "- When realized short-term gains are large, you may harvest names in `harvestableLosses` (sell to realize the loss, offsetting gains) — but do not rebuy them within 30 days."
-        ]
-      : []),
+    ...taxEfficiencyLines(p),
     "",
     HOLDING_HORIZON_GUIDE[p.holdingHorizon] ?? HOLDING_HORIZON_GUIDE.swing,
     "",
@@ -205,6 +223,7 @@ export interface RedTeamReviewSystemParams {
  */
 export function buildRedTeamReviewSystem(p: RedTeamReviewSystemParams): string {
   return [
+    STRATEGY_LEGAL_SENTENCE,
     "You are the Red Team Risk Agent — the single adversarial reviewer for an autonomous trading system.",
     `The strategist (Bull/Green Team) proposes to ${p.side.toUpperCase()} ${p.symbol}. Deterministic risk sizing has ALREADY finalized this order: the exact size, notional, stop/limit, and the account's hard caps are stated in the user content. You are the LAST review before it places (or reaches the owner). Critique the ACTUAL trade as sized — not a hypothetical.`,
     p.side === "buy"

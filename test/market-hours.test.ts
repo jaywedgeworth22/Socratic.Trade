@@ -190,10 +190,22 @@ describe("nextMarketOpenHint (item 29: cheap next-open hint for the paused/marke
 // exists to fix ("stop weekend quota burn; keep Friday data served until Monday").
 describe("expiresAtRespectingMarketClose", () => {
   const SIX_HOURS_MS = 6 * 60 * 60_000;
+  const FIVE_MINUTES_MS = 5 * 60_000;
 
-  it("Friday afternoon write with a 6h TTL extends all the way to Monday's open", () => {
-    const now = etDate("2026-06-12", 14, 0); // Fri 2pm ET — naive expiry (8pm Fri) is past close,
-    // heading into the weekend; the market won't trade again until Monday.
+  it("Friday 10:00 ET write with a 5-minute TTL keeps the naive expiry (session still open)", () => {
+    const now = etDate("2026-08-21", 10, 0); // Fri 10am ET
+    const expiry = expiresAtRespectingMarketClose(now, FIVE_MINUTES_MS);
+    expect(expiry).toBe(now.getTime() + FIVE_MINUTES_MS);
+  });
+
+  it("Friday after close with a 5-minute TTL extends to Monday's open", () => {
+    const now = etDate("2026-08-21", 17, 0); // Fri 5pm ET
+    const expiry = expiresAtRespectingMarketClose(now, FIVE_MINUTES_MS);
+    expect(expiry).toBe(etDate("2026-08-24", 9, 30).getTime()); // Mon 9:30 AM ET
+  });
+
+  it("Friday evening write with a 6h TTL extends all the way to Monday's open", () => {
+    const now = etDate("2026-06-12", 17, 0); // Fri 5pm ET — after today's session
     const expiry = expiresAtRespectingMarketClose(now, SIX_HOURS_MS);
     expect(expiry).toBe(etDate("2026-06-15", 9, 30).getTime()); // Mon 9:30 AM ET
   });
@@ -219,11 +231,19 @@ describe("expiresAtRespectingMarketClose", () => {
   });
 
   it("returns the naive expiry when the TTL itself is long enough to span past the reopen", () => {
-    const now = etDate("2026-06-12", 14, 0); // Fri 2pm ET
+    const now = etDate("2026-06-12", 17, 0); // Fri 5pm ET (after close)
     const seventyTwoHoursMs = 72 * 60 * 60_000;
     const expiry = expiresAtRespectingMarketClose(now, seventyTwoHoursMs);
-    // Naive expiry (Mon 2pm ET) is already past Monday's 9:30 AM open — a session has
+    // Naive expiry (Mon 5pm ET) is already past Monday's 9:30 AM open — a session has
     // intervened, so no extension is needed.
     expect(expiry).toBe(now.getTime() + seventyTwoHoursMs);
+  });
+});
+
+describe("getEarlyCloses / half-day session boundaries", () => {
+  it("day after Thanksgiving 2026 is an early close at 1:00 PM ET", () => {
+    // 2026-11-27 is the Friday after Thanksgiving
+    const d = new Date("2026-11-27T18:30:00Z"); // 13:30 ET (EST)
+    expect(currentMarketSession(d)).not.toBe("regular");
   });
 });
