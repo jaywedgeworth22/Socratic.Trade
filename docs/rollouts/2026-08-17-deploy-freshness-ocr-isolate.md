@@ -18,8 +18,12 @@ one).  Unreachable health is not this class (UptimeRobot pages site-down).
 The workflow never deploys and never calls Coolify.
 
 Shared-box isolation is a dry-run-default `docker update` CPU cap on CT
-OCR/scan worker containers.  It never restarts, never matches ST / Coolify /
-UM, and `--apply` requires `ISOLATE_SHARED_BOX_APPLY=1`.
+OCR/scan worker containers.  Default is **5.0 of 8 vCPUs** (cpu-shares 256):
+as high as is reasonably advisable on the shared Hetzner cx43.  Unconstrained
+OCR peaked at 2.83 cores, so 5.0 does not throttle normal work and leaves 3
+cores for Coolify SSH + ST + UM + CT web.  6.0+ is the class that starved the
+exec stream.  It never restarts, never matches ST / Coolify / UM, and
+`--apply` requires `ISOLATE_SHARED_BOX_APPLY=1`.
 
 - `scripts/alert-deploy-freshness.sh`
 - `scripts/alert-deploy-freshness.selftest.sh`
@@ -54,6 +58,10 @@ UM, and `--apply` requires `ISOLATE_SHARED_BOX_APPLY=1`.
   constraint.
 - `--include-app` is opt-in because capping `congress-app-live` also caps
   CT web.  Default only matches dedicated worker/OCR names.
+- OCR default is 5.0 / 8, not 2.0.  CT compose `scan-cpu-worker` is still
+  `cpus: '2.0'`, which sits *below* the 2.83 unconstrained peak and throttles
+  OCR.  The durable matching change is raise that compose line to `5.0`
+  (`congress-app` stays at 2.0).  This repo cannot edit Congress.Trade.
 
 ## Verification State
 
@@ -76,9 +84,8 @@ setting was touched.
 
 1. Owner: add repo Actions secret `SLACK_BOT_TOKEN` if `#agent-sync` pages
    should come from this cron (Sentry still works without it).
-2. Owner / CT lane: set Coolify CPU limits on `congress-app`, or split OCR
-   into a nice/cpuset worker in the Congress.Trade repo.  Until then, OCR
-   in-process on the shared box remains a host constraint.
+2. CT lane: raise `app/docker-compose.yml` `scan-cpu-worker.cpus` from
+   `2.0` to `5.0` (the advised ceiling).  `congress-app` stays at 2.0.
 3. Owner: Coolify-side retry on SSH exit 255, if the installed Coolify
    version exposes it.  Not configurable from this repo.
 4. After merge: confirm the first scheduled `Deploy freshness` run is green

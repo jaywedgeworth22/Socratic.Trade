@@ -252,9 +252,10 @@ green on the *old* sha. The standing watchdog is `.github/workflows/deploy-fresh
 is older than 1h. Do not treat a green health probe as proof the pipeline is moving.
 ST/CT/UM still share the Hetzner box; `scripts/isolate-shared-box-batch.sh` dry-runs a
 `docker update` CPU cap on CT OCR/scan workers (never restarts; never touches ST).
-Durable isolation is a Coolify CPU limit on congress-app or a CT-repo nice/cpuset
-worker — this repo cannot set those. Coolify has no job-level retry-on-255 we can
-configure from here.
+Default cap is **5.0 of 8 vCPUs** (as high as is reasonably advisable: above the
+2.83 unconstrained OCR peak, 3 cores left for Coolify/ST/UM). Durable isolation is
+`cpus: '5.0'` on CT `scan-cpu-worker` (compose today is still 2.0) — this repo
+cannot set that. Coolify has no job-level retry-on-255 we can configure from here.
 Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md`.
 `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
 protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:

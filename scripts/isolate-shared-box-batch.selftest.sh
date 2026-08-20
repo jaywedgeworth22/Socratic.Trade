@@ -73,6 +73,7 @@ assert_contains "protected wins over ocr in the name" "skip  hhh888  socratic-oc
 assert_contains "congress app skipped without --include-app" "skip  eee555  congress-app-live  app" "$OUT"
 assert_contains "unrelated skipped" "skip  ggg777  unrelated-redis  other" "$OUT"
 assert_contains "names the remaining constraint" "remaining host constraint: docker update is ephemeral" "$OUT"
+assert_contains "default OCR cap is 5 of 8 vCPU" "cpu-shares=256 cpus=5" "$OUT"
 
 # No dedicated worker: must still refuse to touch ST and must name the in-process OCR gap.
 cat > "${WORK}/ps-noworker.tsv" <<'EOF'

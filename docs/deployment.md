@@ -74,22 +74,32 @@ bash scripts/alert-deploy-freshness.sh origin/main
 
 ## Shared-box OCR isolation
 
-ST, Congress.Trade, and Usage Monitor still share the Hetzner cx43.  CT OCR /
-`scan-cpu-worker` batches on that box were the 2026-08-06 contention correlate.
+ST, Congress.Trade, and Usage Monitor still share the Hetzner cx43 (8 vCPU).
+CT OCR / `scan-cpu-worker` batches on that box were the 2026-08-06 contention
+correlate.
+
+**Advised OCR ceiling: 5.0 of 8 vCPUs** (`--cpus=5`, cpu-shares 256).  That is
+as high as is reasonably advisable: unconstrained OCR peaked at 2.83 cores, so
+5.0 does not throttle normal work, and 3 cores stay free for Coolify SSH, ST
+(including `next build`), UM, and CT web.  6.0+ is too high -- that is the
+class that starved the Coolify exec stream.  CT compose today still pins the
+worker at 2.0, which *does* throttle below the measured peak; raise
+`scan-cpu-worker.cpus` to `5.0` there for the durable cap.
 
 ```bash
-bash scripts/isolate-shared-box-batch.sh                  # dry-run on the host
+bash scripts/isolate-shared-box-batch.sh                  # dry-run; default 5 cpus
 ISOLATE_SHARED_BOX_APPLY=1 bash scripts/isolate-shared-box-batch.sh --apply
 ```
 
 The script never restarts a container and never matches Socratic.Trade, Coolify,
 or Usage Monitor.  `--apply` requires the env latch.  `docker update` CPU limits
-are ephemeral: the next CT Coolify recreate overwrites them.
+are ephemeral: the next CT Coolify recreate overwrites them unless compose
+carries `cpus: '5.0'` on `scan-cpu-worker`.
 
 **Remaining host constraint (this repo cannot lift it):**
 
-- Durable isolation is a Coolify CPU limit on `congress-app`, a CT-repo
-  nice/cpuset worker, or moving OCR off-box.
+- Durable isolation is that CT compose `cpus: '5.0'` (or the matching Coolify
+  CPU limit) on `scan-cpu-worker`.  `congress-app` stays at 2.0.
 - If OCR is in-process inside `congress-app-live`, this script finds no worker.
   `--include-app` caps the whole CT app (also caps CT web).
 - Coolify has no job-level retry-on-exit-255 that this repo can set.  Do not

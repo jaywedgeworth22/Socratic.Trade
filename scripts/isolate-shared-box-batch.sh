@@ -7,6 +7,17 @@
 # failure point. ST, CT, and UM still share the Hetzner cx43
 # (docs/rollouts/2026-08-07-hetzner-fleet-cutover.md).
 #
+# Shared-box OCR CPU budget (Hetzner cx43 = 8 vCPU):
+#   5.0  default -- as high as is reasonably advisable.  Leaves 3 cores for
+#        Coolify SSH + ST (including next build) + UM + CT web.  Unconstrained
+#        OCR was measured at 2.83 cores (283%) on 2026-08-12; 5.0 sits above
+#        that peak so normal OCR is not throttled, but cannot take the box.
+#   6.0+ too high -- a concurrent ST deploy + Coolify exec stream died
+#        (2026-08-06 exit 255) when batch load left too little headroom.
+#   2.0  CT compose runaway floor today; throttles OCR below the 2.83 peak.
+# Durable CT compose should use the same 5.0 on scan-cpu-worker (congress-app
+# stays at 2.0; combined CT ceiling 7.5 still leaves a core).
+#
 # This script NEVER restarts a container and NEVER touches Socratic.Trade,
 # Coolify, or Usage Monitor. Default is dry-run. --apply requires
 # ISOLATE_SHARED_BOX_APPLY=1 so a stray invocation cannot mutate production.
@@ -30,7 +41,7 @@
 set -euo pipefail
 
 CPU_SHARES="${ISOLATE_CPU_SHARES:-256}"
-CPUS="${ISOLATE_CPUS:-2}"
+CPUS="${ISOLATE_CPUS:-5}"
 APPLY=0
 INCLUDE_APP=0
 PS_FILE=""

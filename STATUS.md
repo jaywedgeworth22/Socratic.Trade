@@ -1,5 +1,17 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR — OCR CPU ceiling 5 of 8 vCPU (#2545)
+
+Owner: cap OCR as high as is reasonably advisable so other apps still function.
+Default isolation cap is now **5.0 / 8 vCPUs** (cpu-shares 256): above the
+2026-08-12 unconstrained peak of 2.83 cores, 3 cores reserved for Coolify SSH +
+ST + UM + CT web.  6.0+ is the class that starved the exec stream.  CT compose
+still pins `scan-cpu-worker` at 2.0 (throttles below that peak) -- durable fix
+is raise that compose line to `5.0`.  Did not touch prod.
+
+Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  PR #2796.  Rollout:
+`docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
+
 ## 2026-08-17 CURSOR — Deploy freshness alert + CT OCR isolation (#2545)
 
 P0 silent-freeze class from 2026-08-06: Coolify SSH exec died mid-build while

@@ -46,7 +46,9 @@ load). Do not wait for a human to notice. The standing cron is
 `.github/workflows/deploy-freshness.yml` (`scripts/alert-deploy-freshness.sh`).
 A failed run means the oldest undeployed main commit is older than 1h --
 investigate the queue; do not hand-trigger. CT OCR isolation (dry-run only unless
-the owner latches apply) is `scripts/isolate-shared-box-batch.sh`.
+the owner latches apply) is `scripts/isolate-shared-box-batch.sh` -- default
+**5.0 of 8 vCPUs**, the highest advisable cap that still leaves 3 cores for
+Coolify/ST/UM.
 
 ## 3. Backup Continuity (Litestream)
 
