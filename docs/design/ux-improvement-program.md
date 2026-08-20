@@ -3,6 +3,7 @@
 **Date:** 2026-08-04  
 **Author:** GROK (session review → implementation program)  
 **Status:** Waves A–E **COMPLETE on main** (2026-08-05, closeout #2448). Wave F remains owner-gated optional.  
+**Current clients (2026-08-20):** the `/mobile` PWA UI is retired (#2801).  Live surfaces are `/console` (desktop + phone widths) and native iOS.  Treat Wave D / D1 "PWA as control remote" below as the August 4 program record, not current product truth.
 **Source review:** Owner-requested top-to-bottom web + iOS + PWA review (2026-08-04 session)  
 **Related priors:**  
 - `docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md`  

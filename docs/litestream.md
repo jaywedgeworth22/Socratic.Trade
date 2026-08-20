@@ -20,7 +20,11 @@ dev/sidecar history; production does **not** use Mac PM2 litestream.
 > are no longer supported"). It also replaced the `snapshots`/`generations` model with
 > **LTX files** — inspect them with `litestream ltx`, not `litestream snapshots`.
 
-## Setup
+## Setup (retired Mac / PM2 path — not production)
+
+Production Litestream runs in the Coolify container via `litestream.coolify.yml`.
+The Mac `~/apps/trading-live` steps below are rollback/dev history.  Do not start
+Mac `pm2` `litestream` while Coolify runs `DB_BOOTSTRAP=live`.
 
 ### 1. Install
 

@@ -1,6 +1,7 @@
 # Active Implementation Plan
 
 > **2026-08-20 CURSOR-BUGBOT — Owner-cancel stop tombstone on lookup miss (`cursor/owner-cancel-stop-tombstone-lookup`).** Use the tracked `broker_protective_stops` symbol when the advisory cancel lookup is empty so reconcile cannot re-place a stop the owner just cancelled.  Did not touch #2861.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-lookup.md`.
+> **2026-08-20 CURSOR — Stale hosting/stack copy sweep (`cursor/stale-hosting-docs-b392`).** Docs/metadata only.  Production is Coolify at socratictrade.com (README + GitHub About already said so — kept).  PLAN Current Status / acceptance still had Mac pm2 + `trading-beta`.  AGENTS leftover present-tense preview/PWA/Mac-pm2.  PWA UI retired #2801.  No product code.  Rollout: `docs/rollouts/2026-08-20-stale-hosting-docs.md`.
 > **2026-08-20 CURSOR — Rebase #2818 (`cursor/delayed-yahoo-fallback-stamp-c120`).** Rebase-only onto `origin/main` `ce31c367`.  Stamp **Delayed Quote** on approval cards; keep trading.  Conflicts: DataSourcesSettings + HomeView — kept main.  Do not merge.  Rollout: `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
 > **2026-08-20 CURSOR — #2854 rebased onto main (`ce31c367`).** CONFLICTING/DIRTY was phantom (`merge-tree` clean).  Kept gather inventory skip + 502/429 fail-open.  Did not absorb other clusters.  Do not merge.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
 > **2026-08-20 CURSOR — #2854 rebased onto main (`eefc4f82`).** Real conflict was `test/roic-transcripts.test.ts` vs #2813.  Kept gather `shouldSkipWholeIndexInventory` test + main's skip-covered ROIC test.  Did not absorb #2813 product.  Do not merge.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
@@ -2155,12 +2156,11 @@ filling the missing pieces.
 
 ## Current Status
 
-Hosting topology: production remains `socratictrade.com` on the
-`~/apps/trading-live` worktree / pm2 `trading` / port `4000`. The editable
-integration checkout uses the single pre-production beta hostname
-`trading-beta.jays.services` -> `~/Code/Agentic Trading` / pm2 `trading-main` /
-port `4001`. Do not add a second dev/beta hostname in code, docs, Tunnel
-ingress, DNS, or Access configuration.
+Hosting topology: production is **[socratictrade.com](https://socratictrade.com)**
+on Coolify app `socratic-app` (Hetzner fleet box).  Mac `~/apps/trading-live` /
+pm2 `trading` / port `4000` and every `*.jays.services` preview hostname
+(including `trading-beta`) are retired.  Local review is `npm run dev` in your
+own worktree plus the verify CI gate.  See `docs/deployment.md`.
 
 Secrets/config topology (2026-06-25): `.env.local` is git-ignored and is **not** a
 secret source (only the secret-free `.env.example` is tracked), and **Infisical is
@@ -2193,6 +2193,8 @@ scope, timeline, or approach changed.
 | 10 | Stronger signals, learning & UI (v2 plan) | `docs/phase-10-signals-learning-ui-v2.md` | In progress on `phase-10`: positioning/smart-money deterministic sub-score, sector scorecard, full EvidenceDigest for chosen+skipped, SEC 8-K bulletins with item-label enrichment, market breadth/internals, expanded FRED/macro metrics, Macro tab, Fama-French, Cboe SKEW/VVIX, CFTC COT, technical signals, keyed OHLC cascade, batched Voyage/Pinecone RAG scaffold with paced/capped 8-K ingestion, 2026-06-20 tenant-safe RAG metadata/filter/backoff hardening with raw-user credential lookup preservation, symbol drilldown with 0-100 signal thresholds, price chart with VWAP overlay, Market Scan `vs VWAP`, first-pass prompt compaction, factor-bucket scorecards, current-scan skipped counterfactual summaries, durable/mature-horizon skipped-name counterfactual rows, configurable red-team conviction threshold, and an optional de-risk-in-crisis opening-exposure cap are live. Remaining: broader adaptive prompt compaction/cache layout, production-grade filing/news digests, analyst/earnings revisions, SEC XBRL facts, post-mortem/tuning use of missed-opportunity rows, full learning-matrix UI, and broader scoring-threshold settings. |
 | 11 | Multi-user & API-key management (plan) | `docs/phase-11-multi-user.md` | In progress: default-user scaffolding exists; connected accounts now keep API keys server-only in dashboard snapshots, encrypt stored credentials, preserve credentials on metadata edits, route Alpaca through the active connected account, sync Robinhood through MCP OAuth/status instead of manual keys, support Alpaca MCP client connections alongside REST, keep account connection buttons persistent in UI for multi-broker setups, derive Alpaca paper vs brokerage environment dynamically via the account number PA prefix, state the Alpaca Paper/Brokerage default endpoints before asking for custom endpoints, enforce required account numbers for Alpaca, derive execution state as Test vs Paper vs Brokerage, present supported account connect buttons in Accounts, keep Paper accounts optional and user-selected, expose a hardened Robinhood MCP HTTP/SSE transport plus `/api/broker/mcp/health`, use that health check silently behind the Robinhood connect action instead of a persistent disconnected status card, ship Settings → Connections for provider keys and connection status, let users choose separate Green Team and Red Team OpenAI/xAI models in Strategy Studio with Green fallback, route major provider/LLM calls through `resolveApiKey(service,userId)`, scope strategy locks, paper projections, learning scorecards, tax reads, notifications, reflections, dashboard callbacks, and prompt cache keys by user, route high-impact API handlers through verified middleware identity via `resolveRequestUser`, explicitly share public/env-key market data while keeping user-keyed history private by default, track pending public OHLC misses so later shared fills can refresh prior requesters without spending another user's key, and add Infisical wrappers, local Gitleaks scanning, Sentry runtime hooks, redacted Langfuse LLM traces, npm Dependabot, Litestream scripts, and Playwright smoke tests. GitHub CI/e2e/security workflows are deferred until push credentials include `workflow` scope. M3 complete (2026-06-21): per-user policy/profiles/prompt/tuning fully scoped; global settings seeds removed; one-time migration to copy legacy global rows to 'local' user; DELETE /api/profiles/[id] route added; two-user isolation verified by test/per-user-policy-isolation.test.ts. M6 real identity/auth is implemented with Cloudflare Access/Auth.js fail-closed middleware, request-scoped SSR snapshots, `/login`, `/logout`, and visible signed-in/Sign out UI. M7 mobile foundation adds `/api/mobile/*`, a durable audited mobile command queue, `/mobile` PWA, SwiftUI starter client, SSE status updates, and a multi-step account deletion/reset flow for Google/Apple-authenticated users. Remaining: complete data isolation audit for any newer fills/snapshots/proposals/learning tables and broaden mobile e2e coverage. |
 | 12 | Architecture Blueprint | docs/architecture-blueprint.md | Completed 2026-06-20: Blueprint R1–R5 requirements (tri-state execution safety, trailing stop-loss engine, IRA taxation policy settings, multi-tenant RAG & rate limits, prompt compaction & reasoning) are fully implemented, tested, and verified. |
+
+**Client / hosting correction (2026-08-20):** the phase-11 cells above still mention `/mobile` PWA as a live foundation.  That UI was retired in #2801 (`/mobile` redirects to `/console`).  Live clients are `/console` (desktop + phone widths) and native iOS.  `/api/mobile/*` stays the iOS API.  Production is Coolify at socratictrade.com, not Mac pm2 and not Vercel.
 
 ## Integrations (outside the phase roadmap)
 
@@ -2319,15 +2321,16 @@ scope, timeline, or approach changed.
 - Mobile and tablet layouts use normal page scrolling with the fixed cockpit
   shell reserved for desktop widths.
 - Strategy tuning proposals are review-only until the user explicitly applies them.
-- Mobile/PWA/native clients use the shared backend command queue and status model;
+- Native iOS uses the shared backend command queue and status model;
   phones never store provider secrets, broker credentials, or MCP tokens.
+  The `/mobile` PWA UI was retired in #2801 (`/mobile` redirects to `/console`).
 - Policy enforcement deterministically handles daily limits, symbol limits, sector caps, stop-loss, and take-profit rules.
 - Webhook notifications are attempted only when configured and every attempt is audited.
 - Error/LLM observability stays opt-in and redacted by default for account, prompt, and credential data.
 - The local SQLite database has a documented Litestream replicate/restore path before production reliance.
-- Production and beta hosting stay separated: production on `socratictrade.com`
-  / port `4000`; integration beta on `trading-beta.jays.services` / port `4001`;
-  no duplicate dev/beta hostname.
+- Production hosting is Coolify at `socratictrade.com` only.  Preview / beta
+  hostnames are retired.  Do not recreate `trading-beta` or per-agent
+  `*.jays.services` preview lanes.
 - Agent branch landing requires a clean worktree and refuses stale semantic overlap
   when the branch and `origin/main` both changed the same files since divergence.
 - Root-level manual probe artifacts such as screenshots, one-off UI scripts, and

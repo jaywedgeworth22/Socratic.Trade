@@ -13,6 +13,17 @@ Fix: take the symbol from the tracked `broker_protective_stops` row when the loo
 Untrusted content can no longer reach the always-trusted strategy prompt unlabelled.  The trust boundary now lives AT THE SINK: `mergeStrategyDirectiveBlock` requires `source`, runs containment itself and returns `{ prompt, contained }`, so a future caller cannot write an unscanned directive by forgetting a helper (the required parameter proved itself by breaking the one stale 4-arg call site at compile time).  Coach URL lessons are contained at ingest and dropped + audited on a real hijack idiom; the forgeable unauthenticated `POST /api/chat-history` is deleted; a `MockLLM` semantic-gate fallback is audited instead of silent; the revalidation rationale is contained and the reviewer prompt carries a data-not-command clause.
 
 **Owner text is never altered** - containment keys on provenance, so `owner-coach` passes byte-for-byte.  `learningReviewMode: "decide"` auto-apply and `learningReviewEnabled` are untouched: the second review round established that as an owner choice with an existing off-switch, and re-gating it would be paternalism.  Gate: lint 0 errors, tsc clean, 7146 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-prompt-trust-boundary.md`.
+## 2026-08-20 CURSOR — Stale hosting/stack copy sweep (docs only)
+
+Swept current-truth docs and GitHub About for Vercel / Cloudflare Workers /
+PWA-as-current / retired preview hosts.  README and GitHub About already
+point at Coolify / socratictrade.com — left those alone.  Fixed PLAN.md
+Current Status + acceptance checks, leftover AGENTS.md preview/PWA/Mac-pm2
+present-tense, ops-diagnostics `trading.jays.services`, and matching
+ops/litestream/UX-program current-truth lines.  No product code.
+
+Branch `cursor/stale-hosting-docs-b392`.  Rollout:
+`docs/rollouts/2026-08-20-stale-hosting-docs.md`.
 
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
 
