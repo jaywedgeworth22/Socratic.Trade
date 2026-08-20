@@ -749,7 +749,7 @@ describe("vector-db scope metadata", () => {
   describe("private account vector purge", () => {
     beforeEach(() => {
       mocks.getDb.mockReturnValue({
-        prepare: vi.fn(() => ({ all: vi.fn(() => []) }))
+        prepare: vi.fn(() => ({ all: vi.fn(() => []), get: vi.fn(() => undefined) }))
       });
     });
 

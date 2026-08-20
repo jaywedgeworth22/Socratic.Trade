@@ -77,11 +77,12 @@ function assertGatherSafeWholeIndexInventory(options?: {
   accountDeletionRequestId?: string;
   allowDuringStrategyWork?: boolean;
 }): void {
+  if (options?.allowDuringStrategyWork || options?.accountDeletionRequestId) {
+    return;
+  }
   if (
     !shouldSkipWholeIndexInventory({
-      strategyWorkInFlight: hasInFlightStrategyWork(),
-      accountDeletionRequestId: options?.accountDeletionRequestId,
-      allowDuringStrategyWork: options?.allowDuringStrategyWork
+      strategyWorkInFlight: hasInFlightStrategyWork()
     })
   ) {
     return;
