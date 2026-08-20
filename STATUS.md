@@ -50,6 +50,13 @@ Fix: persist the tombstone on cancel throw when the order is a tracked / app-man
 ## 2026-08-20 CURSOR-BUGBOT — Alpaca MCP getEquityOrders hid just-filled orders
 
 #2886 scoped REST `getEquityOrders` to open + 24h closed, but the MCP success path still called `get_orders` with `status:"open"`.  `ordersListIncludesTerminal` stayed true, so `reconcilePlacementError` / `flagStalePlacingIntents` treat a missing refId as never-placed.  A market fill that leaves `open` before the place deadline returns is then safe-to-retry — a second submit.  REST-only Alpaca is fine.  MCP now requests `status:"all"` (bounded 500).  Rollout: `docs/rollouts/2026-08-20-alpaca-mcp-orders-include-terminal.md`.
+## 2026-08-20 MONET - console numeric fields commit on blur, and stop writing a fallback
+
+Two console numeric fields PATCHed on every keystroke and wrote a fallback value when cleared.  On a real-money app those are risk/strategy knobs, so the silent wrong write was the harm.  Fixed to local draft + commit on blur; blank or unparseable now commits nothing and reverts to the last saved value.  No confirmation ceremony added -- guardrail values stay the owner's adjustable preferences.
+
+Test strength is stated honestly rather than overclaimed: the commit decision is tested behaviorally through exported pure functions, but the blur wiring is asserted against source text, because the repo has no DOM test tooling and adding a harness is its own decision.
+
+Third site with the identical bug (`app/admin/operations/operations-client.tsx:208`) filed as #2958 and NOT fixed -- peer PRs hold that area.
 
 ## 2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday 401 at the edge
 
