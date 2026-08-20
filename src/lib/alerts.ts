@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import { getBrokerGateway } from "./broker";
 import {
   audit,
   createPriceAlert,
@@ -10,11 +9,11 @@ import {
   listUsers,
   markPriceAlertTriggered
 } from "./db";
+import { isValidAppSymbol } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
+import { fetchFreshQuotesCascade, quoteAgeSecForStalenessGate } from "./quotes-cascade";
 import type { PriceAlert, PriceAlertOp } from "./types";
-
-const SYMBOL_RE = /^[A-Z.]{1,10}$/;
 
 export function normalizeAlertOp(op: string): PriceAlertOp | null {
   const value = op.trim().toLowerCase();
@@ -30,7 +29,7 @@ export function createAlert(
   const symbol = normalizeSymbol(input.symbol);
   const op = normalizeAlertOp(input.op);
   const price = Number(input.price);
-  if (!SYMBOL_RE.test(symbol)) return { error: "INVALID_SYMBOL" };
+  if (!isValidAppSymbol(symbol)) return { error: "INVALID_SYMBOL" };
   if (!op) return { error: "INVALID_OP" };
   if (!Number.isFinite(price) || price <= 0) return { error: "INVALID_PRICE" };
 
@@ -65,21 +64,25 @@ export async function checkPriceAlerts(userId: string): Promise<PriceAlert[]> {
   if (armed.length === 0) return [];
 
   const policy = getPolicy(userId);
-  const accountNumber = policy.accountNumber;
-  if (!accountNumber) return [];
-
   const symbols = [...new Set(armed.map((alert) => alert.symbol))];
-  const gateway = getBrokerGateway(policy, userId);
-  let quotes: Record<string, { price?: number }> = {};
+  let quotes: Awaited<ReturnType<typeof fetchFreshQuotesCascade>> = {};
   try {
-    quotes = await gateway.getEquityQuotes(accountNumber, symbols);
-  } catch {
+    quotes = await fetchFreshQuotesCascade(symbols, userId);
+  } catch (err) {
+    console.error(`[alerts] quote cascade failed for ${userId}:`, err);
+    audit("alert.check_error", { userId, symbols, error: String(err) }, userId);
     return [];
   }
 
+  const nowMs = Date.now();
+  const maxQuoteAgeSec = policy.maxQuoteAgeSec ?? 120;
   const triggered: PriceAlert[] = [];
   for (const alert of armed) {
     const quote = quotes[alert.symbol];
+    const { ageSec, missing } = quoteAgeSecForStalenessGate(quote, nowMs);
+    const isStale = missing || (ageSec !== undefined && ageSec > maxQuoteAgeSec);
+    if (isStale) continue;
+
     const currentPrice = quote?.price;
     if (typeof currentPrice !== "number" || currentPrice <= 0) continue;
     const hit = alert.op === "<" ? currentPrice < alert.price : currentPrice > alert.price;
