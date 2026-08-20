@@ -56,6 +56,8 @@ Cloud VM has live `PUSHOVER_*` secrets.  Email-fallback cases must stub those en
 
 Full `npm test` on this VM is not the gate for this PR: it hits unrelated network/timeout flakes (TwelveData quota, strategy 30s timeouts, Alpaca/Finnhub 404s).  A broader notify-adjacent set was 139 passed / 1 unrelated timeout (`persistence-notification` pre-run portfolio snapshot).  CI `verify` on #2877 is the full-suite source of truth.
 
+Rebased onto `origin/main` `0382e83f` (2026-08-20).  Replay was clean; no code conflicts.  Docs-only overlap on `PLAN.md` / `STATUS.md` / `docs/EFFORT-LOG.md` kept both sides.
+
 ## Next Steps & Blockers
 
 - Merge; auto-deploy on `main`.  No Coolify / TestFlight / spend-cap action.

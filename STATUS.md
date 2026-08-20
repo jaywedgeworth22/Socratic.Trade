@@ -2,7 +2,7 @@
 
 ## 2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`)
 
-Cluster `alert-repeat-lock`.  **IN PR #2877.**  Same alert (user + type + fingerprint) is not delivered more than once per 60s.  `price_alert` is now in the existing sent-row repeat-dedup set, keyed by alert id.  `provider_degraded` / `budget_alert` / `kill_switch` share that 60s lock.  Health and usage-limit no longer re-send Pushover on a channel the user already has.  Usage-limit 6h cooldown no longer latches on skipped/failed.  Did not revert #2865.  Did not take `alert-push-delivery`.  Next action: merge #2877 when `verify` is green.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
+Cluster `alert-repeat-lock`.  **IN PR #2877.**  Rebased onto `origin/main` `0382e83f`.  Same alert (user + type + fingerprint) is not delivered more than once per 60s.  `price_alert` is now in the existing sent-row repeat-dedup set, keyed by alert id.  `provider_degraded` / `budget_alert` / `kill_switch` share that 60s lock.  Health and usage-limit no longer re-send Pushover on a channel the user already has.  Usage-limit 6h cooldown no longer latches on skipped/failed.  Did not revert #2865.  Did not take `alert-push-delivery`.  Next action: merge #2877 when `verify` is green.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
 
 ## 2026-08-19 MONET — Review board exported into the repo (peers were blocked on a private artifact URL)
 
