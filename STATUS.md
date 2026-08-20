@@ -7,7 +7,8 @@ PR **#2798** (`cursor/alert-noise-retired-boot-64c1`) rematched onto `origin/mai
 on this PR: 5-minute connection-alert mute on `DB_BOOTSTRAP=live` boot, plus
 `getServiceHealthSummaries` stamps `intentionalOff` so leftover 401 rows cannot paint retired
 vendors STOPPED.  Merge kept main's `pineconeIngest` snapshot and `stoppedReasonKind`
-hard-stop check.
+hard-stop check.  Boot-grace uses `process.uptime()` so `db.ts` cannot pull `node:fs` into
+client webpack (old `verify-hosted` failure).  Local lint/tsc/38 targeted tests/`next build` green.
 
 Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
 
