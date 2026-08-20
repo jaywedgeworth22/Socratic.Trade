@@ -44,7 +44,14 @@ npx tsc --noEmit      # clean
 # 3 files / 31 passed
 ```
 
-Full vitest + next build run after the PR opens.
+```
+./node_modules/.bin/vitest run
+# 615 files passed / 1 skipped; 7075 tests passed / 51 skipped
+./node_modules/.bin/next build --webpack
+# Next.js 16.3.0 webpack build succeeded
+```
+
+PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/2940
 
 ## Next Steps & Blockers
 
