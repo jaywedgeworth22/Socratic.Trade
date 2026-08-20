@@ -713,22 +713,12 @@ export async function alertConnectionFailure(
       const config = loadNotifyConfig();
 
       // Prefer Pushover when it can deliver (Resend costs money).  Email stays last resort.
-      const additionalDelivery = isPushoverDeliverable(prefs, config)
-        ? () =>
-            notify(
-              "local",
-              { title, body, kind: "provider_degraded", data: payload },
-              {
-                config,
-                prefs: {
-                  ...prefs,
-                  channels: ["pushover"],
-                  pushoverTarget: operatorPushoverUserKey(prefs),
-                  updatedAt: prefs.updatedAt
-                }
-              }
-            )
-        : fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+      // Skip a fallback that would re-send the same payload on a channel sendNotification
+      // already has in prefs — that looked like two alerts in one minute.
+      const alreadySendingPushover = prefs.channels.includes("pushover");
+      const alreadySendingEmail = prefs.channels.includes("email") && Boolean(prefs.email.trim());
+      const additionalDelivery =
+        isPushoverDeliverable(prefs, config) && !alreadySendingPushover
           ? () =>
               notify(
                 "local",
@@ -737,13 +727,32 @@ export async function alertConnectionFailure(
                   config,
                   prefs: {
                     ...prefs,
-                    channels: ["email" as any],
-                    email: fallbackEmail,
+                    channels: ["pushover"],
+                    pushoverTarget: operatorPushoverUserKey(prefs),
                     updatedAt: prefs.updatedAt
                   }
                 }
               )
-          : undefined;
+          : fallbackEmail &&
+              config.email.resendKey &&
+              config.email.from &&
+              !alreadySendingEmail &&
+              !isPushoverDeliverable(prefs, config)
+            ? () =>
+                notify(
+                  "local",
+                  { title, body, kind: "provider_degraded", data: payload },
+                  {
+                    config,
+                    prefs: {
+                      ...prefs,
+                      channels: ["email" as any],
+                      email: fallbackEmail,
+                      updatedAt: prefs.updatedAt
+                    }
+                  }
+                )
+            : undefined;
 
       // Also send standard notification. Delivery honors the user's real enabledEvents toggle
       // (owner ruling 2026-08-12, "ALL toggles must be real" — no force-include). A legacy stored
