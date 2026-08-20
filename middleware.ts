@@ -36,6 +36,7 @@ import {
 } from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
 import { getSessionIdentity } from "./src/lib/auth/session-edge";
+import { isLiveBootstrap } from "./src/lib/auth-secret-guard";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
 // The primary operator's aliases — additional addresses that map to the same primary account. Kept in sync
@@ -381,8 +382,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Source 3: Dev/local fallback — ONLY when auth is NOT configured.
-  if (!trustedEmail && !isAuthConfigured()) {
+  // Source 3: Dev/local fallback — ONLY when auth is NOT configured and this is not a live bootstrap.
+  if (!trustedEmail && !isAuthConfigured() && !isLiveBootstrap()) {
     trustedEmail = PRIMARY_EMAIL;
     identitySource = AUTHENTICATED_IDENTITY_SOURCES.localFallback;
   }
