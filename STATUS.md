@@ -73,6 +73,14 @@ Every performance number now says what it measures.  Basis and window travel wit
 **Not closed, stated openly:** `perf-17` - the SPY benchmark is total-return or price-return depending on which history provider answered, and an intraday tip is compared against an EOD close.  Confirmed by reading the provider cascade, not papered over; normalising that is its own change.  Also open: the coach tool context still passes raw win rate with no sample count.
 
 Gate: lint 0 errors, tsc clean, 7140 tests, build 0, `xcodebuild build` 0.  Rollout: `docs/rollouts/2026-08-20-pnl-basis-labels.md`.
+## 2026-08-20 CURSOR-BUGBOT — Tradier 24h filter drops live pending_cancel GTC stops
+
+#2886's default `getEquityOrders` keeps only `open` / `pending` / `partially_filled` / `held` plus terminal orders created in the last 24h.  `pending_cancel` and `pending_replace` are live in `isLiveOrderState` (they can still fill) but were treated as terminal.  A week-old GTC equity stop mid-cancel is dropped, `liveExitOrderCoverage` sees no exit, and the synthetic-stop monitor can double-sell.  Same miss can let account-drain purge while that order is still live.
+
+Fix: keep any `isLiveOrderState` row regardless of age.  Still apply the 24h window to true terminal rows.  Distinct from #2947 (5-page cap).  Did not change Alpaca or page count.
+
+**IN PR #2952.**  Branch `cursor/tradier-live-pending-cancel-scope`.  Rollout: `docs/rollouts/2026-08-20-tradier-live-pending-cancel-scope.md`.
+
 ## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on lookup miss
 
 `cancelWorkingOrder` only tombstoned an owner-cancelled app-managed stop when the advisory pre-cancel broker read returned the order.  Console cancel is fail-open on that read (timeout, throw, or a working GTC stop missing from scoped `getEquityOrders`).  The broker cancel still ran, but `cancelledSymbol` stayed empty, so the do-not-replace tombstone and `broker_protective_stops` delete were skipped.  The next reconcile tick then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
