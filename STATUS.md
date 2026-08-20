@@ -9,6 +9,17 @@ Web turned out to be the drifted side on Title Case -- the fleet copy doc names 
 Two of my own instructions were wrong and the implementer pushed back rather than complying: unhyphenated "Exit Only" is a consistent COMMAND name (parallel to "Wind Down"), not an orphan spelling, because the app deliberately runs Title Case commands alongside sentence-case state words -- and it then found the identical casing defect the audit had missed.  It also caught that renaming only the read-only Guardrails rows would have left the EDIT controls on the same screen calling one field by a different name.
 
 Known limit: every screen changed sits behind the OAuth login wall, so there is no visual proof of the changed screens -- only BUILD SUCCEEDED, 190 passing iOS tests, and a clean launch.
+## 2026-08-20 MONET - timed-out work is now cancelled, and slow lanes stop spawning duplicates
+
+`withDeadline` was a bare Promise.race: on timeout the caller proceeded while the underlying broker call kept running with its socket open for the life of the process.  That is the leading candidate for why an aged process degrades (fresh serves /api/health in 0.61s, a 5h-old one took 55s).  It now aborts on the timeout branch only.
+
+More serious: both scheduler in-flight guards released on the RACED promise rather than the real work, so any broker lane slower than the 15s deadline got a duplicate launched on top of it every 60s tick, forever -- on the stale-exit lane that means duplicate remediation attempts against LIVE ORDERS.
+
+Order placement, cancel and replace are deliberately NOT abortable, enforced structurally by never passing a signal on those paths -- an aborted placement may still have reached the broker.
+
+Honest scope: this removes a leaked-work accumulator and a duplicate-launch path.  It is NOT proven to be what stopped runs completing; that still needs one production query (see #2967).
+
+One premise from the investigation did not hold and was deliberately not implemented: the Alpaca gateway has no fetch to thread a signal into, and the obvious axios-interceptor workaround attaches to a different module instance than the bundled SDK uses.  Filed as #2970 rather than shipping something that silently does nothing in production.
 
 ## 2026-08-20 MONET - `realized-pnl-ledger` up for review
 
