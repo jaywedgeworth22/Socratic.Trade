@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-20 CURSOR — Rematch #2798 onto current main (`cursor/alert-noise-retired-boot-64c1`).** Unique leftover after #2799/#2800: 5 min live-boot connection-alert mute + stamp `intentionalOff` in `getServiceHealthSummaries`.  Kept main's `pineconeIngest` and kind-based hard-stop.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
 > **2026-08-17 CURSOR — Alert-noise leftover (`cursor/alert-noise-retired-boot-64c1`).** Owner 4:23–4:38pm CT burst was mostly the 21:35Z Coolify restart plus leftover FilingAPI 401s and expected-limit 429s. Stamp retired vendors OFF in health summaries; ops-snapshot `ok` matches hard-stop only; mute connection pages for 5 min on live boot. Do not raise Pinecone/Anthropic/AV budgets. Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
 > **2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`).** Cluster `alert-repeat-lock`.  **IN PR #2877.**  60s same-fingerprint delivery lock on `price_alert` (by id) plus `provider_degraded` / `budget_alert` / `kill_switch`.  Reuses `notification_events` sent rows.  Health/usage same-channel fallback no longer double-sends.  Did not revert #2865 or take `alert-push-delivery`.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
 

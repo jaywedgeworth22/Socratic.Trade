@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
+
+PR **#2798** (`cursor/alert-noise-retired-boot-64c1`) rematched onto `origin/main` after
+#2799/#2800 landed the overlapping FilingAPI omit and hard-stop-only ops `ok`.  Unique leftover
+on this PR: 5-minute connection-alert mute on `DB_BOOTSTRAP=live` boot, plus
+`getServiceHealthSummaries` stamps `intentionalOff` so leftover 401 rows cannot paint retired
+vendors STOPPED.  Merge kept main's `pineconeIngest` snapshot and `stoppedReasonKind`
+hard-stop check.
+
+Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
+
 ## 2026-08-17 CURSOR — Alert-noise leftover after the 4:23pm CT burst
 
 Owner All Messages 4:23–4:38pm CT.  Live ST is healthy after the 21:35:38Z Coolify restart of
