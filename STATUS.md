@@ -1,5 +1,18 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR — Rebase #2818 onto current main (delayed Yahoo stamp)
+
+Rebase-only of PR **#2818** (`cursor/delayed-yahoo-fallback-stamp-c120`) onto
+`origin/main` `ce31c367`.  Scope stayed stamp user-facing **Delayed Quote** on
+approval cards and keep trading.  Conflicts were only
+`ios/SocraticTrade/DataSourcesSettings.swift` and
+`ios/SocraticTrade/HomeView.swift`; kept main (coordinator-copy cleanup and
+#2857 Desk subtitle fold already landed).  Did not absorb other clusters.
+Do not merge from this rebase.
+
+Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
+`docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
+
 ## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
 
 PR **#2798** (`cursor/alert-noise-retired-boot-64c1`) rematched onto `origin/main` after

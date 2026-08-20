@@ -63,8 +63,8 @@ Did not steal #2792 / #2798 / #2800 / #2794.  No Stripe.
 - User-facing stamp is **Delayed Quote** (Title Case chip).  Sentence:
   "This price is delayed.  You can still approve the order."  Rationale is
   not used as a coordinator channel.
-- iOS Home / Data Sources / empty Proposals no longer mention remote,
-  Infisical, or owner-cut asides.
+- iOS Home / Data Sources coordinator asides already landed on main
+  (this rebase kept those files as main; #2857 Desk subtitle fold stays).
 - Did not touch FilingAPI, Pinecone, iOS release-readiness, or Stripe lanes.
 
 ## Verification State
@@ -103,7 +103,11 @@ metadata, 30s retrieval-scope timeouts) — not this change.
 
 ## Next Steps & Blockers
 
-- Merge via `scripts/land.sh` after verify is green.
+- Rebase-only onto `origin/main` `ce31c367` (2026-08-20).  Conflicts were
+  `ios/SocraticTrade/DataSourcesSettings.swift` and
+  `ios/SocraticTrade/HomeView.swift`; kept main so this PR does not rewrite
+  already-landed Data Sources number rows / #2857 Desk subtitle fold.
+- Do not merge from this rebase.  Leave CI green.
 - Confirm a live delayed-Yahoo opening shows the stamp on website + iOS.
 
 ## Zero-Code Findings
