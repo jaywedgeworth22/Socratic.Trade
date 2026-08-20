@@ -1,5 +1,6 @@
 import { audit, getInternalSetting, setInternalSetting } from "./db";
 import { DEFAULT_POLICY } from "./defaults";
+import { isBracketOrderClass } from "./broker-side";
 import { isWorkingOrderState } from "./broker-held-orders";
 import { normalizeSymbol } from "./money";
 import { shortOrderLabel } from "./order-labels";
@@ -65,7 +66,9 @@ export async function notifyStaleLimitOrders(input: {
   for (const item of stale) {
     // Never alert on an unactivated bracket exit leg — see isHeldExitLeg. (The leg stays in the
     // listing for order-replacement's held-leg 409; only the owner-facing alert is suppressed.)
-    if (isHeldExitLeg(item.order)) continue;
+    // Activated bracket legs (orderClass bracket/oco/oto) are also not actionable auto-replace
+    // targets — suppress the misleading "cancel/reprice before replacing with market" alert.
+    if (isHeldExitLeg(item.order) || isBracketOrderClass(item.order.orderClass)) continue;
     const key = staleLimitOrderAlertKey(userId, input.policy, item);
     if (getInternalSetting(key)) continue;
 
