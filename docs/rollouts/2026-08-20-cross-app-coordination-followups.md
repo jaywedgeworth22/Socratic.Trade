@@ -48,21 +48,31 @@ Touched:
 - Did not promote the pin-check to a required merge check (audit item 9).
 - Did not mint a second Massive key.
 - Did not collapse union-merge STATUS/PLAN.
-- Peer-repo items (CT AGENTS.md runners, CT Massive last-resort, CT
-  provenance commit, UM pin-check + congress.trade health probe, effort-board
-  pointers) are separate PRs.  This cloud seat cannot write Mac live boards.
+- Peer PRs opened: Congress.Trade #2064, Usage-Monitor #1245, FLEET #44,
+  CTS #278, DealDex #93 (pointer only).  This cloud seat cannot write Mac
+  live boards.
 
 ## Verification State
 
-See the PR / later commits for the exact `npm run lint` / `npx tsc --noEmit`
-/ `npm test` / `npm run build` receipts.
+```bash
+npm run lint          # 0 errors (grandfathered warnings)
+npx tsc --noEmit      # clean
+npx vitest run test/history.test.ts test/market-read-routes.test.ts \
+  test/shared-package-pin-check.test.ts test/usage-monitor-push.test.ts \
+  test/usage-monitor-replay.test.ts
+                      # 105 passed after expecting usageLabel on the
+                      # peer-serving SPY call
+```
+
+Full `npm test` in this VM is contaminated by injected provider keys
+(`ROIC_API_KEY`, `TIINGO_API_KEY`, …) and is not the CI signal.
+`npm run build` follows.
 
 ## Next Steps & Blockers
 
-1. Land peer PRs on Congress.Trade and Usage-Monitor for the remaining §7
-   items.
+1. Review/merge peer PRs: CT #2064, UM #1245, FLEET #44, CTS #278, DD #93.
 2. Promote pin-check to required only after ST+UM+CT are a matched pair.
-3. Cross-post effort-board pointers on CT/UM/CTS/FLEET/DD from a Mac seat.
+3. Mac-seat live-board mirrors remain owner/Mac-only.
 
 ## Zero-Code Findings
 

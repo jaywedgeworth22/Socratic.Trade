@@ -378,11 +378,12 @@ triangle and fails closed when CT is unreadable or reintroduces the npm dep
 (still not a required merge check).  Call-volume windows persist to settings
 on drain and replay after a crash.  Peer-serving OHLC misses tag
 `congress-read`.  Infisical merge-order + congress/Quiver docs refreshed.
-Peer-repo items (CT runners, CT Massive last-resort, UM health probe) are
-separate PRs.  Did not mint a Massive key.  Did not collapse STATUS/PLAN.
+Peer PRs: Congress.Trade #2064, Usage-Monitor #1245, FLEET #44, CTS #278,
+DealDex #93 (pointer only).
+Did not mint a Massive key.  Did not collapse STATUS/PLAN.
 
-Branch `cursor/cross-app-coordination-followups-1212`.  Rollout:
-`docs/rollouts/2026-08-20-cross-app-coordination-followups.md`.
+Branch `cursor/cross-app-coordination-followups-1212`.  ST PR **#2941**.
+Rollout: `docs/rollouts/2026-08-20-cross-app-coordination-followups.md`.
 
 ## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
 
