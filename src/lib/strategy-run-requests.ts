@@ -128,6 +128,14 @@ export function queueStrategyRunRequest(input: { userId: string; manual?: boolea
  * `stalled_no_progress` after ~31m on the same process.  A claimed request
  * with no live in-process heartbeat is an orphan — drain must resume that
  * same id so the 202 runId Activity is polling is the row that gets `llm_usage`.
+ *
+ * Presence on this process is the liveness signal, not the beat timestamp.
+ * A 90s age check treated an event-loop freeze (SQLite busy_timeout 60s, and
+ * measured >120s back-to-back stalls) as a dead worker, then
+ * `releaseStrategyLock` + a second `runStrategyOnce` on the same id.  The
+ * still-running gather can already have passed `assertOwned` before place,
+ * so the adopted run double-places.  A hung worker on this process must
+ * stay single-flight; only a missing map entry (process restart) is an orphan.
  */
 export const STRATEGY_RUN_EXECUTION_STALE_MS = 90_000;
 
@@ -141,9 +149,8 @@ function executionMap(): Map<string, ExecutionBeat> {
   return (executionHost.__socraticStrategyRunExecutions ??= new Map());
 }
 
-export function isStrategyRunExecutionLive(runId: string, now: number = Date.now()): boolean {
-  const beat = executionMap().get(runId);
-  return Boolean(beat && now - beat.at < STRATEGY_RUN_EXECUTION_STALE_MS);
+export function isStrategyRunExecutionLive(runId: string): boolean {
+  return executionMap().has(runId);
 }
 
 export function beginStrategyRunExecution(

@@ -70,18 +70,22 @@ describe("Manual Run once drain handoff (claimed worker)", () => {
     });
   });
 
-  it("leaves a live in-process worker alone so drain does not start a second gather", async () => {
+  it("leaves a live in-process worker alone even when its heartbeat timestamp is older than 90s", async () => {
     const db = await import("../src/lib/db");
     const {
       beginStrategyRunExecution,
-      processPendingStrategyRunRequests
+      processPendingStrategyRunRequests,
+      STRATEGY_RUN_EXECUTION_STALE_MS
     } = await import("../src/lib/strategy-run-requests");
     const userId = `drain-live-${randomUUID()}`;
     const runId = randomUUID();
 
     db.insertStrategyRun(runId, userId);
     insertOpenRequest(db, { id: runId, userId, status: "running" });
-    const execution = beginStrategyRunExecution(runId);
+    // Same process, map entry present, beat older than the old 90s cutoff — the
+    // 55–120s SQLite busy_timeout freezes from #2967.  Adopting here would
+    // release the living run's lock and start a second gather/place.
+    const execution = beginStrategyRunExecution(runId, Date.now() - STRATEGY_RUN_EXECUTION_STALE_MS - 30_000);
 
     const result = await processPendingStrategyRunRequests({ limit: 1 });
     expect(result.processed).toBe(0);
