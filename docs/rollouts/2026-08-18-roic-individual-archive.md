@@ -69,7 +69,7 @@ After merge, confirm `GET /api/ops/snapshot` → `roicArchive` and that `roic-tr
 
 ## Next Steps & Blockers
 
-1. Rebased onto `origin/main` (`ce31c367`, #2798) so #2813 is conflict-clean.  Conflicts: `src/lib/web-sources/roic-transcripts.ts` + `test/roic-transcripts.test.ts`.  Kept this PR's cached-tail drain (`while (queue.length > 0)`) and main's #2848 pause + #2820 write-class tests.  Did not merge.  Did not spend the Individual key.
+1. Rebased onto `origin/main` (`d3e2c9ee`, #2892) so #2813 is conflict-clean.  Conflicts: `src/lib/web-sources/roic-transcripts.ts` + `test/roic-transcripts.test.ts`.  Kept this PR's cached-tail drain (`while (queue.length > 0)`) and main's #2848 pause + #2820 write-class tests.  Dropped later merge commits that would have absorbed #2814/#2892.  Did not merge.  Did not spend the Individual key.
 2. Leave CI green, then land.  Coolify auto-deploys.  Watch `roicArchive.transcriptsWithContent` / `universeUncovered` / `thinSymbols`.
 3. Owner: renew-vs-expire Individual.  Do not start a second full-universe list while the cursor is still walking gaps.
 4. Leave FilingAPI leftover and other clusters to their existing PRs.
