@@ -7,6 +7,24 @@ Owner asked why R2 exceeds a one-week snapshot.  `socratic-trade-bucket` holds T
 **FOOTGUN before anyone prunes:** both replicas use the IDENTICAL object path `trading-live/app.db`; only bucket + endpoint differ (R2 `socratic-trade-bucket` = dead/prunable, B2 `jays-socratic-trade-eu` = LIVE).  A prune against the wrong endpoint destroys the active backup.  `cold-snapshots/` must survive.
 
 Prune NOT executed here - no object-level R2 delete tooling and deleting backups needs an explicit human decision.  Runbook in `docs/rollouts/2026-08-20-r2-historic-prune-unblocked.md`.
+## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on cancel timeout
+
+#2949 only wrote the do-not-replace tombstone after `cancelEquityOrder` returned.  #2886's 30s cancel deadline can throw after the broker already accepted the cancel.  Reconcile then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
+
+Fix: persist the tombstone on cancel throw when the order is a tracked / app-managed protective stop.  Leave the tracked row if the ACK was lost.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-timeout.md`.
+
+## 2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday 401 at the edge
+
+#2953 added `/api/market/quotes` and `/api/market/intraday/[symbol]` on the same
+`APP_B_INGEST_TOKEN` path as `/api/market/prices` and `/api/market/spx`, but the
+middleware bearer pass-through stayed on those two older paths.  A peer call with
+only the ingest token never reaches `verifySecuritiesImportToken`; the edge
+returns 401.  CT swallows 401s and falls back, so wiring the FMP replacement
+would keep writing `missed_window` with no visible auth error.
+
+Fix: extend the existing pass-through.  `/api/market/flatfile` stays session-gated.
+Handlers still validate the token.  Rollout:
+`docs/rollouts/2026-08-20-peer-quotes-intraday-middleware.md`.
 
 ## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
 
