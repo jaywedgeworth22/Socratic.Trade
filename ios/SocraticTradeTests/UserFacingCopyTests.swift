@@ -81,18 +81,27 @@ final class UserFacingCopyTests: XCTestCase {
     }
 
     func testUniverseCopyMatchesWebGuardrailsNotAMissingStrategyPage() {
+        // "always-include symbols" tracks the Guardrails row label.  These names are
+        // exempt from the universe floor; "extra symbols" made them sound appended.
         XCTAssertEqual(
             DeskCopy.universeNeedsIndex,
-            "Choose at least one base index (e.g. S&P 500) or add extra symbols so the strategy has names to scan."
+            "Choose at least one base index (e.g. S&P 500) or add always-include symbols so the strategy has names to scan."
         )
         XCTAssertEqual(
             DeskCopy.universeRefreshAfterGuardrails,
-            "Add an index or extra symbols on Guardrails, then pull to refresh here."
+            "Add an index or always-include symbols on Guardrails, then pull to refresh here."
         )
         XCTAssertEqual(
             DeskCopy.universeInsightDetail,
-            "Choose at least one base index (e.g. S&P 500) or add extra symbols."
+            "Choose at least one base index (e.g. S&P 500) or add always-include symbols."
         )
+        for text in [
+            DeskCopy.universeNeedsIndex,
+            DeskCopy.universeRefreshAfterGuardrails,
+            DeskCopy.universeInsightDetail
+        ] {
+            XCTAssertFalse(text.contains("extra symbols"), text)
+        }
         XCTAssertTrue(DeskCopy.universeNeedsIndex.contains("S&P 500"))
         XCTAssertTrue(DeskCopy.universeRefreshAfterGuardrails.contains("Guardrails"))
         for text in [
@@ -200,6 +209,117 @@ final class UserFacingCopyTests: XCTestCase {
             MobileAPIError.serverError(statusCode: 500, message: nil).errorDescription,
             "Something went wrong.  Try again."
         )
+    }
+
+    // MARK: - One vocabulary for run states, another for commands
+
+    /// Run states and the commands that reach them are different parts of speech and
+    /// deliberately worded differently — "Wind Down" (button) vs "Winding down" (state).
+    /// Status TITLES must use the state word, so `AgentControlPlan` may not Title-Case them.
+    func testStatusTitlesUseTheStateWordNotTheCommandName() {
+        let exitOnly = AgentControlPlan.from(
+            systemState: "close_only",
+            runState: .exitOnly,
+            authority: "propose",
+            snapshotStale: false,
+            ready: true
+        )
+        XCTAssertEqual(exitOnly.statusTitle, RunStateWord.exitOnly.rawValue)
+        XCTAssertEqual(exitOnly.statusTitle, "Exit-only")
+
+        let windingDown = AgentControlPlan.from(
+            systemState: "liquidating",
+            runState: .windingDown,
+            authority: "decide",
+            snapshotStale: false,
+            ready: true
+        )
+        XCTAssertEqual(windingDown.statusTitle, RunStateWord.windingDown.rawValue)
+        XCTAssertEqual(windingDown.statusTitle, "Winding down")
+
+        // The state sentence on Guardrails uses the same words.
+        XCTAssertTrue(
+            DeskCopy.authorityVersusRunState(authority: "propose", runState: .exitOnly)
+                .contains(RunStateWord.exitOnly.rawValue)
+        )
+        for title in [exitOnly.statusTitle, windingDown.statusTitle] {
+            XCTAssertFalse(title.contains("Exit-Only"), title)
+            XCTAssertFalse(title.contains("Winding Down"), title)
+        }
+
+        // Commands keep their Title Case imperative names — HomeView's buttons read
+        // these, so they must NOT be rewritten into the state vocabulary.
+        XCTAssertEqual(AppFormat.commandLabel("strategy.close_only"), "Exit Only")
+        XCTAssertEqual(AppFormat.commandLabel("strategy.liquidating"), "Wind Down")
+    }
+
+    /// Authority renders mid-sentence and inside status pills — value contexts, so it is
+    /// sentence case like its siblings, and never the raw propose/decide wire word.
+    func testAuthorityWordIsSentenceCaseAndNeverTheWireEnum() {
+        XCTAssertEqual(AppFormat.strategyAuthorityLabel("propose"), "Ask-first")
+        XCTAssertEqual(AppFormat.strategyAuthorityLabel("decide"), "Autopilot")
+        let detail = AgentControlPlan.from(
+            systemState: "active",
+            runState: .running,
+            authority: "propose",
+            snapshotStale: false,
+            ready: true
+        ).statusDetail
+        XCTAssertTrue(detail.contains("Ask-first"), detail)
+        XCTAssertFalse(detail.contains("Ask-First"), detail)
+        for word in ["propose", "decide"] {
+            XCTAssertFalse(AppFormat.strategyAuthorityLabel(word).lowercased() == word)
+        }
+    }
+
+    /// The Guardrails rows used to print the raw wire enum ("execute", "propose").
+    func testGuardrailValueRowsNeverPrintTheWireEnum() {
+        XCTAssertEqual(DeskCopy.socraticOverrideValue("execute"), "execute in Autopilot")
+        XCTAssertEqual(DeskCopy.socraticOverrideValue("propose"), "propose only")
+        XCTAssertEqual(DeskCopy.socraticOverrideValue("off"), "off")
+        XCTAssertEqual(DeskCopy.socraticOverrideValue(nil), "off")
+        // "Decide" is never shown to a user — Autopilot is the word for that mode.
+        XCTAssertFalse(DeskCopy.socraticOverrideValue("execute").lowercased().contains("decide"))
+
+        XCTAssertEqual(DeskCopy.sellToFundValue("suggest"), "suggest only")
+        XCTAssertEqual(DeskCopy.sellToFundValue("propose"), "propose sells first")
+        XCTAssertEqual(DeskCopy.sellToFundValue("automated"), "sells automatically")
+        XCTAssertEqual(DeskCopy.sellToFundValue(nil), "off")
+        // A bare "propose" here would read as the unrelated Ask-first authority mode.
+        XCTAssertNotEqual(DeskCopy.sellToFundValue("propose"), "propose")
+
+        for value in ["off", "suggest", "propose", "automated"] {
+            assertOrdinary(DeskCopy.sellToFundValue(value))
+        }
+        for value in ["off", "propose", "execute"] {
+            assertOrdinary(DeskCopy.socraticOverrideValue(value))
+        }
+    }
+
+    /// The Guardrails screen shows each cap twice — a read-only row and an edit control.
+    /// They must use the SAME name, and neither may be one of the ambiguous short forms.
+    func testCapEditControlsUseTheSameNamesAsTheReadOnlyRows() {
+        XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.title, "Max Per Order")
+        XCTAssertEqual(PolicyTightening.Cap.maxDailyNotional.title, "Max Spend Per Day")
+        XCTAssertEqual(PolicyTightening.Cap.maxOrderNotional.menuTitle, "Edit Max Per Order")
+        XCTAssertEqual(PolicyTightening.Cap.maxDailyNotional.menuTitle, "Edit Max Spend Per Day")
+        for cap in PolicyTightening.Cap.allCases {
+            // "Max Order" reads as an order count; "Daily Cap" names none of the three
+            // daily caps (spend, order count, loss stop) it could refer to.
+            XCTAssertNotEqual(cap.title, "Max Order")
+            XCTAssertNotEqual(cap.title, "Daily Cap")
+            assertOrdinary(cap.title)
+            assertOrdinary(cap.menuTitle)
+        }
+    }
+
+    /// The More-list line claimed the screen only tightens policy, which the screen
+    /// itself contradicts ("Caps can go up or down").
+    func testGuardrailsTabDetailDoesNotClaimTighteningOnly() {
+        let detail = AppTab.guardrails.detail
+        XCTAssertFalse(detail.lowercased().contains("tighten"), detail)
+        XCTAssertTrue(detail.contains("caps"), detail)
+        assertOrdinary(detail)
     }
 
     private func assertOrdinary(_ text: String, file: StaticString = #filePath, line: UInt = #line) {

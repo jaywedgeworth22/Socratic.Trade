@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-08-20 MONET - iOS/web parity resolved case by case, not synced one way
+
+Owner instruction was explicit that neither platform is assumed superior, and the audit bore that out: of 21 divergences, 9 adopt web, 6 KEEP BOTH, 4 adopt iOS, and 2 needed a third wording because both sides were wrong.  A blanket sync would have been wrong on 12 of 21.
+
+Web turned out to be the drifted side on Title Case -- the fleet copy doc names "Run Once", "Price Alerts", "Current Policy" and "Win Rate" as canonical, and every one of those is the iOS spelling.
+
+Two of my own instructions were wrong and the implementer pushed back rather than complying: unhyphenated "Exit Only" is a consistent COMMAND name (parallel to "Wind Down"), not an orphan spelling, because the app deliberately runs Title Case commands alongside sentence-case state words -- and it then found the identical casing defect the audit had missed.  It also caught that renaming only the read-only Guardrails rows would have left the EDIT controls on the same screen calling one field by a different name.
+
+Known limit: every screen changed sits behind the OAuth login wall, so there is no visual proof of the changed screens -- only BUILD SUCCEEDED, 190 passing iOS tests, and a clean launch.
+
 ## 2026-08-20 MONET - `realized-pnl-ledger` up for review
 
 Accounting reads no longer take the OLDEST 500 fills.  `listFillEvents` defaults to the whole ledger; a numeric limit remains for display windows and returns the NEWEST N.  I rejected the cluster plan's "flip to newest-DESC everywhere" - for a stateful FIFO replay, truncating at either end is wrong: cutting the tail freezes P&L, cutting the head strands exits whose opening lot was never loaded.

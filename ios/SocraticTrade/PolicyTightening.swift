@@ -75,17 +75,21 @@ enum PolicyTightening {
 
         var id: String { rawValue }
 
+        /// Same words as the read-only rows in `GuardrailsView` — the edit control and the
+        /// row it edits sit on ONE screen, so they cannot use different names.  "Max Order"
+        /// read as an order COUNT next to "Max Opening Orders Per Day", and "Daily Cap"
+        /// named none of the three daily caps (spend, order count, loss) it could mean.
         var title: String {
             switch self {
-            case .maxOrderNotional: return "Max Order"
-            case .maxDailyNotional: return "Daily Cap"
+            case .maxOrderNotional: return "Max Per Order"
+            case .maxDailyNotional: return "Max Spend Per Day"
             }
         }
 
         var menuTitle: String {
             switch self {
-            case .maxOrderNotional: return "Edit Max Order"
-            case .maxDailyNotional: return "Edit Daily Cap"
+            case .maxOrderNotional: return "Edit Max Per Order"
+            case .maxDailyNotional: return "Edit Max Spend Per Day"
             }
         }
 
