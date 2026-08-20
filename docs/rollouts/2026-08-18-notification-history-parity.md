@@ -80,6 +80,19 @@ Did not recreate the PR.  Did not merge.  Did not deploy.  Did not touch #2831, 
 
 Did not recreate the PR.  Did not merge.  Did not deploy.  Did not absorb other clusters.
 
+## Rebase onto origin/main (2026-08-20, after #2892/#2876/#2942)
+
+`origin/main` moved to `1d6bbf68` (#2834 + #2942 + #2876 + #2892 + #2814).  This branch rebased onto that SHA.  Git conflicts:
+
+- `app/console/components/nav.tsx` — kept `unreadCount` and main's `sheetId`.
+- `app/console/components/shell.tsx` — kept unread badges / header inbox and main's `#console-main` + `online`.
+- `ios/SocraticTradeTests/MobileModelsTests.swift` — kept inbox assertions and main's `acknowledgedAt` / `latestScan` tests.
+- `ios/SocraticTradeTests/UserFacingCopyTests.swift` — kept this PR's inbox copy test and main's scan-refresh / portfolio copy tests.
+
+Silent auto-merge would have duplicated `notifications` on the snapshot and in `MobileSnapshot`.  Resolution stayed in this PR's scope: one last-100 `buildNotificationHistory` payload (also emits `status` / `acknowledgedAt` so a #2942-shaped row still decodes).  One iOS type (`NotificationHistoryItem`).  One Activity inbox (Unread / All / Mark as Read).  Left `serializeMobileNotifications` on main unused by this route.  Did not take #2942 deep-links, #2892 visibility, #2876 write guards, or #2834 failover.
+
+Did not recreate the PR.  Did not merge.  Did not deploy.
+
 ## Next Steps & Blockers
 
 - Done when GitHub reports #2841 MERGEABLE.  Leave auto-merge as Jay left it.
