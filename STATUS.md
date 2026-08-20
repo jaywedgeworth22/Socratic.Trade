@@ -20,6 +20,30 @@ branch stamps retired vendors OFF in health summaries, aligns ops-snapshot `ok` 
 only, and mutes connection pages for the first 5 minutes of a `DB_BOOTSTRAP=live` boot.
 
 Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
+## 2026-08-20 CURSOR — OCR CPU ceiling 5 of 8 vCPU (#2545)
+
+Owner: cap OCR as high as is reasonably advisable so other apps still function.
+Default isolation cap is now **5.0 / 8 vCPUs** (cpu-shares 256): above the
+2026-08-12 unconstrained peak of 2.83 cores, 3 cores reserved for Coolify SSH +
+ST + UM + CT web.  6.0+ is the class that starved the exec stream.  CT compose
+still pins `scan-cpu-worker` at 2.0 (throttles below that peak) -- durable fix
+is raise that compose line to `5.0`.  Did not touch prod.
+
+Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  PR #2796.  Rollout:
+`docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
+
+## 2026-08-17 CURSOR — Deploy freshness alert + CT OCR isolation (#2545)
+
+P0 silent-freeze class from 2026-08-06: Coolify SSH exec died mid-build while
+webhooks stayed 200 and `/api/health` stayed green on the old sha.  This branch
+adds a 20-minute freshness cron (oldest undeployed main commit >1h pages
+Sentry / optional `#agent-sync`) and a dry-run-default `docker update` CPU cap
+for CT OCR/scan workers that never restarts and never touches ST.  Remaining
+host constraint: durable isolation is Coolify/CT-repo; this repo cannot set
+those or a Coolify retry-on-255.  Did not touch prod.
+
+Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  PR #2796.  Rollout:
+`docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
 ## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
 
 Run-scoped code no longer reads the console-active account.  `debateProposal`, `retryProposalRedTeam` and `applyApprovedPending` now resolve the account from the run's own policy via the new `resolveRunAccountScope(userId, policy)` (account required — no active-account default), so a two-account setup can no longer review account A's proposal against account B's venue, execution mode or strategy prompt, and switching the active account mid-run leaves in-flight reviews pinned.  `retry-red-team.ts` was NOT in the plan — the audit found it and it is fixed here.  Full gate green (lint 0 errors, tsc clean, 7056 tests, build 0); failing-first proven 7/7.  PR body carries the full 21-site `getActiveConnectedAccount` inventory.  Sibling cluster `per-account-visibility` lands next.  Rollout: `docs/rollouts/2026-08-19-run-scoped-account.md`.
