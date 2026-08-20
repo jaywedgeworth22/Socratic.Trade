@@ -46,7 +46,7 @@ Preference is **quota-aware and role-aware**, not a single global ranking.
 4. **Paid but non-scarce** for unique or higher-quality fields  
    (Massive short interest + history; ROIC individual plan for deep fundamentals/transcripts).
 5. **Quota-scarce / RapidAPI monthly** only as **wave-C gap fill**  
-   (`quotaScarce` providers: Mboum, YH Finance 15, AV RapidAPI, Insiders RapidAPI, Twelve RapidAPI, YH ApiDojo, Real-Time Finance, Seeking Alpha RapidAPI). Never burn these on symbols wave A already filled. FilingAPI.dev is retired (2026-08-17).
+   (`quotaScarce` providers: Mboum, YH Finance 15, AV RapidAPI, Insiders RapidAPI, Twelve RapidAPI, YH ApiDojo, Real-Time Finance, Seeking Alpha RapidAPI, FilingAPI). Never burn these on symbols wave A already filled.
 6. **Never spend scarce quota** on a field that a cheaper source already owns for that symbol **if** the scarce source’s remaining budget is needed for fields only *it* can supply (see per-row “preserve quota” notes).
 7. **Narrative / RAG artifacts** use separate producers and rights gates — not the quote cascade.
 
@@ -79,7 +79,7 @@ Cascade mechanics (implementation): free-first waves + `quotaScarce` + `supplies
 | `massive` | paid Starter | Unlimited API; 15m delayed quotes | History + short interest + breadth | Not primary real-time quotes |
 | `marketstack` | key | Free ~100/mo | History failover | Scarce — last resort |
 | `tradier` | connected broker | Sandbox vs live | History | Prefer over marketstack when connected |
-| `filingapi` | — | **Retired 2026-08-17** | Do not call | ROIC.ai + SEC EDGAR cover this class. No Plus checkout. |
+| `filingapi` | optional key | Paid if present | Profile/calendar/insider | `quotaScarce`; missing/401 skips (ROIC + EDGAR cover) |
 | `fintechstudios` | key | Paid | News/events | Niche |
 | `marketaux` | key | Free 100/day | News sentiment | Scarce |
 | `wisesheets` / `simfin` | key | Free tiers | SEC-derived fund. second opinion | Behind Yahoo/SEC quality gate |
@@ -114,21 +114,21 @@ Legend for notes: **Q** = quota conservation · **D** = delay/staleness · **L**
 
 | Data point | Sources | Notes |
 |---|---|---|
-| **companyName** | Yahoo, Nasdaq, Finnhub, Tiingo, ROIC, Twelve, SEC profile paths, RapidAPI | Stable; cache hard. **Q**: once filled free, skip paid profile calls for name alone. |
-| **sector / industry** | Yahoo, Finnhub, ROIC, Twelve, SteadyAPI modules, RapidAPI | GICS-ish labels vary by vendor — do not treat as identical. SEC/Wisesheets more filing-true. |
+| **companyName** | Yahoo, Nasdaq, Finnhub, Tiingo, ROIC, Twelve, FilingAPI, SEC profile paths, RapidAPI | Stable; cache hard. **Q**: once filled free, skip paid profile calls for name alone. |
+| **sector / industry** | Yahoo, Finnhub, ROIC, Twelve, FilingAPI, SteadyAPI modules, RapidAPI | GICS-ish labels vary by vendor — do not treat as identical. SEC/Wisesheets more filing-true. |
 
 ### 3.3 Valuation & profitability ratios
 
 | Data point | Sources | Notes |
 |---|---|---|
-| **peRatio** | Yahoo, Finnhub, ROIC, Twelve, RapidAPI, ~~FMP ratios-ttm~~ | **Qly**: negative EPS → display `n/a` not fake PE. Yahoo/Finnhub fine for scan; ROIC when depth needed. **Q**: never burn scarce RapidAPI only for PE if Yahoo filled it. |
-| **pbRatio** | Yahoo, ROIC, YH ApiDojo | Less universally filled than PE. |
+| **peRatio** | Yahoo, Finnhub, ROIC, Twelve, FilingAPI, RapidAPI, ~~FMP ratios-ttm~~ | **Qly**: negative EPS → display `n/a` not fake PE. Yahoo/Finnhub fine for scan; ROIC when depth needed. **Q**: never burn scarce RapidAPI only for PE if Yahoo filled it. |
+| **pbRatio** | Yahoo, ROIC, FilingAPI, YH ApiDojo | Less universally filled than PE. |
 | **eps** (TTM) | Yahoo, Finnhub, ROIC, Twelve, SEC XBRL, RapidAPI | **Qly**: SEC XBRL is point-in-time filing truth; Yahoo is convenience TTM. Prefer SEC when strategy depends on restatement-safe numbers. |
 | **epsGrowth** | Yahoo, ROIC, Twelve, SEC-derived | Often missing on free tiers — accept null. |
-| **dividendYield** | Yahoo, Finnhub, ROIC, Tiingo meta, ~~FMP~~ | Annualized %; confirm trailing vs forward when both exist. |
+| **dividendYield** | Yahoo, Finnhub, ROIC, Tiingo meta, FilingAPI, ~~FMP~~ | Annualized %; confirm trailing vs forward when both exist. |
 | **beta** | Yahoo, Twelve, SteadyAPI, RapidAPI | Model-dependent across vendors. |
 | **debtToEquity** | Yahoo, ROIC, Twelve, SEC XBRL, ~~FMP~~ | **Qly**: SEC when making capital-structure decisions. |
-| **returnOnEquity / returnOnAssets** | ROIC, Yahoo (sometimes), ~~FMP ratios~~, Twelve | Prefer provider-reported ROE over crude NI/equity rebuild (`derived-metrics.ts`). |
+| **returnOnEquity / returnOnAssets** | ROIC, FilingAPI, Yahoo (sometimes), ~~FMP ratios~~, Twelve | Prefer provider-reported ROE over crude NI/equity rebuild (`derived-metrics.ts`). |
 | **revenueGrowth** | Yahoo, Twelve, SEC, ROIC | Filing cadence. |
 | **fcfYield / freeCashFlowYield** | Yahoo (derived), ROIC, ~~FMP~~ | Naming: both fields exist historically — treat as same economic idea when merging. |
 | **grossProfitMargin** | ROIC, Twelve, ~~FMP~~, SEC | Often paid-path. |
@@ -146,7 +146,7 @@ Legend for notes: **Q** = quota conservation · **D** = delay/staleness · **L**
 
 | Data point | Sources | Notes |
 |---|---|---|
-| **analystRating / analystScore / analystBySource** | Finnhub recommendations, Yahoo recommendation, YH ApiDojo, ~~FMP grades-consensus~~ | **Blend multi-source** in cascade (`analystBySource`). Free Finnhub is valuable here — preserve for news+recs, not candles (premium). |
+| **analystRating / analystScore / analystBySource** | Finnhub recommendations, Yahoo recommendation, FilingAPI, YH ApiDojo, ~~FMP grades-consensus~~ | **Blend multi-source** in cascade (`analystBySource`). Free Finnhub is valuable here — preserve for news+recs, not candles (premium). |
 | **targetMean / High / Low / Median** | YH ApiDojo, ~~FMP price-target-consensus (retired ST)~~ | Forward targets mostly paid-only industry-wide. Expect gaps after FMP retirement. |
 
 ### 3.6 Sentiment, news, events
@@ -155,8 +155,8 @@ Legend for notes: **Q** = quota conservation · **D** = delay/staleness · **L**
 |---|---|---|
 | **sentiment** (0–100 news) | Finnhub news, Alpaca news, Marketaux, AV NEWS_SENTIMENT, Real-Time Finance RapidAPI | **Q**: AV 25/day — prefer AV for calendars if choosing; Finnhub free is better for continuous news. |
 | **headlines** | Same news providers | Store with first-seen + source. |
-| **insiderSentiment** | Finnhub insider (free), Insiders RapidAPI (scarce), SEC Form 4 (web), ~~FMP insider~~ | **Q**: Insiders RapidAPI only when still empty after free paths. |
-| **daysToEarnings** | Yahoo calendarEvents, Nasdaq calendar, AV EARNINGS_CALENDAR, Finnhub calendar, ROIC | **Q**: Prefer Nasdaq/Yahoo free; save AV calendar horizon budget for IPO/dividends bulk. Never fabricate 0. |
+| **insiderSentiment** | Finnhub insider (free), Insiders RapidAPI (scarce), FilingAPI, SEC Form 4 (web), ~~FMP insider~~ | **Q**: Insiders RapidAPI only when still empty after free paths. |
+| **daysToEarnings** | Yahoo calendarEvents, Nasdaq calendar, AV EARNINGS_CALENDAR, FilingAPI, Finnhub calendar | **Q**: Prefer Nasdaq/Yahoo free; save AV calendar horizon budget for IPO/dividends bulk. Never fabricate 0. |
 | **senateTrades / congress activity** | **Congress.Trade only** (not Quiver) | ST must not call Quiver/FMP house-senate. Counts may lag; App A is SoR. |
 
 ### 3.7 Options (opt-in)

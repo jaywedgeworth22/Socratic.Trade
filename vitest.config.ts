@@ -45,7 +45,12 @@ export default defineConfig({
       OPENROUTER_API_URL: "https://openrouter.ai/api/v1/chat/completions",
       TMPDIR: runTmpRoot,
       TMP: runTmpRoot,
-      TEMP: runTmpRoot
+      TEMP: runTmpRoot,
+      // Optional FilingAPI key must not leak from the Cloud/CI shell into the
+      // cascade (a dead 401 key would open real sockets and time out strategy tests).
+      FILINGAPI: "",
+      FILINGAPI_KEY: "",
+      FILING_API_KEY: ""
     },
     exclude: [
       "node_modules/**",

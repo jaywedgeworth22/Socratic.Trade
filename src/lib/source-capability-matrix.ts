@@ -117,8 +117,6 @@ const FMP_RETIRED_NOTE =
   "ST retired 2026-08-04 — do not call. FMP remains CT latency / CT-owned only.";
 const QUIVER_REMOVED_NOTE =
   "QuiverQuant disconnected from ST — use Congress.Trade for congressional data.";
-const FILINGAPI_RETIRED_NOTE =
-  "ST retired 2026-08-17 — do not call. ROIC.ai covers fundamentals/transcripts; SEC EDGAR covers 10-K/10-Q bodies.";
 
 function opt(
   sourceId: string,
@@ -257,8 +255,8 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
       opt("tiingo", 4, "good", "medium", []),
       opt("roic", 5, "avoid_for_quota", "medium", ["Avoid spending ROIC solely for name."]),
       opt("sec-xbrl", 6, "good", "none", ["Filing entity name."]),
-      opt("yh-finance-apidojo", 7, "last_resort", "scarce", []),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 7, "last_resort", "scarce", ["quotaScarce."]),
+      opt("yh-finance-apidojo", 8, "last_resort", "scarce", []),
     ],
   },
   {
@@ -271,8 +269,8 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
       opt("finnhub", 2, "good", "low", []),
       opt("roic", 3, "good", "medium", []),
       opt("twelvedata", 4, "secondary", "medium", []),
-      opt("mboum-finance", 5, "last_resort", "scarce", ["SteadyAPI modules."]),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 5, "last_resort", "scarce", []),
+      opt("mboum-finance", 6, "last_resort", "scarce", ["SteadyAPI modules."]),
       opt("fmp", 99, "last_resort", "high", [FMP_RETIRED_NOTE], { stAllowed: false }),
     ],
   },
@@ -286,7 +284,7 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
       opt("finnhub", 2, "good", "low", []),
       opt("roic", 3, "good", "medium", []),
       opt("twelvedata", 4, "secondary", "medium", []),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 5, "last_resort", "scarce", []),
     ],
   },
   {
@@ -300,8 +298,8 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
       opt("roic", 3, "good", "medium", ["Deeper plan; skip if Yahoo already filled unless distrusting quality."]),
       opt("twelvedata", 4, "avoid_for_quota", "high", ["Fundamentals expensive in credits — avoid for PE alone."]),
       opt("sec-xbrl", 5, "good", "none", ["Derive from filings when strategy needs restatement-safe inputs."]),
-      opt("yh-finance-apidojo", 6, "last_resort", "scarce", ["Wave-C only if still empty."]),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 6, "last_resort", "scarce", []),
+      opt("yh-finance-apidojo", 7, "last_resort", "scarce", ["Wave-C only if still empty."]),
       opt("seeking-alpha-rapidapi", 8, "last_resort", "scarce", []),
       opt("fmp", 99, "last_resort", "high", [FMP_RETIRED_NOTE, "Was ratios-ttm."], { stAllowed: false }),
     ],
@@ -314,8 +312,8 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
     sources: [
       opt("yahoo-finance", 1, "primary", "none", []),
       opt("roic", 2, "good", "medium", []),
-      opt("yh-finance-apidojo", 3, "last_resort", "scarce", []),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 3, "secondary", "scarce", []),
+      opt("yh-finance-apidojo", 4, "last_resort", "scarce", []),
       opt("fmp", 99, "last_resort", "high", [FMP_RETIRED_NOTE], { stAllowed: false }),
     ],
   },
@@ -357,7 +355,7 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
       opt("finnhub", 2, "good", "low", []),
       opt("roic", 3, "good", "medium", []),
       opt("tiingo", 4, "secondary", "medium", ["Meta on daily endpoint."]),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 5, "last_resort", "scarce", []),
       opt("fmp", 99, "last_resort", "high", [FMP_RETIRED_NOTE], { stAllowed: false }),
     ],
   },
@@ -394,8 +392,8 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
     sources: [
       opt("roic", 1, "primary", "medium", ["Strong on individual plan."]),
       opt("yahoo-finance", 2, "good", "none", ["When present."]),
-      opt("sec-xbrl", 3, "good", "none", ["Derive."], { delay: "filing" }),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 3, "secondary", "scarce", []),
+      opt("sec-xbrl", 4, "good", "none", ["Derive."], { delay: "filing" }),
       opt("fmp", 99, "last_resort", "high", [FMP_RETIRED_NOTE, "ratios-ttm."], { stAllowed: false }),
     ],
   },
@@ -533,8 +531,8 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
     sources: [
       opt("finnhub", 1, "primary", "low", ["Free recommendations — preserve for this + news."]),
       opt("yahoo-finance", 2, "good", "none", ["recommendationMean-style."]),
-      opt("yh-finance-apidojo", 3, "last_resort", "scarce", []),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 3, "secondary", "scarce", []),
+      opt("yh-finance-apidojo", 4, "last_resort", "scarce", []),
       opt("fmp", 99, "last_resort", "high", [FMP_RETIRED_NOTE, "grades-consensus."], { stAllowed: false }),
     ],
   },
@@ -628,10 +626,10 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
     sources: [
       opt("finnhub", 1, "primary", "low", ["Free insider-transactions — prefer first."]),
       opt("sec-form4", 2, "primary", "none", ["EDGAR origin; more effort."], { delay: "filing" }),
-      opt("insiders-rapidapi", 3, "last_resort", "scarce", [
+      opt("filingapi", 3, "secondary", "scarce", []),
+      opt("insiders-rapidapi", 4, "last_resort", "scarce", [
         "quotaScarce — only when free paths left field empty.",
       ]),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
       opt("fmp", 99, "last_resort", "high", [FMP_RETIRED_NOTE], { stAllowed: false }),
     ],
   },
@@ -649,8 +647,8 @@ export const DATA_POINT_CATALOG: readonly DataPointSpec[] = [
       opt("alpha-vantage", 4, "secondary", "scarce", [
         "EARNINGS_CALENDAR is a good AV use of the 25/day — better than quotes.",
       ]),
-      opt("roic", 5, "secondary", "medium", []),
-      opt("filingapi", 99, "last_resort", "scarce", [FILINGAPI_RETIRED_NOTE], { stAllowed: false }),
+      opt("filingapi", 5, "last_resort", "scarce", []),
+      opt("roic", 6, "secondary", "medium", []),
     ],
   },
   {
@@ -907,15 +905,7 @@ export function sourcesFor(
 
 /** True if ST product code may call this source id at all (any field). */
 export function isStAllowedSource(sourceId: string): boolean {
-  const retired = new Set([
-    "fmp",
-    "fmp-rapidapi",
-    "fmp-earnings-transcript",
-    "quiverquant",
-    "unusual_whales",
-    "stooq",
-    "filingapi"
-  ]);
+  const retired = new Set(["fmp", "fmp-rapidapi", "fmp-earnings-transcript", "quiverquant", "unusual_whales", "stooq"]);
   if (retired.has(sourceId)) return false;
   // If it appears anywhere as stAllowed false only, still false
   let saw = false;

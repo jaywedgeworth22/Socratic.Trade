@@ -16,8 +16,9 @@
 //      a loop that alerted forever about a lane no product code was calling.
 //
 // The discriminating half of this suite is the NEGATIVE side: a genuine outage (repeated hard
-// 5xx / a persistent 401) must still page. Those cases are asserted explicitly below, because a
-// "fix" that silences the noise by silencing everything would be strictly worse than the bug.
+// 5xx) must still page. FilingAPI 401 is an optional-key skip, not an outage — it must not page.
+// Those cases are asserted explicitly below, because a "fix" that silences the noise by silencing
+// everything would be strictly worse than the bug.
 //
 // Hermetic: real module graph against a temp SQLite DB; only the Sentry SDK and `fetch` are stubbed.
 
@@ -182,9 +183,8 @@ describe("connection-health alert gate: hard streak required", () => {
     await vi.waitFor(async () => expect(await alertKinds()).toEqual(["congress-trade"]));
   });
 
-  it("REGRESSION GUARD: a retired filingapi 401 never alerts", async () => {
-    // FilingAPI.dev is product-retired (2026-08-17). Leftover 401 rows from the dead trial
-    // key must stay muted OFF — not page as a live credential outage.
+  it("filingapi 401 is a soft skip and does not alert", async () => {
+    // Optional lane: a dead trial key must not page. ROIC + EDGAR cover the fields.
     const { logApiHealth } = await import("../src/lib/db-health");
     for (let i = 0; i < 5; i++) {
       logApiHealth({ service: "filingapi", ok: false, errorText: "HTTP 401 Unauthorized", keySource: "env" });
@@ -234,7 +234,7 @@ describe("connection-health alert gate: hard streak required", () => {
 describe("connection-health alert gate: retired vendors", () => {
   it("a product-retired vendor lane never alerts, even at a full hard streak", async () => {
     const { logApiHealth } = await import("../src/lib/db-health");
-    for (const service of ["fmp", "fmp-transcripts", "quiverquant", "unusual_whales", "filingapi"]) {
+    for (const service of ["fmp", "fmp-transcripts", "quiverquant", "unusual_whales"]) {
       for (let i = 0; i < 5; i++) {
         logApiHealth({ service, ok: false, errorText: "HTTP 403 Forbidden", keySource: "env" });
       }

@@ -229,8 +229,9 @@ export async function GET(request: Request) {
       if (!isHardStoppedHealthSummary(summary)) configuredLaneHealthy.add(summary.service);
     }
     for (const summary of summaries) {
-      // Retired vendors (FilingAPI, FMP, Quiver, UW) keep historical failure rows. Public
-      // health must not list them as live ok:false — that pages UptimeRobot / Pushover.
+      // Retired vendors (FMP, Quiver, UW) keep historical failure rows. Public health must
+      // not list them as live ok:false — that pages UptimeRobot / Pushover. FilingAPI is an
+      // optional live lane: missing/401 keys are soft-stamped in db-health, not retired.
       if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
       if (!isGlobal) continue;

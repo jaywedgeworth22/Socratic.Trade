@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
 import { intentionalOffHealthReason, isIntentionalOffHealthService } from "./retired-direct-vendors";
+import { isFilingApiAuthErrorText } from "./filingapi-auth-classify";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
@@ -260,7 +261,9 @@ export function logApiHealth(opts: {
     // without a schema column. Do not double-prefix if the caller already used the marker or
     // if auto-classification would match the free-text shape either way.
     let errorText = opts.errorText ?? null;
-    if (!opts.ok && errorText && (opts.soft || isSoftHealthFailure(errorText))) {
+    const filingApiAuthSoft =
+      opts.service === "filingapi" && !opts.ok && isFilingApiAuthErrorText(errorText);
+    if (!opts.ok && errorText && (opts.soft || filingApiAuthSoft || isSoftHealthFailure(errorText))) {
       if (!errorText.startsWith(HEALTH_SOFT_FAILURE_PREFIX)) {
         errorText = `${HEALTH_SOFT_FAILURE_PREFIX}${errorText}`;
       }
@@ -310,7 +313,7 @@ export function logApiHealth(opts: {
       }
     })();
 
-    // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales / FilingAPI are PRODUCT-RETIRED direct
+    // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales are PRODUCT-RETIRED direct
     // lanes (see retired-direct-vendors.ts). Admin Connections already renders them as muted OFF
     // rather than red STOPPED; a residual call site that still touches one must not additionally
     // page the operator about a vendor we deliberately stopped using.

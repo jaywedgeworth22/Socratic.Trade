@@ -127,10 +127,10 @@ export function ApiKeysCard() {
         an LLM key (OpenRouter is the production path) so Green/Red team models can propose and debate.{" "}
         <strong className="font-semibold text-[color:var(--con-muted)]">Optional enrichment:</strong> Finnhub, Tiingo, FRED,
         and similar data providers deepen the scan — without them the app still uses free floors (e.g. Yahoo).{" "}
-        <strong className="font-semibold text-[color:var(--con-muted)]">Direct FMP, QuiverQuant, and FilingAPI.dev are retired</strong>{" "}
-        here (Congress.Trade owns FMP/Quiver; ROIC.ai + SEC EDGAR cover FilingAPI). Market data, positions, and guardrails work without optional
+        <strong className="font-semibold text-[color:var(--con-muted)]">Direct FMP and QuiverQuant are retired</strong>{" "}
+        here (Congress.Trade owns that class of data). Market data, positions, and guardrails work without optional
         keys; autonomous proposals do not. For <strong className="font-semibold text-[color:var(--con-muted)]">every
-        market-data / data-platform key</strong> (Tiingo, Massive, ROIC, Twelve, Finnhub, Marketstack,
+        market-data / data-platform key</strong> (Tiingo, Massive, ROIC, Twelve, Finnhub, Marketstack, FilingAPI,
         EarningsCalls, RapidAPI, Apify, Logo.dev, FRED, …), set the{" "}
         <strong className="font-semibold text-[color:var(--con-muted)]">plan tier</strong> dropdown to the plan you
         actually pay for — rate limits and transcript depth follow that choice (free-safe until you declare a paid

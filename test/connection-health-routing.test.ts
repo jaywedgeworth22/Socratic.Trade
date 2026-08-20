@@ -461,7 +461,7 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies.apify.ok).toBe(false);
   });
 
-  it("/api/health omits retired FilingAPI rows so a stale 401 does not look like a live outage", async () => {
+  it("/api/health stays 200 when FilingAPI 401s (optional lane, soft skip)", async () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
@@ -473,7 +473,10 @@ describe("Connection Health & Failure Routing", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.ok).toBe(true);
-    expect(body.checks.dependencies.filingapi).toBeUndefined();
+    // Optional lane: 401s are soft, so public health is ok (possibly degraded), never 503.
+    const filing = body.checks.dependencies.filingapi;
+    expect(filing).toBeDefined();
+    expect(filing.ok).toBe(true);
   });
 
   it("/api/health reports the live recovery path degraded when Litestream cannot be observed", async () => {
