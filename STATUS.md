@@ -29,6 +29,9 @@ Part II cluster: stale-exit auto-remediation no longer cancel-replaces bracket l
 Cluster from Part II expert review.  Added `src/lib/guardrail-copy.ts` as the single source for guardrail-semantics sentences; macro / Guardrails / public pages / iOS `DeskCopy` now describe advisory pre-vetoes (not hard veto).  Stripped paper/live ceremony: `Alpaca (paper)`, lowercase paper chip, no iOS Live pill or brokerage activation confirm, Mock removed from Coach pickers.  Terms §8 mirrors Privacy shared pool; `LEGAL_NOTICE_VERSION=2`.  Engine + AUTOPILOT path unchanged.
 
 Branch `cursor/copy-guardrail-claims-19ca`.  Rollout: `docs/rollouts/2026-08-19-copy-guardrail-claims.md`.
+## 2026-08-20 CURSOR — Wire dead tax / webhook / preset controls (`dead-controls`)
+
+Expert review cluster: wired `taxSettings.subtractFromResults` into Results realized P&L, extended Send test to probe `policy.notificationSettings.webhookUrl` (Discord embed path), and added Preset create/rename/delete on Strategy via `/api/profiles`.  Branch `cursor/wire-dead-controls-8b69`.  Rollout: `docs/rollouts/2026-08-20-wire-dead-controls.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

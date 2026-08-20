@@ -73,6 +73,16 @@ export function overlayAccountTaxationType(
   };
 }
 
+/** When `subtractFromResults` is on, show realized P&L net of estimated tax liability. */
+export function realizedPnlNetOfEstimatedTax(
+  realized: number | undefined,
+  estimatedTaxLiability: number | undefined,
+  subtractFromResults: boolean
+): number | undefined {
+  if (typeof realized !== "number" || !subtractFromResults) return realized;
+  return Number((realized - (estimatedTaxLiability ?? 0)).toFixed(2));
+}
+
 export function resolveTaxSettings(settings?: Partial<TaxSettings>): TaxSettings {
   const merged = { ...DEFAULT_TAX_SETTINGS, ...(settings ?? {}) };
   // Tax-sheltered IRAs: no annual capital-gains tax, no deductible loss to harvest, and the
