@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-19 CURSOR — Pinecone trial end in 7 days (`cursor/pinecone-trial-end-7d-c9a3`).** Owner: move the app Standard-trial snap from 2026-08-30 to 2026-08-27T00:00:00.000Z (7 days from 2026-08-19 21:59 CT). Infisical `PINECONE_TRIAL_ENDS_AT` + code default. Pinecone console trial unchanged. Daily WU fuse unchanged. Rollout: `docs/rollouts/2026-08-19-pinecone-trial-end-7d.md`.
+
 > **2026-08-20 CURSOR — OCR CPU ceiling 5 of 8 (`cursor/deploy-freshness-ocr-isolate-d4cf`, #2545).** Default isolation cap is 5.0 vCPU (cpu-shares 256): as high as is reasonably advisable on the shared cx43.  Leaves 3 cores for Coolify/ST/UM.  CT compose `scan-cpu-worker` is still 2.0 -- raise that line to 5.0 for the durable cap.  Do not take prod down.  Rollout: `docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
 
 > **2026-08-17 CURSOR — Deploy freshness + shared-box OCR isolation (`cursor/deploy-freshness-ocr-isolate-d4cf`, #2545).** Standing cron pages when the oldest undeployed main commit is >1h old (silent-freeze class: webhook 200s, health green on old sha).  Isolation script dry-runs a no-restart CPU cap on CT OCR/scan workers.  Remaining constraint: Coolify/CT-repo limits and retry-on-255 are not settable from this repo.  Do not take prod down.  Rollout: `docs/rollouts/2026-08-17-deploy-freshness-ocr-isolate.md`.
