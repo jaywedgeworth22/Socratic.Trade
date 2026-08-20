@@ -1274,6 +1274,7 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
           base_url = COALESCE(excluded.base_url, connected_accounts.base_url),
           capabilities = COALESCE(excluded.capabilities, connected_accounts.capabilities),
           is_active = excluded.is_active,
+          is_draining = 0,
           updated_at = excluded.updated_at
          WHERE connected_accounts.user_id = excluded.user_id`
       )
@@ -1323,8 +1324,13 @@ export function renameConnectedAccount(id: string, label: string, userId: string
 export function setActiveConnectedAccount(id: string, userId: string = "local"): void {
   const db = getDb();
   db.transaction(() => {
-    const exists = db.prepare("SELECT id FROM connected_accounts WHERE id = ? AND user_id = ?").get(id, userId);
-    if (!exists) throw new Error("Connected account not found.");
+    const row = db
+      .prepare("SELECT id, is_draining FROM connected_accounts WHERE id = ? AND user_id = ?")
+      .get(id, userId) as { id: string; is_draining: number } | undefined;
+    if (!row) throw new Error("Connected account not found.");
+    if (row.is_draining === 1) {
+      throw new Error("This account is disconnected and being wound down — it can no longer be made active.");
+    }
     db.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(userId);
     db.prepare("UPDATE connected_accounts SET is_active = 1 WHERE id = ? AND user_id = ?").run(id, userId);
   })();
