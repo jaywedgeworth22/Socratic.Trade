@@ -96,6 +96,11 @@ Expert review cluster: wired `taxSettings.subtractFromResults` into Results real
 ## 2026-08-19 CURSOR — Account write guards (`cursor/account-write-guards-940d`)
 
 Expert review tranche-1 cluster `account-write-guards`: `strategyAuthority` now stays pinned on profile activate/copy/import (mirrors existing `systemState` guard).  `setActiveConnectedAccount` rejects draining rows; `upsertConnectedAccount` clears `is_draining` on reconnect.  No new TypedConfirm ceremony.  PR open on branch `cursor/account-write-guards-940d`.  Rollout: `docs/rollouts/2026-08-19-account-write-guards.md`.
+## 2026-08-19 CURSOR — Coach fail-closed tool inputs + abort in-flight turns
+
+Implements review cluster `coach-tools-and-turns`.  `draft_order` no longer coerces invalid `side`/`order_type` to buy/market; limit orders require a positive `limit_usd`.  `kb_search` clamps `k` to [1, 20].  Chat LLM transports thread `args.abortSignal` so Cancel and the 120s deadline can abort in-flight provider calls.
+
+PR **#TBD**.  Branch `cursor/coach-tools-fail-closed-1c54`.  Rollout: `docs/rollouts/2026-08-19-coach-tools-fail-closed.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

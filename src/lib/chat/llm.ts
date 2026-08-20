@@ -10,7 +10,7 @@ import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
 import { applyOpenRouterClassifierEnrichment, applyOpenRouterProviderRouting } from "../llm-call";
-import { llmFetch, reasoningCapabilityForModel, withLlmRequestBounds } from "../llm-request";
+import { llmFetch, LLM_TIMEOUT_MS, reasoningCapabilityForModel, withLlmRequestBounds } from "../llm-request";
 import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
@@ -327,9 +327,21 @@ export class MockLLM implements ChatLLM {
   }
 }
 
-type Transport = (body: any, apiKey: string) => Promise<any>;
+type Transport = (body: any, apiKey: string, signal?: AbortSignal) => Promise<any>;
 
-async function defaultTransport(body: any, apiKey: string): Promise<any> {
+function composeChatAbortSignal(callerSignal?: AbortSignal): AbortSignal | undefined {
+  const timeoutSignal =
+    typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(LLM_TIMEOUT_MS)
+      : undefined;
+  if (!callerSignal) return timeoutSignal;
+  if (!timeoutSignal) return callerSignal;
+  return typeof AbortSignal.any === "function"
+    ? AbortSignal.any([callerSignal, timeoutSignal])
+    : callerSignal;
+}
+
+async function defaultTransport(body: any, apiKey: string, signal?: AbortSignal): Promise<any> {
   const res = await llmFetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -339,7 +351,8 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
       // Enable prompt-caching beta so cache_control blocks are honoured by the API.
       "anthropic-beta": "prompt-caching-2024-07-31"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: composeChatAbortSignal(signal)
   });
   if (!res.ok) throw new Error(`anthropic ${res.status}`);
   return res.json();
@@ -421,7 +434,7 @@ export class AnthropicLLM implements ChatLLM {
             reasoningEffort: this.reasoningEffort
           })
         : { ...baseBody, max_tokens: 1024 };
-      const resp = await this.transport(requestBody, this.apiKey);
+      const resp = await this.transport(requestBody, this.apiKey, args.abortSignal);
       const u = extractLlmUsage(resp);
       if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
         sawUsage = true;
@@ -461,14 +474,15 @@ export class AnthropicLLM implements ChatLLM {
 }
 
 // OpenAI Chat Completions transport — injectable for offline testing.
-type OpenAITransport = (body: any, apiKey: string) => Promise<any>;
+type OpenAITransport = (body: any, apiKey: string, signal?: AbortSignal) => Promise<any>;
 
-async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
+async function defaultOpenAITransport(body: any, apiKey: string, signal?: AbortSignal): Promise<any> {
   const url = process.env.OPENAI_CHAT_URL ?? "https://api.openai.com/v1/chat/completions";
   const res = await llmFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: composeChatAbortSignal(signal)
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -585,7 +599,8 @@ export class OpenAILLM implements ChatLLM {
       if (this.provider === "openrouter") applyOpenRouterProviderRouting(requestBody);
       const resp = await this.transport(
         requestBody,
-        this.apiKey
+        this.apiKey,
+        args.abortSignal
       );
 
       const genId = providerRequestIdFromPayload(this.provider, resp);
@@ -685,7 +700,7 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (prov
 
 /** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
  *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
-function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string) => {
+function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string, signal?: AbortSignal) => {
     const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${apiKey}` };
     if (provider === "openrouter") {
       headers["HTTP-Referer"] = "https://socratictrade.com";
@@ -694,7 +709,8 @@ function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenA
     const res = await llmFetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: composeChatAbortSignal(signal)
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
