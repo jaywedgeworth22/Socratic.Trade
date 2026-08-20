@@ -1,6 +1,7 @@
 // Tests for the token-gated market-data READ endpoints (congress.trade cache-aside price pulls):
 //   GET /api/market/prices/{symbol}  -> PriceSeries envelope, closes DESCENDING
 //   GET /api/market/spx              -> { closes } DESCENDING (SPY daily bars)
+//   GET /api/market/quotes + /api/market/intraday/{symbol} (#2953 peer routes)
 // plus the src/lib/market-read.ts shaping helpers and the middleware bearer pass-through.
 //
 // Route tests drive the real handlers with APP_B_INGEST_TOKEN set; fetchDailyOHLC is module-mocked
@@ -278,6 +279,30 @@ describe("middleware — market read bearer pass-through", () => {
     const middleware = await loadMiddleware();
     const res = await middleware(mwRequest("/api/market/prices/AAPL", { authorization: `Bearer ${TEST_TOKEN}` }));
     expect(res.status).not.toBe(401);
+  });
+
+  it("lets a bearer request through to /api/market/quotes without a session", async () => {
+    vi.resetModules();
+    process.env.AUTH_SECRET = "test-secret";
+    const middleware = await loadMiddleware();
+    const res = await middleware(mwRequest("/api/market/quotes", { authorization: `Bearer ${TEST_TOKEN}` }));
+    expect(res.status).not.toBe(401);
+  });
+
+  it("lets a bearer request through to /api/market/intraday/{symbol} without a session", async () => {
+    vi.resetModules();
+    process.env.AUTH_SECRET = "test-secret";
+    const middleware = await loadMiddleware();
+    const res = await middleware(mwRequest("/api/market/intraday/AAPL", { authorization: `Bearer ${TEST_TOKEN}` }));
+    expect(res.status).not.toBe(401);
+  });
+
+  it("still fail-closes /api/market/quotes with NO bearer token", async () => {
+    vi.resetModules();
+    process.env.AUTH_SECRET = "test-secret";
+    const middleware = await loadMiddleware();
+    const res = await middleware(mwRequest("/api/market/quotes"));
+    expect(res.status).toBe(401);
   });
 
   it("still fail-closes /api/market/spx with NO bearer token", async () => {
