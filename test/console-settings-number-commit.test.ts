@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { resolveSourceFeatureNumberCommit } from "../app/console/settings/page";
+import { resolveSourceFeatureNumberCommit } from "../app/console/lib/number-commit";
 
 /**
  * console-ia-forms-blotters (keystroke-PATCH slice, docs/reviews/2026-08-18-full-app-expert-review.md):

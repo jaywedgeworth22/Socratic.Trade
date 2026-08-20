@@ -21,6 +21,7 @@ import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPE_LABELS } from "@/lib/dashboard-ui";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
+import { resolveSourceFeatureNumberCommit } from "../lib/number-commit";
 import { loginProviderLabel } from "../lib/labels";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useAutoSave } from "../lib/useAutoSave";
@@ -711,13 +712,6 @@ const GROUP_ORDER = ["fmp", "sec", "web_sources", "transcripts", "rag", "enrichm
  *  the last committed value instead of silently saving a fallback (these rows
  *  used to PATCH the row's default straight to the server on the very next
  *  keystroke after clearing the field), and an unchanged value is a no-op. */
-export function resolveSourceFeatureNumberCommit(raw: string, committed: number): number | null {
-  const parsed = Number(raw);
-  if (raw.trim() === "" || !Number.isFinite(parsed)) return null;
-  if (parsed === committed) return null;
-  return parsed;
-}
-
 function DataSourcesCard() {
   const toast = useToast();
   const [rows, setRows] = useState<SourceFeatureRow[] | null>(null);
