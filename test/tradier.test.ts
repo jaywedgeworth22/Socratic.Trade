@@ -349,7 +349,7 @@ describe("Tradier adapter — envelope normalization", () => {
       { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 1, symbol: "AAPL", side: "buy", type: "market", status: "filled", create_date: "2026-07-10", class: "equity" } } } }
     ]);
     const mod1 = await import("../src/lib/tradier");
-    const one = await mod1.getTradierGateway("local").getEquityOrders(ACCT);
+    const one = await mod1.getTradierGateway("local").getEquityOrders(ACCT, { fullHistory: true });
     expect(one).toHaveLength(1);
     expect(one[0].id).toBe("1");
 

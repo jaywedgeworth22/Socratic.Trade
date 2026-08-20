@@ -28,6 +28,17 @@ export function alpacaAccountReadBudgetMs(): { firstMs: number; retryMs: number 
 /** Same in-process broker lane as getAccounts.  Live 6s / 8s withDeadline races. */
 export const EQUITY_QUOTES_MS = 16_000;
 export const OPTION_POSITIONS_MS = 16_000;
+/** Inner trackHealth deadline for Alpaca writes and unbounded reads (quotes/place/cancel).
+ *  Must exceed read-path first+retry budgets (16s+8s=24s) so awaitWithFirstCallRetry wins the race. */
+export const ALPACA_BROKER_IO_DEADLINE_MS = 30_000;
+/** Tradier REST fetch ceiling — same lane as Alpaca broker I/O. */
+export const TRADIER_BROKER_IO_DEADLINE_MS = 30_000;
+/** Default terminal-order lookback for scoped getEquityOrders (open + recent closed). */
+export const EQUITY_ORDERS_TERMINAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+export function equityOrdersDefaultSinceIso(nowMs = Date.now()): string {
+  return new Date(nowMs - EQUITY_ORDERS_TERMINAL_LOOKBACK_MS).toISOString();
+}
 
 export type SettleKind = "fulfilled" | "rejected" | "pending";
 

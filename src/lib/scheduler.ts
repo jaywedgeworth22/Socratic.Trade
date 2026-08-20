@@ -52,6 +52,7 @@ import { safeErrorMessage } from "./telemetry-sanitize";
 import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
 import { journalLane } from "./task-journal";
 import { pruneTaskJournal } from "./db-task-journal";
+import { withDeadline, SCHEDULER_BROKER_TIMEOUT_MS } from "./safety-maintenance";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 export const MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY = "scheduler:managedVectorReconcile:lastAttempt";
@@ -893,24 +894,20 @@ async function tick(): Promise<void> {
           staleExitInFlight.add(key);
           const gw = brokerGateway;
           const stalePolicy = policy as TradingPolicy & { accountNumber: string }; // accountNumber checked non-null above
-          void journalLane("stale-limit-scan", { userId, connectedAccountId: accountId }, async () => {
-            const orders = await gw.getEquityOrders(stalePolicy.accountNumber);
-            await notifyStaleLimitOrders({ userId, policy, orders });
-            // Auto-cancel-replace stale EXIT limits with market orders (MU deadlock backstop). No-op
-            // when disabled; defers to the human on a live account with typed confirmation on. The
-            // in-flight guard above + the per-order cooldown inside autoRemediateStaleExitOrders keep
-            // a slow broker cancel from triggering a second market sell on the next tick.
-            // §7 slice 3: the cancel-then-place bodies run under the account's mutation lease.
-            // Bounded wait (not try-once): this lane reaches its acquisition only after a broker
-            // read, so a try-once would deterministically lose the phase race to the stop-monitor
-            // lane every tick and starve the replacement pump (adversarial-review finding).
-            const outcome = await withAccountMutation(
-              { userId, accountNumber: stalePolicy.accountNumber, connectedAccountId: accountId, lane: "stale-exit-replacement", waitMs: LANE_WAITS.staleExit },
-              (ctx) => autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders, fence: ctx.assertOwned })
-            );
-            if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
-            return undefined;
-          })
+          void withDeadline(
+            journalLane("stale-limit-scan", { userId, connectedAccountId: accountId }, async () => {
+              const orders = await gw.getEquityOrders(stalePolicy.accountNumber);
+              await notifyStaleLimitOrders({ userId, policy, orders });
+              const outcome = await withAccountMutation(
+                { userId, accountNumber: stalePolicy.accountNumber, connectedAccountId: accountId, lane: "stale-exit-replacement", waitMs: LANE_WAITS.staleExit },
+                (ctx) => autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders, fence: ctx.assertOwned })
+              );
+              if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
+              return undefined;
+            }),
+            SCHEDULER_BROKER_TIMEOUT_MS,
+            "stale-limit-scan broker timeout"
+          )
             .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err))
             .finally(() => staleExitInFlight.delete(key));
         }
@@ -926,20 +923,22 @@ async function tick(): Promise<void> {
         // reduce exposure after a breaker trips. `halted` remains the only no-order state unless protectWhileHalted is active.
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
-          void journalLane("synthetic-stop-monitor", { userId, connectedAccountId: accountId }, async () => {
-            // §7 slice 3: the whole read-decide-mutate pass holds the account mutation lease so
-            // its coverage math cannot go stale under a concurrent replacement/drain sequence.
-            const outcome = await withAccountMutation(
-              { userId, accountNumber: policy.accountNumber, connectedAccountId: accountId, lane: "stop-monitor" },
-              (ctx) => runSyntheticStopMonitor(userId, policy, true, undefined, ctx.assertOwned)
-            );
-            if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
-            const result = outcome.value;
-            return {
-              status: "ok" as const,
-              summary: `evaluated=${result.evaluated} triggered=${result.triggered} exited=${result.exited}`
-            };
-          })
+          void withDeadline(
+            journalLane("synthetic-stop-monitor", { userId, connectedAccountId: accountId }, async () => {
+              const outcome = await withAccountMutation(
+                { userId, accountNumber: policy.accountNumber, connectedAccountId: accountId, lane: "stop-monitor" },
+                (ctx) => runSyntheticStopMonitor(userId, policy, true, undefined, ctx.assertOwned)
+              );
+              if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
+              const result = outcome.value;
+              return {
+                status: "ok" as const,
+                summary: `evaluated=${result.evaluated} triggered=${result.triggered} exited=${result.exited}`
+              };
+            }),
+            SCHEDULER_BROKER_TIMEOUT_MS,
+            "runSyntheticStopMonitor timeout"
+          )
             .catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err))
             .finally(() => stopMonitorInFlight.delete(key));
         }

@@ -153,6 +153,11 @@ Branch `cursor/fix-ci-docs-benchmarks-skip-e4ac`.  Rollout: `docs/rollouts/2026-
 Expert review cluster `identity-fails-open` (sec-01): live prod without `AUTH_SECRET` silently made every anonymous request the owner.  Added `assertAuthSecretConfiguredInLiveBootstrap()` at boot (alongside `ENCRYPTION_KEY`), gated middleware `PRIMARY_EMAIL` fallback on `DB_BOOTSTRAP !== "live"`, and made `resolveRequestUser` refuse anonymous / `local-fallback` provenance in live bootstrap.  Dev/test without `AUTH_SECRET` unchanged.
 
 PR **#TBD**.  Branch `cursor/identity-fails-open-535a`.  Rollout: `docs/rollouts/2026-08-19-identity-fails-open.md`.
+## 2026-08-19 CURSOR — Broker I/O deadlines + scoped order history (`broker-io-deadlines`)
+
+Part II cluster: Alpaca quotes/place/cancel and Tradier fetch now have deadlines; scheduler stop-monitor and stale-limit lanes wrap in `withDeadline(15s)` so in-flight keys cannot latch on a hung socket; default `getEquityOrders` returns open + 24h terminal history instead of walking `status:"all"`.  Explicit `{ fullHistory: true }` retains the legacy walk.  Did not change 16s+8s read retry budgets on getAccounts/getPositions/getEquityOrders pages.  Did not touch order-replacement provenance.
+
+PR **TBD**.  Branch `cursor/broker-io-deadlines-85a9`.  Rollout: `docs/rollouts/2026-08-19-broker-io-deadlines.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

@@ -15,6 +15,7 @@ import type {
   TimeInForce,
   BrokerGateway,
   EquityOrderInput,
+  GetEquityOrdersOptions,
   OptionPosition
 } from "./types";
 import {
@@ -31,7 +32,8 @@ import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } 
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
 import { isTransientNetworkError } from "./network-errors";
-import { ALPACA_MCP_FETCH_MS, alpacaAccountReadBudgetMs, awaitWithFirstCallRetry } from "./inflight-deadline";
+import { ALPACA_MCP_FETCH_MS, alpacaAccountReadBudgetMs, awaitWithFirstCallRetry, ALPACA_BROKER_IO_DEADLINE_MS, EQUITY_QUOTES_MS, equityOrdersDefaultSinceIso } from "./inflight-deadline";
+import { withDeadline } from "./safety-maintenance";
 
 /**
  * Fill in a usable price for any symbol the broker didn't quote (>0). Alpaca's latest-quote feed
@@ -196,9 +198,7 @@ export function resolveAlpacaTimeInForce(input: {
 }
 
 class AlpacaBrokerGateway implements BrokerGateway {
-  // getEquityOrders pages status:"all" (see below), so the returned list authoritatively includes
-  // recently-terminal orders (filled/canceled/rejected/expired). This lets reconcilePlacementError
-  // conclude not_placed from an absent order for Alpaca (safe: absence really means never placed).
+  // Default getEquityOrders returns open orders plus terminal orders inside a bounded window.
   readonly ordersListIncludesTerminal = true;
   private alpaca: Alpaca;
   private label: string;
@@ -279,13 +279,19 @@ class AlpacaBrokerGateway implements BrokerGateway {
   // is still wrapped so a health-logging failure can never affect the real broker call.
   // The Alpaca SDK ships no types, so this.alpaca.* calls are already `any`; a constrained
   // generic here would collapse those returns to `unknown` at every call site.
-  private async trackHealth(fn: () => Promise<any>): Promise<any> {
+  private async trackHealth(fn: () => Promise<any>, opts?: { deadlineMs?: number }): Promise<any> {
     const start = Date.now();
     const attempts = 2;
     let lastErr: unknown;
+    const runOnce = () => {
+      const call = fn();
+      return opts?.deadlineMs != null
+        ? withDeadline(call, opts.deadlineMs, "Alpaca broker call timed out")
+        : call;
+    };
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
-        const result = await fn();
+        const result = await runOnce();
         logApiHealth({ service: "alpaca-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
         return result;
       } catch (err) {
@@ -544,51 +550,82 @@ class AlpacaBrokerGateway implements BrokerGateway {
     });
   }
 
-  async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
+  async getEquityOrders(accountNumber: string, options?: GetEquityOrdersOptions): Promise<EquityOrder[]> {
+    if (options?.fullHistory) {
+      return this.getEquityOrdersFullHistory(accountNumber);
+    }
+    const sinceIso = options?.since ?? equityOrdersDefaultSinceIso();
+    const sinceMs = Date.parse(sinceIso);
+    return this.callMcp<any>("get_orders", { status: "open", limit: 500 }, async () => {
+      const open = await this.fetchAlpacaOrderPages({ status: "open" });
+      const closed = await this.fetchAlpacaOrderPages({
+        status: "closed",
+        after: sinceIso,
+        stopBeforeMs: Number.isFinite(sinceMs) ? sinceMs : undefined
+      });
+      const merged = new Map<string, Record<string, unknown>>();
+      for (const row of [...open, ...closed]) merged.set(String(row.id), row);
+      return Array.from(merged.values());
+    }).then((res: any) => (Array.isArray(res) ? res.map((o: any) => mapAlpacaOrder(o as Record<string, unknown>)) : res));
+  }
+
+  /** Legacy full-history walk — explicit opt-in via GetEquityOrdersOptions.fullHistory. */
+  private async getEquityOrdersFullHistory(accountNumber: string): Promise<EquityOrder[]> {
     return this.callMcp<any>("get_orders", { status: "all", limit: 500 }, async () => {
-      // Paginate: Alpaca returns at most `limit` (max 500) per call, newest-first. Walk backwards via
-      // `until` (the oldest created_at seen) until a short page signals the end. Without this the
-      // default page silently capped history and missed older orders. Dedupe by id at page edges.
-      const all: Record<string, unknown>[] = [];
-      const seen = new Set<string>();
-      const PAGE = 500;
-      let until: string | undefined;
-      for (let guard = 0; guard < 50; guard++) {
-        const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
-        const page = (await awaitWithFirstCallRetry(
-          () => this.trackHealth(() => this.alpaca.getOrders({
-            status: "all",
-            limit: PAGE,
-            direction: "desc",
-            ...(until ? { until } : {})
-          } as Parameters<typeof this.alpaca.getOrders>[0])),
-          {
-            firstMs,
-            retryMs,
-            onFinalTimeout: () => {
-              throw new Error(`Timed out waiting for alpaca.getOrders after ${firstMs}+${retryMs}ms.`);
-            }
-          }
-        )) as Record<string, unknown>[];
-        if (!Array.isArray(page) || page.length === 0) break;
-        let added = 0;
-        let oldest: string | undefined;
-        for (const o of page) {
-          const id = String(o.id);
-          const createdAt = String(o.created_at);
-          if (!seen.has(id)) {
-            seen.add(id);
-            all.push(o);
-            added += 1;
-          }
-          if (!oldest || createdAt < oldest) oldest = createdAt;
-        }
-        // Stop on a short page, no forward progress, or a stuck boundary.
-        if (page.length < PAGE || added === 0 || !oldest || oldest === until) break;
-        until = oldest;
-      }
+      const all = await this.fetchAlpacaOrderPages({ status: "all" });
       return all;
     }).then((res: any) => (Array.isArray(res) ? res.map((o: any) => mapAlpacaOrder(o as Record<string, unknown>)) : res));
+  }
+
+  private async fetchAlpacaOrderPages(params: {
+    status: "open" | "closed" | "all";
+    after?: string;
+    until?: string;
+    stopBeforeMs?: number;
+  }): Promise<Record<string, unknown>[]> {
+    const all: Record<string, unknown>[] = [];
+    const seen = new Set<string>();
+    const PAGE = 500;
+    let until: string | undefined = params.until;
+    for (let guard = 0; guard < 50; guard++) {
+      const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
+      const page = (await awaitWithFirstCallRetry(
+        () => this.trackHealth(() => this.alpaca.getOrders({
+          status: params.status,
+          limit: PAGE,
+          direction: "desc",
+          ...(params.after ? { after: params.after } : {}),
+          ...(until ? { until } : {})
+        } as Parameters<typeof this.alpaca.getOrders>[0])),
+        {
+          firstMs,
+          retryMs,
+          onFinalTimeout: () => {
+            throw new Error(`Timed out waiting for alpaca.getOrders after ${firstMs}+${retryMs}ms.`);
+          }
+        }
+      )) as Record<string, unknown>[];
+      if (!Array.isArray(page) || page.length === 0) break;
+      let added = 0;
+      let oldest: string | undefined;
+      let oldestMs = Number.POSITIVE_INFINITY;
+      for (const o of page) {
+        const id = String(o.id);
+        const createdAt = String(o.created_at);
+        const createdMs = Date.parse(createdAt);
+        if (!seen.has(id)) {
+          seen.add(id);
+          all.push(o);
+          added += 1;
+        }
+        if (!oldest || createdAt < oldest) oldest = createdAt;
+        if (Number.isFinite(createdMs)) oldestMs = Math.min(oldestMs, createdMs);
+      }
+      if (params.stopBeforeMs != null && oldestMs < params.stopBeforeMs) break;
+      if (page.length < PAGE || added === 0 || !oldest || oldest === until) break;
+      until = oldest;
+    }
+    return all;
   }
 
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
@@ -606,7 +643,20 @@ class AlpacaBrokerGateway implements BrokerGateway {
     const normalizedSymbols = Array.from(aliasesByCanonical.keys());
     const quotes: Record<string, BrokerQuote> = {};
     try {
-      const response = await this.trackHealth(() => this.alpaca.getLatestQuotes(normalizedSymbols.map(toAlpacaSymbol)));
+      const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
+      const response = await awaitWithFirstCallRetry(
+        () => this.trackHealth(
+          () => this.alpaca.getLatestQuotes(normalizedSymbols.map(toAlpacaSymbol)),
+          { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS }
+        ),
+        {
+          firstMs: EQUITY_QUOTES_MS,
+          retryMs,
+          onFinalTimeout: () => {
+            throw new Error(`Timed out waiting for alpaca.getLatestQuotes after ${firstMs}+${retryMs}ms.`);
+          }
+        }
+      );
       for (const [rawSymbol, q] of Object.entries(response)) {
         const symbol = fromAlpacaSymbol(rawSymbol);
         const anyQ = q as Record<string, number | string>;
@@ -676,15 +726,18 @@ class AlpacaBrokerGateway implements BrokerGateway {
         audit("alpaca_tif_normalized_to_day", { symbol: input.symbol, side: input.side, requestedTimeInForce: input.timeInForce, reason: trailingTif.reason, quantity: input.quantity }, this.userId);
       }
       try {
-        const raw = await this.trackHealth(() => this.alpaca.createOrder({
-          symbol: toAlpacaSymbol(input.symbol),
-          side: toBrokerSide(input.side),
-          type: "trailing_stop",
-          trail_percent: String(input.trailPercent),
-          qty: input.quantity,
-          time_in_force: trailingTif.timeInForce,
-          client_order_id: input.refId
-        }));
+        const raw = await this.trackHealth(
+          () => this.alpaca.createOrder({
+            symbol: toAlpacaSymbol(input.symbol),
+            side: toBrokerSide(input.side),
+            type: "trailing_stop",
+            trail_percent: String(input.trailPercent),
+            qty: input.quantity,
+            time_in_force: trailingTif.timeInForce,
+            client_order_id: input.refId
+          }),
+          { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS }
+        );
         return {
           orderId: raw.id,
           refId: input.refId,
@@ -780,7 +833,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           }
         }
 
-        const raw = await this.trackHealth(() => this.alpaca.createOrder(orderOptions));
+        const raw = await this.trackHealth(() => this.alpaca.createOrder(orderOptions), { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS });
         return {
           orderId: raw.id,
           refId: input.refId,
@@ -857,15 +910,18 @@ class AlpacaBrokerGateway implements BrokerGateway {
     if (bad) throw new OrderValidationError(bad);
     const symbol = input.occSymbol.trim().toUpperCase().replace(/\s+/g, "");
     try {
-      const raw = await this.trackHealth(() => this.alpaca.createOrder({
-        symbol,
-        qty: String(input.quantity),
-        side: optionIntentToBrokerSide(input.intent),
-        type: input.type,
-        time_in_force: "day",
-        limit_price: input.type === "limit" && input.limitPrice != null ? String(roundAlpacaPrice(input.limitPrice)) : undefined,
-        client_order_id: input.refId
-      }));
+      const raw = await this.trackHealth(
+        () => this.alpaca.createOrder({
+          symbol,
+          qty: String(input.quantity),
+          side: optionIntentToBrokerSide(input.intent),
+          type: input.type,
+          time_in_force: "day",
+          limit_price: input.type === "limit" && input.limitPrice != null ? String(roundAlpacaPrice(input.limitPrice)) : undefined,
+          client_order_id: input.refId
+        }),
+        { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS }
+      );
       return {
         orderId: raw.id,
         refId: input.refId,
@@ -905,7 +961,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder> {
     return this.callMcp<any>("cancel_order", { order_id: orderId }, async () => {
-      await this.trackHealth(() => this.alpaca.cancelOrder(orderId));
+      await this.trackHealth(() => this.alpaca.cancelOrder(orderId), { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS });
       return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: {} };
     }).then((res: any) => {
       if (res && typeof res === "object") {
@@ -927,7 +983,10 @@ class AlpacaBrokerGateway implements BrokerGateway {
   async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
     let raw: any;
     try {
-      raw = await this.trackHealth(() => this.alpaca.sendRequest(`/orders/${originalOrderId}`, { nested: true }, null, "GET"));
+      raw = await this.trackHealth(
+        () => this.alpaca.sendRequest(`/orders/${originalOrderId}`, { nested: true }, null, "GET"),
+        { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS }
+      );
     } catch (error) {
       // A 404 means the entry order is genuinely gone (expired/purged) — nothing to tear down, safe
       // to resolve as done. Any OTHER failure (network, rate-limit, 5xx) is transient and must
@@ -947,7 +1006,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const legState = String(leg?.status ?? "");
       if (isRejectedOrCanceledState(legState) || legState.toLowerCase() === "filled") continue;
       try {
-        await this.trackHealth(() => this.alpaca.cancelOrder(legId));
+        await this.trackHealth(() => this.alpaca.cancelOrder(legId), { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS });
         cancelledOrderIds.push(legId);
       } catch {
         // best-effort — a leg that filled/cancelled between the fetch above and this cancel is fine

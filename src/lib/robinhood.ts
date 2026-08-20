@@ -420,7 +420,7 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
     }).filter((p) => p.underlyingSymbol && p.expirationDate && p.quantity !== 0);
   }
 
-  async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
+  async getEquityOrders(accountNumber: string, _options?: import("./types").GetEquityOrdersOptions): Promise<EquityOrder[]> {
     const raw = await this.callTool("get_equity_orders", { account_number: accountNumber });
     const orders = extractRobinhoodOrderCollection(raw);
     return orders.map((item: Record<string, unknown>) => ({

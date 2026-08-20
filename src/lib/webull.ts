@@ -49,7 +49,7 @@ class WebullBrokerGateway implements BrokerGateway {
     return [];
   }
 
-  async getEquityOrders(_accountNumber: string): Promise<EquityOrder[]> {
+  async getEquityOrders(_accountNumber: string, _options?: import("./types").GetEquityOrdersOptions): Promise<EquityOrder[]> {
     return [];
   }
 

@@ -16,6 +16,9 @@ export async function withDeadline<T>(promise: Promise<T>, ms: number, message: 
 
 const BROKER_TIMEOUT_MS = 15_000;
 
+/** Scheduler / safety-maintenance broker lane ceiling (matches BROKER_TIMEOUT_MS). */
+export const SCHEDULER_BROKER_TIMEOUT_MS = BROKER_TIMEOUT_MS;
+
 export async function runSafetyMaintenance(
   userId: string,
   policy: TradingPolicy & { accountNumber: string },
