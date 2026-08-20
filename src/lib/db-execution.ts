@@ -315,6 +315,24 @@ export function shouldDeferBackgroundRagForStrategy(input: {
   return input.strategyWorkInFlight && input.force !== true;
 }
 
+/**
+ * Live Roth `9d71dda4` (2026-08-19): same window as the Robinhood max-10 reject
+ * also listed/fetched the whole Pinecone index (managed-vector-reconcile
+ * inventory).  Gather retrieval is query/id scoped.  A queued or running
+ * strategy run must not start or continue a whole-index list/fetch.  Account
+ * deletion still inventories so erasure can finish.  Do not flip
+ * `RAG_PINECONE_WRITE_CLASS`.  Do not prune the live index.
+ */
+export function shouldSkipWholeIndexInventory(input: {
+  strategyWorkInFlight: boolean;
+  accountDeletionRequestId?: string;
+  allowDuringStrategyWork?: boolean;
+}): boolean {
+  if (input.allowDuringStrategyWork) return false;
+  if (input.accountDeletionRequestId) return false;
+  return input.strategyWorkInFlight;
+}
+
 export function hasInFlightStrategyWork(): boolean {
   const db = getDb();
   const run = db.prepare("SELECT 1 FROM strategy_runs WHERE status = 'running' LIMIT 1").get();

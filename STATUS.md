@@ -20,6 +20,12 @@ Screens no longer label one account's data as every account's.  Broker rows in S
 PR **#2813** (`cursor/roic-individual-archive-9ad4`) rebased onto `origin/main` `d3e2c9ee` (#2892).  Scope unchanged: skip ROIC HTTP when cache/artifacts already cover; persist `earningscalls_transcripts` + `data/roic-artifacts`; ops `roicArchive`.  Conflicts were `src/lib/web-sources/roic-transcripts.ts` and `test/roic-transcripts.test.ts` -- kept this PR's `while (queue.length > 0)` cached-tail drain and main's #2848 strategy-run pause plus the existing #2820 write-class tests.  Did not absorb other clusters.  Did not merge.  Did not spend the Individual key.
 
 Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
+## 2026-08-20 CURSOR — #2854 rebased onto main (`ce31c367`)
+## 2026-08-20 CURSOR — #2854 rebased onto main (`eefc4f82`)
+
+#2854 was CONFLICTING/DIRTY against `origin/main` (Jay landing open issue PRs tonight).  First rebase onto `ce31c367`/`44e9ef06` was phantom.  After #2813 landed, the only real conflict was `test/roic-transcripts.test.ts`.  Kept this PR's `shouldSkipWholeIndexInventory` test and main's `planRoicSymbolWork` skip-covered test.  Did not absorb #2813 product.  Gather skip + 502/429 fail-open only.  Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune.  Did not merge.
+
+PR **#2854**.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
 
 ## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
 
@@ -132,6 +138,13 @@ Part II clusters `ios-state-outcome-truth` + `web-ios-contract-drift` (stop-loss
 `docs/reviews/2026-08-18-full-app-expert-review.md` now carries Part II.  Second round re-attacked all 40 P1s: **27 upheld with a proven repro, 11 narrowed, 2 already fixed, 0 refuted outright**.  Two Part I headlines (mine) were WRONG and are corrected: `tsx-01` is **not** "MCP-fallback duplicate orders" — reusing the same `client_order_id` is what makes Alpaca refuse the second submission, the harm is a live order misfiled as `rejected_by_broker`, and the MCP transport is unreachable in production (no UI creates an `alpaca-mcp` account; the host allowlist blocks it) so it is **P3**.  The oldest-500 fill cap (`perf-01`/`berel-02`) needs >500 fills per (account, source) — unconfirmed on the prod DB — so **P2**; settle it with `SELECT source, COUNT(*) FROM fill_events GROUP BY source`.
 
 Five new lanes read what Part I skimmed and found P1s it missed: Coach `draft_order` coerces `short`/`cover` to **buy** (`src/lib/chat/tools.ts:92`); "Import from account" arms Autopilot on a live account with no guard (`app/console/guardrails/page.tsx:1021`); a draining account can be reactivated as the live trade target (`src/lib/db-api-keys.ts:1323`); price alerts stop evaluating when no account is active (`src/lib/alerts.ts:68`); unauthenticated `POST /api/chat-history` accepts forged turns.  Everything folds into **45 clusters** (22 tranche-1) with implementation plans.  Work from the clusters, not the finding count.  Also LIVE-21: the paired uptime flaps are origin stalls, not restarts (uptime continuous) — and prod being 2 merges behind main is correct (watch paths; those merges are iOS/docs only).
+## 2026-08-19 CURSOR — #2854 rebased onto main (`52add2ae`)
+
+#2854 was CONFLICTING/DIRTY after #2856 / #2857 (and #2858 on main).  Live is still `a8a0a65b`.  This morning's first post-open run hit Roth + Paper `strategy gather timeout` at 8 minutes, 0 proposed, Green never started.  #2831 400-failover was not exercised.  #2852 Robinhood ≤10 is already live.  #2854 (skip whole-index Pinecone inventory during strategy work + congress 502 / Massive 429 fail-open) is the remaining gather PR and is NOT live.
+
+Rebased `cursor/gather-no-pinecone-inventory-befc` onto `origin/main` `52add2ae`.  `git merge-tree --write-tree` was already clean.  Overlap vs later main was only `STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md` (union).  No iOS files.  Kept the gather skip + 502/429 fail-open.  Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune.  Did not reopen #2840.  Did not touch #2841 / #2849 / #2850 / #2856 / #2857.  Did not open a second PR.  Do not merge / deploy / bounce / TF.
+
+PR **#2854**.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
 
 ## 2026-08-18 MONET — Full-app expert-panel review landed (desktop web + mobile web + iOS)
 
@@ -154,6 +167,13 @@ PR **#2856**.  Branch `cursor/indices-common-names-3381`.  Rollout: `docs/rollou
 ## 2026-08-19 CURSOR — Indices labels (`S&P 500`, not `sp500`)
 
 **MERGED #2855** `b27de85c`.  Follow-up: live Guardrails Indices selected-set + Scan chips still leaked slugs — `cursor/indices-common-names-3381`.
+## 2026-08-19 CURSOR — Gather crumbs: no Pinecone inventory + 502/429 fail-open
+
+#2852 is merged (`c7b775c5`) — keep the Robinhood ≤10 chunk.  Same Roth `9d71dda4` window also did thousands of Pinecone list/fetch, congress.trade 502, and Massive 429.  No OpenRouter strategy/completion call.  Only run-scoped audits: `usage_budget_status` at +10s, then the crash.  Robinhood `too many symbols (max 10, got 250)` at +18s remains the first hard fail.
+
+Do not inventory the whole index during gather.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not prune.  Do not reopen #2840.  502/429 must not latch gather or skip Green.  New PR.  Do not merge / deploy / bounce.  Do not touch #2850 / #2849 / #2841.
+
+PR **#2854**.  Rebased onto `52add2ae`.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.  Do not merge / deploy / bounce.
 
 ## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (rebased onto #2853)
 

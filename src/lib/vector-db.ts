@@ -56,6 +56,39 @@ import {
   withUserWriteOperation,
   type UserOperationClaim
 } from "./user-write-fence";
+import { hasInFlightStrategyWork, shouldSkipWholeIndexInventory } from "./db-execution";
+
+export class WholeIndexInventoryDeferredError extends Error {
+  readonly code = "whole-index-inventory-deferred" as const;
+  constructor() {
+    super("Whole-index Pinecone inventory deferred while a strategy run is in flight");
+    this.name = "WholeIndexInventoryDeferredError";
+  }
+}
+
+export function isWholeIndexInventoryDeferredError(error: unknown): boolean {
+  return (
+    error instanceof WholeIndexInventoryDeferredError
+    || (error instanceof Error && error.name === "WholeIndexInventoryDeferredError")
+  );
+}
+
+function assertGatherSafeWholeIndexInventory(options?: {
+  accountDeletionRequestId?: string;
+  allowDuringStrategyWork?: boolean;
+}): void {
+  if (options?.allowDuringStrategyWork || options?.accountDeletionRequestId) {
+    return;
+  }
+  if (
+    !shouldSkipWholeIndexInventory({
+      strategyWorkInFlight: hasInFlightStrategyWork()
+    })
+  ) {
+    return;
+  }
+  throw new WholeIndexInventoryDeferredError();
+}
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 const RAG_CONNECTION_ALERT_PREFIX = "vectorStore:connectionAlert";
@@ -4550,6 +4583,7 @@ export async function backfillAsOfEpoch(options: BackfillAsOfEpochOptions = {}):
 
   let paginationToken: string | undefined;
   do {
+    assertGatherSafeWholeIndexInventory();
     const listResp = await withRagApiHealth("pinecone", pineconeSource, userId, "list", () =>
       index.listPaginated({
         ...(options.prefix ? { prefix: options.prefix } : {}),
@@ -4659,6 +4693,9 @@ export async function inventoryVectorRecordsByMetadata(options: {
   const userId = options.userId ?? "local";
   const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
   const maxScanned = Math.max(1, Math.min(1_000_000, Math.floor(options.maxScanned ?? 250_000)));
+  assertGatherSafeWholeIndexInventory({
+    accountDeletionRequestId: options.accountDeletionRequestId
+  });
   assertVectorStoreLease(options.leaseGuard);
   const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for vector inventory.");
@@ -4668,6 +4705,9 @@ export async function inventoryVectorRecordsByMetadata(options: {
   let scanned = 0;
   let paginationToken: string | undefined;
   do {
+    assertGatherSafeWholeIndexInventory({
+      accountDeletionRequestId: options.accountDeletionRequestId
+    });
     assertVectorStoreLease(options.leaseGuard);
     const listed = await withRagApiHealth(
       "pinecone",
@@ -5412,12 +5452,32 @@ export async function reconcileManagedVectorRecords(options: {
   };
 }
 
+function emptyReconcileResult(dryRun: boolean, skipped = false): ReconcileManagedVectorRecordsResult {
+  return {
+    dryRun,
+    promoteIds: [],
+    deleteIds: [],
+    invalidateCommitIds: [],
+    repairCommitIds: [],
+    quarantineIds: [],
+    promoted: 0,
+    deleted: 0,
+    ...(skipped ? { skipped: true } : {})
+  };
+}
+
 async function reconcileManagedVectorRecordsUnlocked(
   options: { userId?: string; source?: string; dryRun?: boolean },
   operationLeaseGuard?: VectorStoreLeaseGuard
 ): Promise<ReconcileManagedVectorRecordsResult> {
   assertVectorStoreLease(operationLeaseGuard);
   const dryRun = options.dryRun !== false;
+  try {
+    assertGatherSafeWholeIndexInventory();
+  } catch (error) {
+    if (isWholeIndexInventoryDeferredError(error)) return emptyReconcileResult(dryRun, true);
+    throw error;
+  }
   const userId = options.userId ?? "local";
   const providerAuthority = await getCurrentVectorProviderAuthority({
     userId,
@@ -5431,16 +5491,22 @@ async function reconcileManagedVectorRecordsUnlocked(
   const targetNamespace: "managed" | "fmp-transcripts" = options.source === "fmp-earnings-transcript"
     ? "fmp-transcripts"
     : "managed";
-  const providerRows = (await inventoryVectorRecordsByMetadata({
-    userId,
-    namespace: targetNamespace,
-    prefix: managedOccurrenceVectorPrefix({ ledgerAuthority, providerAuthority }),
-    leaseGuard: operationLeaseGuard
-  })).filter((row) => (
-    row.metadata.receipt_required === true ||
-    typeof row.metadata.vector_commit_id === "string" ||
-    isManagedOccurrenceVectorId(row.id)
-  ));
+  let providerRows: VectorMetadataInventoryRow[];
+  try {
+    providerRows = (await inventoryVectorRecordsByMetadata({
+      userId,
+      namespace: targetNamespace,
+      prefix: managedOccurrenceVectorPrefix({ ledgerAuthority, providerAuthority }),
+      leaseGuard: operationLeaseGuard
+    })).filter((row) => (
+      row.metadata.receipt_required === true ||
+      typeof row.metadata.vector_commit_id === "string" ||
+      isManagedOccurrenceVectorId(row.id)
+    ));
+  } catch (error) {
+    if (isWholeIndexInventoryDeferredError(error)) return emptyReconcileResult(dryRun, true);
+    throw error;
+  }
   assertVectorStoreLease(operationLeaseGuard);
   // Resolve the mutation client before claiming any SQLite reconciliation fences. Inventory uses
   // the same provider, but this explicit preflight prevents a later configuration/client failure

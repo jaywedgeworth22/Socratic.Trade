@@ -61,6 +61,13 @@ fundamentals send at most 10 symbols per MCP call (live reject: `too many
 symbols (max 10, got 250)` on Roth `9d71dda4`).  The scan universe is not
 shrunk.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
 
+**Gather fail-open (2026-08-19, same `9d71dda4` window):** congress.trade 502
+and Massive 429 must not latch enrichment or skip Green.  The legacy
+short-circuit path no longer awaits App A alone.  App A stops remaining
+symbol pulls after the first latching 5xx/429/timeout.  Massive treats 429 as
+soft, retries 0, and stops the rest of that enrich call.  A 404 stays a miss.
+Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
+
 **Quote/OHLC sharing guardrails (2026-06-19):** broker quote merges now append the
 actual provider to `MarketScan.source` (`alpaca-quotes`, `robinhood-quotes`, or
 `broker-quotes` when unspecified) and dedupe repeated merges. OHLC history caches

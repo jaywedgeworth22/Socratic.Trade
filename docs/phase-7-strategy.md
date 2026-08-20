@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-19 Gather must not inventory Pinecone or latch on 502/429
+
+Same Roth `9d71dda4` terminal.  Robinhood `too many symbols (max 10, got 250)` at +18s remains the first hard fail (#2852 `c7b775c5`, folded in, not replaced).  The same window also listed/fetched the whole Pinecone index, 502'd congress.trade, and 429'd Massive.  There was no OpenRouter strategy/completion call — only run-scoped `usage_budget_status` at +10s, then the crash.  Gather retrieval stays query/id scoped.  `managed-vector-reconcile` and `inventoryVectorRecordsByMetadata` skip whole-index list/fetch while any strategy run/request is queued or running (account deletion still inventories).  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not prune the live index.  Do not reopen #2840.  congress.trade 502 and Massive 429 fail-open so Green can start.  Rebased onto `52add2ae` after #2856/#2857/#2858.  GitHub `DIRTY` was docs-union (`STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md`); `git merge-tree` was clean; no iOS overlap.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
+
 ## 2026-08-19 Robinhood quote chunk (250-name gather)
 
 Live Roth `9d71dda4` reached gather, then Robinhood `get_equity_quotes` rejected `too many symbols (max 10, got 250)`.  That emptied the Robinhood quote pass, so a full-scan universe never priced through the broker and Green/`llm_usage` never started.  Requests are chunked to 10 symbols; the universe stays 250 (or the full scan).  A congress.trade HTTP 404 is a miss, not a latch on the free enrichment wave.  Drain handoff is merged (#2853 `df1f5a37`).  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
