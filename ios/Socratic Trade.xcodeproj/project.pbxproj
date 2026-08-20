@@ -29,6 +29,8 @@
 		59A784D6939E343235F74CF3 /* LATO-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = 64FD6B1AE752DEF0DB8C719D /* LATO-OFL.txt */; };
 		6B532570C7BE012A3EF3D070 /* OrderCancelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5557CAA4F581AB7FB8F8234 /* OrderCancelTests.swift */; };
 		6F472653B6E7B573907DEB0E /* AgentControlPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CC6784F07066C7C065671F /* AgentControlPlan.swift */; };
+		700A4F7309B4940998C8190B /* policy-contract.json in Resources */ = {isa = PBXBuildFile; fileRef = 09F64EED0B9788B036ED3BFA /* policy-contract.json */; };
+		7E98F3E600F596650127865C /* UserFacingCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 505CFD83F8A4DB57C8C6B26B /* UserFacingCopyTests.swift */; };
 		8299FA4E767A17105773101F /* DeskModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A1EC10518F9629B12DBFA3D /* DeskModelsTests.swift */; };
 		84A3825A59F57AD4C4DEE18D /* InsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD460CC2D17E0F0B061B372A /* InsightsView.swift */; };
 		85DC43A7311763C033D46DC8 /* AccountMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1104431D2656738961FF9E2E /* AccountMetricsTests.swift */; };
@@ -73,6 +75,7 @@
 		03611D1B48875FFFC841E481 /* GuardrailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuardrailsView.swift; sourceTree = "<group>"; };
 		042C3DAFDC413C79CE5526F9 /* Lato-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Lato-Bold.ttf"; sourceTree = "<group>"; };
 		04FCAD7405F1B4180574C644 /* SocraticTrade.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SocraticTrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		09F64EED0B9788B036ED3BFA /* policy-contract.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "policy-contract.json"; sourceTree = "<group>"; };
 		1104431D2656738961FF9E2E /* AccountMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountMetricsTests.swift; sourceTree = "<group>"; };
 		1414766425B708D8C45691ED /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		1A1EC10518F9629B12DBFA3D /* DeskModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeskModelsTests.swift; sourceTree = "<group>"; };
@@ -86,6 +89,7 @@
 		3F73B7DC3AC7076311C24456 /* PushNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotifications.swift; sourceTree = "<group>"; };
 		40B15024373F200D860968ED /* AppTypographyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTypographyTests.swift; sourceTree = "<group>"; };
 		46F9B58AE392D9B952212857 /* MobileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileModels.swift; sourceTree = "<group>"; };
+		505CFD83F8A4DB57C8C6B26B /* UserFacingCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserFacingCopyTests.swift; sourceTree = "<group>"; };
 		50946B1368FEFB6B6B20116D /* SocraticTradeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SocraticTradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5106B1DF419D29BCC1717594 /* ProposalPriceReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProposalPriceReview.swift; sourceTree = "<group>"; };
 		552372DC3315B434227861EE /* Lato-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Lato-Regular.ttf"; sourceTree = "<group>"; };
@@ -182,6 +186,7 @@
 		6C5E76B26EEA71F469806853 /* SocraticTradeTests */ = {
 			isa = PBXGroup;
 			children = (
+				9320706A10B83DA3F02D6628 /* Fixtures */,
 				1104431D2656738961FF9E2E /* AccountMetricsTests.swift */,
 				005E737FB143D683852FE490 /* AgentControlPlanTests.swift */,
 				40B15024373F200D860968ED /* AppTypographyTests.swift */,
@@ -195,9 +200,18 @@
 				8CD0F6E51E8A29D4714465B2 /* PushNotificationTests.swift */,
 				EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */,
 				728EAC5AE3C4358672EBAEED /* TabPreferencesTests.swift */,
+				505CFD83F8A4DB57C8C6B26B /* UserFacingCopyTests.swift */,
 				D127513EA965CC0E9E36D114 /* WrappingHStackTests.swift */,
 			);
 			path = SocraticTradeTests;
+			sourceTree = "<group>";
+		};
+		9320706A10B83DA3F02D6628 /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				09F64EED0B9788B036ED3BFA /* policy-contract.json */,
+			);
+			path = Fixtures;
 			sourceTree = "<group>";
 		};
 		E1435EB17748A8296DAE65FD /* Fonts */ = {
@@ -220,6 +234,7 @@
 			buildConfigurationList = 62428D1776F306A1A696E24B /* Build configuration list for PBXNativeTarget "SocraticTradeTests" */;
 			buildPhases = (
 				87B05EB34EEE50FFDAF215D2 /* Sources */,
+				23D5468C351CBF10ABA29C58 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -291,6 +306,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		23D5468C351CBF10ABA29C58 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				700A4F7309B4940998C8190B /* policy-contract.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3E11AAB697E85D67C9C0A9F7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -324,6 +347,7 @@
 				E51F3B135F00DDFD0E7D55A2 /* PushNotificationTests.swift in Sources */,
 				1F37FE2BA14490285C0A0156 /* RunStateDerivationTests.swift in Sources */,
 				C3BB26F6D86DD0C45B1EBEFC /* TabPreferencesTests.swift in Sources */,
+				7E98F3E600F596650127865C /* UserFacingCopyTests.swift in Sources */,
 				0AECCBC50D5461DB100A6502 /* WrappingHStackTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

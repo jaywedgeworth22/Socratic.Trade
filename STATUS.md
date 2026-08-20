@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
+
+Contract fixture now pins `GET /api/policy` to the Swift `FullPolicy` decoder from both sides, so a rename fails CI instead of silently blanking a phone list.  `api-01` was already fixed on main by #2863 mid-flight, so this branch drops its competing decode and keeps main's.  **`qa-04` (a `/api/mobile/snapshot` contract test) is still OPEN.**
+
+**Unrelated breakage found:** `xcodebuild test` does not compile on a clean `origin/main` - `ios/SocraticTradeTests/MobileModelsTests.swift:403/425/445` call `JSONEncoder().encode()` on a non-`Encodable` type (5 errors; that file arrived in #2863).  The app builds fine; only the test target is red, and the required gate never runs it, so it went unnoticed - findings `qa-01`/`qa-02` exactly.  Reported to the fleet, not claimed.  Until it is repaired, Swift contract assertions ship committed but unrunnable.
+
 ## 2026-08-20 CURSOR — Rebase #2818 onto current main (delayed Yahoo stamp)
 
 Rebase-only of PR **#2818** (`cursor/delayed-yahoo-fallback-stamp-c120`) onto
