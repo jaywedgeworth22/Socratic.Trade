@@ -6,7 +6,7 @@
 
 Fix: take the symbol from the tracked `broker_protective_stops` row when the lookup has no order.  Did not touch #2861.  Did not change cancel fail-open doctrine.
 
-Branch `cursor/owner-cancel-stop-tombstone-lookup`.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-lookup.md`.
+**IN PR #2949.**  Branch `cursor/owner-cancel-stop-tombstone-lookup`.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-lookup.md`.
 
 ## 2026-08-20 MONET - `prompt-trust-boundary` up for review
 
