@@ -158,6 +158,17 @@ export function CommandPalette() {
         }
       })),
       {
+        id: "nav:notifications",
+        label: "Notifications",
+        hint: "Open later alerts — time, body, and whether you have read them.",
+        keywords: "notifications alerts inbox history unread alert center",
+        run: () => {
+          if (checkNav(undefined, "/console/activity?tab=alerts")) {
+            router.push("/console/activity?tab=alerts");
+          }
+        }
+      },
+      {
         id: "action:run-once",
         label: "Run once strategy",
         hint: "Execute manual strategy run",

@@ -1,13 +1,21 @@
 import SwiftUI
 
 struct ActivityView: View {
+    @EnvironmentObject private var store: MobileStore
     @State private var presentedItem: PresentedMarketItem?
+    @State private var notificationFilter: NotificationHistoryFilter = .unread
 
     var body: some View {
         SnapshotScaffold { snapshot in
+            NotificationHistorySection(
+                snapshot: snapshot,
+                filter: $notificationFilter,
+                markRead: { ids in
+                    await store.acknowledgeNotifications(ids: ids)
+                }
+            )
             DailyActivityCard(snapshot: snapshot)
             SchedulerActivityCard(snapshot: snapshot)
-            AlertActivitySection(notifications: snapshot.notifications)
             FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedItem: $presentedItem)
             CommandActivitySection(commands: snapshot.recentCommands)
         }
@@ -16,6 +24,174 @@ struct ActivityView: View {
         .sheet(item: $presentedItem) { item in
             SymbolInfoSheet(item: item)
         }
+    }
+}
+
+private enum NotificationHistoryFilter: String, CaseIterable, Identifiable {
+    case unread = "Unread"
+    case all = "All"
+
+    var id: String { rawValue }
+}
+
+private struct NotificationHistorySection: View {
+    let snapshot: MobileSnapshot
+    @Binding var filter: NotificationHistoryFilter
+    let markRead: ([String]) async -> Void
+
+    @State private var ackingIds: Set<String> = []
+
+    private var activeAccountId: String? {
+        snapshot.readiness.activeConnectedAccount?.id ?? snapshot.policy.connectedAccountId
+    }
+
+    private var scoped: [NotificationHistoryItem] {
+        snapshot.inScopeNotifications(activeAccountId: activeAccountId)
+    }
+
+    private var visible: [NotificationHistoryItem] {
+        let rows = filter == .unread ? scoped.filter { !$0.read } : scoped
+        return Array(rows.prefix(40))
+    }
+
+    private var unreadCount: Int {
+        scoped.filter { !$0.read }.count
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            SectionHeading(
+                "Notifications",
+                subtitle: "Alerts you can open later.  Refresh still shows them."
+            )
+            filterRow
+            if visible.isEmpty {
+                EmptyStateCard(
+                    title: filter == .unread ? "No Unread Notifications" : "No Notifications Yet",
+                    message: filter == .unread
+                        ? "Nothing unread for this account.  Switch to All to see earlier alerts."
+                        : "Fills, blocks, and run alerts will appear here after they are sent.",
+                    systemImage: "bell"
+                )
+            } else {
+                ForEach(visible) { item in
+                    NotificationHistoryRow(
+                        item: item,
+                        acking: ackingIds.contains(item.id),
+                        markRead: { await markOne(item) }
+                    )
+                }
+            }
+        }
+    }
+
+    private var filterRow: some View {
+        HStack(spacing: 8) {
+            ForEach(NotificationHistoryFilter.allCases) { option in
+                Button {
+                    filter = option
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(option.rawValue)
+                        if option == .unread {
+                            Text("\(unreadCount)")
+                                .font(.appCaption2.weight(.bold))
+                        }
+                    }
+                    .font(.appCaption.weight(filter == option ? .bold : .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 36)
+                    .background(
+                        filter == option ? AppPalette.accent.opacity(0.14) : Color.clear,
+                        in: Capsule()
+                    )
+                    .foregroundStyle(filter == option ? AppPalette.accent : .secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(filter == option ? .isSelected : [])
+            }
+            Spacer()
+            if unreadCount > 0 {
+                Button("Mark All Read") {
+                    Task { await markAllVisibleUnread() }
+                }
+                .font(.appCaption.weight(.semibold))
+                .disabled(!ackingIds.isEmpty)
+            }
+        }
+    }
+
+    private func markOne(_ item: NotificationHistoryItem) async {
+        guard !item.read else { return }
+        ackingIds.insert(item.id)
+        defer { ackingIds.remove(item.id) }
+        await markRead([item.id])
+    }
+
+    private func markAllVisibleUnread() async {
+        let ids = visible.filter { !$0.read }.map(\.id)
+        guard !ids.isEmpty else { return }
+        ackingIds.formUnion(ids)
+        defer { ackingIds.subtract(ids) }
+        await markRead(ids)
+    }
+}
+
+private struct NotificationHistoryRow: View {
+    let item: NotificationHistoryItem
+    let acking: Bool
+    let markRead: () async -> Void
+
+    var body: some View {
+        AppCard(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.appHeadline)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    StatusPill(
+                        item.readLabel,
+                        color: item.read ? .secondary : AppPalette.accent,
+                        systemImage: item.read ? "envelope.open" : "envelope.badge"
+                    )
+                }
+                if !item.body.isEmpty {
+                    Text(item.body)
+                        .font(.appSubheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Text(AppFormat.dateTime(item.createdAt))
+                        .font(.appFootnote)
+                        .foregroundStyle(.secondary)
+                    if let account = item.accountLabel, !account.isEmpty {
+                        Text(account)
+                            .font(.appFootnote)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    if !item.read {
+                        Button {
+                            Task { await markRead() }
+                        } label: {
+                            if acking {
+                                ProgressView()
+                            } else {
+                                Text("Mark as Read")
+                            }
+                        }
+                        .font(.appCaption.weight(.semibold))
+                        .disabled(acking)
+                        .accessibilityLabel("Mark as Read")
+                    }
+                }
+            }
+        }
+        .opacity(item.read ? 0.72 : 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.title), \(item.readLabel), \(AppFormat.dateTime(item.createdAt))")
     }
 }
 
@@ -73,96 +249,6 @@ private struct SchedulerActivityCard: View {
                 LabeledContent("Cadence", value: snapshot.policy.runCadenceMinutes.map { "\($0) minutes" } ?? "Manual")
             }
         }
-    }
-}
-
-private struct AlertActivitySection: View {
-    let notifications: [MobileNotification]
-
-    private var ordered: [MobileNotification] {
-        notifications.sorted { lhs, rhs in
-            let leftOpen = lhs.acknowledgedAt == nil
-            let rightOpen = rhs.acknowledgedAt == nil
-            if leftOpen != rightOpen { return leftOpen }
-            let leftUrgent = isUrgent(lhs.type)
-            let rightUrgent = isUrgent(rhs.type)
-            if leftUrgent != rightUrgent { return leftUrgent }
-            return lhs.createdAt > rhs.createdAt
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 10) {
-            SectionHeading("Alerts", subtitle: "runs, kills, and other notices")
-            if ordered.isEmpty {
-                EmptyStateCard(
-                    title: "No alerts yet",
-                    message: "Failed runs and kill-switch trips will appear here after they fire.",
-                    systemImage: "bell"
-                )
-            } else {
-                ForEach(ordered) { event in
-                    AlertActivityRow(event: event)
-                }
-            }
-        }
-    }
-
-    private func isUrgent(_ type: String) -> Bool {
-        type == "run_failed" || type == "kill_switch"
-    }
-}
-
-private struct AlertActivityRow: View {
-    let event: MobileNotification
-
-    private var urgent: Bool {
-        event.type == "run_failed" || event.type == "kill_switch"
-    }
-
-    var body: some View {
-        AppCard(padding: 13) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(event.title)
-                        .font(.appHeadline)
-                        .foregroundStyle(urgent ? AppPalette.negative : .primary)
-                    Spacer()
-                    if event.acknowledgedAt == nil {
-                        StatusPill("Open", color: urgent ? AppPalette.negative : AppPalette.warning)
-                    }
-                }
-                Text(alertTypeLabel(event.type))
-                    .font(.appCaption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(AppFormat.dateTime(event.createdAt))
-                    .font(.appFootnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .overlay {
-            if urgent && event.acknowledgedAt == nil {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(AppPalette.negative.opacity(0.45), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(event.title). \(alertTypeLabel(event.type))")
-    }
-}
-
-private func alertTypeLabel(_ type: String) -> String {
-    switch type {
-    case "run_failed": return "Strategy run failed"
-    case "kill_switch": return "Kill switch"
-    case "pending_approval": return "Waiting for approval"
-    case "fill": return "Fill"
-    case "price_alert": return "Price alert"
-    case "limit_order_stale": return "Stale limit"
-    case "provider_degraded": return "Provider"
-    case "budget_alert": return "Budget"
-    default: return type.replacingOccurrences(of: "_", with: " ")
     }
 }
 

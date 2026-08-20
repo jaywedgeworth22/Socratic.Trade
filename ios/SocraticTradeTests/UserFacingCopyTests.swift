@@ -175,6 +175,17 @@ final class UserFacingCopyTests: XCTestCase {
         assertOrdinary(DeskCopy.equityWaitingOnBroker)
     }
 
+    func testNotificationHistoryCopyStaysOrdinary() {
+        let item = try! JSONDecoder().decode(
+            NotificationHistoryItem.self,
+            from: Data(#"{"id":"n1","createdAt":"2026-08-18T12:00:00.000Z","type":"run_failed","title":"Strategy Run Failed","body":"Sent","read":false}"#.utf8)
+        )
+        assertOrdinary(item.title)
+        assertOrdinary(item.body)
+        assertOrdinary(item.readLabel)
+        XCTAssertEqual(item.readLabel, "unread")
+    }
+
     func testWorkspaceErrorsStayOrdinary() throws {
         assertOrdinary(MobileAPIError.serverError(statusCode: 522, message: nil).errorDescription ?? "")
         assertOrdinary(MobileAPIError.serverError(statusCode: 500, message: nil).errorDescription ?? "")

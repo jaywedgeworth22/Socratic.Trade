@@ -12,6 +12,12 @@ Do not merge from this rebase.
 
 Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
 `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
+## 2026-08-20 CURSOR — Rebase #2841 onto current main (after #2892/#2876/#2942)
+
+PR **#2841** rebased onto `origin/main` `1d6bbf68`.  Scope unchanged: header inbox, Activity unread, last-100 `notification_events`.  Conflicts in nav/shell/copy tests kept this PR's unread badges plus main's skip-link / `sheetId` / scan+portfolio copy tests.  Snapshot uses one last-100 `buildNotificationHistory` row (also carries `status` / `acknowledgedAt` so older #2942 payloads still decode).  One iOS inbox (`NotificationHistoryItem`); did not keep a second `MobileNotification` list.  Did not absorb #2892/#2876/#2942/#2834.  Not merging.
+
+Branch `cursor/notification-history-parity-4bbc`.  Rollout: `docs/rollouts/2026-08-18-notification-history-parity.md`.
+
 ## 2026-08-19 MONET — `per-account-visibility` landed for review (tranche-1 cluster)
 
 Screens no longer label one account's data as every account's.  Broker rows in Settings read real per-account policy state and a real per-account pending count (both were previously the active account's, with every other row mislabelled "Inactive" even while trading, and the count dead code that always read 0); the decisions index keeps its by-design all-accounts fetch and gains an account chip; `mobileCommandBacklog` was global across USERS and is now user-scoped.  Each finding was classified wrong-scope vs wrong-label before fixing, so a wrong query is never papered over with a label change.  Full gate green (lint 0 errors, tsc clean, 7071 tests, build 0).  Rollout: `docs/rollouts/2026-08-19-per-account-visibility.md`.
@@ -26,6 +32,11 @@ Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 #2854 was CONFLICTING/DIRTY against `origin/main` (Jay landing open issue PRs tonight).  First rebase onto `ce31c367`/`44e9ef06` was phantom.  After #2813 landed, the only real conflict was `test/roic-transcripts.test.ts`.  Kept this PR's `shouldSkipWholeIndexInventory` test and main's `planRoicSymbolWork` skip-covered test.  Did not absorb #2813 product.  Gather skip + 502/429 fail-open only.  Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune.  Did not merge.
 
 PR **#2854**.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
+## 2026-08-20 CURSOR — Rebase #2841 onto current main (notification history)
+
+PR **#2841** (`cursor/notification-history-parity-4bbc`) rebased onto `origin/main` `ce31c367`.  Scope unchanged: website header inbox + Activity unread, iOS Activity notifications, last-100 `notification_events` on the mobile snapshot.  Three conflicts: `app/api/mobile/snapshot/route.ts`, `docs/phase-6-customization-risk-notifications.md`, `ios/SocraticTradeTests/MobileModelsTests.swift`.  Kept this PR's inbox fields and main's `latestScan` / alert-fingerprint acceptance.  Did not absorb other clusters.  Did not merge.
+
+Branch `cursor/notification-history-parity-4bbc`.  Rollout: `docs/rollouts/2026-08-18-notification-history-parity.md`.
 
 ## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
 
@@ -280,6 +291,12 @@ Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/20
 Owner: min-loss should be optional, and Auto must be a choosable IRA option (not only Ignore vs Block).  `iraWashSaleHandling` is now `block | auto | disregard`.  Blank `washSaleMinLossUsd` means every loss is in play (no hidden $50 IRA default).  Ignore does not steer Green.  Auto proceeds and Green weighs priced lock costs.  Block refuses.
 
 Prompt `agentic-strategy@2.14.0`.  Branch `cursor/ira-wash-sale-factor-a1df`.  PR #2842.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
+## 2026-08-18 CURSOR — notification history + web/iOS inbox parity
+## 2026-08-18 CURSOR — notification history rebased onto main (#2830)
+
+PR **#2841** was CONFLICTING/DIRTY against `origin/main` after #2830 (`13b60747`) and docs #2832.  Rebased `cursor/notification-history-parity-4bbc` onto that SHA.  Sole conflict: `ios/SocraticTradeTests/UserFacingCopyTests.swift` — kept #2830 `testScanCopyDoesNotTreatWatchlistAsTheUniverse` and this PR's `testNotificationHistoryCopyStaysOrdinary`.  Silent auto-merge also duplicated `acknowledgeNotifications` in `MobileStore.swift`; dropped the extra copy.  History work unchanged: shared `notification_events`, website bell inbox, iOS Activity Notifications, last 100, ack via `POST /api/notifications/ack`.  Did not touch #2831/#2812/#2840, trading, broker, OpenRouter, RAG, or the health gate.  Not merging.  Not deploying.
+
+Branch `cursor/notification-history-parity-4bbc`.  Rollout: `docs/rollouts/2026-08-18-notification-history-parity.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

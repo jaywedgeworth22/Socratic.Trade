@@ -106,3 +106,6 @@ watermark only after a `sent` user delivery or a successful operator fallback.
   channel delivery is mirrored in audit events (`notify.sent` / `notify.error`).
 - The same alert fingerprint is not delivered more than once per 60s
   (`price_alert` by id; other lock types by stable payload identity).
+- Users can reopen later notifications (time, title/body, read) on the website
+  header inbox + Activity Alert Center, and on iOS Activity.  Same
+  `notification_events` rows; last 100; mark-as-read uses `/api/notifications/ack`.

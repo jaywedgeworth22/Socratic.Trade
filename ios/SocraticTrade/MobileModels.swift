@@ -19,11 +19,11 @@ struct MobileSnapshot: Decodable {
     let connectedAccounts: [ConnectedAccount]
     let watchlist: [WatchlistItem]
     let alerts: [PriceAlert]
+    /// Persisted notification inbox (last 100).  Missing on older payloads.
+    let notifications: [NotificationHistoryItem]
     let recentCommands: [MobileCommand]
     /// Last-good `/api/scan` universe.  Same seed `/console/scan` keeps when Refresh 503s.
     let latestScan: MarketScanResponse?
-    /// Alert Center rows for Activity.  Optional so older payloads still decode.
-    let notifications: [MobileNotification]
 
     private enum CodingKeys: String, CodingKey {
         case currentUser
@@ -41,9 +41,9 @@ struct MobileSnapshot: Decodable {
         case connectedAccounts
         case watchlist
         case alerts
+        case notifications
         case recentCommands
         case latestScan
-        case notifications
     }
 
     init(from decoder: Decoder) throws {
@@ -69,21 +69,22 @@ struct MobileSnapshot: Decodable {
         connectedAccounts = try values.decodeIfPresent([ConnectedAccount].self, forKey: .connectedAccounts) ?? []
         watchlist = try values.decodeIfPresent([WatchlistItem].self, forKey: .watchlist) ?? []
         alerts = try values.decodeIfPresent([PriceAlert].self, forKey: .alerts) ?? []
+        notifications = try values.decodeIfPresent([NotificationHistoryItem].self, forKey: .notifications) ?? []
         recentCommands = try values.decodeIfPresent([MobileCommand].self, forKey: .recentCommands) ?? []
         latestScan = try values.decodeIfPresent(MarketScanResponse.self, forKey: .latestScan)
-        notifications = try values.decodeIfPresent([MobileNotification].self, forKey: .notifications) ?? []
     }
-}
 
-/// Public Activity row.  Payload and webhook URL stay off the wire.
-struct MobileNotification: Decodable, Identifiable, Equatable {
-    let id: String
-    let type: String
-    let title: String
-    let createdAt: String
-    let status: String
-    let acknowledgedAt: String?
-    let connectedAccountId: String?
+    var unreadNotificationCount: Int {
+        notifications.filter { !$0.read }.count
+    }
+
+    func inScopeNotifications(activeAccountId: String?) -> [NotificationHistoryItem] {
+        guard let activeAccountId else { return notifications }
+        return notifications.filter { item in
+            guard let accountId = item.connectedAccountId else { return true }
+            return accountId == activeAccountId
+        }
+    }
 }
 
 /// The server's own description of what this deployment's mobile control plane offers —
@@ -525,6 +526,55 @@ struct PriceAlert: Decodable, Identifiable {
     let createdAt: String?
     let triggeredAt: String?
     let triggeredPrice: Double?
+}
+
+/// One persisted inbox row from `/api/mobile/snapshot` `notifications`.
+/// Title and body are already ordinary words — do not show `type` raw.
+/// Older #2942 rows had `status` / `acknowledgedAt` and no `body` / `read`.
+struct NotificationHistoryItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let createdAt: String
+    let type: String
+    let title: String
+    let body: String
+    let read: Bool
+    let status: String
+    let acknowledgedAt: String?
+    let connectedAccountId: String?
+    let accountLabel: String?
+
+    var readLabel: String { read ? "read" : "unread" }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case createdAt
+        case type
+        case title
+        case body
+        case read
+        case status
+        case acknowledgedAt
+        case connectedAccountId
+        case accountLabel
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        createdAt = try values.decode(String.self, forKey: .createdAt)
+        type = try values.decode(String.self, forKey: .type)
+        title = try values.decode(String.self, forKey: .title)
+        body = try values.decodeIfPresent(String.self, forKey: .body) ?? ""
+        acknowledgedAt = try values.decodeIfPresent(String.self, forKey: .acknowledgedAt)
+        if let explicitRead = try values.decodeIfPresent(Bool.self, forKey: .read) {
+            read = explicitRead
+        } else {
+            read = acknowledgedAt != nil
+        }
+        status = try values.decodeIfPresent(String.self, forKey: .status) ?? "sent"
+        connectedAccountId = try values.decodeIfPresent(String.self, forKey: .connectedAccountId)
+        accountLabel = try values.decodeIfPresent(String.self, forKey: .accountLabel)
+    }
 }
 
 struct MobileCommand: Decodable, Identifiable {
