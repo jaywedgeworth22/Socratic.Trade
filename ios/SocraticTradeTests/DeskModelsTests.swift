@@ -226,6 +226,35 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(missing.crossAccount, "ignored")
     }
 
+    /// web-ios-contract-drift (docs/reviews/2026-08-18-work-items.json): stopLossPct/
+    /// trailingStopPct/shortStopLossPct live under `riskRules` in the real GET /api/policy
+    /// payload (src/lib/types.ts's RiskRules interface).  The fixture this test decodes is NOT
+    /// hand-typed — it is generated straight from that route's real output by
+    /// test/policy-ios-contract-fixture.test.ts and checked in at
+    /// ios/SocraticTradeTests/Fixtures/policy-contract.json, so a future server-side rename of
+    /// `riskRules` (or of any of these three fields) changes the checked-in fixture and this
+    /// test starts asserting against stale values — catching the drift in CI instead of on a
+    /// phone screen.  Re-run `npm test -- policy-ios-contract-fixture` to refresh the fixture
+    /// after any policy/riskRules shape change, then re-run this test.
+    func testFullPolicyDecodesNestedRiskRulesFromGeneratedFixture() throws {
+        guard let fixtureURL = Bundle(for: Self.self).url(forResource: "policy-contract", withExtension: "json") else {
+            XCTFail(
+                "ios/SocraticTradeTests/Fixtures/policy-contract.json not found in the test bundle. " +
+                "Run `npm test -- policy-ios-contract-fixture` in the repo root to generate it, then commit the result."
+            )
+            return
+        }
+        let json = try Data(contentsOf: fixtureURL)
+        let policy = try JSONDecoder().decode(FullPolicy.self, from: json)
+
+        // Values the generator pins (test/policy-ios-contract-fixture.test.ts's
+        // CONTRACT_RISK_RULES) — deliberately non-default so a decoder reading the wrong key,
+        // or silently falling back to a default, is caught rather than coincidentally matching.
+        XCTAssertEqual(policy.stopLossPct, 8)
+        XCTAssertEqual(policy.trailingStopPct, 3)
+        XCTAssertEqual(policy.shortStopLossPct, 5)
+    }
+
     func testFullPolicyDecodesIraWashSaleHandling() throws {
         let json = Data(#"""
         {
