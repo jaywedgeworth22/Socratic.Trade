@@ -1,5 +1,25 @@
-import { describe, expect, it } from "vitest";
-import { barAt, normalizeTimeframe, toRobinhoodInterval, type IntradayBar } from "@/lib/market-realtime";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { barAt, fetchIntradayBars, normalizeTimeframe, toRobinhoodInterval, type IntradayBar } from "@/lib/market-realtime";
+import { resolveAlpacaHistoryCredential } from "@/lib/history";
+import { fetchRobinhoodHistoricals, robinhoodMcpDataEnabled } from "@/lib/robinhood";
+
+vi.mock("@/lib/history", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/history")>();
+  return { ...actual, resolveAlpacaHistoryCredential: vi.fn() };
+});
+
+vi.mock("@/lib/robinhood", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/robinhood")>();
+  return {
+    ...actual,
+    robinhoodMcpDataEnabled: vi.fn(() => false),
+    fetchRobinhoodHistoricals: vi.fn()
+  };
+});
+
+const mockResolveAlpaca = vi.mocked(resolveAlpacaHistoryCredential);
+const mockRhEnabled = vi.mocked(robinhoodMcpDataEnabled);
+const mockRhHistoricals = vi.mocked(fetchRobinhoodHistoricals);
 
 const bars: IntradayBar[] = [
   { t: "2026-08-06T15:05:00Z", c: 100 },
@@ -68,5 +88,81 @@ describe("toRobinhoodInterval", () => {
 
   it("defaults unknown timeframes to minute resolution", () => {
     expect(toRobinhoodInterval("nonsense")).toBe("minute");
+  });
+});
+
+describe("fetchIntradayBars provider failure vs confirmed empty", () => {
+  const start = "2026-08-20T14:40:00.000Z";
+  const end = "2026-08-20T15:40:00.000Z";
+
+  beforeEach(() => {
+    mockRhEnabled.mockReturnValue(false);
+    mockRhHistoricals.mockReset();
+    mockResolveAlpaca.mockReturnValue({ apiKey: "PK-TEST", secretKey: "SK-TEST", source: "env" });
+    vi.unstubAllGlobals();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("marks Alpaca HTTP 403 as unavailable, not an empty window", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("forbidden", { status: 403 }))
+    );
+    const result = await fetchIntradayBars("AAPL", start, end);
+    expect(result).toEqual({ kind: "unavailable", reason: "alpaca bars HTTP 403" });
+  });
+
+  it("marks a network timeout as unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("aborted");
+      })
+    );
+    const result = await fetchIntradayBars("AAPL", start, end);
+    expect(result).toEqual({ kind: "unavailable", reason: "alpaca bars request failed" });
+  });
+
+  it("returns ok [] when Alpaca confirms the window has no bars", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ bars: [], next_page_token: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+    );
+    const result = await fetchIntradayBars("AAPL", start, end);
+    expect(result).toEqual({ kind: "ok", bars: [] });
+  });
+
+  it("returns ok bars when Alpaca answers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            bars: [{ t: "2026-08-20T14:43:00Z", o: 1, h: 2, l: 1, c: 1.5, v: 10 }],
+            next_page_token: null
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+    );
+    const result = await fetchIntradayBars("AAPL", start, end);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.bars).toEqual([{ t: "2026-08-20T14:43:00Z", o: 1, h: 2, l: 1, c: 1.5, v: 10 }]);
+    }
+  });
+
+  it("is unavailable when no history credential is configured", async () => {
+    mockResolveAlpaca.mockReturnValue({ source: "env" });
+    const result = await fetchIntradayBars("AAPL", start, end);
+    expect(result).toEqual({ kind: "unavailable", reason: "no history credential" });
   });
 });
