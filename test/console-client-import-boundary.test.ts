@@ -13,4 +13,10 @@ describe("console client import boundary", () => {
     expect(source).not.toMatch(/@\/lib\/db/);
     expect(source).not.toMatch(/@\/lib\/db-/);
   });
+
+  it("results page imports tax-pure instead of tax (no db chain via performance)", () => {
+    const source = readFileSync("app/console/results/page.tsx", "utf8");
+    expect(source).toContain("@/lib/tax-pure");
+    expect(source).not.toMatch(/@\/lib\/tax["']/);
+  });
 });

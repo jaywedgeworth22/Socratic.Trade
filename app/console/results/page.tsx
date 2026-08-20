@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
-import { realizedPnlNetOfEstimatedTax } from "@/lib/tax";
+import { realizedPnlNetOfEstimatedTax } from "@/lib/tax-pure";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleApiError, fetchAccountPerformance, fetchLookaheadAudit, fetchSignalHealth, type LookaheadAuditResponse, type SignalHealthResponse } from "../lib/api";
 import {
