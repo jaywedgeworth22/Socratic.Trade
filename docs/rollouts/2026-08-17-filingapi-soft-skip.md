@@ -36,6 +36,10 @@ Touched files:
 - `docs/source-capability-matrix.md`
 - `docs/market-data-provider-pricing.md`
 - `docs/rollouts/2026-08-17-filingapi-soft-skip.md`
+- `app/api/health/route.ts` (comment: FilingAPI is optional live, not retired)
+- `test/connection-health-routing.test.ts`
+- `test/health-lane-cap.test.ts`
+- `test/ops-snapshot.test.ts`
 
 ## Decisions & Trade-offs
 
@@ -63,6 +67,8 @@ npm run build
 ```
 
 A full `npm test` in this Cloud VM previously leaked the shell `FILINGAPI` dead key into strategy/enrichment tests (30s timeouts).  `vitest.config.ts` now blanks `FILINGAPI*`.  Focused suite above is the gate for this change.
+
+2026-08-20 babysit rebase onto `origin/main` `8555415bc` (#2955).  Unioned `db-health.ts` imports (`intentionalOffHealthReason` from main + FilingAPI auth classify).  Main's post-#2798 tests still expected FilingAPI to be omitted as retired; retargeted them to the keep/skip-401 contract: public `/api/health` stays 200 with `filingapi.ok === true`, summaries are not `intentionalOff` / not consecutive-failure STOPPED, ops snapshot lists the lane as ok.  Targeted: `npx vitest run test/connection-health-routing.test.ts test/health-lane-cap.test.ts test/ops-snapshot.test.ts test/health-alert-noise-gate.test.ts test/filingapi-auth.test.ts` — 5 files, 64 passed.
 
 ## Next Steps & Blockers
 

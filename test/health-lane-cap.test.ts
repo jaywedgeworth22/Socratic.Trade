@@ -124,18 +124,16 @@ describe("admin connections panel count formatting", () => {
   });
 });
 
-describe("getServiceHealthSummaries stamps retired vendors OFF", () => {
-  it("leftover filingapi 401s are intentionalOff and not STOPPED", async () => {
+describe("getServiceHealthSummaries treats FilingAPI 401 as a soft skip", () => {
+  it("filingapi 401s are not intentionalOff and do not hard-STOP", async () => {
     const { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } = await load();
     for (let i = 0; i < 5; i++) {
       logApiHealth({ service: "filingapi", ok: false, errorText: "HTTP 401 Unauthorized", keySource: "env" });
     }
     const summary = getServiceHealthSummaries().find((s) => s.service === "filingapi" && s.keySource === "env");
     expect(summary).toBeDefined();
-    expect(summary?.intentionalOff).toBe(true);
-    expect(summary?.stoppedWorking).toBe(false);
-    expect(summary?.stoppedReasonKind).toBeNull();
-    expect(summary?.stoppedReason).toMatch(/ROIC\.ai/);
+    expect(summary?.intentionalOff).toBeFalsy();
+    expect(summary?.stoppedReasonKind).not.toBe("consecutive-failures");
     expect(summary?.stoppedReason).not.toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
   });
 });
