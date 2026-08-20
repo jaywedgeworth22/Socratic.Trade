@@ -371,14 +371,12 @@ function TabsSheet({
   );
 }
 
-/* The 2026-08-05 "chrome gap" experiment (measure the band above Safari's floating
- * URL chrome, shift the bar down by 80% of it via negative `bottom`, and paint a
- * `::after` surface underlay for the rest) is REVERTED (owner mobile punch list
- * 2026-08-08): on-device the downward shift slid the label row underneath Safari's
- * chrome — icons visible, labels gone — while the ≥48px underlay read as a dead
- * grey band under the bar. The bar sits at bottom:0 again with only
- * env(safe-area-inset-bottom) padding (see .con-tabbar in console.css); the solid
- * near-opaque background stays so page content never ghosts through. */
+/* Tab bar stays at bottom:0. The 2026-08-05 measured-gap shift (negative
+ * `bottom`) is still forbidden: it slid labels under Safari's URL chrome.
+ * Browser padding is ~22% of env(safe-area-inset-bottom) so ~78% of the
+ * grey-blue band is gone; a solid --con-surface ::after paints the rest
+ * and the area around the URL pill (see .con-tabbar in console.css).
+ * Standalone/PWA still uses the full env() pad for the home indicator. */
 
 export function MobileTabBar({ pendingCount, unreadCount = 0 }: { pendingCount: number; unreadCount?: number }) {
   const pathname = usePathname() ?? "";

@@ -850,25 +850,43 @@
 
 /* Bottom tab bar.
  *
- * bottom:0 with ONLY env(safe-area-inset-bottom) padding (owner mobile punch
- * list 2026-08-08). The 2026-08-05 chrome-gap shift + ::after underlay is
- * reverted: shifting the bar down by 80% of the measured gap slid the label
- * row underneath Safari's floating URL chrome (icons visible, labels hidden)
- * and the ≥48px underlay painted a dead grey band under the bar. Unlike the
- * 2026-07-18 "redundant band" (page-grey inside a page-colored bar), any
- * safe-area padding here sits INSIDE the bar's own painted surface, below the
- * labels — so it reads as bar, not wasted page. */
+ * Keep bottom:0. Do NOT use a negative bottom / measured chrome-gap shift —
+ * that hid the label row under Safari's floating URL chrome (2026-08-05).
+ *
+ * Browser Safari already parks a position:fixed;bottom:0 bar above its own
+ * toolbar, so a full env(safe-area-inset-bottom) pad is a second clearance
+ * (2026-07-18). That pad plus a 94% surface-over-blur let --con-bg (#f1f4f6
+ * grey-blue) show as a band between the tab labels and the URL pill, and
+ * again around the translucent chrome. Owner 2026-08-18: remove ~75-80% of
+ * that band and paint the remainder the same white as the tab strip.
+ *
+ * Browser: keep ~22% of the inset as breathing room. Standalone/PWA: full
+ * env() so the home indicator stays inside the bar. Solid --con-surface
+ * (no blur) so the remaining pad and the ::after chrome underlay match the
+ * labels, not the page grey. */
 .con-tabbar {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  /* Near-opaque surface + blur so page content cannot ghost through the bar. */
-  background: color-mix(in oklab, var(--con-surface) 94%, transparent);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) * 0.22);
+  background: var(--con-surface);
 }
-/* Fallback when backdrop-filter is unsupported: solid surface. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+/* Paints under / around Safari's translucent URL chrome. Sits BELOW the bar
+ * so labels stay put. Height covers the floating pill + toolbar + home
+ * indicator without a min-height floor that reads as a dead band. */
+.con-tabbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: max(7.5rem, calc(env(safe-area-inset-bottom, 0px) + 4rem));
+  background: var(--con-surface);
+  pointer-events: none;
+}
+@media (display-mode: standalone), (display-mode: fullscreen) {
   .con-tabbar {
-    background: var(--con-surface);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .con-tabbar::after {
+    content: none;
   }
 }
 

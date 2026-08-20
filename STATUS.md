@@ -502,6 +502,19 @@ Owner screenshot: Autopilot sold NWG on the Roth with Green rationale "Harvestin
 Fix: IRA prompt language forbids harvest; empty harvest candidates; omit harvest / LT-window fields on IRA runs; overlay account `taxationType` in strategy the same way the dashboard already did.  Prompt `agentic-strategy@2.12.0`.
 
 Branch `cursor/ira-no-tax-loss-harvest-a1df`.  Rollout: `docs/rollouts/2026-08-18-ira-no-tax-loss-harvest.md`.
+## 2026-08-18 CURSOR — Mobile tab bar: shrink Safari chrome gap + white underlay
+
+Owner iPhone Safari screenshot: a grey-blue (`--con-bg` `#f1f4f6`) band sat between
+the console tab labels and the floating URL chrome, and the same color showed
+around the URL pill. Browser pad is now `calc(env(safe-area-inset-bottom) * 0.22)`
+(~78% of the band gone). Bar + `::after` are solid `--con-surface` so the
+remainder matches the tab strip. Did **not** repeat the 2026-08-05 negative-bottom
+shift (that hid labels). Standalone/PWA still uses the full env() pad.
+
+PR **#2828**.  Branch `cursor/mobile-tabbar-chrome-gap-23d5`.  lint + tsc +
+`npm run build` passed.  Focused nav tests 9/9.  Full vitest not green on this
+VM (unrelated live-HTTP tests).  Rollout:
+`docs/rollouts/2026-08-18-mobile-tabbar-chrome-gap.md`.
 
 ## 2026-08-18 CURSOR — iOS UX owner cut (rebased onto main)
 
