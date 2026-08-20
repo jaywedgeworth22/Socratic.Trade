@@ -25,6 +25,8 @@ import { isRunAllowedNow, nextMarketOpenHint, previousTradingDayStart } from "@/
 // the browser bundle. @/lib/cash-flows is the dependency-free extraction of the same function.
 import { inferExternalCashFlows, isInferredFlowUnverified } from "@/lib/cash-flows";
 import { REALITY_PAPER_WORD } from "@/lib/guardrail-copy";
+import { centralTradingDayKey } from "@/lib/trading-day";
+import type { FillEvent } from "@/lib/types";
 import { dayKey, startOfCentralDay } from "./format";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
@@ -409,16 +411,35 @@ export interface DayPnl {
    *  compared across a real gap (e.g. a July 7 baseline read on July 17), not just "yesterday". */
   isStaleBaseline: boolean;
   cashFlowAdjusted?: boolean;
+  /** When external flows came from the broker activity ledger vs equity inference. */
+  cashFlowSource?: "broker" | "inferred";
 }
 
-/** Change in equity vs the last persisted snapshot before today (local time)
+export interface DayPnlBrokerHints {
+  /** Prior session close equity from the broker (e.g. Alpaca last_equity). */
+  priorCloseEquity?: number;
+  /** Net external flow today from broker activities (deposit +, withdrawal −). */
+  todayBrokerFlow?: number;
+  cashFlowSource?: "broker" | "inferred";
+}
+
+function fillsForDay(fills: FillEvent[] | undefined, dayStartMs: number, nowMs: number): FillEvent[] {
+  if (!fills?.length) return [];
+  return fills.filter((f) => {
+    const t = new Date(f.filledAt).getTime();
+    return Number.isFinite(t) && t > dayStartMs && t <= nowMs;
+  });
+}
+
+/** Change in equity vs the last persisted snapshot before today (Central time)
  *  in the current mode's bucket. Null when there is no prior-day snapshot or
  *  no current equity — render "—", never invent. `now` is injectable for tests. */
 export function deriveDayPnl(
   performance: PerformanceSummary | undefined,
   mode: ExecutionMode | undefined,
   portfolio: Pick<Portfolio, "totalMarketValue" | "cash"> | undefined,
-  now: Date = new Date()
+  now: Date = new Date(),
+  brokerHints?: DayPnlBrokerHints
 ): DayPnl | null {
   const currentEquity = portfolio?.totalMarketValue;
   if (!performance || typeof currentEquity !== "number" || !Number.isFinite(currentEquity)) return null;
@@ -430,10 +451,28 @@ export function deriveDayPnl(
     const t = new Date(point.timestamp).getTime();
     if (Number.isFinite(t) && t < todayStart) baseline = point;
   }
-  if (!baseline || !Number.isFinite(baseline.equity) || baseline.equity === 0) return null;
+  if (!baseline || !Number.isFinite(baseline.equity) || baseline.equity === 0) {
+    if (!(typeof brokerHints?.priorCloseEquity === "number" && brokerHints.priorCloseEquity > 0)) return null;
+    baseline = {
+      timestamp: new Date(todayStart - 86_400_000).toISOString(),
+      equity: brokerHints.priorCloseEquity,
+      source: mode === "broker/live" ? "live" : "paper"
+    };
+  }
+  const baselineEquity =
+    typeof brokerHints?.priorCloseEquity === "number" && Number.isFinite(brokerHints.priorCloseEquity) && brokerHints.priorCloseEquity > 0
+      ? brokerHints.priorCloseEquity
+      : baseline.equity;
+  if (!Number.isFinite(baselineEquity) || baselineEquity === 0) return null;
 
+  const todayKey = centralTradingDayKey(now);
   let flow = 0;
-  if (portfolio && typeof portfolio.cash === "number" && typeof baseline.cash === "number") {
+  let cashFlowSource: "broker" | "inferred" | undefined = brokerHints?.cashFlowSource;
+
+  if (typeof brokerHints?.todayBrokerFlow === "number" && Number.isFinite(brokerHints.todayBrokerFlow)) {
+    flow = brokerHints.todayBrokerFlow;
+    cashFlowSource = "broker";
+  } else if (portfolio && typeof portfolio.cash === "number" && typeof baseline.cash === "number") {
     const fakeCurrent: EquityCurvePoint = {
       timestamp: now.toISOString(),
       equity: currentEquity,
@@ -441,17 +480,15 @@ export function deriveDayPnl(
       cash: portfolio.cash,
       positionsValue: currentEquity - portfolio.cash
     };
-    const flowMap = inferExternalCashFlows([baseline, fakeCurrent], []);
-    // Sum any flows found in the map (there should only be at most 1, keyed by fakeCurrent date)
-    for (const v of flowMap.values()) flow += v;
-    // #2557 sanity bound: an inferred transfer must reconcile against the equity move it
-    // supposedly caused. A phantom flow (e.g. a mid-day snapshot glitch read as a $36.5k
-    // withdrawal) must not fabricate day P&L — fall back to the raw equity delta.
-    if (flow !== 0 && isInferredFlowUnverified(flow, baseline.equity, currentEquity)) flow = 0;
+    const dayFills = fillsForDay(performance.fills, todayStart, now.getTime());
+    const flowMap = inferExternalCashFlows([baseline, fakeCurrent], dayFills);
+    flow = flowMap.get(todayKey) ?? 0;
+    cashFlowSource = "inferred";
+    if (flow !== 0 && isInferredFlowUnverified(flow, baselineEquity, currentEquity)) flow = 0;
   }
 
-  const pnl = currentEquity - baseline.equity - flow;
-  const pctBase = baseline.equity + flow;
+  const pnl = currentEquity - baselineEquity - flow;
+  const pctBase = baselineEquity + flow;
   const pct = pctBase > 0 ? (pnl / pctBase) * 100 : 0;
 
   const baselineDayStart = startOfCentralDay(new Date(baseline.timestamp)).getTime();
@@ -461,9 +498,10 @@ export function deriveDayPnl(
     pnl,
     pct,
     baselineAt: baseline.timestamp,
-    baselineEquity: baseline.equity,
+    baselineEquity,
     isStaleBaseline,
-    ...(Math.abs(flow) > 0.01 ? { cashFlowAdjusted: true } : {})
+    ...(Math.abs(flow) > 0.01 ? { cashFlowAdjusted: true } : {}),
+    ...(cashFlowSource ? { cashFlowSource } : {})
   };
 }
 

@@ -2,21 +2,21 @@
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
 import "server-only";
 import { audit, getDb } from "./db";
+import { CENTRAL_TRADING_DAY_ZONE, startOfCentralTradingDay } from "./trading-day";
 import type { StrategyRunFinishStatus } from "./strategy-run-status";
 import type { StrategyRunRow } from "./types";
 
 export type { StrategyRunFinishStatus } from "./strategy-run-status";
 
 /**
- * IANA timezone whose civil midnight defines the daily-notional reset boundary. Made explicit so the
- * daily cap resets deterministically regardless of the server process's local TZ — the old
- * `setHours(0,0,0,0)` silently used `process.env.TZ`. US equities trade on the NYSE calendar, so the
- * market day (America/New_York) is the natural boundary. (T13)
+ * IANA timezone whose civil midnight defines the daily-notional reset boundary. Central Time
+ * matches owner-facing Day P&L and drawdown-breaker day keys (perf-08 / cash-flow cluster).
  */
-export const DAILY_RESET_TIME_ZONE = "America/New_York";
+export const DAILY_RESET_TIME_ZONE = CENTRAL_TRADING_DAY_ZONE;
 
 /** UTC instant of civil midnight, in `timeZone`, for the calendar day containing `now`. (T13) */
 export function startOfDayInTimeZone(now: Date, timeZone: string = DAILY_RESET_TIME_ZONE): Date {
+  if (timeZone === CENTRAL_TRADING_DAY_ZONE) return startOfCentralTradingDay(now);
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-CA", {
       timeZone,

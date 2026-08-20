@@ -298,6 +298,9 @@ Part II cluster `green-request-schema`: `exitPlan` was in Bull `properties` but 
 ## 2026-08-19 CURSOR — console-ships-too-much cluster (server DB boundary + snapshot projection)
 
 PR **#2884** (`cursor/console-ships-too-much-6790`).  `server-only` on all `src/lib/db*` modules; `venue-contract-pure.ts` so `brokers.tsx` no longer pulls the DB layer; dashboard snapshot drops raw `audit[]`, trims `quotesBySymbol` and order history, and ack/cancel/replace invalidate the 10s cache.  Connections client chunk grep: 0 `getDb` / `better-sqlite3` hits after `npm run build`.  Rollout: `docs/rollouts/2026-08-19-console-ships-too-much.md`.
+## 2026-08-19 CURSOR — Day P&L cash-flow cluster (perf-02/03/08)
+
+Expert review cluster `cash-flow-and-trading-day`: Home Day P&L no longer zeroes on directional-trade days (fills passed into inference); short/cover cash sign fixed in `cash-flows.ts`; Alpaca account activities wired as broker flow source for benchmark + `dayPnlHints`; shared Central trading-day helper (`trading-day.ts`) reused by risk-breaker + daily cap roll.  PR **#2878**.  Branch `cursor/fix-day-pnl-cash-flows-56a3`.  Rollout: `docs/rollouts/2026-08-19-day-pnl-cash-flow-cluster.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

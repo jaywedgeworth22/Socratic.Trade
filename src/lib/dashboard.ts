@@ -46,6 +46,9 @@ import {
   type PrefetchedPnl
 } from "./performance";
 import { computeSpyBenchmarkDetailed, type SpyBenchmarkResult } from "./benchmark";
+import { brokerFlowOnDay } from "./broker-cash-flows";
+import { fetchAlpacaAccountActivities } from "./alpaca-account-insights";
+import { centralTradingDayKey } from "./trading-day";
 import { getTaxSummary, overlayAccountTaxationType } from "./tax";
 import { getBrokerGateway } from "./broker";
 import {
@@ -732,8 +735,27 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     // Same-source fills let the benchmark infer deposits/withdrawals (cash delta minus trade
     // cash) so the account return line is time-weighted instead of counting transfers as P&L.
     const benchmarkFills = scorecardSource === "live" ? liveFills : paperFills;
+    const brokerActivities =
+      activeAccount?.broker === "alpaca"
+        ? await withDeadline(
+            fetchAlpacaAccountActivities(userId, {
+              activityTypes: ["CSD", "CSW", "ACATS", "JNLC", "INT", "DIV", "DIVNRA", "DIVTX", "FEE"]
+            }),
+            4000,
+            () => [],
+            "fetchAlpacaAccountActivities",
+            timedOutSections
+          )
+        : [];
+    const todayKey = centralTradingDayKey(new Date());
+    if (brokerActivities.length > 0) {
+      performance.dayPnlHints = {
+        todayBrokerFlow: brokerFlowOnDay(brokerActivities, todayKey),
+        cashFlowSource: "broker"
+      };
+    }
     const benchmarkResult = await withDeadline<SpyBenchmarkResult>(
-      computeSpyBenchmarkDetailed(tippedCurve, userId, Date.now(), benchmarkFills).catch((error) => ({
+      computeSpyBenchmarkDetailed(tippedCurve, userId, Date.now(), benchmarkFills, brokerActivities).catch((error) => ({
         comparison: null,
         unavailable: { reason: "fetch-failed" as const, detail: messageFromUnknownError(error).slice(0, 200) }
       })),
