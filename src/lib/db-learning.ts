@@ -1597,6 +1597,13 @@ export function insertChunkOccurrences(occurrences: ChunkOccurrence[]): void {
   insertMany(occurrences);
 }
 
+type FtsOccurrenceIdentity = {
+  content_hash: string;
+  symbol: string;
+  source: string;
+  accession: string;
+};
+
 function lookupDocumentChunkFtsRowid(
   contentHash: string,
   symbol: string,
@@ -1610,6 +1617,35 @@ function lookupDocumentChunkFtsRowid(
     )
     .get(contentHash, symbol, source, accession) as { fts_rowid: number } | undefined;
   return row?.fts_rowid ?? null;
+}
+
+/**
+ * FTS5 reuses the current max rowid after a DELETE. A bulk wipe of
+ * `document_chunks_fts` that leaves `document_chunks_fts_index` behind can
+ * therefore point at a later filing's chunk. Only delete when the live row
+ * still matches this occurrence.
+ */
+function ftsRowidStillOwnsOccurrence(
+  rowid: number,
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string
+): boolean {
+  const live = getDb()
+    .prepare(
+      `SELECT content_hash, symbol, source, accession
+       FROM document_chunks_fts
+       WHERE rowid = ?`
+    )
+    .get(rowid) as FtsOccurrenceIdentity | undefined;
+  return (
+    live != null &&
+    live.content_hash === contentHash &&
+    live.symbol === symbol &&
+    live.source === source &&
+    live.accession === accession
+  );
 }
 
 function upsertDocumentChunkFtsIndex(
@@ -1648,11 +1684,21 @@ function replaceDocumentChunkFtsOccurrence(
   text: string
 ): void {
   const existingRowid = lookupDocumentChunkFtsRowid(contentHash, symbol, source, accession);
-  if (existingRowid != null) {
+  if (existingRowid != null && ftsRowidStillOwnsOccurrence(existingRowid, contentHash, symbol, source, accession)) {
     delByRowid.run(existingRowid);
   }
   const info = ins.run(contentHash, symbol, source, accession, text);
   upsertDocumentChunkFtsIndex(contentHash, symbol, source, accession, Number(info.lastInsertRowid));
+}
+
+/** Drop FTS rows and their index keys together. A leftover index rowid can be reused. */
+export function deleteDocumentChunkFtsBySourceAccession(source: string, accession: string): void {
+  const db = getDb();
+  const dropBoth = db.transaction(() => {
+    db.prepare("DELETE FROM document_chunks_fts WHERE source = ? AND accession = ?").run(source, accession);
+    db.prepare("DELETE FROM document_chunks_fts_index WHERE source = ? AND accession = ?").run(source, accession);
+  });
+  dropBoth();
 }
 
 export function insertDocumentChunkFts(

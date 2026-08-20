@@ -324,6 +324,83 @@ describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix, sub-batch
       .get(row.contentHash, row.symbol, row.source, row.accession) as { n: number };
     expect(indexAfterSingle.n).toBe(1);
   });
+
+  it("does not delete a reused FTS5 rowid after a stale index lookup", async () => {
+    const { insertDocumentChunkFts } = await import("../src/lib/db-learning");
+    const db = getDb();
+    insertDocumentChunkFts(
+      "sum-hash-stale",
+      "MSFT",
+      "document-summarizer",
+      "abstract:earnings-summary:MSFT:stale-rowid",
+      "Azure growth accelerated with enough text to index."
+    );
+    const stale = db
+      .prepare(
+        `SELECT fts_rowid FROM document_chunks_fts_index
+         WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?`
+      )
+      .get(
+        "sum-hash-stale",
+        "MSFT",
+        "document-summarizer",
+        "abstract:earnings-summary:MSFT:stale-rowid"
+      ) as { fts_rowid: number };
+    db.prepare("DELETE FROM document_chunks_fts WHERE rowid = ?").run(stale.fts_rowid);
+
+    insertDocumentChunkFts(
+      "filing-hash-victim",
+      "AAPL",
+      "sec-edgar",
+      "0000320193-26-000099",
+      "Item 1A Risk Factors for the reused rowid victim filing."
+    );
+    const victimRowid = db
+      .prepare("SELECT rowid AS n FROM document_chunks_fts WHERE content_hash = ?")
+      .get("filing-hash-victim") as { n: number };
+    expect(victimRowid.n).toBe(stale.fts_rowid);
+
+    insertDocumentChunkFts(
+      "sum-hash-stale",
+      "MSFT",
+      "document-summarizer",
+      "abstract:earnings-summary:MSFT:stale-rowid",
+      "Azure growth accelerated with enough text to index."
+    );
+
+    const victim = db
+      .prepare("SELECT text FROM document_chunks_fts WHERE content_hash = ?")
+      .get("filing-hash-victim") as { text: string } | undefined;
+    expect(victim?.text).toMatch(/Risk Factors/);
+    const summaryCount = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM document_chunks_fts
+         WHERE content_hash = ? AND source = 'document-summarizer'`
+      )
+      .get("sum-hash-stale") as { n: number };
+    expect(summaryCount.n).toBe(1);
+  });
+
+  it("deleteDocumentChunkFtsBySourceAccession drops matching index keys", async () => {
+    const { insertDocumentChunkFts, deleteDocumentChunkFtsBySourceAccession } =
+      await import("../src/lib/db-learning");
+    const db = getDb();
+    const accession = "abstract:10k-delta:MSFT:index-drop";
+    insertDocumentChunkFts("sum-drop", "MSFT", "document-summarizer", accession, "highlight text enough");
+    insertDocumentChunkFts("keep-filing", "MSFT", "sec-edgar", "0000789019-26-000010", "filing body enough");
+    deleteDocumentChunkFtsBySourceAccession("document-summarizer", accession);
+    const indexLeft = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM document_chunks_fts_index
+         WHERE source = 'document-summarizer' AND accession = ?`
+      )
+      .get(accession) as { n: number };
+    const filingLeft = db
+      .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE content_hash = ?")
+      .get("keep-filing") as { n: number };
+    expect(indexLeft.n).toBe(0);
+    expect(filingLeft.n).toBe(1);
+  });
 });
 
 describe("nextFtsBatchGroupSize (2026-08-13 adaptive stretch budget)", () => {
