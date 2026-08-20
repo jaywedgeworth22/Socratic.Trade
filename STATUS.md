@@ -22,7 +22,7 @@ Current Status + acceptance checks, leftover AGENTS.md preview/PWA/Mac-pm2
 present-tense, ops-diagnostics `trading.jays.services`, and matching
 ops/litestream/UX-program current-truth lines.  No product code.
 
-Branch `cursor/stale-hosting-docs-b392`.  Rollout:
+**IN PR #2945.**  Branch `cursor/stale-hosting-docs-b392`.  Rollout:
 `docs/rollouts/2026-08-20-stale-hosting-docs.md`.
 
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
