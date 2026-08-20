@@ -1379,13 +1379,20 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       const freeProviders = freeIndexes.map((i) => this.providers[i]);
       let freeRuns: ProviderRun[];
       if (enrichmentShortCircuitEnabled()) {
-        // App A still leads the free wave when short-circuit is on (coverage hint for paid).
+        // Coverage hint still comes from App A's result before the paid wave.
+        // Do not await congress.trade alone — a 404/empty App A must not latch
+        // gather while Yahoo/Finnhub sit idle (live `9d71dda4` 01:01:53Z).
         const congressProvider = freeProviders.find((p) => p.name === "congress.trade");
-        const appAResult = congressProvider
-          ? await run(congressProvider, normalized)
-          : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
         const otherFree = freeProviders.filter((p) => p.name !== "congress.trade");
-        const otherResults = await Promise.all(otherFree.map((p) => run(p, normalized)));
+        const [appAResult, ...otherResults] = await Promise.all([
+          congressProvider
+            ? run(congressProvider, normalized)
+            : Promise.resolve({
+                name: "congress.trade",
+                data: {} as Record<string, SymbolEnrichment>
+              } satisfies ProviderRun),
+          ...otherFree.map((p) => run(p, normalized))
+        ]);
         const byName = new Map<string, ProviderRun>();
         for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
         freeRuns = freeProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });

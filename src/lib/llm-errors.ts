@@ -79,7 +79,8 @@ function extractStructuredProviderError(
 /** Matches text that is ALREADY a humanizeLlmError output ("<Provider label> error ...: ...") so a
  *  second pass (e.g. humanizeLlmTransportError re-wrapping an Error whose message was humanized at
  *  the throw site) returns it unchanged instead of stuttering "Gemini error: Gemini error: ...". */
-const ALREADY_HUMANIZED = /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|OpenRouter|the LLM) error\b/;
+const ALREADY_HUMANIZED =
+  /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|Moonshot AI \(Kimi\)|OpenRouter|the LLM) error\b|^(?:That model id isn't valid on |That model isn't available on your |Couldn't complete this model request\.|.+ had no compatible endpoint for this request\.)/;
 
 /**
  * Convert a raw LLM error (and optional HTTP status) into a plain-English, actionable message.
@@ -103,10 +104,37 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
     return `${provider} rejected the API key. Add or update the ${provider} key in Connections.`;
 
   if (status === 403 || has("permission", "do not have access", "does not have access", "not allowed", "forbidden", "unsupported_country", "region"))
-    return `Your ${provider} key doesn't have access to this model or region. Pick a different model, or check your ${provider} plan.`;
+    return `Your ${provider} key doesn't have access to this model or region.  Pick a different model, or check your ${provider} plan.`;
 
-  if (status === 404 || has("model not found", "does not exist", "no such model", "model_not_found", "unknown model"))
-    return `That model isn't available on your ${provider} account. Choose a different model in the picker.`;
+  // OpenRouter require_parameters 404 — the model exists; no endpoint advertised
+  // every request field.  Never call that an account allowlist miss.
+  const noEndpointRouting = has(
+    "no endpoints found",
+    "no endpoints available",
+    "no endpoint found",
+    "no available providers",
+    "no provider available"
+  );
+  if (status === 404 && noEndpointRouting)
+    return `${provider} had no compatible endpoint for this request.  Try again, or choose a different model.`;
+
+  // A true model_not_found is a bad slug, not an account-privacy miss.
+  // A bare 404 is "couldn't complete", never "isn't available on your account".
+  const modelMissingBody = has(
+    "model not found",
+    "does not exist",
+    "no such model",
+    "model_not_found",
+    "unknown model",
+    "do not have access",
+    "does not have access",
+    "no access to this model",
+    "no access to the model"
+  );
+  if ((status === 404 || status === 403) && modelMissingBody)
+    return `That model id isn't valid on ${provider}.  Choose a different model in the picker.`;
+  if (status === 404)
+    return `Couldn't complete this model request.  Try again, or choose a different model.`;
 
   if (status === 429 || has("rate limit", "rate_limit", "too many requests", "quota", "insufficient_quota", "billing", "credit balance", "out of credit", "payment required"))
     return `Your ${provider} account hit a rate limit or is out of quota/credits. Wait and retry, or check ${provider} billing.`;

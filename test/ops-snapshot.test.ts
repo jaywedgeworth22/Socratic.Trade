@@ -192,4 +192,28 @@ describe("ops diagnostic snapshot", () => {
     expect(summary.doneForDayCount).toBe(2);
     expect(summary.topStates.find((s) => s.state === "done_for_day")?.count).toBe(2);
   });
+
+  it("exposes the Pinecone trial window and does not paint soft 429 backups as down", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "1";
+    const db = await import("../src/lib/db");
+    db.getDb();
+    const { logApiHealth } = await import("../src/lib/db-health");
+    logApiHealth({ service: "vix-cboe", ok: true, latencyMs: 20 });
+    logApiHealth({
+      service: "vix-yahoo",
+      ok: false,
+      latencyMs: 15,
+      errorText: "[expected-limit] HTTP 429",
+      soft: true
+    });
+    const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
+    const snapshot = buildOpsSnapshot({ runsPerUser: 1, auditPerUser: 1 });
+    expect(snapshot.pineconeIngest).toBeDefined();
+    expect(snapshot.pineconeIngest!.trial.active).toBe(true);
+    expect(snapshot.pineconeIngest!.trial.effectiveDailyWriteUnits).toBeGreaterThanOrEqual(2_048);
+    expect(snapshot.pineconeIngest!.trial.effectiveTextsPerDay).toBeGreaterThanOrEqual(32);
+    expect(snapshot.dependencies?.["vix-cboe"]?.ok).toBe(true);
+    expect(snapshot.dependencies?.["vix-yahoo"]?.ok).toBe(true);
+  });
 });

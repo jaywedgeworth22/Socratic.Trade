@@ -24,6 +24,8 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
   };
 });
 beforeEach(async () => {
+  vi.useRealTimers();
+  vi.doUnmock("../src/lib/inflight-deadline");
   vi.resetModules();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -208,6 +210,58 @@ describe("Alpaca MCP gateway adapter", () => {
       .prepare("SELECT ok, error_text FROM api_health_log WHERE service = ? ORDER BY ts")
       .all("alpaca-broker") as Array<{ ok: number; error_text: string | null }>;
     expect(rows.some((row) => row.ok === 0 && row.error_text === "boom")).toBe(true);
+  });
+
+  it("retries getAccount when the first REST SDK call stays pending", async () => {
+    // Live first wait is 16s (above alpaca-broker max 14416ms).  Advancing that
+    // under fake timers while the first SDK promise never settles hangs vitest
+    // (`advanceTimersByTimeAsync` waits on pending promises).  Mock a short
+    // budget so this test proves the retry path without waiting the live 16s.
+    vi.doMock("../src/lib/inflight-deadline", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../src/lib/inflight-deadline")>();
+      return {
+        ...actual,
+        ALPACA_ACCOUNT_READ_FIRST_MS: 40,
+        ALPACA_ACCOUNT_READ_RETRY_MS: 40,
+        alpacaAccountReadBudgetMs: () => ({ firstMs: 40, retryMs: 40 })
+      };
+    });
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 500 }));
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+    let calls = 0;
+    (gateway as unknown as { alpaca: { getAccount: () => Promise<Record<string, string>> } }).alpaca.getAccount = () => {
+      calls += 1;
+      if (calls === 1) return new Promise(() => undefined);
+      return Promise.resolve({
+        account_number: "RETRY_ACC",
+        portfolio_value: "10000",
+        buying_power: "5000",
+        equity: "8000",
+        cash: "2000"
+      });
+    };
+
+    try {
+      const accounts = await gateway.getAccounts();
+      expect(accounts[0]?.accountNumber).toBe("RETRY_ACC");
+      expect(calls).toBe(2);
+    } finally {
+      vi.doUnmock("../src/lib/inflight-deadline");
+    }
+  });
+
+  it("passes an abort signal on MCP fetch so a hung sidecar can fall back to REST", async () => {
+    let seenSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return new Response(null, { status: 500 });
+    });
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    await getAlpacaGateway("local").getAccounts();
+    expect(seenSignal).toBeDefined();
   });
 
   it("falls back to REST client when fetch errors or is rejected", async () => {

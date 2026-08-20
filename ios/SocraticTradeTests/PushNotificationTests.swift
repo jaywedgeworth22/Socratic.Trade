@@ -274,11 +274,18 @@ final class PushAlertStateTests: XCTestCase {
         XCTAssertFalse(PushAlertState.unknown.isWorking)
     }
 
-    func testSummariesNameTheRealProblemAndTheEnvironment() {
+    func testSummariesStayOrdinaryAppLanguage() {
         XCTAssertTrue(PushAlertState.denied.summary.contains("iOS Settings"))
-        XCTAssertTrue(PushAlertState.failed("token rejected").summary.contains("token rejected"))
-        XCTAssertTrue(PushAlertState.registered(environment: .sandbox).summary.contains("sandbox"))
-        XCTAssertTrue(PushAlertState.registered(environment: .production).summary.contains("production"))
+        XCTAssertEqual(PushAlertState.registered(environment: .sandbox).summary, "Alerts on.")
+        XCTAssertEqual(PushAlertState.registered(environment: .production).summary, "Alerts on.")
+        XCTAssertFalse(PushAlertState.registered(environment: .production).summary.lowercased().contains("production"))
+        XCTAssertFalse(PushAlertState.registered(environment: .sandbox).summary.lowercased().contains("sandbox"))
+        XCTAssertFalse(PushAlertState.registered(environment: .production).summary.contains("APNs"))
+        XCTAssertEqual(
+            PushAlertState.failed("Apple returned an empty device token.").summary,
+            "Alerts are off.  Try again, or check Notifications in iOS Settings."
+        )
+        XCTAssertEqual(PushAlertState.failed("token rejected").summary, "Alerts are off.  Try again.")
     }
 }
 

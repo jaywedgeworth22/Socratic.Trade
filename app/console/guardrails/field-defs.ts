@@ -9,6 +9,8 @@
  *    (panic brake, broker-held brackets), where turning protection off is
  *    the risk-increasing move. */
 
+import { ADVISORY_NOTE } from "@/lib/guardrail-copy";
+import { SUPPORTED_INDEX_UNIVERSES, indexUniverseLabel } from "@/lib/index-universes";
 import type { IndexUniverse, OrderType } from "@/lib/types";
 import type { FieldDef } from "../lib/policy-diff";
 
@@ -17,8 +19,6 @@ import type { FieldDef } from "../lib/policy-diff";
  *  words (Daily loss stop, Max drawdown stop), applied uniformly so equally-consequential
  *  settings never read as "safer" or "scarier" than one another based on which one happened
  *  to get a longer hint. Decision: session lead, UI-audit sweep. */
-const ADVISORY_NOTE = "Advisory: the agent decides and logs everything — adjust or override this at any time.";
-
 export const ESSENTIALS: FieldDef[] = [
   { path: "maxOrderNotional", label: "Max per order", kind: "money", optional: true, looserWhen: "up", hint: "Hard dollar cap on any single order. The effective cap never exceeds current buying power/NAV. Blank = no per-order dollar cap (the % of portfolio cap below still applies)." },
   { path: "maxOrderPctOfNav", label: "Max per order (% of portfolio)", kind: "pct", optional: true, looserWhen: "up" },
@@ -292,15 +292,9 @@ export const ALL_DEFS: FieldDef[] = [
   ...TRIGGERS
 ];
 
-export const INDICES: Array<{ id: IndexUniverse; label: string }> = [
-  { id: "sp100", label: "S&P 100" },
-  { id: "sp500", label: "S&P 500" },
-  { id: "nasdaq100", label: "Nasdaq 100" },
-  { id: "nasdaqComposite", label: "Nasdaq Composite" },
-  { id: "dow30", label: "Dow 30" },
-  { id: "russell2000", label: "Russell 2000" },
-  { id: "nyseComposite", label: "NYSE Composite" },
-  { id: "ftWilshire5000", label: "FT Wilshire 5000" }
-];
+export const INDICES: Array<{ id: IndexUniverse; label: string }> = SUPPORTED_INDEX_UNIVERSES.map((id) => ({
+  id,
+  label: indexUniverseLabel(id)
+}));
 
 export const ORDER_TYPES: OrderType[] = ["market", "limit", "stop_market", "stop_limit"];

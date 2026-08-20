@@ -7,6 +7,7 @@ struct ScanView: View {
     @State private var scan: MarketScanResponse?
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var didAttemptLiveRefresh = false
     @State private var query = ""
     @State private var presentedSymbol: PresentedSymbol?
 
@@ -37,6 +38,9 @@ struct ScanView: View {
             SymbolInfoSheet(symbol: presented.symbol)
         }
         .task { await load(force: false) }
+        .onChange(of: store.snapshot?.latestScan?.generatedAt ?? store.snapshot?.latestScan?.asOf) { _, _ in
+            seedFromSnapshotIfNeeded()
+        }
     }
 
     private var filtered: [ScanCandidate] {
@@ -56,15 +60,28 @@ struct ScanView: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeading(
                     "Market Scan",
-                    subtitle: scan?.asOf.map { "as of \(AppFormat.dateTime($0))" } ?? "same interactive scan as the web desk"
+                    subtitle: scan?.asOf.map { "as of \(AppFormat.dateTime($0))" } ?? "ranked names for this universe"
                 )
-                Text("Ranked candidates for the current universe.  Watchlist add/remove uses the audited mobile command.  Nothing here places an order.")
+                Text(DeskCopy.scanUniverseNote)
                     .font(.appSubheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("\(filtered.count) names · \(snapshot.watchlist.count) watched")
+                Text(
+                    DeskCopy.scanCountLine(
+                        names: filtered.count,
+                        scanned: scan?.scannedSymbols,
+                        quotes: scan?.returnedQuotes,
+                        watched: snapshot.watchlist.count
+                    )
+                )
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
+                ForEach(scan?.warnings ?? [], id: \.self) { warning in
+                    Text(warning)
+                        .font(.appCaption)
+                        .foregroundStyle(AppPalette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -90,17 +107,24 @@ struct ScanView: View {
             AppCard {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Refreshing the scan — this can take up to 20 seconds.")
+                    Text(DeskCopy.scanLoadingNote)
                         .font(.appSubheadline)
                         .foregroundStyle(.secondary)
                 }
             }
+        } else if loadError != nil && filtered.isEmpty {
+            // Failure banner + header counts/warnings already shown.  Do not
+            // render "No Candidates" — that reads as an empty universe when
+            // quotes were aborted (prod d0359642: 505 scanned, 0 quotes).
+            EmptyView()
         } else if filtered.isEmpty {
             EmptyStateCard(
-                title: query.isEmpty ? "No Candidates" : "No Matching Names",
-                message: query.isEmpty
-                    ? "The scan returned no ranked names.  Confirm the universe on Guardrails, then refresh."
-                    : "Nothing in this scan matches that filter.",
+                title: DeskCopy.scanEmptyTitle(hasFilter: !query.isEmpty),
+                message: DeskCopy.scanEmptyMessage(
+                    scanned: scan?.scannedSymbols,
+                    quotes: scan?.returnedQuotes,
+                    hasFilter: !query.isEmpty
+                ),
                 systemImage: "tablecells"
             )
         } else {
@@ -115,15 +139,37 @@ struct ScanView: View {
         }
     }
 
+    private func seedFromSnapshotIfNeeded() {
+        guard let latest = store.snapshot?.latestScan, latest.hasUsableUniverse else { return }
+        if scan == nil || scan?.hasUsableUniverse != true {
+            scan = latest
+        }
+    }
+
     private func load(force: Bool) async {
-        if !force, scan != nil { return }
+        seedFromSnapshotIfNeeded()
+        if !force, didAttemptLiveRefresh { return }
         isLoading = true
         defer { isLoading = false }
         do {
             scan = try await store.fetchMarketScan()
             loadError = nil
+            didAttemptLiveRefresh = true
+        } catch let error as MobileAPIError {
+            if case .scanQuotesUnavailable(let failed) = error {
+                scan = failed.keepingLastGood(from: scan)
+            }
+            loadError = DeskCopy.scanRefreshFailedBanner(
+                reason: error.localizedDescription,
+                lastGoodAt: scan?.lastGoodStamp
+            )
+            didAttemptLiveRefresh = true
         } catch {
-            loadError = error.localizedDescription
+            loadError = DeskCopy.scanRefreshFailedBanner(
+                reason: error.localizedDescription,
+                lastGoodAt: scan?.lastGoodStamp
+            )
+            didAttemptLiveRefresh = true
         }
     }
 }

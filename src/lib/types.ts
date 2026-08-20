@@ -160,10 +160,11 @@ export interface ScoringWeights {
 /** US tax-mitigation settings (estimates only — not tax advice). */
 /**
  * Tax treatment of an account. IRAs (Roth/Traditional) are tax-sheltered: there is no annual
- * capital-gains tax, and the IRC §1091 wash-sale lockout does not apply WITHIN a single IRA
- * (a wash sale has no benefit there). A loss realized in a TAXABLE account, however, still locks
- * rebuys of that symbol across ALL of the user's accounts — including the IRAs — for 30 days,
- * because buying the replacement in the IRA permanently destroys the disallowed basis.
+ * capital-gains tax, tax-loss harvesting has no effect (losses never appear on a return), and
+ * the IRC §1091 wash-sale lockout does not apply WITHIN a single IRA (a wash sale has no benefit
+ * there). A loss realized in a TAXABLE account, however, still locks rebuys of that symbol across
+ * ALL of the user's accounts — including the IRAs — for 30 days, because buying the replacement
+ * in the IRA permanently destroys the disallowed basis.
  */
 export type TaxationType = "taxable" | "roth_ira" | "traditional_ira";
 
@@ -429,17 +430,15 @@ export interface TuningSettings {
    */
   minProposalScoreThreshold?: number;
   /**
-   * Hard per-user/day LLM + RAG TOKEN ceiling. When today's summed model + retrieval usage reaches
-   * this, the run skips every model/RAG spend for the rest of the day (non-LLM risk maintenance still
-   * runs). `undefined` (blank in the UI) INHERITS the operator env default
-   * `TRIGGER_LLM_DAILY_TOKEN_BUDGET`; an explicit `0` means NO LIMIT (opt out of the default); a
-   * positive value is that ceiling. Modifiable in Settings → Tuning. Enforced at the spend primitives
-   * (`withLlmGeneration`, `retrieveContextDetailed`), so it covers every spend site.
+   * Legacy per-account LLM + RAG TOKEN ceiling. Prefer `user_settings.llm_daily_budget`
+   * (Settings → Daily LLM Budget / `PATCH /api/settings/llm-budget`). When the user setting
+   * is unset, this still binds; then retired env `TRIGGER_LLM_DAILY_TOKEN_BUDGET`.
+   * `undefined` inherits the next tier; explicit `0` means NO LIMIT.
    */
   llmDailyTokenBudget?: number;
   /**
-   * Hard per-user/day LLM + RAG COST ceiling in USD (estimated). Same semantics as
-   * `llmDailyTokenBudget`: `undefined` inherits env `TRIGGER_LLM_DAILY_COST_BUDGET_USD`, `0` = no limit.
+   * Legacy per-account LLM + RAG COST ceiling in USD. Same inheritance as
+   * `llmDailyTokenBudget`; prefer the per-user Settings cap.
    */
   llmDailyCostBudgetUsd?: number;
 

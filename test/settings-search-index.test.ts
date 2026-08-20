@@ -75,7 +75,9 @@ describe("settings search index (PR #3)", () => {
       "confirmation",
       "notifications",
       "sharing",
+      "legal",
       "learning-review",
+      "llm-budget",
       "boot",
       "you",
       "glossary",
@@ -96,6 +98,9 @@ describe("settings search index (PR #3)", () => {
     }
     expect(hrefForSettingsField(SETTINGS_FIELDS.find((f) => f.id === "settings.theme")!)).toBe(
       "/console/settings#appearance"
+    );
+    expect(hrefForSettingsField(SETTINGS_FIELDS.find((f) => f.id === "settings.llmDailyTokenBudget")!)).toBe(
+      "/console/settings#llm-budget"
     );
     expect(hrefForSettingsField(SETTINGS_FIELDS.find((f) => f.id === "settings.apiKeys")!)).toBe(
       "/console/connections#api-keys"

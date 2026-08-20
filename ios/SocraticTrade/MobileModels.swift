@@ -20,6 +20,8 @@ struct MobileSnapshot: Decodable {
     let watchlist: [WatchlistItem]
     let alerts: [PriceAlert]
     let recentCommands: [MobileCommand]
+    /// Last-good `/api/scan` universe.  Same seed `/console/scan` keeps when Refresh 503s.
+    let latestScan: MarketScanResponse?
 
     private enum CodingKeys: String, CodingKey {
         case currentUser
@@ -38,6 +40,7 @@ struct MobileSnapshot: Decodable {
         case watchlist
         case alerts
         case recentCommands
+        case latestScan
     }
 
     init(from decoder: Decoder) throws {
@@ -64,6 +67,7 @@ struct MobileSnapshot: Decodable {
         watchlist = try values.decodeIfPresent([WatchlistItem].self, forKey: .watchlist) ?? []
         alerts = try values.decodeIfPresent([PriceAlert].self, forKey: .alerts) ?? []
         recentCommands = try values.decodeIfPresent([MobileCommand].self, forKey: .recentCommands) ?? []
+        latestScan = try values.decodeIfPresent(MarketScanResponse.self, forKey: .latestScan)
     }
 }
 
@@ -114,6 +118,10 @@ struct Readiness: Decodable {
     let selectedAccountNumber: String?
     let activeConnectedAccount: ConnectedAccount?
     let commandBacklog: CommandBacklog
+    /// Missing on older payloads: treat as already accepted so a stale cache cannot lock the desk.
+    let needsAppConsent: Bool?
+
+    var requiresAppConsent: Bool { needsAppConsent == true }
 }
 
 struct CommandBacklog: Decodable {
@@ -130,6 +138,9 @@ struct ConnectedAccount: Decodable, Identifiable, Hashable {
     let isActive: Bool?
     let isDraining: Bool?
     let capabilities: AccountCapabilities?
+    /// Connected-account tax regime (`roth_ira` / `traditional_ira` / `taxable`).  Wins over
+    /// `policy.taxSettings.taxationType` the same way the web desk resolves it.
+    let taxationType: String?
 }
 
 struct AccountCapabilities: Decodable, Hashable {

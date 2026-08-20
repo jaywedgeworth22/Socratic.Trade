@@ -31,6 +31,7 @@ import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } 
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
 import { isTransientNetworkError } from "./network-errors";
+import { ALPACA_MCP_FETCH_MS, alpacaAccountReadBudgetMs, awaitWithFirstCallRetry } from "./inflight-deadline";
 
 /**
  * Fill in a usable price for any symbol the broker didn't quote (>0). Alpaca's latest-quote feed
@@ -285,6 +286,24 @@ class AlpacaBrokerGateway implements BrokerGateway {
     throw lastErr;
   }
 
+  /** Account GET used by getAccounts / getPortfolio.  First wait is above the
+   *  live alpaca-broker max (14s).  One fresh retry if that call stays pending.
+   *  A thrown credential / 401 is not retried here — trackHealth already retries
+   *  UND_ERR_SOCKET. */
+  private async readAccount(): Promise<any> {
+    const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
+    return awaitWithFirstCallRetry(
+      () => this.trackHealth(() => this.alpaca.getAccount()),
+      {
+        firstMs,
+        retryMs,
+        onFinalTimeout: () => {
+          throw new Error(`Timed out waiting for alpaca.getAccount after ${firstMs}+${retryMs}ms.`);
+        }
+      }
+    );
+  }
+
   private async callMcp<T>(toolName: string, args: Record<string, unknown>, fallbackFn: () => Promise<T>): Promise<T> {
     if (!this.isMcp || !this.mcpUrl) {
       return fallbackFn();
@@ -296,6 +315,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           "content-type": "application/json",
           accept: "application/json"
         },
+        signal: AbortSignal.timeout(ALPACA_MCP_FETCH_MS),
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: crypto.randomUUID(),
@@ -340,7 +360,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
       return { ok: cached.ok, reason: cached.reason };
     }
     try {
-      const account = await this.trackHealth(() => this.alpaca.getAccount());
+      const account = await this.readAccount();
       if (account && String(account.account_number ?? "") && accountNumber) {
         const live = String(account.account_number).trim().toLowerCase();
         const want = String(accountNumber).trim().toLowerCase();
@@ -391,7 +411,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     };
 
     return this.callMcp<any>("get_account_info", {}, async () => {
-      const account = await this.trackHealth(() => this.alpaca.getAccount());
+      const account = await this.readAccount();
       return [
         {
           accountNumber: account.account_number,
@@ -417,7 +437,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     return this.callMcp<any>("get_account_info", {}, async () => {
-      const account = await this.trackHealth(() => this.alpaca.getAccount());
+      const account = await this.readAccount();
       // Alpaca API credentials are scoped to exactly one account, so getAccount() always returns THE
       // account these keys belong to. Only flag a GENUINE cross-account mismatch (both numbers present
       // and actually different, ignoring case/whitespace) — a blank configured number or a mere
@@ -458,7 +478,17 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
     return this.callMcp<any>("get_positions", {}, async () => {
-      const positions = await this.trackHealth(() => this.alpaca.getPositions());
+      const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
+      const positions = await awaitWithFirstCallRetry(
+        () => this.trackHealth(() => this.alpaca.getPositions()),
+        {
+          firstMs,
+          retryMs,
+          onFinalTimeout: () => {
+            throw new Error(`Timed out waiting for alpaca.getPositions after ${firstMs}+${retryMs}ms.`);
+          }
+        }
+      );
       return positions.map(parseAlpacaPosition);
     }).then((res: any) => {
       if (Array.isArray(res)) {
@@ -478,12 +508,22 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const PAGE = 500;
       let until: string | undefined;
       for (let guard = 0; guard < 50; guard++) {
-        const page = (await this.trackHealth(() => this.alpaca.getOrders({
-          status: "all",
-          limit: PAGE,
-          direction: "desc",
-          ...(until ? { until } : {})
-        } as Parameters<typeof this.alpaca.getOrders>[0]))) as Record<string, unknown>[];
+        const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
+        const page = (await awaitWithFirstCallRetry(
+          () => this.trackHealth(() => this.alpaca.getOrders({
+            status: "all",
+            limit: PAGE,
+            direction: "desc",
+            ...(until ? { until } : {})
+          } as Parameters<typeof this.alpaca.getOrders>[0])),
+          {
+            firstMs,
+            retryMs,
+            onFinalTimeout: () => {
+              throw new Error(`Timed out waiting for alpaca.getOrders after ${firstMs}+${retryMs}ms.`);
+            }
+          }
+        )) as Record<string, unknown>[];
         if (!Array.isArray(page) || page.length === 0) break;
         let added = 0;
         let oldest: string | undefined;

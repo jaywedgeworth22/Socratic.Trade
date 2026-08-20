@@ -47,7 +47,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-// ── Source / data-plane feature settings (per-user overrides of Infisical knobs) ─
+// ── Source / data-plane feature settings ────────────────────────────────────
 
 export interface SourceFeatureRow {
   id: string;
@@ -80,6 +80,36 @@ export function patchSourceFeatures(
   return request<{ ok: boolean }>("/api/settings/source-features", {
     method: "PATCH",
     body: JSON.stringify({ settings })
+  });
+}
+
+export type LlmBudgetLimitSource = "user" | "policy" | "env" | "none";
+
+export interface LlmBudgetResponse {
+  ok: boolean;
+  tokenBudget: number | null;
+  costBudgetUsd: number | null;
+  effective: {
+    tokenLimit: number | null;
+    costLimitUsd: number | null;
+    tokenSource: LlmBudgetLimitSource;
+    costSource: LlmBudgetLimitSource;
+  };
+  today: { tokens: number; costUsd: number };
+  enforced: boolean;
+}
+
+export function fetchLlmBudget(): Promise<LlmBudgetResponse> {
+  return request<LlmBudgetResponse>("/api/settings/llm-budget");
+}
+
+export function patchLlmBudget(body: {
+  tokenBudget?: number | null;
+  costBudgetUsd?: number | null;
+}): Promise<LlmBudgetResponse> {
+  return request<LlmBudgetResponse>("/api/settings/llm-budget", {
+    method: "PATCH",
+    body: JSON.stringify(body)
   });
 }
 

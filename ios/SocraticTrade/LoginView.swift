@@ -11,7 +11,7 @@ struct LoginView: View {
     private static let valueBullets = [
         "Review and approve proposals",
         "Track positions, orders, and performance",
-        "Control the backend agent without moving credentials onto the device"
+        "Run, pause, and approve from your phone"
     ]
 
     var body: some View {
@@ -194,13 +194,26 @@ struct LoginView: View {
     }
 
     private var privacyNote: some View {
-        Label(
-            "The app stores only your Socratic Trade session.  Broker and provider secrets stay on the backend.",
-            systemImage: "lock.fill"
-        )
-        .font(.appCaption)
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.center)
+        VStack(spacing: 8) {
+            Label(
+                "The app stores only your Socratic Trade session.  Broker and provider keys stay with your account.",
+                systemImage: "lock.fill"
+            )
+            .font(.appCaption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+
+            Text("By signing in you agree to the Terms and Privacy Policy.  Not investment advice.  You set authority.")
+                .font(.appCaption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: 16) {
+                Link("Terms", destination: URL(string: "https://socratictrade.com/terms-and-conditions")!)
+                Link("Privacy", destination: URL(string: "https://socratictrade.com/privacy-policy")!)
+            }
+            .font(.appCaption)
+        }
         .padding(.top, 4)
     }
 

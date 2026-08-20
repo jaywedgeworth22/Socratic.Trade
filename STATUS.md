@@ -8,6 +8,327 @@ branch stamps retired vendors OFF in health summaries, aligns ops-snapshot `ok` 
 only, and mutes connection pages for the first 5 minutes of a `DB_BOOTSTRAP=live` boot.
 
 Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
+## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
+
+Run-scoped code no longer reads the console-active account.  `debateProposal`, `retryProposalRedTeam` and `applyApprovedPending` now resolve the account from the run's own policy via the new `resolveRunAccountScope(userId, policy)` (account required — no active-account default), so a two-account setup can no longer review account A's proposal against account B's venue, execution mode or strategy prompt, and switching the active account mid-run leaves in-flight reviews pinned.  `retry-red-team.ts` was NOT in the plan — the audit found it and it is fixed here.  Full gate green (lint 0 errors, tsc clean, 7056 tests, build 0); failing-first proven 7/7.  PR body carries the full 21-site `getActiveConnectedAccount` inventory.  Sibling cluster `per-account-visibility` lands next.  Rollout: `docs/rollouts/2026-08-19-run-scoped-account.md`.
+
+## 2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`)
+
+Cluster `alert-repeat-lock`.  **IN PR #2877.**  Rebased onto `origin/main` `0382e83f`.  Same alert (user + type + fingerprint) is not delivered more than once per 60s.  `price_alert` is now in the existing sent-row repeat-dedup set, keyed by alert id.  `provider_degraded` / `budget_alert` / `kill_switch` share that 60s lock.  Health and usage-limit no longer re-send Pushover on a channel the user already has.  Usage-limit 6h cooldown no longer latches on skipped/failed.  Did not revert #2865.  Did not take `alert-push-delivery`.  Next action: merge #2877 when `verify` is green.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
+
+## 2026-08-19 MONET — Review board exported into the repo (peers were blocked on a private artifact URL)
+
+The claude.ai artifact board is private to the owner's session by design, so peer agents got a 404.  The same board is now committed: `docs/reviews/2026-08-18-audit-board.html` (self-contained, open directly) and `docs/reviews/2026-08-18-work-items.json` (machine-readable: `clusters[]` with `member_uids` + `plan`, `p1_verdicts[]`, `gap_findings[]`, `findings_index{}`).  **Claim work by cluster key**, not by finding count.  Making the artifact itself public is an owner action (share menu) and is not required for anyone to work.
+
+## 2026-08-19 CURSOR — Price alert evaluation (`cursor/fix-price-alert-evaluation-1a3d`)
+
+Part II cluster `price-alert-evaluation`.  `checkPriceAlerts` now uses user-scoped `fetchFreshQuotesCascade`, logs/audits cascade failures, skips stale quotes via `quoteAgeSecForStalenessGate`, and shares `isValidAppSymbol` for create validation.  Four new evaluation tests.  Did not take on alert-push-delivery.  PR open on branch `cursor/fix-price-alert-evaluation-1a3d`.  Rollout: `docs/rollouts/2026-08-19-price-alert-evaluation.md`.
+## 2026-08-19 CURSOR — Home proposal rows (`home-proposal-rows`)
+
+Expert review cluster `home-proposal-rows`: Home latest-run rows now use persisted `trade_proposals.id` on the strategy trace, shared `proposalChipTone` / `isProposalRowApprovable` helpers, honest warn tones for error/failed/blocked, Approve only on real pending/proposed ids, and a keyboard-operable row button with `SymbolButton` outside the activation target.  Empty `latest.proposals` falls back to `pendingProposals`.  Web console only.
+
+PR **(pending)**.  Branch `cursor/home-proposal-rows-8a57`.  Rollout: `docs/rollouts/2026-08-19-home-proposal-rows.md`.
+## 2026-08-19 CURSOR — Session-aware market cache freshness (`market-cache-freshness` / mdi-01)
+
+Replaced calendar-day cache TTL with session-boundary logic: Friday 10:00 ET screener/OHLC/enrichment writes now expire on their naive TTL (not Monday open).  TTL extension only fires after today's regular or early-close session ends.  `isBarSeriesFresh` now compares the latest bar to the most recently completed trading session instead of a 3-calendar-day window.  Added `getEarlyCloses(year)` for half-day closes.
+
+PR on branch `cursor/market-cache-freshness-5ee3`.  Rollout: `docs/rollouts/2026-08-19-market-cache-freshness.md`.
+## 2026-08-19 CURSOR — Order provenance guard (`order-provenance-guard`)
+
+Part II cluster: stale-exit auto-remediation no longer cancel-replaces bracket legs or owner-placed GTC sells; owner-cancelled app-managed protective stops stay cancelled (tombstone honored by reconciler).  Branch `cursor/order-provenance-guard-197e`.  Rollout: `docs/rollouts/2026-08-19-order-provenance-guard.md`.
+## 2026-08-19 CURSOR — Copy: guardrail claims match advisory engine (`copy-claims-and-rulings`)
+
+Cluster from Part II expert review.  Added `src/lib/guardrail-copy.ts` as the single source for guardrail-semantics sentences; macro / Guardrails / public pages / iOS `DeskCopy` now describe advisory pre-vetoes (not hard veto).  Stripped paper/live ceremony: `Alpaca (paper)`, lowercase paper chip, no iOS Live pill or brokerage activation confirm, Mock removed from Coach pickers.  Terms §8 mirrors Privacy shared pool; `LEGAL_NOTICE_VERSION=2`.  Engine + AUTOPILOT path unchanged.
+
+Branch `cursor/copy-guardrail-claims-19ca`.  Rollout: `docs/rollouts/2026-08-19-copy-guardrail-claims.md`.
+## 2026-08-20 CURSOR — Wire dead tax / webhook / preset controls (`dead-controls`)
+
+Expert review cluster: wired `taxSettings.subtractFromResults` into Results realized P&L, extended Send test to probe `policy.notificationSettings.webhookUrl` (Discord embed path), and added Preset create/rename/delete on Strategy via `/api/profiles`.  Branch `cursor/wire-dead-controls-8b69`.  Rollout: `docs/rollouts/2026-08-20-wire-dead-controls.md`.
+
+## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
+
+`docs/reviews/2026-08-18-full-app-expert-review.md` now carries Part II.  Second round re-attacked all 40 P1s: **27 upheld with a proven repro, 11 narrowed, 2 already fixed, 0 refuted outright**.  Two Part I headlines (mine) were WRONG and are corrected: `tsx-01` is **not** "MCP-fallback duplicate orders" — reusing the same `client_order_id` is what makes Alpaca refuse the second submission, the harm is a live order misfiled as `rejected_by_broker`, and the MCP transport is unreachable in production (no UI creates an `alpaca-mcp` account; the host allowlist blocks it) so it is **P3**.  The oldest-500 fill cap (`perf-01`/`berel-02`) needs >500 fills per (account, source) — unconfirmed on the prod DB — so **P2**; settle it with `SELECT source, COUNT(*) FROM fill_events GROUP BY source`.
+
+Five new lanes read what Part I skimmed and found P1s it missed: Coach `draft_order` coerces `short`/`cover` to **buy** (`src/lib/chat/tools.ts:92`); "Import from account" arms Autopilot on a live account with no guard (`app/console/guardrails/page.tsx:1021`); a draining account can be reactivated as the live trade target (`src/lib/db-api-keys.ts:1323`); price alerts stop evaluating when no account is active (`src/lib/alerts.ts:68`); unauthenticated `POST /api/chat-history` accepts forged turns.  Everything folds into **45 clusters** (22 tranche-1) with implementation plans.  Work from the clusters, not the finding count.  Also LIVE-21: the paired uptime flaps are origin stalls, not restarts (uptime continuous) — and prod being 2 merges behind main is correct (watch paths; those merges are iOS/docs only).
+
+## 2026-08-18 MONET — Full-app expert-panel review landed (desktop web + mobile web + iOS)
+
+`docs/reviews/2026-08-18-full-app-expert-review.md`: 17 expert lanes + 17 verifiers + prior-review cross-check + a by-hand live pass.  336 panel findings (40 P1 / 148 P2 / 148 P3), 20 live-pass items, 50 verifier-added items, 15 prior items still open, 53 resolved.  Top of the list: MCP-fallback duplicate orders (`tsx-01`), stale-exit remediation cancel-replacing bracket legs with MARKET (`tsx-02`), iOS approve reported "succeeded" on blocked/error (`api-02`), fill ledger keeps the OLDEST 500 fills so P&L freezes (`perf-01`), Bull strict schema `exitPlan` missing from `required` = the Green 400s (`llm-01`), no `AUTH_SECRET` boot guard (`sec-01`), Friday cache freeze (`mdi-01`), FTS full-scan per chunk = the loop pin (`berel-01`).  Hotfix #2851 (Connections `process.uptime` crash) is live; root-cause split is LIVE-01.  Sequencing in report §11.  Rollout: `docs/rollouts/2026-08-18-full-app-expert-review.md`.
+
+## 2026-08-19 CURSOR — iOS Home / Guardrails parity vs live web `a8a0a65b`
+
+Hypothesis held: #2855/#2856 are on `main` (`a8a0a65b`).  TF **1.0.68** is behind that binary, so Guardrails → Universe → Indices still prints `sp500, nasdaqComposite, dow30, nyseComposite` on the phone.  Current `main` iOS already uses `DeskCopy.joinedIndexList` on Guardrails and Desk Current Policy — no leftover raw-slug join.  Remaining leaks on this tree: #2849 Desk subtitle still open, and Home / Guardrails / Insights still pointed at a nonexistent iOS **Strategy** page (web universe edits are on Guardrails).
+
+This PR folds #2849 (`SectionHeading("Desk")` only) and retargets empty-universe copy at Guardrails with the same `S&P 500` example web uses.  Did not add iOS index checkboxes, Scan source chips, or Smart Money.  Did not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Did not touch #2841 / #2854 / #2840.
+
+PR **#2857**.  Branch `cursor/ios-web-parity-502f`.  SHA `e2f56f21`.  Rollout: `docs/rollouts/2026-08-19-ios-web-parity.md`.
+
+## 2026-08-19 CURSOR — Indices common names on every surface
+
+#2855 merged (`b27de85c`).  Live Guardrails → Universe → Indices still printed `sp500, nasdaqComposite, dow30, nyseComposite`.  Jay does not distinguish rows vs Guardrails — both use **Indices** and the shared names (S&P 500, Nasdaq Composite, Dow 30, NYSE Composite, Nasdaq 100, Russell 2000, FT Wilshire 5000, S&P 100).  Web selected-set + checkbox grid, policy-diff, Scan `${id}-universe` chips, iOS Guardrails, and Desk Current Policy now go through `formatIndexUniverseList` / `indexUniverseLabel`.  Storage / API slugs stay.  Did not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Did not touch #2841 / #2849 / #2854 / #2840.  Did not reopen #2855.
+
+PR **#2856**.  Branch `cursor/indices-common-names-3381`.  Rollout: `docs/rollouts/2026-08-19-indices-common-names.md`.
+
+## 2026-08-19 CURSOR — Indices labels (`S&P 500`, not `sp500`)
+
+**MERGED #2855** `b27de85c`.  Follow-up: live Guardrails Indices selected-set + Scan chips still leaked slugs — `cursor/indices-common-names-3381`.
+
+## 2026-08-19 CURSOR — Robinhood max-10 quote chunk (rebased onto #2853)
+
+#2853 is merged (`df1f5a37`).  This PR was CONFLICTING/DIRTY against that main.  Rebased `cursor/robinhood-quote-chunk-befc` onto `df1f5a37`.  The only real conflict was `docs/phase-7-strategy.md` (both added a 2026-08-19 stanza).  Kept #2853 drain/heartbeat/adopt and the ≤10 Robinhood chunk.  `strategy.ts` / quote-cascade did not conflict.
+
+#2848 is live.  Roth `9d71dda4` wrote 00:58:57Z, llm=0, then `stalled_no_progress` at 01:29:44Z.  ASC: robinhood `too many symbols (max 10, got 250)` at 00:59:15Z (18s after start).  congress.trade HTTP 404 at 01:01:53Z.  One OpenRouter embed document.  Zero completion `llm_usage`.  account-miss 404 did not fire.
+
+Root cause: `getEquityQuotes` sent the full scan universe in one MCP `get_equity_quotes`.  Robinhood rejected the batch, so gather never priced through Robinhood.  Do not shrink the universe to 10.  Chunk requests to 10.  congress.trade 404 is secondary and must not latch the free enrichment wave.  Do not reopen #2840 / #2853.  Do not touch #2850 / #2849 / #2841 / strategy picks.  Do not merge / deploy / bounce / TF.
+
+PR **#2852**.  Branch `cursor/robinhood-quote-chunk-befc`.  Rollout: `docs/rollouts/2026-08-19-robinhood-quote-chunk.md`.
+
+## 2026-08-19 CURSOR — Manual Run once drain must resume a claimed worker
+
+**MERGED #2853** `df1f5a37`.  #2848 was live (`c55c2e64`).  Roth `9d71dda4` wrote 00:58:57Z, sat `running` llm=0, then sweep-failed 01:29:44Z `stalled_no_progress` (~31m).  Drain now resumes a claimed request with no heartbeat on the same run id.  Remaining gather-pricing hole is #2852.
+
+## 2026-08-18 MONET — HOTFIX: `/console/connections` crashed client-side after #2848
+
+Prod `c55c2e64` (live 00:51Z) renders "Dashboard error: process.uptime is not a function" on Connections.  `src/lib/db-execution.ts` module-scope `process.uptime()` reaches the browser bundle via `app/console/settings/brokers.tsx -> venue-contract -> source-settings -> db-api-keys -> db` (webpack stubs sqlite, not `process.uptime`).  Fix = lazy guarded accessor + regression test that fails on the old code.  Root cause (server DB modules in the client bundle; Turbopack `npm run dev` 500s every route after that page compiles) is a P1 in the MONET full-app review, not fixed here.  Branch `monet/hotfix-connections-process-uptime`.  Rollout: `docs/rollouts/2026-08-18-connections-process-uptime-hotfix.md`.
+
+## 2026-08-18 CURSOR — #2848 verify hang + same-process stall labeled restart
+
+verify-hosted: 7010 passed, 1 failed.  `test/alpaca-mcp.test.ts:214` timed out 60000ms — the 16s live first wait plus a never-settling first `getAccount` hung fake-timer advance.  Mock a short `alpacaAccountReadBudgetMs` in that test only.  Keep the live 16s wait and ROIC/FTS pause.
+
+Same process `4abfb7fa` (`processStartedAt` 23:10:43Z, uptime ~34m) sweep-failed Roth `b3b83913` as "Process restarted mid-run".  That run started at 23:13:25Z on this process and sat llm=0.  Restart only when `started_at` predates boot; a same-process 30m stall is `stalled_no_progress`.  Do not merge.
+
+## 2026-08-18 CURSOR — Manual Run once starved by ROIC / FTS on the event loop
+
+#2847 is live (`4abfb7fa`).  The request lock is gone: Roth Manual Run once wrote `b3b83913` at 23:13:25Z.  That run sat ~17m with llm=0 and never reached Green.  Not a #2831 miss.  `roic-transcript-refresh` was already in-flight (23:11:45Z, RJF 2024Q2→2022Q4); 78 `ftsMirrorSlice` 6–13s; `getEquityQuotes` 6s ×28; alpaca-broker 6.5–7.4s.  Bounding the FTS tick is not enough if ROIC still owns the loop.
+
+#2848 rebase onto `4abfb7fa`: keep 16s wait-above-p95 and FTS 2s / 1-row bound; **also** skip / pause ROIC and FTS while any `strategy_runs`/`strategy_run_requests` row is queued or running, and yield between ROIC periods.  Do not reopen #2840.  Do not hide the embed 8193 error with copy.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2812 / strategy picks.
+
+PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+## 2026-08-19 CURSOR — iOS Scan last-good / seed-first rebased onto #2848 (`c55c2e64`)
+
+#2850 rebased onto current `main` (`c55c2e64`).  Did not rewrite #2848.  Live unblocker for TF 1.0.68 is still seed-first `GET /api/scan` (names before Yahoo whole-set).  iOS `latestScan` kept for the next TF.  Do not merge / deploy / bounce / second TestFlight.  Do not touch #2848 / #2849 / #2841 / #2840.
+
+## 2026-08-19 CURSOR — iOS Scan keeps last-good on a 503 refresh
+
+Live `4abfb7fa` web `/console/scan`: Refresh scan once (not Run once) 503s, then paints the last-good universe from Aug 18, 2026, 7:25:13 PM (70 names / 5069 quotes / 5073 scanned).  Public `GET /api/scan` is 401.  TF 1.0.68 already has #2830 ScanView but iOS only called live `/api/scan` and replaced the table with the empty 503 body.  Snapshot had no `latestScan`.
+
+Why Refresh 503s: after an empty Nasdaq screener, interactive `/api/scan` Yahoo-priced the whole ~5k allowed set inside the 35s budget.  That miss also dies as a generic 503 (often edge HTML, no `warnings` JSON) before the seed web already shows.  One bad row in `quotesBySymbol` also voided the whole seed.
+
+Fix: seed before Yahoo whole-set; keep valid seed rows; compact `latestScan` on `/api/mobile/snapshot`; iOS paints that universe and keeps it on a failed refresh.  Did not merge.  Did not deploy.  Did not bounce.  Did not start a second TestFlight.  Did not click Manual Run.  Did not touch #2848 / #2849 / #2841 / #2840.
+
+PR **#2850**.  Branch `cursor/ios-scan-last-good-503-b104`.  Rollout: `docs/rollouts/2026-08-19-ios-scan-last-good-503.md`.
+
+ASC follow-up (testers on TF **1.0.68** `202608182121` / `581467e1`, which already includes #2830+#2831): this is not a stale binary.  That client already calls `GET /api/scan` and decodes structured `scan_quotes_unavailable`.  Live Refresh still 503s without names (`4abfb7fa` scan path; live process is now `c55c2e64` = #2848 on top — scan/iOS files unchanged).  `/api/mobile/snapshot` on that live sha has no `latestScan`.  The 1.0.68 client times out at 25s vs the 35s server budget.  Do not start a second TestFlight.  Do not merge/deploy/bounce.  Do not touch #2848/#2849/#2841/#2840.  The 1.0.68-compatible fix is making `/api/scan` return names (seed before Yahoo) — already in #2850, not live.
+
+## 2026-08-18 CURSOR — sweep-failed orphan leaves Manual Run once locked
+
+#2845 is merged and live (`d4299bec`).  Do not amend it.  After that deploy, Manual Run once did not create a `strategy_run`.  ASC: 0 new Roth rows after 22:06:43Z.  Orphan `0e5ccd66` was stale-swept failed at 22:13:05Z (0 LLM) while `strategy_run_requests` stayed `status=running`.  That leftover request is the lock (`queueStrategyRunRequest` dedupes on `queued`/`running`; the worker never wrote the request terminal).  22:10:15Z `getPortfolioBundle` `8000+7000ms` is a separate slow first-read (#2848), not this lock.
+
+Fix closes the matching open request on the sweep and `finishStrategyRun` write paths, heals already-terminal mismatches on the next tick, and heals this user's orphan on the next Manual Run once click.  Do not hide the lock by ignoring `running`.  Do not merge.  Do not deploy.  Do not bounce Coolify.  Do not touch #2841 / #2840 / #2812.
+
+PR **#2847**.  Branch `cursor/sweep-request-orphan-lock-befc`.  Rollout: `docs/rollouts/2026-08-18-sweep-failed-request-lock.md`.
+## 2026-08-18 CURSOR — 6s getAccounts abort vs live p95 + ftsMirrorSlice loop pin
+
+ASC + Trading Ops, same process `581467e1`.  Exact log: `gateway.getAccounts timed out after 6000ms — serving degraded snapshot` then `Failed to fetch accounts… 6000ms` (11 times since 4:12pm CT).  Same window aborted portfolio/positions/orders at 8s and getEquityQuotes at 6s.  alpaca-broker 500/500 ok, 0 failures, min 97ms / avg ~3085ms / max 14416ms, 191/500 ≥6s.  Latest ~4:40pm CT 98–413ms ok; ~30s earlier several ok at 6570–6600ms — the SDK finished AFTER the 6s abort.  `/api/health` 200 at ~4.2s.  Event loop loaded (`ftsMirrorSlice` 6–12s).  No sidecar.
+
+Fix: first wait 16s on getAccounts / portfolio / getAccount / getEquityQuotes / option positions; shrink FTS tick so it cannot pin the 6s race.  Do not hide with copy.  Do not bounce Coolify.  Do not merge.  Do not touch #2841 / #2840 / #2812 / strategy logic.
+
+PR **#2848**.  Branch `cursor/getaccounts-loop-budget-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-loop-budget.md`.
+
+## 2026-08-18 CURSOR — getAccounts 6s timeout blocks Run once after deploy
+
+Live after #2831 (`581467e1`, `processStartedAt` 2026-08-18T21:12:26Z): Manual Run once on Paper and Roth showed `Timed out waiting for gateway.getAccounts after 6000ms`.  Ops snapshot 21:37:42Z: both accounts are Alpaca REST (not MCP); no strategy run queued after the swap; `dashboard.getAccounts` recoverable_issue on Roth 21:31:18Z / 21:36:26Z and Paper 21:32:56Z.  Same class already fired before the swap (20:02Z, 20:15Z).  Console Run once preflights `accountReadiness`, which fail-closes on that dashboard 6s race.
+
+Fix: first-call retry + 15s combined budget on the in-flight `getAccounts` / portfolio bundle; Alpaca REST `getAccount` retries a hung first SDK call; MCP fetch aborts at 8s and falls back to REST.  Real 401 / credential throws still fail immediately.  Do not bounce Coolify.  Do not merge from this seat.
+
+Branch `cursor/getaccounts-post-deploy-timeout-befc`.  Rollout: `docs/rollouts/2026-08-18-getaccounts-post-deploy-timeout.md`.
+
+## 2026-08-18 CURSOR — rag-embed DeepInfra batch-window 400 (hotfix)
+
+Live `VECTOR_EMBED_BATCH_SIZE=32` POSTed 32 ingest texts to OpenRouter `baai/bge-m3`.  DeepInfra sums the whole `input[]` against 8192; a batch hit 8193 and 400'd `embed documents` from 19:12:49Z.  That is a batch-sum, not one unchunked 10-K.  #2812 stopped the 503; it did not embed those docs.  Hybrid producer still condenses first (`chunkDocument` 480 / `VECTOR_CONTEXT_MAX_CHARS`); packing is a batch-window fix after that step.  `storeContexts` packs already-condensed texts under ~7500 `approxTokens` and embeds each group on its own lane so one over-limit singleton cannot skip the rest of a count-32 batch.  Local archive / store-more is unchanged.  No second filing chunker.  No extra table vectors.  Did not flip `RAG_PINECONE_WRITE_CLASS` or prune.  Did not re-clamp the #2800 fuse.  Infisical can keep the count at 32.  Did not drop rag-embed from health.
+
+**MERGED #2840** `5674dfaf`.  Hybrid condense-first stayed; packing is after that step.  One over-limit condensed text no longer skips the rest of a count-32 batch.  Do not flip write-class or prune.  Do not re-clamp the #2800 fuse.  Leave Infisical `VECTOR_EMBED_BATCH_SIZE=32`.  Confirm live `rag-embed` on real ingest batches, not only tiny probes.  Rollout: `docs/rollouts/2026-08-18-rag-embed-batch-window.md`.
+## 2026-08-18 CURSOR — Green 400 failover rebased onto #2830 (`13b60747`)
+
+PR **#2831** was CONFLICTING/DIRTY after #2830 merged (`13b60747`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Docs auto-merged.  Did not recreate the PR.  Did not touch #2812 health-gate, #2840 rag-embed chunking, or #2841 notification history.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
+
+## 2026-08-18 CURSOR — Green 400 failover rebased onto #2812 (`12e8dcd`)
+
+PR **#2831** was CONFLICTING after #2812 merged (`12e8dcd`).  Rebased `cursor/green-400-failover-terra-2639` onto `origin/main`.  Sole conflict was `docs/phase-7-strategy.md` — kept both this Green 400 stanza and #2812's rag-embed soft-degrade stanza.  Did not revert #2812 (rag-embed must not 503) or #2829/#2800.  Runtime unchanged: 400 is failover-eligible, exhausted suffix counts stored calls only, terra is not first Green pick.
+
+Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
+
+## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
+
+PR **#2812** MERGED as `12e8dcd`.  One dead rag-embed stays HTTP 200 (`ok: false`, `degraded: true`); pinecone still 503s.  Did not revert #2800/#2829.
+
+Local after rebase: lint/tsc/focused health+embed tests/build green.  Linux VM: no xcodebuild.  Full `npm test` still hits leftover SiliconFlow + SEC/Yahoo 404s (untouched).  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+## 2026-08-18 CURSOR — Nasdaq screener UA + retry so Scan returns names
+
+`fetchNasdaqScreener` in `src/lib/market.ts` now uses the same `BROWSER_UA` + Origin/Referer + `fetchWithRetry` as nasdaq quote/calendar.  That is the 8s stub `"Mozilla/5.0"` abort that zeroed every scan since 2026-08-13T22:30Z (last good 513 quotes).  If Nasdaq still returns 0, Yahoo prices the whole allowed set so Scan ranks names again.  iOS `MobileStore` switch is exhaustive for `.scanQuotesUnavailable` (unsigned `xcodebuild` miss); Scan shows the abort warning, not silent No Candidates.  Rebased onto `origin/main` `7b073b65` (includes #2812 and #2832).  Did not revert #2812 / #2829 / #2800.  Does not block #2831.  UA/retry path not reverted.
+
+PR **#2830**.  Branch `cursor/scan-empty-screener-a128`.  Rollout: `docs/rollouts/2026-08-18-scan-empty-screener.md`.
+## 2026-08-18 CURSOR — Green 400 must actually fail over (First Green after #2829)
+
+#2829 is live (`6429d984`) and stopped the account-miss liar on 404.  It did not make Green complete.  Paper `PA33IDTHMFK9` run `7f5890a5-bc21-4474-87eb-9b595de04ed1` (19:33–19:38Z) picked `gpt-5.6-terra` → `openai/gpt-5.6-terra`, HTTP 400 "Provider returned error" (881ms), then claimed "Failover chain exhausted (3 Green Team endpoints)" after ONE stored `llm_call_latency`.  Red `deepseek-reasoner` never ran.  Roth had no `strategy_run` after process start 19:12:31Z.
+
+Root cause: `isFailoverLlmStatus` left 400 out (404/403 only), and the exhausted sentence used planned seats, not stored calls.  Terra is on public `/models` but OpenRouter 400s it; fail-open still lets it win first pick.
+
+Fix: 400 is failover-eligible (not a same-model retry, not an account miss).  Exhausted copy cites stored attempts only.  Terra is demoted from first Green pick when Gemini Flash / Mistral Medium class seats remain; those preferred seats lead implicit fallbacks.  Did not revert #2829 or #2800.  Did not rewrite the 400 sentence.
+
+Branch `cursor/green-400-failover-terra-2639`.  Rollout: `docs/rollouts/2026-08-18-green-400-failover.md`.
+
+## 2026-08-18 CURSOR — Pinecone daily-fuse deadlock (rebased onto hybrid)
+
+#2800 rebased onto `origin/main` (`cda485ff`, includes hybrid #2820 `ea68c1fc`).  Verified: the trip was local-MTD remainder math, not the 2.5M fuse and not a spent Standard trial.  Live card was used 0 of 15 estimated WUs, attempted 28, skipped 1.  Local month-to-date WUs (including pre-hybrid full-body writes) were treated as Pinecone's bill; leftover lifetime units collapsed the daily fuse below one document.  Hybrid processed writes stay; write-class stays full-body; prune stays dry-run.  Did not raise a post-trial 2.5M/60k ceiling.
+
+Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+## 2026-08-18 CURSOR — OpenRouter rotation alias miss is not "not on your account"
+## 2026-08-18 CURSOR — OpenRouter "No endpoints" 404 is not "not on your account"
+## 2026-08-18 CURSOR — OpenRouter 404s are not "not on your account"
+## 2026-08-18 CURSOR — Today's Green 404s are valid public slugs, not tilde seats
+
+Coolify receipts (sha `cda485ff`, SELECT-only, no raw OpenRouter JSON).  Mapper on that sha is still 404 → “isn't available on your OpenRouter account.”
+
+Today's Green fails are **not** the missing-tilde seats.  Claude/Grok/Kimi/mini-latest were skipped (`skippedNoCredential`; that array also includes availability-filtered models) and never called.  Tilde restore will not by itself clear today's Green 404s.
+
+Actual 404s, ~80ms, OpenRouter, `key_source=user`:
+- 17:12:09Z Alpaca Paper `PA33IDTHMFK9` run `20072a55-2805-4d7a-8fa0-a1dff8c766cc`: pick `gemini-flash-latest` → called `google/gemini-3.7-flash` HTTP 404 86ms.  Failover chain exhausted (3 endpoints); only one `llm_call_latency`.  Red `gpt-5.6-luna` never called.
+- 17:01:57Z Roth IRA `294709855` run `a9f29155-e139-4259-8666-25b0cf5f901c`: pick `mistral-medium-latest` → `mistralai/mistral-medium-3-5` HTTP 404 82ms.
+
+Not 401/402/403/429.  Credits not involved.  Both slugs exist on public `/api/v1/models`.  7d 404s: `google/gemini-3.7-flash` ×2, `mistralai/mistral-medium-3-5` ×2, `mistralai/mistral-small-2603` ×1.  Fits #2771 `require_parameters=true` emptying the endpoint set.
+
+PR **#2829** primary: omit `require_parameters` except the nano `max_completion_tokens` case; classifier must not use the account sentence for bare 404 / “No endpoints found”.  Secondary: restore `~` / dated public ids for skipped Claude/Grok/Kimi/mini-latest.  Keep `__rotate__`.  No dashboard adds.  No Stripe/IAP.
+
+PR **#2829**.  Branch `cursor/openrouter-rotation-alias-fb04`.  Rollout: `docs/rollouts/2026-08-18-openrouter-rotation-alias-failopen.md`.
+
+## 2026-08-18 CURSOR — IRA accounts must not tax-loss harvest
+
+Owner screenshot: Autopilot sold NWG on the Roth with Green rationale "Harvesting unrealized loss… as part of tax loss harvesting strategy."  Roth/Traditional cannot deduct that loss.  Root cause: `taxContext` always included `harvestableLosses`, and Green was told it traded a taxable account whenever any tax block existed.
+
+Fix: IRA prompt language forbids harvest; empty harvest candidates; omit harvest / LT-window fields on IRA runs; overlay account `taxationType` in strategy the same way the dashboard already did.  Prompt `agentic-strategy@2.12.0`.
+
+Branch `cursor/ira-no-tax-loss-harvest-a1df`.  Rollout: `docs/rollouts/2026-08-18-ira-no-tax-loss-harvest.md`.
+
+## 2026-08-18 CURSOR — iOS UX owner cut (rebased onto main)
+
+Rebased #2825 `cursor/ios-ux-owner-cut-bdae` onto `main` (`995b7eee` #2815).  Kept IRA wash-sale N/A, lowercase “rotate models”, full jargon sweep, Ask-First ↔ Autopilot + % NAV caps on device.  Kept #2815 legal clickwrap / Terms+Privacy, #2821 Daily AI Budget, and #2821 Data Sources number rows.  No coordinator notes in the UI.  Did not steal reserved PRs.  Do not merge until GitHub mergeable is CLEAN.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
+
+## 2026-08-18 CURSOR — Per-user LLM daily budget (Settings + iOS)
+
+**MERGED #2821 `972e3763`.**  Live store is `user_settings.llm_daily_budget` via `GET|PATCH /api/settings/llm-budget`.  Resolution: user setting → legacy `policy.tuning` → retired env `TRIGGER_LLM_DAILY_*`.  Explicit `0` = no cap.  When a cap is set and today's ledger cannot be read, skip LLM/RAG/chat (`ledger_unavailable`).  `RAG_RUN_BUDGET_*` is a Data Sources setting.  System secrets stay Infisical.  Console/iOS copy is product language only.  Rollout: `docs/rollouts/2026-08-18-user-llm-daily-budget.md`.
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+## 2026-08-18 CURSOR — Paper/live pooling truth + paper cost = OOS 20 bps
+
+Owner cut 2026-08-17: paper→live pooling stays.  Delete the leftover 20-paper+5-live transfer
+gate from current-truth docs.  Paper execution-cost default rises from 1 bp to the shared
+`OOS_ROUND_TRIP_COST_BPS` / `PAPER_DEFAULT_BASE_SLIPPAGE_BPS` (20).  No `autoApplyWeights`.
+Code already had no 20+5 evaluator (`learning-transfer.ts` deleted 2026-07-23).
+
+PR **#2819**.  Branch `cursor/paper-live-docs-cost-68d3`.  Rollout:
+`docs/rollouts/2026-08-18-paper-live-pooling-cost.md`.  Did not touch #2792/#2798/#2800/#2794.
+lint 0 errors, tsc clean, 278 focused tests pass, `npm run build` clean.
+
+## 2026-08-18 CURSOR — Hybrid AND prune (processed operational index)
+
+Owner cut after #2811: condense-first for Pinecone, store-more locally, then prune junk so Green/Red retrieve (scout k=1 / deep k=8 + 24k) sees useful vectors.  Minimum PR A split is on this branch: local-complete FTS + extractive highlights + form-aware signal sections + speaker-turn slices write as their own complete `storeDocument`s.  `RAG_PINECONE_WRITE_CLASS` still defaults to `full-body` (not flipped; PR B hydrate is not in this PR).  Safe prune deletes raw-HTML / junk / dupes / low-value only; useful full-body only-copies stay.  2.5M fuse + $45 reserve unchanged.  No Stripe.  Did not retarget #2792 / #2798 / #2800 / #2794.
+
+Branch `cursor/hybrid-and-prune-7f41`.  PR #2820, rebased onto `main` (`522b2454` #2824).  Rollout: `docs/rollouts/2026-08-18-hybrid-and-prune.md`.  Next: dry-run prune against prod inventory when ready — do not `--apply` yet.  Do not flip write-class until PR B.
+## 2026-08-18 CURSOR — Legal clickwrap + mandatory data-pool + keep multi-user
+
+Owner cut 2026-08-17 items 9–11.  Versioned dismissible legal notice (clickwrap +
+desk sentence + Green/Red prompt).  Data-pool is accept-or-cannot-use; unset users
+do not silently share.  `/welcome` stays on; a second `ALLOWED_EMAILS` address
+stays isolated.  No Stripe/IAP.  PR **#2815**.  Branch `cursor/legal-clickwrap-data-pool-1016`.
+`LegalConsentSheet` is inlined in `SocraticTradeApp.swift` so the committed
+`.pbxproj` compiles it.  Rollout: `docs/rollouts/2026-08-18-legal-clickwrap-data-pool.md`.
+CI green on `1b9e84ca` (iOS + verify-hosted).  User-visible copy is product
+language only (no remotes/surfaces/`ALLOWED_EMAILS`/Infisical asides).
+## 2026-08-18 CURSOR — iOS UX owner cut (IRA wash-sale, copy, bidirectional caps)
+
+Owner cut 2026-08-17 ~8:45pm CT; live Guardrails screenshot confirmed 2026-08-18.  IRA/Roth no longer shows Wash-Sale Guard yes or Handling auto.  `__rotate__` displays as lowercase “rotate models”.  Swept every user-facing iOS string: no `/api/policy`, snapshot, phone-safe, `policy.patch`, console-only, APNs/SSE/sandbox, or dunder tokens.  Ask-First ↔ Autopilot and raise/lower / % NAV caps on the phone.  Typed `AUTOPILOT` / live `CONFIRM` only.  Notes for Jay stay in the PR.  Did not touch reserved PRs.  `xcodebuild` not on this VM.
+
+PR **#2825**.  Branch `cursor/ios-ux-owner-cut-bdae`.  lint + tsc + `npm run build` passed.  Full vitest hung on unrelated env/network failures (no JS product files in this PR).  `xcodebuild` not available on this VM.  Rollout: `docs/rollouts/2026-08-18-ios-ux-owner-cut.md`.
+
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+## 2026-08-18 CURSOR — rag-embed soft-degrade (no 503 / no autonomy halt)
+
+One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify restarted Docker, and the boot interlock re-halted Green/Red.  `rag-embed` and `rag-rerank` now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay critical.  A thrown document-embed batch skips that batch and continues later ones; a thrown query embed returns empty retrieval.  Rebased onto `6429d984` (#2800 + #2829 kept).  Did not steal #2792/#2798/#2800/#2794.
+
+PR **#2812**.  Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+
+## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
+
+Owner: $230.44 of $300 trial left, 12 days; likely Builder ~Aug 30; keep using Pinecone, do not prune.  Question: is more storage better for Green/Red, or is condensing the corpus?  **Hybrid: condense-first for Pinecone, store-more locally.**  Builder is 10 GB / 5M WU (hard cap), not unlimited raw 10-Ks.  Do not flip write-class.  Do not raise the 2.5M fuse (pacer already ~4.8M/day).  FilingAPI stays #2792.
+
+PR on `cursor/pinecone-store-vs-condense-ce2b`.  Audit: `docs/audits/2026-08-18-pinecone-store-vs-condense.md`.  Rollout: `docs/rollouts/2026-08-18-pinecone-store-vs-condense.md`.
+
+## 2026-08-17 CURSOR — Blind-spots audit (report-only)
+
+Red-team panel across legal/fintech, product identity, a11y (beyond #2795), i18n, DX, tests, observability, vendor/cost, docs, and ops calendars.  Live `gh` snapshot so FilingAPI / Pinecone 2M / PWA / ASOF claims stay current.  Register: `docs/audits/2026-08-17-blind-spots.md`.  Branch `cursor/blind-spots-audit-299e`.  Rollout: `docs/rollouts/2026-08-17-blind-spots.md`.
+
+## 2026-08-17 CURSOR — Purchases / Stripe / StoreKit audit (report only)
+
+Read-only.  ST has no user-facing SKU: no Stripe SDK/routes/webhooks, no StoreKit/IAP, no paywall.  Access is allowlist + mailto.  App Review 3.1.1 PASS (no web checkout inside iOS).  PWA leftover is not a live surface.  No implementation PR — do not invent a money path.  CT already owns fleet Stripe + IAP.
+
+PR **#2809**.  Branch `cursor/purchases-stripe-storekit-audit-f1c0`.  Audit:
+`docs/audits/2026-08-17-purchases-stripe-storekit.md`.  Rollout:
+`docs/rollouts/2026-08-17-purchases-stripe-storekit-audit.md`.
+
+## 2026-08-17 CURSOR — Cross-app coordination audit (report only)
+
+Portfolio audit of ST / CT / UM / CTS / DealDex / fleet protocols.  No code
+fixes.  Pins currently match CTS `v2.5.2`, but ST's pin-check still reads CT
+`app/package.json` dependencies (CT is vendor-only now) so the gate is a
+no-op.  ST trades if CT or UM dies; the three Coolify apps share Hetzner
+fate; CT Senate ingest still needs the Mac.  DealDex is protocol-only.
+
+PR **#2802**.  Branch `cursor/cross-app-coordination-audit-1212`.  Audit:
+`docs/audits/2026-08-17-cross-app-coordination.md`.  Rollout:
+`docs/rollouts/2026-08-17-cross-app-coordination-audit.md`.
+## 2026-08-17 CURSOR — Pinecone daily-fuse deadlock (not a spent trial)
+
+Owner correction after the 4:32–4:38pm CT cards.  Pinecone should still be writing.  The live
+card was **used 0 of 15 estimated WUs, attempted 28, skipped 1** plus Siliconflow **0 or 1 of
+1 texts** — a deadlock, not the 2.5M daily fuse and not the Standard trial wall.  Local
+month-to-date WUs were treated as Pinecone's bill; remaining lifetime WUs collapsed the daily
+fuse below one document, so used stayed 0.  "Expected ingest park" was agent slang for that
+skip.  It was wrong.
+
+HTTP 429 on a backup lane is not a success and not a reason to abandon the source.  Cboe is
+serving ^VIX; Yahoo stays in the cascade for when Cboe dies.  Do not re-probe Yahoo while
+Cboe is up (that is what burns the backup into 429s).
+
+There is no OpenRouter files-endpoint prepaid-minimum outage.  ST `/api/health`
+`openrouterCredits.ok` is true (threshold $3 only).  Owner has >$50 on OpenRouter.  CT
+autopilot is still halted on a **stored** `error_class:billing` string — leftover, not a
+live balance check.  Fix that in Congress.Trade; do not repeat the prepaid line.
+
+Branch `cursor/pinecone-write-deadlock-64c1`.  Rollout: `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
+
+## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
+
+Owner: the app thinks monthly Pinecone write units are at the free-tier limit, and Pushover
+is still firing for Litestream plus leftover health noise.  Live Pinecone is a Standard trial
+(usage-billed ~$300 through 2026-08-30).  It does **not** have the Starter 2M WU / month cap.
+
+A leftover `pinecone:wuExhaustedUntil` marker (or a 2M-shaped 429) parked every vector write
+until the 1st of next month.  The gate runs before any upsert, so success could never clear
+it.  A leftover `PINECONE_MONTHLY_WU_BUDGET=2000000` (or the post-trial 1.6M snap) also paged
+the monthly pace guard.  Litestream L0–L3/L9 were already advancing; the remaining page was a
+healed `compaction failed` line still in the log tail.  Public `/api/health` still listed
+retired FilingAPI as `ok: false`.
+
+Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
+`docs/rollouts/2026-08-17-pinecone-trial-wu-alerts.md`.
 
 ## 2026-08-17 CURSOR — Settings search in the command palette (#2558)
 

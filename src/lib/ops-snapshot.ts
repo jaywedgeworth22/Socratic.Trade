@@ -8,6 +8,9 @@ import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { computeAccountTradingLiveness } from "./trading-liveness";
 import { getLastEnrichmentCoverageReport } from "./enrichment-coverage";
+import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
+import { pineconeTrialState } from "./pinecone-trial-window";
+import { pineconeWuExhaustedUntil } from "./pinecone-wu-breaker";
 import { isWorkingOrderState } from "./broker-held-orders";
 import { isLiveOrderState } from "./broker-side";
 import type { EquityOrder } from "./types";
@@ -142,6 +145,22 @@ export interface OpsSnapshot {
   } | null;
   /** Task brain: per-lane aggregates from the unified task_journal cron ledger (24h lookback). */
   taskJournal?: import("./db-task-journal").TaskJournalLaneSummary[];
+  /** App-recorded Pinecone write fuse + trial window.  Not Pinecone's bill. */
+  pineconeIngest?: {
+    monthToDateWriteUnits: number;
+    wuExhaustedUntil: string | null;
+    trial: {
+      active: boolean;
+      phase: string;
+      mode: string;
+      remainingUsd: number;
+      spentUsd: number;
+      remainingDays: number;
+      effectiveDailyWriteUnits: number;
+      effectiveTextsPerDay: number;
+      localMtdUntrusted: boolean;
+    };
+  };
   users: OpsUserSnapshot[];
 }
 
@@ -395,18 +414,38 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     for (const summary of summaries) {
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
       if (!isGlobal) continue;
-      // Retired vendors stay on Connections as muted OFF. Do not list them as live
-      // dependency failures (FilingAPI leftover 401s after the 2026-08-17 retire).
       if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       dependencies[summary.service] = {
-        // Match /api/health: only a hard 5-streak fails `ok`. Soft "no success this
-        // hour" / expected-limit 429s are degraded signal, not an outage.
+        // Hard 5-streak only.  Soft 429 / "no success this hour" is degraded, not down.
         ok: !isHardStoppedHealthSummary(summary),
         reason: summary.stoppedReason,
         lastFailure: summary.lastFailureError
       };
     }
   } catch {}
+
+  let pineconeIngest: OpsSnapshot["pineconeIngest"];
+  try {
+    const mtd = pineconeMonthToDateWriteUnits();
+    const trial = pineconeTrialState(Date.now(), mtd);
+    pineconeIngest = {
+      monthToDateWriteUnits: mtd,
+      wuExhaustedUntil: pineconeWuExhaustedUntil(),
+      trial: {
+        active: trial.active,
+        phase: trial.phase,
+        mode: trial.mode,
+        remainingUsd: trial.remainingUsd,
+        spentUsd: trial.spentUsd,
+        remainingDays: trial.remainingDays,
+        effectiveDailyWriteUnits: trial.effectiveDailyWriteUnits,
+        effectiveTextsPerDay: trial.effectiveTextsPerDay,
+        localMtdUntrusted: trial.localMtdUntrusted
+      }
+    };
+  } catch {
+    pineconeIngest = undefined;
+  }
 
   let storage: Record<string, unknown> | null = null;
   try {
@@ -472,6 +511,7 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     storage,
     enrichmentCoverage,
     taskJournal: getTaskJournalSummary(new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString()),
+    pineconeIngest,
     users
   };
 }

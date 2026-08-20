@@ -775,6 +775,34 @@ agent: web, PWA, iOS UI, **every App Store Connect field** (description,
 promotional text, What's New, **App Review notes**, **IAP / subscription
 review notes**, subscription localization descriptions), push/email, help,
 privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
-Store listing copy must be accurate (corpus, trial length).  Canonical:
-`/Users/jay/apps/AGENT-SYNC.md` § Two spaces and `/Users/jay/apps/FLEET-UI-COPY.md`.
+Store listing copy must be accurate (corpus, trial length).
+
+**Strengthened 2026-08-19 (owner, in-conversation):** not limited to product copy —
+covers every paragraph an agent writes anywhere, including **chat replies to the
+owner**, PR titles/bodies, commit messages, Slack posts to #agent-sync, Apple Notes,
+effort-board rows, rollout notes, review reports, and design docs.  If it's prose a
+human reads, it gets two spaces.
+
+**HOW to emit it so the owner can actually SEE it (verified 2026-08-19).**  The gap is not
+a matter of intent — it has to survive the renderer:
+
+- **Agent chat replies** (Claude Code terminal / desktop transcript): use the HTML entity
+  `&nbsp;` right after the period, then a normal space — `Sentence one.&nbsp; Sentence two.`
+  The markdown renderer expands the entity, so the double gap is visible.
+- **Files** — repo docs, commit messages, PR titles/bodies, Slack posts, Apple Notes,
+  effort-board rows, code comments: two **literal** spaces.  These are read as source or by
+  renderers that preserve them; an entity would show up as literal text.
+
+What does NOT work, all tested live: two literal spaces in chat (GitHub-flavored markdown
+collapses the run when rendering); a raw U+00A0 character in chat (normalized away in the view
+even though copy-paste shows two spaces — do not be fooled by copy-paste); app settings (none
+exist: `outputStyle` changes tone only, `--output-format` is headless `claude -p` only,
+`axScreenReader` only drops borders); patching the client (compiled binary + signed app; breaks
+code signing, wiped by auto-update — do not attempt).
+
+Process lesson: when an instruction appears not to take effect, diagnose the **rendering**
+layer between you and the reader — and ask what they see on screen — before restating a promise
+to comply.
+
+Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Two spaces and `/Users/jay/apps/FLEET-UI-COPY.md`.
 

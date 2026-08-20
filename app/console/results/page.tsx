@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
+import { realizedPnlNetOfEstimatedTax } from "@/lib/tax";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleApiError, fetchAccountPerformance, fetchLookaheadAudit, fetchSignalHealth, type LookaheadAuditResponse, type SignalHealthResponse } from "../lib/api";
 import {
@@ -123,6 +124,10 @@ export default function ResultsPage() {
 
   const perf = snapshot.performance;
   const tax = snapshot.tax;
+  const subtractFromResults = Boolean(snapshot.policy.taxSettings?.subtractFromResults);
+  const estimatedTaxLiability = tax?.estimatedTaxLiability;
+  const netRealized = (realized?: number) =>
+    realizedPnlNetOfEstimatedTax(realized, estimatedTaxLiability, subtractFromResults);
   // Real multi-account comparison: every OTHER connected account (any environment) the
   // user could pick, never a hardcoded paper/live pairing of the same account's own data.
   const otherAccounts: ConnectedAccount[] = snapshot.connectedAccounts.filter((a) => a.id !== reality.account?.id);
@@ -140,22 +145,24 @@ export default function ResultsPage() {
     <BucketCard
       title="Paper Account"
       tone="paper"
-      realized={perf?.paperRealizedPnl}
+      realized={netRealized(perf?.paperRealizedPnl)}
       unrealized={perf?.paperUnrealizedPnl}
       winRate={perf?.paperWinRate}
       avgReturn={perf?.paperAverageReturnPct}
       curve={perf?.paperEquityCurve ?? []}
+      netOfTax={subtractFromResults}
     />
   );
   const liveBucket = (
     <BucketCard
       title="Brokerage Account"
       tone="live"
-      realized={perf?.liveRealizedPnl}
+      realized={netRealized(perf?.liveRealizedPnl)}
       unrealized={perf?.liveUnrealizedPnl}
       winRate={perf?.liveWinRate}
       avgReturn={perf?.liveAverageReturnPct}
       curve={perf?.liveEquityCurve ?? []}
+      netOfTax={subtractFromResults}
     />
   );
 
@@ -944,7 +951,8 @@ function BucketCard({
   unrealized,
   winRate,
   avgReturn,
-  curve
+  curve,
+  netOfTax = false
 }: {
   title: string;
   tone: "paper" | "live";
@@ -953,13 +961,16 @@ function BucketCard({
   winRate?: number;
   avgReturn?: number;
   curve: Array<{ timestamp: string; equity: number; source: "live" | "paper" }>;
+  netOfTax?: boolean;
 }) {
   const hasAny = curve.length > 0 || (realized ?? 0) !== 0 || (unrealized ?? 0) !== 0;
   return (
     <Card title={title}>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <div className="con-card-title">Realized P&amp;L</div>
+          <div className="con-card-title" title={netOfTax ? "Realized P&L minus estimated tax at your configured short- and long-term rates." : undefined}>
+            Realized P&amp;L{netOfTax ? " (net of est. tax)" : ""}
+          </div>
           <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
             {typeof realized === "number" ? <SignedText value={realized}>{fmtSignedMoney(realized)}</SignedText> : <Dash />}
           </div>
@@ -1048,21 +1059,37 @@ function ScorecardCard({
 function TaxBlock() {
   const { snapshot } = useConsoleData();
   const tax = snapshot?.tax;
+  const subtractFromResults = Boolean(snapshot?.policy.taxSettings?.subtractFromResults);
   if (!tax) return null;
 
   const ira = tax.settings.taxationType === "roth_ira" || tax.settings.taxationType === "traditional_ira";
+  const shortTermDisplay = subtractFromResults
+    ? realizedPnlNetOfEstimatedTax(tax.shortTermRealized, tax.estimatedShortTermTax, true)
+    : tax.shortTermRealized;
+  const longTermDisplay = subtractFromResults
+    ? realizedPnlNetOfEstimatedTax(tax.longTermRealized, tax.estimatedLongTermTax, true)
+    : tax.longTermRealized;
 
   return (
     <div className="flex flex-col gap-4 text-[length:var(--con-fs-sm)]">
+      {subtractFromResults && !ira && (
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Realized figures below are net of estimated tax at your configured rates (same toggle as Guardrails → Tax).
+        </p>
+      )}
       {ira && (
         <p className="text-[color:var(--con-muted)]">
-          This is an IRA — no yearly taxes on trades here, so rates are zeroed. A loss realized in a <em>taxable</em>{" "}
-          account still locks rebuys of that symbol across all your accounts, including this one.
+          This is an IRA — no yearly taxes on trades here, so rates are zeroed and loss-harvest
+          candidates are not shown. A loss realized in a <em>taxable</em> account still locks rebuys
+          of that symbol across all your accounts, including this one.
         </p>
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label={`Short-term realized ${tax.taxYear}`} value={fmtSignedMoney(tax.shortTermRealized)} />
-        <Stat label="Long-term realized" value={fmtSignedMoney(tax.longTermRealized)} />
+        <Stat
+          label={`Short-term realized ${tax.taxYear}${subtractFromResults && !ira ? " (net)" : ""}`}
+          value={fmtSignedMoney(shortTermDisplay)}
+        />
+        <Stat label={`Long-term realized${subtractFromResults && !ira ? " (net)" : ""}`} value={fmtSignedMoney(longTermDisplay)} />
         <Stat label="Disallowed wash-sale loss" value={fmtMoney(tax.disallowedWashSaleLoss)} />
         <Stat label="Estimated tax liability" value={fmtMoney(tax.estimatedTaxLiability)} sub={`ST ${fmtMoney(tax.estimatedShortTermTax)} · LT ${fmtMoney(tax.estimatedLongTermTax)}`} />
       </div>

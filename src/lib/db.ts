@@ -3129,6 +3129,27 @@ const MIGRATIONS: Migration[] = [
           ON ark_holdings(fund, as_of);
       `);
     }
+  },
+  {
+    version: 84,
+    name: "ingested_accessions_pinecone_write_class",
+    up: (database) => {
+      const hasTable = database
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ingested_accessions'")
+        .get();
+      if (!hasTable) return;
+      const cols = database.prepare("PRAGMA table_info(ingested_accessions)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "pinecone_write_class")) {
+        database.exec(
+          "ALTER TABLE ingested_accessions ADD COLUMN pinecone_write_class TEXT NOT NULL DEFAULT 'full-body'"
+        );
+      }
+      if (!cols.some((c) => c.name === "pinecone_vector_count")) {
+        database.exec(
+          "ALTER TABLE ingested_accessions ADD COLUMN pinecone_vector_count INTEGER NOT NULL DEFAULT 0"
+        );
+      }
+    }
   }
 ];
 
@@ -4015,6 +4036,8 @@ function migrate(database: Database.Database): void {
       ticker TEXT NOT NULL DEFAULT '',
       indexed_at TEXT NOT NULL,
       chunk_count INTEGER NOT NULL DEFAULT 0,
+      pinecone_write_class TEXT NOT NULL DEFAULT 'full-body',
+      pinecone_vector_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (accession, doc_type)
     );
     CREATE TABLE IF NOT EXISTS document_chunks (

@@ -43,7 +43,7 @@ import { safeTopCandidates } from "./lib/evidence-rows";
 import { destinationLabel } from "./components/nav";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
-import { isExecutedStatus, isNotPlacedStatus, sideVerb } from "./lib/action-verbs";
+import { isExecutedStatus, isNotPlacedStatus, isProposalRowApprovable, proposalChipTone, sideVerb } from "./lib/action-verbs";
 import { approveProposal, LiveConfirmationRequiredError } from "./lib/api";
 import { Sheet } from "./ui/sheet";
 import { useToast } from "./ui/toast";
@@ -74,10 +74,21 @@ export default function ConsoleHomePage() {
     const primaryDecision = snapshot.socratic?.decisions?.[0];
     const primaryTrace = latest?.proposals?.[0];
     const primaryProposal = primaryTrace?.proposal ?? snapshot.pendingProposals[0]?.proposal;
-    const latestProposals =
+    const traceRows =
       latest?.proposals?.slice(0, 5).map((item) =>
-        decisionFromProposal(`${latest?.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
-      ) ?? snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
+        decisionFromProposal(
+          item.id ?? `${latest?.runId}-${item.proposal.symbol}-${item.status}`,
+          item.proposal,
+          item.status,
+          item.reasons,
+          latest.createdAt,
+          Boolean(item.id) && item.status === "proposed"
+        )
+      ) ?? [];
+    const latestProposals =
+      traceRows.length > 0
+        ? traceRows
+        : snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
     const previousTrades = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
     const frameworkRows = deriveFrameworkRows(snapshot);
     const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
@@ -596,6 +607,7 @@ type DecisionRowData = {
   title?: string;
   confidence?: number;
   at?: string;
+  approvable?: boolean;
   proposal?: any;
   decision?: any;
 };
@@ -767,11 +779,19 @@ function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
     confidence: decision.confidenceScore,
     at: decision.createdAt,
-    decision
+    decision,
+    approvable: false
   };
 }
 
-function decisionFromProposal(id: string, proposal: TradeProposal, status: string, reasons: string[] = [], at?: string): DecisionRowData {
+function decisionFromProposal(
+  id: string,
+  proposal: TradeProposal,
+  status: string,
+  reasons: string[] = [],
+  at?: string,
+  approvable = false
+): DecisionRowData {
   return {
     id,
     symbol: proposal.symbol,
@@ -782,14 +802,15 @@ function decisionFromProposal(id: string, proposal: TradeProposal, status: strin
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
     confidence: proposal.confidenceScore,
     at,
-    proposal
+    proposal,
+    approvable
   };
 }
 
 function decisionFromPending(pending: PendingProposal): DecisionRowData {
   const proposal = pending.proposal;
   return {
-    ...decisionFromProposal(pending.id, proposal, "pending", [], pending.createdAt),
+    ...decisionFromProposal(pending.id, proposal, "pending", [], pending.createdAt, true),
     size: pending.estimatedNotional ? fmtMoney(pending.estimatedNotional) : proposal.dollarAmount ? fmtMoney(proposal.dollarAmount) : EM_DASH
   };
 }
@@ -1008,7 +1029,7 @@ function ProposalRow({
     }
   };
 
-  const isPendingOrFailed = row.status === "pending" || row.status === "failed" || row.status === "blocked";
+  const showApprove = isProposalRowApprovable(row.approvable, row.status);
   const evidenceRows = deriveEvidenceRows(snapshot, latest, decision);
 
   let combinedStatus = "";
@@ -1022,23 +1043,27 @@ function ProposalRow({
     const sideNoun = row.verb === "Sell" ? "Sale" : row.verb;
     combinedStatus = `${sideNoun} ${statusText}`;
   }
-  const chipTone = row.status === "blocked" || row.status === "failed" || row.status === "not_placed" ? "warn" : row.status === "pending" ? "accent" : "pos";
+  const chipTone = proposalChipTone(row.status);
 
   return (
     <>
-      <div 
-        className="cursor-pointer hover:bg-[color:var(--con-surface-3)] transition-colors rounded-md p-2.5 flex items-center justify-between gap-2 border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)]"
-        onClick={() => setOpen(true)}
-      >
-        <div className="flex items-center gap-3">
+      <div className="flex items-stretch gap-0 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)]">
+        <div className="flex shrink-0 items-center px-2.5 py-2.5">
           {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} />}
+        </div>
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded-r-md p-2.5 text-left transition-colors hover:bg-[color:var(--con-surface-3)] focus-visible:bg-[color:var(--con-surface-3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--con-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--con-surface-2)]"
+          onClick={() => setOpen(true)}
+          aria-label={`View ${row.symbol} proposal details`}
+        >
           <Chip tone={chipTone}>
             {combinedStatus}
           </Chip>
-        </div>
-        <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] flex items-center gap-1 whitespace-nowrap">
-          View details <ArrowRight size={12} />
-        </div>
+          <span className="flex items-center gap-1 whitespace-nowrap text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            View details <ArrowRight size={12} />
+          </span>
+        </button>
       </div>
       
       <Sheet open={open} onClose={() => setOpen(false)} title={<span className="flex items-center gap-1.5"><Brain size={13} /> Proposal Details</span>} wide>
@@ -1068,7 +1093,7 @@ function ProposalRow({
               </div>
             </div>
           )}
-          {isPendingOrFailed && (
+          {showApprove && (
             <div className="border-t border-[color:var(--con-line)] pt-4 mt-2 flex flex-col gap-2">
               {liveConfirm && (
                 <div className="text-[length:var(--con-fs-sm)] p-3 bg-[color:var(--con-warn-soft)] border border-[color:var(--con-warn-border)] rounded-md">

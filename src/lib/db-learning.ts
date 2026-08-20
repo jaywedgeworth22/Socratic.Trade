@@ -1060,13 +1060,34 @@ export function hasIngestedAccession(accession: string, docType: string): boolea
 }
 
 /** Record a successfully-ingested accession so it is never re-embedded. */
-export function insertIngestedAccession(accession: string, docType: string, ticker: string, chunkCount: number): void {
+export function insertIngestedAccession(
+  accession: string,
+  docType: string,
+  ticker: string,
+  chunkCount: number,
+  extras?: { pineconeWriteClass?: string; pineconeVectorCount?: number }
+): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
       "INSERT OR IGNORE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count) VALUES (?, ?, ?, ?, ?)"
     )
     .run(accession, docType, ticker, now, chunkCount);
+  if (extras && (extras.pineconeWriteClass !== undefined || extras.pineconeVectorCount !== undefined)) {
+    const writeClass = extras.pineconeWriteClass ?? "full-body";
+    const vectorCount = extras.pineconeVectorCount ?? 0;
+    try {
+      getDb()
+        .prepare(
+          `UPDATE ingested_accessions
+           SET pinecone_write_class = ?, pinecone_vector_count = ?
+           WHERE accession = ? AND doc_type = ?`
+        )
+        .run(writeClass, vectorCount, accession, docType);
+    } catch {
+      // Columns land in migration 84; older test DBs that skipped versioned migrate stay compatible.
+    }
+  }
 
   // Preserve the original SEC filed_at/accepted_at from the scraper (if the row already
   // exists) rather than overwriting every field via insertSecFiling, which sets both
@@ -1625,6 +1646,8 @@ export function insertDocumentChunkFts(
  *  group of them. */
 const FTS_BATCH_MAX_ROWS = 40;
 const FTS_BATCH_MIN_ROWS = 1;
+/** First group is one row so a slow 10-K tokenisation cannot pin 8 rows (6–12s) before a yield. */
+const FTS_BATCH_START_ROWS = 1;
 /** Keep in lockstep with `FTS_MIRROR_SYNC_STRETCH_BUDGET_MS` in fts-mirror-bound.ts. */
 export const FTS_BATCH_STRETCH_BUDGET_MS = 250;
 
@@ -1659,7 +1682,7 @@ export async function insertDocumentChunkFtsBatch(
       ins.run(row.contentHash, row.symbol, row.source, row.accession, row.text);
     }
   });
-  let groupSize = 8;
+  let groupSize = FTS_BATCH_START_ROWS;
   let i = 0;
   while (i < rows.length) {
     const group = rows.slice(i, i + groupSize);

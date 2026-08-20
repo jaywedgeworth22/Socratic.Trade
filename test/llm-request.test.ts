@@ -9,6 +9,9 @@ import {
   reasoningCapabilityForModel,
   normalizeReasoningEffortForModel,
   strategyLlmTimeoutMs,
+  greenFailoverExhaustedSuffix,
+  isFailoverLlmStatus,
+  isRetryableLlmStatus,
   llmFetchCapturing,
   ALL_LLM_REASONING_EFFORTS,
   LLM_MODEL_ROTATION_SENTINEL,
@@ -398,5 +401,26 @@ describe("llm-request — llmFetchCapturing (latency capture, never sever a slow
     expect(outcomes[0]!.durationMs).toBeGreaterThanOrEqual(20);
     expect(outcomes[0]!.response).toBeDefined();
     expect(await outcomes[0]!.response!.text()).toBe("late-reply");
+  });
+});
+
+describe("isFailoverLlmStatus", () => {
+  it("fails over 404/403/400 to the next model without treating them as transient retries", () => {
+    expect(isRetryableLlmStatus(404)).toBe(false);
+    expect(isRetryableLlmStatus(403)).toBe(false);
+    expect(isRetryableLlmStatus(400)).toBe(false);
+    expect(isFailoverLlmStatus(404)).toBe(true);
+    expect(isFailoverLlmStatus(403)).toBe(true);
+    expect(isFailoverLlmStatus(400)).toBe(true);
+    expect(isFailoverLlmStatus(429)).toBe(true);
+    expect(isFailoverLlmStatus(401)).toBe(false);
+  });
+});
+
+describe("greenFailoverExhaustedSuffix", () => {
+  it("is empty until more than one stored Green call actually ran", () => {
+    expect(greenFailoverExhaustedSuffix(0)).toBe("");
+    expect(greenFailoverExhaustedSuffix(1)).toBe("");
+    expect(greenFailoverExhaustedSuffix(3)).toBe("  Failover chain exhausted (3 Green Team endpoints).");
   });
 });

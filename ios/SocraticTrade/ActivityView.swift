@@ -23,7 +23,7 @@ private struct DailyActivityCard: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SectionHeading("Today", subtitle: "America/New_York trading-day boundary")
+            SectionHeading("Today", subtitle: "this trading day (New York)")
             LazyVGrid(columns: columns, spacing: 10) {
                 MetricTile(title: "All orders", value: "\(snapshot.dailyStats.orderCount)")
                 MetricTile(title: "Opening orders", value: "\(snapshot.dailyStats.openingOrderCount)")
@@ -33,7 +33,7 @@ private struct DailyActivityCard: View {
                     detail: dailyNotionalDetail(snapshot)
                 )
                 MetricTile(
-                    title: "Command backlog",
+                    title: "In Progress",
                     value: "\(snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running)",
                     detail: "\(snapshot.readiness.commandBacklog.queued) queued · \(snapshot.readiness.commandBacklog.running) running"
                 )
@@ -157,12 +157,12 @@ private struct CommandActivitySection: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SectionHeading("Commands", subtitle: "Audited mobile command history")
+            SectionHeading("Recent Actions", subtitle: "what you asked this app to do")
             if commands.isEmpty {
                 EmptyStateCard(
-                    title: "No mobile commands",
-                    message: "Commands submitted from this app or the mobile web surface will appear here.",
-                    systemImage: "terminal"
+                    title: "No Recent Actions",
+                    message: "Actions you take here will show up here.",
+                    systemImage: "list.bullet"
                 )
             } else {
                 ForEach(commands) { command in
@@ -199,13 +199,6 @@ private struct CommandActivityRow: View {
                         .font(.appFootnote)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(command.id.prefix(8)))
-                        // Deliberately NOT Lato: this row is column-aligned figures, and Lato
-                        // ships no monospaced face, so `.monospaced()` on it would silently
-                        // drop back to proportional and break the alignment this line exists
-                        // for.  The system mono face stays.
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
                 }
                 if let error = command.error, !error.isEmpty {
                     Label(error, systemImage: "exclamationmark.triangle")

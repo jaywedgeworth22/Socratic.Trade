@@ -227,7 +227,14 @@ export default function WelcomePage() {
         <footer className="border-t border-line mt-8">
           <div className="mx-auto max-w-5xl px-6 py-8 flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-between">
             <p className="text-xs text-faint">
-              Not investment advice. Trading involves risk of loss.
+              Not investment advice.  You set authority.{" "}
+              <a href="/terms-and-conditions" className="underline underline-offset-2 hover:text-muted">
+                Terms
+              </a>
+              {" · "}
+              <a href="/privacy-policy" className="underline underline-offset-2 hover:text-muted">
+                Privacy
+              </a>
             </p>
             <p className="text-xs text-faint">
               &copy; 2026 Socratic Trade &middot;{" "}

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Full policy surface: read the current rulebook, then tighten only.
+/// Full policy surface: read the current rulebook, then edit authority and caps.
 struct GuardrailsView: View {
     @EnvironmentObject private var store: MobileStore
 
@@ -14,7 +14,7 @@ struct GuardrailsView: View {
             universeCard(snapshot)
             if let fullPolicy {
                 extraPolicyCard(fullPolicy)
-                taxCard(fullPolicy.taxSettings)
+                taxCard(fullPolicy.taxSettings, snapshot: snapshot)
             }
             if let error = loadError {
                 InlineErrorBanner(
@@ -62,7 +62,7 @@ struct GuardrailsView: View {
     private func snapshotPolicyCard(_ snapshot: MobileSnapshot) -> some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Current Policy", subtitle: "values from the latest snapshot")
+                SectionHeading("Current Policy", subtitle: "this account's current rules")
                 policyRow("Horizon", AppFormat.policyHorizonValue(snapshot.policy.holdingHorizon))
                 policyRow("Cadence", AppFormat.cadenceMinutesValue(snapshot.policy.runCadenceMinutes))
                 policyRow("Extended Hours", DeskCopy.yesNo(snapshot.policy.runDuringExtendedHours))
@@ -80,13 +80,9 @@ struct GuardrailsView: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading("Universe")
-                policyRow("Indices", DeskCopy.joinedList(snapshot.policy.includedIndices))
+                policyRow("Indices", DeskCopy.joinedIndexList(snapshot.policy.includedIndices))
                 policyRow("Extra Symbols", DeskCopy.joinedList(snapshot.policy.additionalSymbols))
                 policyRow("Blocklist", DeskCopy.joinedList(snapshot.policy.blocklist))
-                Text("Universe edits stay on the web Strategy page.  The phone can tighten risk, not widen the book.")
-                    .font(.appCaption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -94,9 +90,9 @@ struct GuardrailsView: View {
     private func extraPolicyCard(_ policy: FullPolicy) -> some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Full Rulebook", subtitle: "additional fields from /api/policy")
-                policyRow("Green Team", policy.llmModel?.lowercased() ?? "—")
-                policyRow("Red Team", policy.redTeamLlmModel?.lowercased() ?? "—")
+                SectionHeading("Stops and Models")
+                policyRow("Green Team", DeskCopy.modelSeatValue(policy.llmModel, fallbacks: policy.llmFallbackModels ?? []))
+                policyRow("Red Team", DeskCopy.modelSeatValue(policy.redTeamLlmModel, fallbacks: policy.llmFallbackModels ?? []))
                 policyRow("Stop Loss", DeskCopy.percentPoints(policy.stopLossPct))
                 policyRow("Trailing Stop", DeskCopy.percentPoints(policy.trailingStopPct))
                 policyRow("Short Stop", DeskCopy.percentPoints(policy.shortStopLossPct))
@@ -107,14 +103,36 @@ struct GuardrailsView: View {
     }
 
     @ViewBuilder
-    private func taxCard(_ tax: PolicyTaxSettings?) -> some View {
+    private func taxCard(_ tax: PolicyTaxSettings?, snapshot: MobileSnapshot) -> some View {
         if let tax {
+            let accountTaxation = snapshot.readiness.activeConnectedAccount?.taxationType
+            let capabilityType = snapshot.readiness.activeConnectedAccount?.capabilities?.accountType
+            let taxation = DeskCopy.resolvedTaxationType(
+                accountTaxation: accountTaxation,
+                capabilityType: capabilityType,
+                policyTaxation: tax.taxationType
+            )
+            let isIra = DeskCopy.isIraAccount(
+                accountTaxation: accountTaxation,
+                capabilityType: capabilityType,
+                policyTaxation: tax.taxationType
+            )
             AppCard {
                 VStack(alignment: .leading, spacing: 10) {
                     SectionHeading("Tax Settings", subtitle: "estimates only — not tax advice")
-                    policyRow("Account Type", AppFormat.accountTypeWord(tax.taxationType ?? ""))
-                    policyRow("Wash-Sale Guard", DeskCopy.yesNo(tax.washSaleGuard))
-                    policyRow("Wash-Sale Handling", (tax.washSaleHandling ?? "—").replacingOccurrences(of: "_", with: " ").lowercased())
+                    policyRow("Account Type", AppFormat.accountTypeWord(taxation ?? ""))
+                    if isIra {
+                        let rows = DeskCopy.iraWashSaleRows(handling: tax.iraWashSaleHandling)
+                        policyRow("Same-Account Wash Sale", rows.sameAccount)
+                        policyRow("Cross-Account Replacement", rows.crossAccount)
+                        Text("Same-account wash sales do not apply in an IRA.  Cross-account replacement buys are ignored unless you blocked them.")
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        policyRow("Wash-Sale Guard", DeskCopy.yesNo(tax.washSaleGuard))
+                        policyRow("Wash-Sale Handling", (tax.washSaleHandling ?? "—").replacingOccurrences(of: "_", with: " ").lowercased())
+                    }
                     policyRow("Short-Term Rate", DeskCopy.percentPoints(tax.shortTermRatePct))
                     policyRow("Long-Term Rate", DeskCopy.percentPoints(tax.longTermRatePct))
                 }
@@ -126,11 +144,11 @@ struct GuardrailsView: View {
         AppCard {
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeading(
-                    "Tighten Guardrails",
-                    subtitle: "phone-safe reductions only"
+                    "Edit Guardrails",
+                    subtitle: "Ask-First, Autopilot, and caps"
                 )
                 GuardrailTighteningControls()
-                Text("Returning to Autopilot or raising a cap is done in the web console.")
+                Text("Ask-First and Autopilot both live here.  Caps can go up or down, including the % of NAV cap when that is the one that binds.")
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -159,119 +177,19 @@ struct GuardrailsView: View {
     }
 }
 
-/// Card-friendly tightening controls (the Form `GuardrailTighteningSection` stays in Settings).
+/// Card-friendly edit controls (the Form `GuardrailTighteningSection` stays in Settings).
 private struct GuardrailTighteningControls: View {
     @EnvironmentObject private var store: MobileStore
-
-    private var policy: PolicySummary? { store.snapshot?.policy }
 
     var body: some View {
         if store.serverAdvertises(PolicyTightening.commandType) {
             VStack(alignment: .leading, spacing: 10) {
-                authorityRow
-                ForEach(PolicyTightening.Cap.allCases) { cap in
-                    capRow(cap)
-                }
+                GuardrailEditRows()
             }
         } else {
-            Text("This deployment does not advertise policy.patch.")
+            Text("Policy changes are not available on this version.")
                 .font(.appSubheadline)
                 .foregroundStyle(.secondary)
         }
-    }
-
-    @ViewBuilder
-    private var authorityRow: some View {
-        let operationID = PolicyTightening.operationID("strategyAuthority")
-        if PolicyTightening.tightenedAuthority(current: policy?.strategyAuthority) != nil {
-            CommandButton(
-                "Require Approval First",
-                systemImage: "person.badge.shield.checkmark",
-                isBusy: store.isBusy(operationID),
-                isDisabled: store.isBusy(operationID) || !store.canSubmit(PolicyTightening.commandType)
-            ) {
-                Task {
-                    await store.submit(
-                        PolicyTightening.commandType,
-                        payload: PolicyTightening.authorityPayload(),
-                        operationID: operationID
-                    )
-                }
-            }
-        } else {
-            policyLabeled("Authority", AppFormat.strategyAuthorityValue(policy?.strategyAuthority))
-        }
-    }
-
-    @ViewBuilder
-    private func capRow(_ cap: PolicyTightening.Cap) -> some View {
-        let current = cap.currentValue(in: policy)
-        let competing = cap.competingPercentCap(in: policy)
-        let options = PolicyTightening.tightenedCapOptions(current: current, competingPercentCap: competing)
-        let operationID = PolicyTightening.operationID(cap.rawValue)
-
-        if store.isBusy(operationID) {
-            HStack {
-                Text(cap.menuTitle)
-                Spacer()
-                ProgressView()
-            }
-            .font(.appSubheadline)
-        } else if options.isEmpty {
-            policyLabeled(cap.title, unavailableValue(current: current, competingPercentCap: competing))
-        } else {
-            Menu {
-                ForEach(options, id: \.self) { value in
-                    Button(AppFormat.money(value)) {
-                        submit(cap, value: value, operationID: operationID)
-                    }
-                }
-            } label: {
-                HStack {
-                    Text(cap.menuTitle)
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Text(AppFormat.money(current))
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.appCaption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(minHeight: 44)
-            }
-            .disabled(!store.canSubmit(PolicyTightening.commandType))
-        }
-    }
-
-    private func submit(_ cap: PolicyTightening.Cap, value: Double, operationID: String) {
-        let policy = store.snapshot?.policy
-        guard PolicyTightening.isStillATightening(cap, value: value, in: policy) else {
-            store.error = "\(cap.title) changed while that menu was open.  Nothing was sent — reopen it to see the current limit."
-            return
-        }
-        let payload = PolicyTightening.capPayload(cap, value: value, current: cap.currentValue(in: policy))
-        Task {
-            await store.submit(
-                PolicyTightening.commandType,
-                payload: payload,
-                operationID: operationID
-            )
-        }
-    }
-
-    private func unavailableValue(current: Double?, competingPercentCap: Double?) -> String {
-        if competingPercentCap != nil { return "set as % of NAV — console only" }
-        if current == nil { return "not set — console only" }
-        return "already at the floor"
-    }
-
-    private func policyLabeled(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
-        }
-        .font(.appSubheadline)
     }
 }

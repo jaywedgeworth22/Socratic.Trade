@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved (rev 3 — review 2026-08-16, 0 open issues) |
+| Status | Approved (rev 3 — review 2026-08-16, 0 open issues).  Minimum PR A split landed 2026-08-18 (`cursor/hybrid-and-prune-7f41`); write-class still `full-body`. |
 | Date | 2026-08-16 |
 | Author | Grok (design only; no product-code change) |
 | Branch | `grok/prod-error-triage-48h` |

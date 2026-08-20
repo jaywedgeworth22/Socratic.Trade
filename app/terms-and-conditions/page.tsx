@@ -69,25 +69,32 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
     ]
   },
   {
-    title: "8. Limitation of liability",
+    title: "8. Shared market-data pool",
+    body: [
+      "Using the app requires contributing general market data — quotes, fundamentals, price history, and news pulled through your keys or broker — to a shared pool that other accepted users can read.  Personal account data (positions, orders, balances, P&L, credentials, watchlists, and strategy settings) is never pooled.",
+      "A shared research corpus may include fact-level notes you choose to contribute.  Risk rules and strategy instructions stay private and are never written to the shared corpus.  See the Privacy Policy for retention and deletion details."
+    ]
+  },
+  {
+    title: "9. Limitation of liability",
     body: [
       "To the maximum extent permitted by law, Socratic Trade and its operator are not liable for any indirect, incidental, special, consequential, or punitive damages, or any loss of profits, revenue, data, or trading losses, arising from or related to your use of the service."
     ]
   },
   {
-    title: "9. Changes to the service and these terms",
+    title: "10. Changes to the service and these terms",
     body: [
       "We may modify or discontinue the service, in whole or part, at any time. We may update these terms as the service evolves; continued use after an update constitutes acceptance of the revised terms."
     ]
   },
   {
-    title: "10. Termination",
+    title: "11. Termination",
     body: [
       "You may stop using the service and disconnect your accounts at any time. We may suspend or terminate access for violation of these terms or for any reason at our discretion."
     ]
   },
   {
-    title: "11. Contact",
+    title: "12. Contact",
     body: ["Questions about these terms: mail@jays.services."]
   }
 ];
@@ -107,7 +114,7 @@ export default function TermsAndConditionsPage() {
       <main className="mx-auto max-w-3xl px-6 py-14 space-y-10">
         <section className="space-y-3">
           <h1 className="text-3xl font-bold tracking-tight text-fg sm:text-4xl">Terms and Conditions</h1>
-          <p className="text-sm text-faint">Effective date: July 10, 2026</p>
+          <p className="text-sm text-faint">Effective date: August 19, 2026</p>
         </section>
 
         {SECTIONS.map((section) => (

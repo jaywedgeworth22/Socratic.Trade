@@ -9,7 +9,7 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
-import { applyOpenRouterClassifierEnrichment } from "../llm-call";
+import { applyOpenRouterClassifierEnrichment, applyOpenRouterProviderRouting } from "../llm-call";
 import { llmFetch, reasoningCapabilityForModel, withLlmRequestBounds } from "../llm-request";
 import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
@@ -582,6 +582,7 @@ export class OpenAILLM implements ChatLLM {
             reasoningEffort: this.reasoningEffort
           })
         : { ...baseBody, max_tokens: 1024 };
+      if (this.provider === "openrouter") applyOpenRouterProviderRouting(requestBody);
       const resp = await this.transport(
         requestBody,
         this.apiKey

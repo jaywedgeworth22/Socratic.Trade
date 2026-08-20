@@ -11,6 +11,7 @@ import {
   healthReprobeLaneSettingKey,
   usageMonitorProbeUrls,
   probeFnForService,
+  backupLanePrimaryIsServing,
 } from "../src/lib/health-lane-reprobe";
 import {
   logApiHealth,
@@ -39,6 +40,21 @@ describe("health-lane-reprobe", () => {
     } catch {
       /* ignore */
     }
+  });
+
+  it("does not treat Yahoo VIX as a probe target while Cboe is serving", () => {
+    expect(
+      backupLanePrimaryIsServing("vix-yahoo", [
+        { service: "vix-cboe", keySource: null, stoppedWorking: false },
+        { service: "vix-yahoo", keySource: null, stoppedWorking: true }
+      ])
+    ).toBe(true);
+    expect(
+      backupLanePrimaryIsServing("vix-yahoo", [
+        { service: "vix-cboe", keySource: null, stoppedWorking: true },
+        { service: "vix-yahoo", keySource: null, stoppedWorking: true }
+      ])
+    ).toBe(false);
   });
 
   it("parseKnownUnavailabilityUntil honors Retry-After and AV daily language", () => {

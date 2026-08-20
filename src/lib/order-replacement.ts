@@ -4,8 +4,10 @@ import { applyPaperExitCost } from "./execution-cost";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { isActiveBrokerOrderState } from "./broker-held-orders";
+import { auditDeduped } from "./audit-dedupe";
 import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState } from "./broker-side";
 import { listStaleLimitOrders } from "./stale-limit-orders";
+import { autoReplaceProvenanceSkipReason } from "./order-provenance";
 import { normalizeSymbol } from "./money";
 import type { BrokerGateway, ConnectedAccount, EquityOrder, EquityOrderInput, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
 
@@ -343,6 +345,21 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ?`)
           .run(errStr, new Date().toISOString(), row.id);
         audit("stale_exit_remediation_skipped_held", { orderId: originalOrder.id, symbol, side: originalOrder.side, state: originalOrder.state }, userId, input.policy.connectedAccountId);
+        throw new MarketReplacePreconditionError(errStr, 409);
+      }
+      const provenanceSkip = autoReplaceProvenanceSkipReason(originalOrder);
+      if (provenanceSkip) {
+        const errStr = provenanceSkip === "bracket_leg"
+          ? `${symbol} ${originalOrder.side} order is a bracket leg — cannot be auto-replaced with a market order.`
+          : `${symbol} ${originalOrder.side} order was not placed by the app — cannot be auto-replaced.`;
+        db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ?`)
+          .run(errStr, new Date().toISOString(), row.id);
+        audit(
+          provenanceSkip === "bracket_leg" ? "stale_exit_remediation_skipped_bracket_leg" : "stale_exit_remediation_skipped_not_app_placed",
+          { orderId: originalOrder.id, symbol, side: originalOrder.side, orderClass: originalOrder.orderClass, clientOrderId: originalOrder.clientOrderId },
+          userId,
+          input.policy.connectedAccountId
+        );
         throw new MarketReplacePreconditionError(errStr, 409);
       }
 
@@ -756,15 +773,26 @@ export async function autoRemediateStaleExitOrders(input: {
       const side = String(item.order.side ?? "").toLowerCase();
       if (side !== "sell" && side !== "cover") continue;
       if (String(item.order.state ?? "").trim().toLowerCase() === "held") continue;
-      
+
       const symbol = normalizeSymbol(item.order.symbol);
-      if (liveNeedsHuman) {
+      const provenanceSkip = autoReplaceProvenanceSkipReason(item.order);
+      if (provenanceSkip) {
         out.deferred++;
         audit(
-          "stale_exit_auto_remediation_deferred",
-          { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, reason: "live account with requireTypedConfirmation on — human replace required" },
+          provenanceSkip === "bracket_leg" ? "stale_exit_auto_remediation_skipped_bracket_leg" : "stale_exit_auto_remediation_skipped_not_app_placed",
+          { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, orderClass: item.order.orderClass, clientOrderId: item.order.clientOrderId },
           userId,
           input.policy.connectedAccountId
+        );
+        continue;
+      }
+      if (liveNeedsHuman) {
+        out.deferred++;
+        auditDeduped(
+          "stale_exit_auto_remediation_deferred",
+          { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, reason: "live account with requireTypedConfirmation on — human replace required" },
+          [userId, input.policy.accountNumber, item.order.id, "live_typed_confirm"],
+          { userId, connectedAccountId: input.policy.connectedAccountId }
         );
         continue;
       }

@@ -2,17 +2,17 @@
 
 /** Settings — GLOBAL-ONLY since the 2026-07-10 IA restructure: everything here
  *  is either ALL YOUR ACCOUNTS (event notifications, delivery channels, scan
- *  shape, learning review, typed confirmation, boot behavior — user-level,
- *  overlaid on every account), THIS BROWSER (appearance), OPERATOR (admin
- *  links), REFERENCE (glossary), or DANGER (deletion). Nothing account-scoped
- *  lives here: per-account config (models, prompt, weights) belongs to
- *  Strategy (/console/strategy) and Guardrails (/console/guardrails,
+ *  shape, learning review, daily LLM budget, typed confirmation, boot behavior
+ *  — user-level, overlaid on every account), THIS BROWSER (appearance),
+ *  OPERATOR (admin links), REFERENCE (glossary), or DANGER (deletion). Nothing
+ *  account-scoped lives here: per-account config (models, prompt, weights)
+ *  belongs to Strategy (/console/strategy) and Guardrails (/console/guardrails,
  *  including tax treatment). The one-time-setup half of the old Settings page
  *  — broker connections and API keys — split out to Connections
  *  (/console/connections) in the 2026-07-16 IA restructure; a 3-line hash
  *  safety net below redirects any old #brokers/#api-keys bookmark there.
  *  Sub-sections live in sibling modules (delivery/danger/help/sharing/
- *  learning-review) with their fetch helpers in ./lib. */
+ *  learning-review / llm-budget) with their fetch helpers in ./lib. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -36,6 +36,8 @@ import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
+import { LegalCard } from "./legal";
+import { LlmBudgetCard } from "./llm-budget";
 import { DataSharingCard } from "./sharing";
 import {
   fetchSourceFeatures,
@@ -51,7 +53,9 @@ const SETTINGS_TOC: ReadonlyArray<{ id: string; label: string }> = [
   { id: "notifications", label: "Notifications" },
   { id: "delivery", label: "Delivery" },
   { id: "sharing", label: "Sharing" },
+  { id: "legal", label: "Legal" },
   { id: "learning-review", label: "Learning review" },
+  { id: "llm-budget", label: "AI budget" },
   { id: "scan-shape", label: "Scan shape" },
   { id: "data-sources", label: "Data sources" },
   { id: "confirmation", label: "Confirmation" },
@@ -261,6 +265,9 @@ export default function SettingsPage() {
         <div id="sharing" className={SECTION_SCROLL_MT}>
           <DataSharingCard />
         </div>
+        <div id="legal" className={SECTION_SCROLL_MT}>
+          <LegalCard />
+        </div>
         {/* learningReviewEnabled/Mode/Model are USER-level policy fields
             (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
             user per day over user-level learned context, so its config overlays
@@ -269,6 +276,9 @@ export default function SettingsPage() {
             /console/approvals link here as "Model settings"). */}
         <div id="learning-review" className={SECTION_SCROLL_MT}>
           <LearningReviewCard />
+        </div>
+        <div id="llm-budget" className={SECTION_SCROLL_MT}>
+          <LlmBudgetCard />
         </div>
         <div id="scan-shape" className={SECTION_SCROLL_MT}>
           <ScanShapeCard />
@@ -692,10 +702,6 @@ function YouCard() {
 }
 
 // ── All accounts: Data sources + per-user feature knobs ──────────────────────
-//
-// Owner 2026-08-06: FMP module toggles stay visible (even if disproportionate for
-// barely-active FMP). SEC / RAG / transcript / web-source knobs that used to be
-// Infisical-only are selectable here (user override → env → default).
 
 const GROUP_ORDER = ["fmp", "sec", "web_sources", "transcripts", "rag", "enrichment"] as const;
 
@@ -776,9 +782,8 @@ function DataSourcesCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Per-user feature knobs for data planes that used to be hidden in Infisical. Values you set here
-        override server env for your account; leave unset to follow env/default. API keys and plan tiers
-        still live on{" "}
+        Turn data features on or off for your account.  Values you set here override the current
+        default; leave a row unset to keep it.  API keys and plan tiers still live on{" "}
         <a href="/console/connections#api-keys" className="font-semibold text-[color:var(--con-accent)] underline-offset-2 hover:underline">
           Connections
         </a>
@@ -832,7 +837,7 @@ function DataSourcesCard() {
                               : row.source === "server"
                                 ? "Server-level override set by the operator in Admin > Operations"
                                 : row.source === "env"
-                                  ? "Following server Infisical/env"
+                                  ? "Using the server default"
                                   : "Catalog default"
                           }
                         >

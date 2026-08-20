@@ -76,6 +76,21 @@ describe("pinecone trial window", () => {
     expect(state.effectiveMonthlyWriteUnits).toBe(0);
   });
 
+  it("ignores a leftover Starter 2M monthly budget while the Standard trial is active", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow } = await load();
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: 5_000_000,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 2_000_000
+    });
+    expect(state.active).toBe(true);
+    expect(state.mode).toBe("trial");
+    expect(state.effectiveMonthlyWriteUnits).toBe(0);
+  });
+
   it("stays full-steam at the configured 2.5M fuse when remaining credit is still above the $45 reserve", async () => {
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     const { assessPineconeTrialWindow } = await load();
@@ -142,6 +157,28 @@ describe("pinecone trial window", () => {
     });
     expect(state.mode).toBe("configured");
     expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
+  });
+
+  it("does not collapse the daily fuse to a remainder smaller than one document when local MTD says the trial is spent", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow, PINECONE_MIN_USABLE_DAILY_WU, PINECONE_MIN_USABLE_TEXTS_PER_DAY } = await load();
+    // Local counter implying ~$300 spent (75M WU at $4/M) produced the live card
+    // "used 0 of 15 estimated WUs, attempted 28, skipped 1".
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: 75_000_000,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 1,
+      configuredMonthlyWriteUnits: 2_000_000
+    });
+    expect(state.active).toBe(true);
+    expect(state.mode).toBe("trial");
+    expect(state.localMtdUntrusted).toBe(true);
+    expect(state.phase).toBe("full-steam");
+    expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
+    expect(state.effectiveDailyWriteUnits).toBeGreaterThan(PINECONE_MIN_USABLE_DAILY_WU);
+    expect(state.effectiveTextsPerDay).toBe(PINECONE_MIN_USABLE_TEXTS_PER_DAY);
+    expect(state.effectiveMonthlyWriteUnits).toBe(0);
   });
 
   it("advises the free-tier rollback once", async () => {
