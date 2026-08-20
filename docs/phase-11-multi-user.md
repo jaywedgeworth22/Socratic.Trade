@@ -384,7 +384,9 @@ set of trading controls:
   cards, watchlist and alert controls, command history, backend-source-of-truth
   messaging, and a danger-zone deletion workflow.
 - `ios/SocraticTrade/` provides a SwiftUI starter that uses the same endpoints
-  and keeps only the backend session on-device.
+  and keeps only the backend session on-device. User-visible copy is product
+  copy only — coordinator or owner notes (remotes, surfaces, Infisical, other
+  agents) belong in PRs and docs, not the iOS UI.
 - Account deletion routes reuse the audited M7 deletion lifecycle: prepare first,
   type the signed-in identity and required phrase, then confirm/sign out with
   provider-side guidance for optional OAuth grant revocation.
