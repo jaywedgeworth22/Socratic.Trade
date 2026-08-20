@@ -8,6 +8,10 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-usage-limit-alerts-${randomUUID()}.db`)}`;
+  // Cloud / host env may carry live Pushover tokens; email-fallback cases must stay hermetic.
+  vi.stubEnv("PUSHOVER_APP_TOKEN", "");
+  vi.stubEnv("PUSHOVER_ST_API_TOKEN", "");
+  vi.stubEnv("PUSHOVER_USER_KEY", "");
 });
 
 describe("usage limit alerts", () => {

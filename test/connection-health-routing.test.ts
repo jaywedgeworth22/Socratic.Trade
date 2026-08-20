@@ -30,6 +30,9 @@ describe("Connection Health & Failure Routing", () => {
     process.env.PRIMARY_USER_EMAIL = "admin@socratic.trade";
     process.env.RESEND_API_KEY = "re_test_key";
     process.env.NOTIFY_EMAIL_FROM = "alerts@socratic.trade";
+    delete process.env.PUSHOVER_APP_TOKEN;
+    delete process.env.PUSHOVER_ST_API_TOKEN;
+    delete process.env.PUSHOVER_USER_KEY;
     
     // Clear out cooldown keys from DB
     const { db } = await load();
