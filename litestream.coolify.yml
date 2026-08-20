@@ -1,14 +1,14 @@
 # Litestream config for the PRODUCTION app running on the Coolify box
-# (socratictrade.com). Continuous SQLite backup to Backblaze B2 (S3-compatible).
+# (socratictrade.com).  Continuous SQLite backup to Backblaze B2 (S3-compatible).
 #
 # Destination (2026-08-07, owner): Backblaze B2 EU Central
 #   bucket jays-socratic-trade-eu, endpoint s3.eu-central-003.backblazeb2.com
 # Cloudflare R2 (`socratic-trade-bucket` etc.) is left as a historic object set —
-# do not delete R2 until B2 restore is proven. Active replication no longer
+# do not delete R2 until B2 restore is proven.  Active replication no longer
 # writes to R2.
 #
-# 2026-08-20 (owner, in conversation): THE B2 RESTORE HAS BEEN PROVEN. That condition is
-# satisfied, so the historic R2 replica is now safe to prune. It is also the answer to
+# 2026-08-20 (owner, in conversation): THE B2 RESTORE HAS BEEN PROVEN.  That condition is
+# satisfied, so the historic R2 replica is now safe to prune.  It is also the answer to
 # "why is R2 bigger than a one-week snapshot should be": the bucket still holds the whole
 # pre-cutover litestream object set (see the ~90k-object L1 backlog noted further down)
 # ON TOP of cold-snapshots/app-<date>.db.
@@ -21,25 +21,25 @@
 # Echo and eyeball endpoint + bucket before any delete; prune ONLY the R2 one.
 #
 # KEEP `cold-snapshots/**` in R2 — that prefix is the LIVE weekly second-provider DR lane
-# (src/lib/r2-cold-snapshot.ts), not historic. Only `trading-live/**` is dead.
+# (src/lib/r2-cold-snapshot.ts), not historic.  Only `trading-live/**` is dead.
 #
 # All ${VARS} are injected at runtime by scripts/infisical-run.mjs (Infisical
-# `prod` env) — no secrets live in this file. Used only by
+# `prod` env) — no secrets live in this file.  Used only by
 # scripts/coolify-prod-start.sh; harmless everywhere else.
 socket:
   enabled: true
   # Writable by the container `node` user. /var/run/litestream.sock fails with
   # "bind: permission denied" under Coolify (node is non-root), which left IPC
   # dead and /api/health stuck on storageDegraded=unavailable even while
-  # replication was healthy. Keep next to the DB volume.
+  # replication was healthy.  Keep next to the DB volume.
   path: /app/data/litestream.sock
   permissions: 0600
 
 # Periodic LTX-sequence self-check (litestream 0.5.12: cmd/litestream/main.go's top-level
 # `Config.Validation` field, wired through Store.ValidationInterval -> Store.Validate ->
-# Replica.ValidateLevel in store.go). This is a GLOBAL key, not a per-database one -- litestream's
+# Replica.ValidateLevel in store.go).  This is a GLOBAL key, not a per-database one -- litestream's
 # own DBConfig struct has no `validation` field, only Config does, so it must live here at the
-# top level of the file rather than nested under `dbs:`. Confirmed against the pinned v0.5.12
+# top level of the file rather than nested under `dbs:`.  Confirmed against the pinned v0.5.12
 # source (github.com/benbjohnson/litestream, tag v0.5.12) before adding this.
 #
 # On each tick this walks every configured compaction level (except the snapshot level) and logs
@@ -74,7 +74,7 @@ dbs:
         bucket: ${AWS_S3_BUCKET_NAME}
         path: trading-live/app.db
         # Literal region required: litestream substitutes ${VAR} but does NOT support
-        # bash `:-` defaults (empty region broke R2). B2 wants the cluster id, e.g.
+        # bash `:-` defaults (empty region broke R2).  B2 wants the cluster id, e.g.
         # eu-central-003 (set AWS_REGION accordingly in Infisical).
         region: ${AWS_REGION}
         endpoint: ${AWS_S3_ENDPOINT}
