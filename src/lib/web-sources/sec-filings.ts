@@ -750,7 +750,7 @@ export async function ingestFiling(
   }
 
   try {
-    const managedAccession = document.doc_id;
+    const managedAccession = document.doc_id ?? `${ticker}:${filingRef.accession}:${filingRef.docType}`;
     const ftsRows = localChunks.map((chunk) => ({
       contentHash: chunk.content_hash,
       symbol: chunk.ticker[0] ?? ticker,
