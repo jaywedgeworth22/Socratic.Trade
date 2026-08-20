@@ -267,12 +267,12 @@ export const TRIGGERS: FieldDef[] = [
     options: [
       { value: "", label: "Full run (default)" },
       { value: "full", label: "Full run" },
-      { value: "close_only", label: "Close-only" }
+      { value: "close_only", label: "Exit-only" }
     ],
     optionValues: { "": null },
     // close_only is strictly tighter than full: exits only, no new risk on an event.
     looseRank: { "": 1, "full": 1, "close_only": 0 },
-    hint: "What an event-fired run may do. Full = a normal run (opens + exits). Close-only = the run manages exits and safety maintenance but every new opening is rejected at the policy gate — for this run only; your stored state is never changed."
+    hint: "What an event-fired run may do. Full = a normal run (opens + exits). Exit-only = the run manages exits and safety maintenance but every new opening is rejected at the policy gate — for this run only; your stored state is never changed."
   }
 ];
 

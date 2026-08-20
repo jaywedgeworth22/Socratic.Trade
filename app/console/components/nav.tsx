@@ -177,7 +177,8 @@ function TabsSheet({
   guardNav,
   tabs,
   pendingCount,
-  barHeight
+  barHeight,
+  sheetId
 }: {
   open: boolean;
   onClose: () => void;
@@ -186,6 +187,7 @@ function TabsSheet({
   tabs: MobileTabsState;
   pendingCount: number;
   barHeight: number;
+  sheetId: string;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -255,6 +257,7 @@ function TabsSheet({
       <div className="con-scrim lg:hidden" style={{ bottom: barOffset }} onClick={onClose} aria-hidden />
       <div
         ref={sheetRef}
+        id={sheetId}
         role="dialog"
         aria-modal="true"
         aria-labelledby={headingId}
@@ -358,6 +361,7 @@ function TabsSheet({
 
 export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
+  const moreSheetId = useId();
   const [tabsOpen, setTabsOpen] = useState(false);
   const guardNav = useNavDirtyGuard();
   const tabsState = useMobileTabs(DESTINATIONS.map((d) => d.href));
@@ -445,6 +449,8 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
             data-active={tabsButtonActive || tabsOpen}
             title={tabsOpen ? "Close more menu" : "Choose which screens show up here, or jump to any screen"}
             style={tabsButtonActive || tabsOpen ? { fontWeight: 800 } : undefined}
+            aria-expanded={tabsOpen}
+            aria-controls={moreSheetId}
             onClick={() => setTabsOpen(!tabsOpen)}
           >
             <span
@@ -469,6 +475,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
         tabs={tabsState}
         pendingCount={pendingCount}
         barHeight={barOffset}
+        sheetId={moreSheetId}
       />
     </>
   );

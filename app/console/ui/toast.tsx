@@ -44,9 +44,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="con-toasts" role="status" aria-live="polite">
+      <div className="con-toasts">
         {toasts.map((t) => (
-          <div key={t.id} className={cx("con-toast", KIND_CLASS[t.kind])}>
+          <div
+            key={t.id}
+            className={cx("con-toast", KIND_CLASS[t.kind])}
+            role={t.kind === "neg" ? "alert" : "status"}
+            aria-live={t.kind === "neg" ? "assertive" : "polite"}
+          >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-semibold">{t.title}</div>

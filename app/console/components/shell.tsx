@@ -80,7 +80,7 @@ const SNAPSHOT_INDEPENDENT_ROUTES = new Set(["/console/usage"]);
 const SELF_SKELETON_ROUTES = new Set(["/console/connections"]);
 
 function ShellFrame({ children }: { children: ReactNode }) {
-  const { snapshot, fetchedAt, loading, slowFirstLoad, error, stream, refresh } = useConsoleData();
+  const { snapshot, fetchedAt, loading, slowFirstLoad, error, stream, refresh, online } = useConsoleData();
   const { theme, dataTheme, set: setTheme } = useConsoleTheme();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
   const { dataConsoleFont } = useConsoleFont();
@@ -179,6 +179,9 @@ function ShellFrame({ children }: { children: ReactNode }) {
       data-console-font={dataConsoleFont}
       suppressHydrationWarning
     >
+      <a href="#console-main" className="con-skip-link">
+        Skip to content
+      </a>
       <ConsoleIntro />
       {/* ToastProvider must live INSIDE .console-root: it renders the .con-toasts
           viewport as its last child, and the --con-* design tokens (colors, radii,
@@ -199,16 +202,16 @@ function ShellFrame({ children }: { children: ReactNode }) {
             <div className="con-topbar sticky top-0 z-50 bg-[color:var(--con-bg)]">
               <RealityBanner snapshot={snapshot} />
               <ChromeBar snapshot={snapshot} theme={theme} setTheme={setTheme} />
-              <MobileFreshnessBar snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
+              <MobileFreshnessBar snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} online={online} />
             </div>
           ) : null}
           <div className="mx-auto flex w-full max-w-[1400px] flex-1">
             {snapshot ? <DesktopRail pendingCount={snapshot.pendingProposals.length} /> : null}
-            <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
+            <main id="console-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
           </div>
           {snapshot ? (
             <>
-              <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
+              <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} online={online} />
               <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
               {/* Blocking legal clickwrap + mandatory data-pool gate.  Accept
                   dismisses it until either version bumps. */}

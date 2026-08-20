@@ -216,8 +216,10 @@ private struct ScanRow: View {
                             toggleWatch()
                         } label: {
                             Image(systemName: isWatched ? "star.fill" : "star")
+                                .font(.appBody)
                                 .foregroundStyle(isWatched ? AppPalette.warning : .secondary)
-                                .frame(width: 32, height: 32)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .disabled(store.isBusy(watchOperation) || !store.canSubmit(isWatched ? "watchlist.remove" : "watchlist.add"))

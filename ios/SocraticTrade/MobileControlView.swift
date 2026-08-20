@@ -136,6 +136,8 @@ struct MobileControlView: View {
     @State private var morePath: [AppTab] = []
     /// Proposal id a deep link asked for, handed to whichever ProposalsView is on screen.
     @State private var focusedProposalId: String?
+    /// Ticker a deep link asked for, handed to MarketsView (Assets).
+    @State private var focusedSymbol: String?
     /// Clears the ring above once the cue has been seen (see `apply`).
     @State private var focusExpiry: Task<Void, Never>?
 
@@ -159,7 +161,7 @@ struct MobileControlView: View {
                 // Any tab change ends the deep-link ring: it has either been seen or been left
                 // behind.  `apply` sets the focus AFTER moving the selection, so a link's own
                 // jump is not the change that clears it.
-                clearFocusedProposal()
+                clearFocus()
                 if target == .more || tabPreferences.barTabs.contains(target) {
                     selectedTab = target
                 } else {
@@ -281,20 +283,23 @@ struct MobileControlView: View {
         guard let destination else { return }
         selection.wrappedValue = destination.tab
         focusedProposalId = destination.proposalId
+        focusedSymbol = destination.focusedSymbol
         pendingDeepLink = nil
         focusExpiry?.cancel()
-        guard focusedProposalId != nil else { return }
+        guard focusedProposalId != nil || focusedSymbol != nil else { return }
         focusExpiry = Task { @MainActor in
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
             focusedProposalId = nil
+            focusedSymbol = nil
         }
     }
 
-    private func clearFocusedProposal() {
+    private func clearFocus() {
         focusExpiry?.cancel()
         focusExpiry = nil
         focusedProposalId = nil
+        focusedSymbol = nil
     }
 
     @ViewBuilder
@@ -302,7 +307,7 @@ struct MobileControlView: View {
         switch tab {
         case .home: HomeView(selectedTab: selection)
         case .proposals: ProposalsView(focusedProposalId: $focusedProposalId)
-        case .markets: MarketsView(selectedTab: selection)
+        case .markets: MarketsView(selectedTab: selection, focusedSymbol: $focusedSymbol)
         case .activity: ActivityView()
         case .insights: InsightsView(selectedTab: selection)
         case .coach: CoachView()

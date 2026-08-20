@@ -369,6 +369,16 @@ private struct StrategyControlsCard: View {
                     if plan.showStart {
                         startButton
                     }
+                    if plan.showCloseOnly || plan.showWindDown {
+                        DisclosureGroup("More Postures") {
+                            VStack(spacing: 10) {
+                                if plan.showCloseOnly { closeOnlyButton }
+                                if plan.showWindDown { windDownButton }
+                            }
+                            .padding(.top, 8)
+                        }
+                        .font(.appSubheadline.weight(.semibold))
+                    }
                 } else if plan.showStart {
                     startButton
                     if let reason = plan.startDisabledReason, !plan.startEnabled {
@@ -376,24 +386,36 @@ private struct StrategyControlsCard: View {
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
-                }
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        if plan.showCloseOnly { closeOnlyButton }
-                        if plan.showWindDown { windDownButton }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
+                        VStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
                     }
-                    VStack(spacing: 10) {
-                        if plan.showCloseOnly { closeOnlyButton }
-                        if plan.showWindDown { windDownButton }
+                    if plan.showStop {
+                        stopButton
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
+                        VStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
+                    }
+                    if plan.showStop {
+                        stopButton
                     }
                 }
 
-                if plan.primary != .stop, plan.showStop {
-                    stopButton
-                }
-
-                Text("Close Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
+                Text("Exit Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -452,7 +474,7 @@ private struct StrategyControlsCard: View {
     // allows protective commands, same as Stop — no extra ceremony beyond existing controls).
     private var closeOnlyButton: some View {
         CommandButton(
-            "Close Only",
+            "Exit Only",
             systemImage: "arrow.down.right.circle",
             isBusy: store.isBusy("strategy.close_only")
         ) {
@@ -841,9 +863,10 @@ private struct AccountSettingsView: View {
                     ConnectedAccountSettingsRow(account: account)
                 }
             } else {
-                Text("No connected accounts.  Connect one in Socratic.Trade, then return here to select it.")
+                Text("No connected accounts.  Connect one on the website, then return here to select it.")
                     .foregroundStyle(.secondary)
             }
+            Link("Open Connections", destination: URL(string: "https://socratictrade.com/console/connections")!)
         }
     }
 

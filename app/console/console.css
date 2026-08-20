@@ -815,12 +815,34 @@
   }
 }
 
+.con-skip-link {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 80;
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  background: var(--con-surface);
+  color: var(--con-fg);
+  font-weight: 700;
+  box-shadow: var(--con-shadow);
+  transform: translateY(-220%);
+}
+.con-skip-link:focus {
+  transform: none;
+}
+.con-deep-link-focus {
+  outline: 2px solid var(--con-accent);
+  outline-offset: 2px;
+  scroll-margin-top: 6rem;
+}
+
 .con-tab-item {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  font-size: 10px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--con-faint);
   /* Extra top padding vs. bottom gives the negative-positioned badge (see

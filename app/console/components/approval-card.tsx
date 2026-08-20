@@ -43,6 +43,7 @@ import { Ago, Btn, Chip, LiveTag, SignedText, TextInput } from "../ui/primitives
 import { ModelBadge } from "../ui/provider-logo";
 import { Sheet } from "../ui/sheet";
 import { SymbolButton } from "../ui/symbol-drilldown";
+import { DEEP_LINK_FOCUS_CLASS, proposalElementId } from "../lib/deep-link-focus";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
 const STOP_PLAN_DISPLAY: Record<string, string> = { fixed: "Fixed", atr: "ATR", trailing: "Trailing", none: "None" };
@@ -226,7 +227,13 @@ export function redTeamSummaryChip(
 }
 
 /** Wave C: memo so parent dashboard re-renders do not rebuild every card. */
-export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: PendingProposal }) {
+export const ApprovalCard = memo(function ApprovalCard({
+  pending,
+  focused = false
+}: {
+  pending: PendingProposal;
+  focused?: boolean;
+}) {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState<"approve" | "reject" | "retry" | null>(null);
@@ -452,7 +459,10 @@ export const ApprovalCard = memo(function ApprovalCard({ pending }: { pending: P
 
   return (
     // No overflow-hidden: it creates a containing block that breaks sticky CTAs (PR-A2).
-    <article className={cx("con-card", live && "border-[color:var(--con-live-border)]")}>
+    <article
+      id={proposalElementId(pending.id)}
+      className={cx("con-card", live && "border-[color:var(--con-live-border)]", focused && DEEP_LINK_FOCUS_CLASS)}
+    >
       {/* Header: verb + company logo + symbol + size + reality word — always visible (PR-A2). */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
         <span className={cx("inline-flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
