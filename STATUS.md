@@ -9,6 +9,13 @@ Accounting reads no longer take the OLDEST 500 fills.  `listFillEvents` defaults
 **`perf-11` is deliberately NOT closed** - regrouping win rate from per-lot to per-round-trip changes a number feeding every scorecard, the Kelly payoff split, the conviction calibration and the tuner's weight-shift gate at once.  `aggregateRoundTrip` is now exported as the primitive it needs, but the grouping key is an owner decision.
 
 Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `PerformanceSummary` fields kept - a textual merge would have dropped one).  Gate: lint 0 errors, tsc clean, 7205 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-realized-pnl-ledger.md`.
+## 2026-08-20 MONET - R2 is not storing one week; the B2 restore is proven
+
+Owner asked why R2 exceeds a one-week snapshot.  `socratic-trade-bucket` holds TWO unrelated sets: `cold-snapshots/app-<date>.db` (LIVE weekly second-provider DR, retain 1, DB ~4.2 GB) and `trading-live/**` - the ENTIRE pre-cutover litestream replica kept since active replication moved to Backblaze B2 on 2026-08-07, including the ~90k-object L1 backlog the config itself notes.  The second set is the surprise, and it is now prunable: the owner confirmed the B2 restore has been PROVEN, lifting the config's own blocker.
+
+**FOOTGUN before anyone prunes:** both replicas use the IDENTICAL object path `trading-live/app.db`; only bucket + endpoint differ (R2 `socratic-trade-bucket` = dead/prunable, B2 `jays-socratic-trade-eu` = LIVE).  A prune against the wrong endpoint destroys the active backup.  `cold-snapshots/` must survive.
+
+Prune NOT executed here - no object-level R2 delete tooling and deleting backups needs an explicit human decision.  Runbook in `docs/rollouts/2026-08-20-r2-historic-prune-unblocked.md`.
 ## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on cancel timeout
 
 #2949 only wrote the do-not-replace tombstone after `cancelEquityOrder` returned.  #2886's 30s cancel deadline can throw after the broker already accepted the cancel.  Reconcile then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
