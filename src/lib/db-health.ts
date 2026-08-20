@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
 import { intentionalOffHealthReason, isIntentionalOffHealthService } from "./retired-direct-vendors";
-import { runtimeReleaseIdentity } from "./runtime-health";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
@@ -670,7 +669,10 @@ export async function alertConnectionFailure(
       await noteLocalDbFault({ lane: service, operation: "connection health", message: errorText, userId: targetUserId });
       return;
     }
-    if (shouldSuppressConnectionAlertForStartup(runtimeReleaseIdentity().processUptimeSeconds)) {
+    // process.uptime() — do not import runtime-health here.  That module loads
+    // node:fs / node:http / node:path, and db.ts re-exports this file into client
+    // graphs (PR #2798 verify-hosted webpack UnhandledSchemeError).
+    if (shouldSuppressConnectionAlertForStartup(process.uptime())) {
       return;
     }
     // Cool down GLOBAL lanes (env/none) by service+source only — NOT per-user. In a multi-user outage

@@ -61,6 +61,10 @@ was dropped; the kind-based copy from #2800 remains.
 - Startup grace is live-only so the existing hard-streak tests keep paging.
 - Did not call a write skip an "expected ingest park."  The 15-WU / 1-text skip was a
   deadlock (#2800), already live.
+- Boot-grace reads `process.uptime()` instead of `runtimeReleaseIdentity()`.
+  `runtime-health` imports `node:fs` / `node:http`; `db.ts` re-exports this
+  module, and the old head failed `verify-hosted` on webpack
+  `UnhandledSchemeError`.
 
 ## Verification State
 
