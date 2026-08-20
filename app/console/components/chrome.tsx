@@ -213,7 +213,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         aria-expanded={open}
         // items-start + a small chevron nudge aligns the chevron with the first
         // (account-name) line rather than floating between the two label lines.
-        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3"
+        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3 con-bar-ctl con-bar-ctl-scope"
         title="Switch which account this console shows"
       >
         <span className="min-w-0 flex-1">
@@ -301,7 +301,7 @@ export function StateChip({ snapshot }: { snapshot: DashboardSnapshot }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex shrink-0 items-center gap-2 rounded-control border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
+        className="con-bar-ctl flex shrink-0 items-center gap-2 rounded-control border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
         title={info.detail}
       >
         <Dot tone={STATE_TONE[info.tone]} pulse={info.state === "active" && info.marketOpen !== false && snapshot.policy.strategyAuthority === "decide"} />
@@ -343,7 +343,7 @@ export function RunStateButton({ snapshot }: { snapshot: DashboardSnapshot }) {
         aria-label={label}
       >
         {isStartDirection ? <Play size={15} /> : <OctagonMinus size={15} />}
-        {label}
+        <span className="con-run-state-label">{label}</span>
       </button>
       <ControlSheet snapshot={snapshot} open={open} onClose={() => setOpen(false)} emergency={!isStartDirection} />
     </>
@@ -901,7 +901,7 @@ export function UserMenu({
         aria-expanded={open}
         aria-haspopup="menu"
         style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, maxWidth: 32, maxHeight: 32 }}
-        className="flex shrink-0 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
+        className="con-bar-ctl flex shrink-0 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
       >
         <Avatar imageUrl={user.imageUrl} size="h-full w-full" iconSize={15} />
       </button>

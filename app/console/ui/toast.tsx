@@ -60,7 +60,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 aria-label="Dismiss"
-                className="text-[color:var(--con-faint)] hover:text-[color:var(--con-fg)]"
+                className="con-icon-btn con-toast-dismiss shrink-0"
                 onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
               >
                 ×

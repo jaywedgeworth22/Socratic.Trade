@@ -6,6 +6,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cx } from "../lib/format";
+import { useOverlay } from "./use-overlay";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -62,6 +63,9 @@ export function Sheet({
   const sheetRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const headingId = useId();
+  const overlayId = useId();
+
+  useOverlay(overlayId, open, onClose);
 
   // Keep the latest onClose without making it a dependency of the FOCUS effect below. Callers pass
   // an inline arrow (e.g. `() => setOpen(false)`) that is a NEW reference on every render, so if the
@@ -157,7 +161,7 @@ export function Sheet({
           <button
             type="button"
             aria-label="Close"
-            className="text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
+            className="con-icon-btn"
             onClick={onClose}
           >
             <X size={18} />

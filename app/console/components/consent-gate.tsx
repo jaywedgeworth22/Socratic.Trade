@@ -5,10 +5,11 @@
  *  no Decline — unset users must not silently share, and the app is unusable
  *  until they accept.  Personal account data is never pooled. */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Scale } from "lucide-react";
 import { Btn } from "../ui/primitives";
 import { useFocusTrap } from "../ui/focus-trap";
+import { useOverlay } from "../ui/use-overlay";
 import { BACKUP_RETENTION_DAYS, LEGAL_NOTICE_SENTENCE } from "@/lib/legal-notice";
 
 type GateState = "loading" | "needed" | "done";
@@ -22,8 +23,10 @@ export function ConsentGate() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const overlayId = useId();
 
   useFocusTrap(dialogRef, state === "needed", { blocking: true });
+  useOverlay(overlayId, state === "needed", () => {}, { history: false });
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +90,7 @@ export function ConsentGate() {
       className="fixed inset-0 z-[200] flex items-center justify-center p-4"
     >
       <div className="absolute inset-0" style={{ background: "var(--con-scrim)" }} aria-hidden />
-      <div className="con-card relative z-10 flex w-full max-w-lg flex-col gap-4 p-6">
+      <div className="con-card relative z-10 flex w-full max-w-lg max-h-[min(90dvh,calc(var(--con-vv-height,100dvh)-2rem))] flex-col gap-4 overflow-y-auto overscroll-contain p-6">
         <div className="flex items-start gap-3">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]">
             <Scale size={20} />
