@@ -284,6 +284,21 @@ jobs:
           bash -n scripts/ios-fleet-pin.sh
           bash -n scripts/ios-ship-testflight.sh
           bash scripts/test-ios-scheduled-ship-gate.sh
+      # Deploy-freshness watchdog + shared-box OCR isolation are shell, so
+      # vitest cannot cover them. Offline selftests (throwaway git + stub
+      # /api/health, fake docker ps) catch a silent-pass the same way
+      # verify-deploy-sha.selftest.sh does. No production, no Slack, no docker.
+      - name: Deploy freshness + shared-box isolation scripts (bash)
+        run: |
+          bash -n scripts/verify-deploy-sha.sh
+          bash -n scripts/verify-deploy-sha.selftest.sh
+          bash -n scripts/alert-deploy-freshness.sh
+          bash -n scripts/alert-deploy-freshness.selftest.sh
+          bash -n scripts/isolate-shared-box-batch.sh
+          bash -n scripts/isolate-shared-box-batch.selftest.sh
+          bash scripts/verify-deploy-sha.selftest.sh
+          bash scripts/alert-deploy-freshness.selftest.sh
+          bash scripts/isolate-shared-box-batch.selftest.sh
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
