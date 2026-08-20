@@ -38,8 +38,8 @@ Full `npm test` in cloud VM reported 36 pre-existing failures in unrelated vecto
 
 ## Next Steps & Blockers
 
-- Merge PR; auto-deploy on `main`.
-- Follow-up (out of scope): grey/disable Load/Use for draining rows in `brokers.tsx`, chrome ScopeSelector, iOS HomeView.
+- None — merged to `main` as `44e9ef06` (#2876, 2026-08-20 auto-merge).
+- Follow-up (out of scope): grey/disable Load/Use for draining rows in `brokers.tsx` / iOS.
 
 ## Zero-Code Findings
 
