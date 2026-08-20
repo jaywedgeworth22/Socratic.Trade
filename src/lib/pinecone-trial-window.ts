@@ -14,8 +14,8 @@
 import { audit, getInternalSetting, setInternalSetting } from "./db";
 import { alertStorageWarning } from "./db-health";
 
-/** This Standard trial ends at 00:00 UTC on 2026-08-30 (21 days from the 2026-08-09 open). */
-export const PINECONE_CURRENT_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
+/** This Standard trial ends at 00:00 UTC on 2026-08-27 (owner 2026-08-19: 7 days from then). */
+export const PINECONE_CURRENT_TRIAL_ENDS_AT = "2026-08-27T00:00:00.000Z";
 export const PINECONE_TRIAL_CREDIT_USD = 300;
 /** Standard serverless write-unit list price used to pace remaining trial dollars. */
 export const PINECONE_WU_USD_PER_MILLION = 4;
@@ -69,7 +69,7 @@ function configuredDailyFromEnv(): number {
 /**
  * When the trial calendar ends (UTC ms), or null when auto-rollback is off.
  * Explicit PINECONE_TRIAL_ENDS_AT wins. "off"/"0"/"never" disables the window.
- * Otherwise a trial-sized daily fuse (>= 1M) implies THIS trial's 2026-08-30 end.
+ * Otherwise a trial-sized daily fuse (>= 1M) implies THIS trial's 2026-08-27 end.
  */
 export function isPineconeTrialCalendarOff(): boolean {
   return parseEndsAt(process.env.PINECONE_TRIAL_ENDS_AT) === "off";

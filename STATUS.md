@@ -20,6 +20,15 @@ branch stamps retired vendors OFF in health summaries, aligns ops-snapshot `ok` 
 only, and mutes connection pages for the first 5 minutes of a `DB_BOOTSTRAP=live` boot.
 
 Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
+## 2026-08-19 CURSOR — Pinecone trial end in 7 days
+
+Owner: set the Standard-trial calendar to 7 days from 2026-08-19 21:59 CT.  Default +
+Infisical `PINECONE_TRIAL_ENDS_AT` is now `2026-08-27T00:00:00.000Z` (remainingDays=7
+at that instant).  Pinecone's own console trial is unchanged.  Daily WU fuse unchanged.
+
+Branch `cursor/pinecone-trial-end-7d-c9a3`.  Rollout:
+`docs/rollouts/2026-08-19-pinecone-trial-end-7d.md`.
+
 ## 2026-08-20 CURSOR — OCR CPU ceiling 5 of 8 vCPU (#2545)
 
 Owner: cap OCR as high as is reasonably advisable so other apps still function.
