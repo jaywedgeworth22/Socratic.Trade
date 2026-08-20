@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-20 MONET - `prompt-trust-boundary` up for review
+
+Untrusted content can no longer reach the always-trusted strategy prompt unlabelled.  The trust boundary now lives AT THE SINK: `mergeStrategyDirectiveBlock` requires `source`, runs containment itself and returns `{ prompt, contained }`, so a future caller cannot write an unscanned directive by forgetting a helper (the required parameter proved itself by breaking the one stale 4-arg call site at compile time).  Coach URL lessons are contained at ingest and dropped + audited on a real hijack idiom; the forgeable unauthenticated `POST /api/chat-history` is deleted; a `MockLLM` semantic-gate fallback is audited instead of silent; the revalidation rationale is contained and the reviewer prompt carries a data-not-command clause.
+
+**Owner text is never altered** - containment keys on provenance, so `owner-coach` passes byte-for-byte.  `learningReviewMode: "decide"` auto-apply and `learningReviewEnabled` are untouched: the second review round established that as an owner choice with an existing off-switch, and re-gating it would be paternalism.  Gate: lint 0 errors, tsc clean, 7146 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-prompt-trust-boundary.md`.
+
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
 
 Contract fixture now pins `GET /api/policy` to the Swift `FullPolicy` decoder from both sides, so a rename fails CI instead of silently blanking a phone list.  `api-01` was already fixed on main by #2863 mid-flight, so this branch drops its competing decode and keeps main's.  **`qa-04` (a `/api/mobile/snapshot` contract test) is still OPEN.**

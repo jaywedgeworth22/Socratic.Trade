@@ -38,6 +38,12 @@ import type {
   LearnedContextTransferState
 } from "../types";
 import { hasPii } from "./classify";
+import {
+  buildStrategyDirectiveBlock,
+  containDirectiveValue,
+  directiveProvenanceLabel
+} from "./directive-block";
+import type { PromptContainmentResult } from "../prompt-safety";
 import { classifyWithSemanticGate, type SemanticGateOptions } from "./semantic-gate";
 import { captureUserWriteEpoch, runWithUserWriteEpoch, type UserWriteEpoch } from "../user-write-fence";
 
@@ -360,14 +366,9 @@ function formatLearnedContextLine(row: LearnedContextRow, currentRegime?: string
 // this section imports or calls setPolicy. Any real numeric risk-limit change remains a separate
 // manual action the human takes in Risk settings.
 
-/**
- * Build the delimited, attributed AI-LEARNED block for an approved strategy-directive. The block is
- * keyed by the pending row's id so re-approval is idempotent (replace-in-place, never duplicate).
- */
-function buildLearnedBlock(id: string, value: string, dateIso: string): string {
-  const day = dateIso.slice(0, 10); // YYYY-MM-DD
-  return `<!-- AI-LEARNED ${id} ${day} -->\n${value}\n<!-- /AI-LEARNED -->`;
-}
+// The prompt TRUST BOUNDARY for directive blocks lives in ./directive-block (a pure leaf shared
+// with the console preview, so what the owner is shown is byte-identical to what actually lands).
+export { isOwnerAuthoredLearnedSource } from "./directive-block";
 
 /**
  * APPEND an attributed AI-LEARNED block to the strategy prompt, idempotent by id. If a block with the
@@ -375,21 +376,40 @@ function buildLearnedBlock(id: string, value: string, dateIso: string): string {
  * is appended after a blank-line separator. This is approved guidance TEXT — it does NOT touch numeric
  * policy limits. Exported for direct unit testing of the merge invariant.
  */
-export function mergeStrategyDirectiveBlock(currentPrompt: string, id: string, value: string, dateIso: string): string {
-  const block = buildLearnedBlock(id, value, dateIso);
+/**
+ * TRUST BOUNDARY AT THE SINK.  This is the only function that writes a learned directive into the
+ * always-trusted strategy prompt, so containment and provenance happen HERE rather than in the
+ * caller.  An earlier shape took a pre-formatted `provenance` string and trusted the caller to have
+ * run `containDirectiveValue` first — which is the same "one caller must remember two helpers in
+ * the right order" hazard this cluster exists to remove.  `source` is required; owner-authored text
+ * is still passed through byte-for-byte (see `containDirectiveValue`).  The containment result is
+ * returned so the caller can audit it, never so the caller can decide whether to apply it.
+ */
+export function mergeStrategyDirectiveBlock(
+  currentPrompt: string,
+  id: string,
+  rawValue: string,
+  dateIso: string,
+  source: string | null | undefined,
+  origin?: string | null
+): { prompt: string; contained: PromptContainmentResult | null } {
+  const { value, contained } = containDirectiveValue(rawValue, source);
+  const block = buildStrategyDirectiveBlock(id, value, dateIso, directiveProvenanceLabel(source, origin));
   // Match an existing block for THIS id (any prior date) so re-approval replaces, not duplicates.
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const existingBlock = new RegExp(`<!-- AI-LEARNED ${escapedId} [^>]*-->[\\s\\S]*?<!-- /AI-LEARNED -->`);
   if (existingBlock.test(currentPrompt)) {
-    return currentPrompt.replace(existingBlock, block);
+    return { prompt: currentPrompt.replace(existingBlock, block), contained };
   }
-  return `${currentPrompt}\n\n${block}`;
+  return { prompt: `${currentPrompt}\n\n${block}`, contained };
 }
 
 /**
  * Apply an APPROVED pending row per its tier. Safety-critical — see the header above.
  *   - 'strategy-directive' → APPEND an attributed, idempotent AI-LEARNED block to the strategy prompt
- *     via setStrategyPrompt (append-not-replace; re-approve replaces just that id's block).
+ *     via setStrategyPrompt (append-not-replace; re-approve replaces just that id's block). The block
+ *     always carries a provenance line, and its value is containment-scanned UNLESS the owner typed
+ *     it themselves (isOwnerAuthoredLearnedSource) — owner text is never altered.
  *   - 'risk'               → PROMOTE to an advisory learned_context row via insertLearnedContext
  *     (scope 'private', riskTier 'risk', origin preserved). It becomes soft DATA the LLM reads; the
  *     human approval IS the gate. NEVER calls setPolicy.
@@ -406,7 +426,34 @@ export function applyApprovedPending(pending: LearnedContextPendingRow, asserted
     // and keeps the existing active-account behavior.
     const accountId = pending.connectedAccountId ?? undefined;
     const current = getStrategyPrompt(pending.userId, accountId);
-    const merged = mergeStrategyDirectiveBlock(current, pending.id, pending.value, assertedAt);
+    // TRUST BOUNDARY: the owner's own words go in untouched. Anything else is scanned first, so a
+    // hijack idiom carried in from a fetched page or an LLM paraphrase becomes an explicit
+    // quarantine marker instead of a line the model reads as owner intent.  The scan itself lives
+    // inside mergeStrategyDirectiveBlock so no caller can skip it; this call site only audits.
+    const { prompt: merged, contained } = mergeStrategyDirectiveBlock(
+      current,
+      pending.id,
+      pending.value,
+      assertedAt,
+      pending.source,
+      pending.origin
+    );
+    if (contained && contained.status !== "clean") {
+      audit(
+        "learned_context.directive_contained",
+        {
+          userId: pending.userId,
+          pendingId: pending.id,
+          source: pending.source,
+          origin: pending.origin,
+          status: contained.status,
+          patterns: contained.findings.map((finding) => finding.pattern),
+          quarantined: contained.quarantinedExcerpts.map((excerpt) => excerpt.excerpt)
+        },
+        pending.userId,
+        accountId
+      );
+    }
     setStrategyPrompt(merged, pending.userId, accountId);
     return;
   }
