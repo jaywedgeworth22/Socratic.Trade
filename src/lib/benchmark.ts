@@ -328,10 +328,12 @@ export async function computeSpyBenchmarkDetailed(
   if (!equityCurve || equityCurve.length < 2) {
     return { comparison: null, unavailable: { reason: "insufficient-history" } };
   }
-  // Refuse synthetic paper curves (`syntheticPaperCurve` uses equity = 100 + realized with no cash
-  // fields). IMPORTANT: do not let a single live tip (which has cash) "upgrade" a synthetic
-  // history into a real TWR — that made $100-base fill curves + $100k tip read as +tens of %
-  // "account return" on paper/sandbox accounts. Require ≥2 real snapshot points.
+  // Defense in depth against fabricated-equity curves (getPerformanceSummary no longer builds one
+  // when there are no persisted portfolio snapshots, but this filter stays as a second guard for
+  // any caller that hands in a hand-built curve without cash/positionsValue). IMPORTANT: do not
+  // let a single live tip (which has cash) "upgrade" a curve with no real snapshots into a real
+  // TWR — that made $100-base fill curves + $100k tip read as +tens of % "account return" on
+  // paper/sandbox accounts. Require ≥2 real snapshot points.
   const realCurve = equityCurve.filter(
     (p) => typeof p.cash === "number" || typeof p.positionsValue === "number"
   );

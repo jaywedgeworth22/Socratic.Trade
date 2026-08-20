@@ -294,6 +294,14 @@ enum AccountMetrics {
         if !hasFillHistory { return nil }
         return ledger
     }
+
+    /// Win rate / avg return are `0` (not nil) from the server for an account with zero closed
+    /// lots — a real "no data yet" state, not a genuine 0%.  Gate on the closed-lot count, not
+    /// the value, so an account with exactly one break-even closed lot still shows its real 0%.
+    static func displayedRateMetric(ledger: Double?, closedLotCount: Int?) -> Double? {
+        guard let closedLotCount, closedLotCount > 0 else { return nil }
+        return ledger
+    }
 }
 
 struct EquityOrder: Decodable, Identifiable {
@@ -475,6 +483,11 @@ struct PerformanceSummary: Decodable {
     let paperWinRate: Double?
     let liveAverageReturnPct: Double?
     let paperAverageReturnPct: Double?
+    /// Count of CLOSED lots behind liveWinRate/liveAverageReturnPct.  Zero for an account that has
+    /// never closed a lot — winRate/averageReturn both compute to 0 (not nil) server-side for an
+    /// empty lot list, so a real "no data yet" state must be read off this count, not the value.
+    let liveClosedLotCount: Int?
+    let paperClosedLotCount: Int?
     let benchmark: BenchmarkComparison?
     let fills: [FillEvent]?
 }

@@ -497,8 +497,11 @@ function MarkToMarketCard({
                   {markToMarket.unrealizedPct !== undefined ? ` (${fmtPct(markToMarket.unrealizedPct, 2, true)})` : ""}
                 </SignedText>
               </div>
-              <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                vs open cost basis {fmtMoney(markToMarket.costBasis)}
+              <div
+                className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+                title="Gross cost basis: the sum of |average entry price × quantity| across open positions, long and short alike. The percentage above divides by this, not the net signed basis — a short position's capital is still capital at risk, not a subtraction from a long position's."
+              >
+                vs gross open cost basis {fmtMoney(markToMarket.costBasis)}
               </div>
             </div>
             <Stat label="Cash" value={fmtMoney(markToMarket.cash)} />

@@ -783,6 +783,9 @@ export function deriveSpend(snapshot: DashboardSnapshot): SpendInfo {
 }
 
 export interface MarkToMarketInfo {
+  /** GROSS cost basis (sum of |averageCost × quantity| across open positions) — the capital
+   *  actually committed, long and short alike. NOT the net signed basis, which nets a short
+   *  against a long and can hide real capital at risk (and a real return) behind zero. */
   costBasis: number;
   marketValue: number;
   unrealizedPnl: number;
@@ -795,14 +798,22 @@ export interface MarkToMarketInfo {
 export function deriveMarkToMarket(snapshot: DashboardSnapshot): MarkToMarketInfo | null {
   const positions = snapshot.positions ?? [];
   if (positions.length === 0 && !snapshot.portfolio) return null;
-  const costBasis = positions.reduce((sum, position) => sum + position.averageCost * position.quantity, 0);
+  // Net signed basis is what makes unrealizedPnl correct for both longs and shorts (a short's
+  // negative quantity keeps marketValue − basis netting to the real gain/loss). But a book with
+  // offsetting long/short basis can net toward zero — or negative — capital even though real
+  // capital IS committed on both sides. Reported `costBasis` (and the %) use GROSS (sum of
+  // |basis|) — the capital actually at risk, matching positions.tsx's per-row Math.abs(costBasis)
+  // convention — so a short-heavy book's real return is never hidden behind a `costBasis <= 0`
+  // guard (perf-15).
+  const netCostBasis = positions.reduce((sum, position) => sum + position.averageCost * position.quantity, 0);
+  const grossCostBasis = positions.reduce((sum, position) => sum + Math.abs(position.averageCost * position.quantity), 0);
   const marketValue = positions.reduce((sum, position) => sum + (Number.isFinite(position.marketValue) ? position.marketValue : 0), 0);
-  const unrealizedPnl = marketValue - costBasis;
+  const unrealizedPnl = marketValue - netCostBasis;
   return {
-    costBasis,
+    costBasis: grossCostBasis,
     marketValue,
     unrealizedPnl,
-    unrealizedPct: costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : undefined,
+    unrealizedPct: grossCostBasis > 0 ? (unrealizedPnl / grossCostBasis) * 100 : undefined,
     positionsValue: snapshot.portfolio?.equityMarketValue ?? marketValue,
     cash: snapshot.portfolio?.cash,
     buyingPower: snapshot.portfolio?.buyingPower
