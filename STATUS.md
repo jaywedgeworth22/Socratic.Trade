@@ -12,6 +12,9 @@ Do not merge from this rebase.
 
 Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
 `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
+## 2026-08-19 MONET — `per-account-visibility` landed for review (tranche-1 cluster)
+
+Screens no longer label one account's data as every account's.  Broker rows in Settings read real per-account policy state and a real per-account pending count (both were previously the active account's, with every other row mislabelled "Inactive" even while trading, and the count dead code that always read 0); the decisions index keeps its by-design all-accounts fetch and gains an account chip; `mobileCommandBacklog` was global across USERS and is now user-scoped.  Each finding was classified wrong-scope vs wrong-label before fixing, so a wrong query is never papered over with a label change.  Full gate green (lint 0 errors, tsc clean, 7071 tests, build 0).  Rollout: `docs/rollouts/2026-08-19-per-account-visibility.md`.
 
 ## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
 

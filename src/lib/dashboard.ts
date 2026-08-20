@@ -14,6 +14,7 @@ import {
   listNotificationEvents,
   sweepAutoAcknowledgeNotifications,
   listPendingProposals,
+  countPendingProposals,
   listRecentProposals,
   listStrategyProfiles,
   listStrategyRuns,
@@ -368,6 +369,13 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         }
       ];
     })
+  );
+  // Real per-account pending-proposal counts, not just the active account's — the scheduler runs
+  // every connected account independently of which one is loaded, so a non-active account can
+  // genuinely have proposals waiting. A COUNT query, not listPendingProposals, to avoid parsing
+  // full proposal/decision JSON blobs for every connected account on every snapshot.
+  const connectedAccountPendingCounts = Object.fromEntries(
+    connectedAccounts.map((account) => [account.id, account.accountNumber ? countPendingProposals(account.accountNumber, userId) : 0])
   );
   const accountLabelById = Object.fromEntries(connectedAccounts.map((account) => [account.id, account.label || account.broker]));
   // An account is an account: with none connected there is no broker to call. Skip the gateway
@@ -1107,6 +1115,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     accountReadiness,
     connectedAccounts,
     connectedAccountPolicies,
+    connectedAccountPendingCounts,
     portfolio: displayPortfolio,
     portfolioReadError,
     positions: displayPositions,
