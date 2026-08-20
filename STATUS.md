@@ -192,7 +192,7 @@ Part II cluster `event-loop-pins`: FTS idempotency no longer full-scans the corp
 Part II cluster `green-request-schema`: `exitPlan` was in Bull `properties` but missing from `BULL_PROPOSAL_REQUIRED_KEYS`, so OpenAI strict mode 400'd every Green seat.  Added `exitPlan` to required keys, invariant test (properties ⊆ required), and `json_object` post-parse completeness via `filterRepairedProposals`.  Branch `cursor/green-bull-schema-769b`.  Rollout: `docs/rollouts/2026-08-19-green-bull-schema.md`.
 ## 2026-08-19 CURSOR — console-ships-too-much cluster (server DB boundary + snapshot projection)
 
-PR branch `cursor/console-ships-too-much-6790`.  `server-only` on all `src/lib/db*` modules; `venue-contract-pure.ts` so `brokers.tsx` no longer pulls the DB layer; dashboard snapshot drops raw `audit[]`, trims `quotesBySymbol` and order history, and ack/cancel/replace invalidate the 10s cache.  Connections client chunk grep: 0 `getDb` / `better-sqlite3` hits after `npm run build`.  Rollout: `docs/rollouts/2026-08-19-console-ships-too-much.md`.
+PR **#2884** (`cursor/console-ships-too-much-6790`).  `server-only` on all `src/lib/db*` modules; `venue-contract-pure.ts` so `brokers.tsx` no longer pulls the DB layer; dashboard snapshot drops raw `audit[]`, trims `quotesBySymbol` and order history, and ack/cancel/replace invalidate the 10s cache.  Connections client chunk grep: 0 `getDb` / `better-sqlite3` hits after `npm run build`.  Rollout: `docs/rollouts/2026-08-19-console-ships-too-much.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
