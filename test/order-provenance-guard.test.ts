@@ -161,6 +161,72 @@ describe("order provenance guard", () => {
     expect(result.placed).toBe(0);
     expect(reconcileGw.placeEquityOrder).not.toHaveBeenCalled();
   });
+
+  it("tombstones an owner-cancelled protective stop when the advisory lookup misses the order", async () => {
+    const { cancelWorkingOrder } = await import("../src/lib/order-cancel");
+    const { reconcileBrokerProtectiveStops } = await import("../src/lib/broker-protective-stops");
+    const { hasOwnerCancelledProtectiveStop } = await import("../src/lib/order-provenance");
+    const { listBrokerProtectiveStops, setPolicy, upsertBrokerProtectiveStop } = await import("../src/lib/db");
+
+    const userId = "local";
+    const accountNumber = "PS-OWNER-CANCEL-LOOKUP-MISS";
+    const policy: TradingPolicy = {
+      ...DEFAULT_POLICY,
+      accountNumber,
+      activeBroker: "robinhood",
+      robinhoodBrokerStops: true,
+      riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 8 }
+    };
+    setPolicy(policy, userId);
+
+    const stopOrderId = "broker-stop-lookup-miss";
+    upsertBrokerProtectiveStop({
+      id: `protstop-${userId}-${accountNumber}-AAPL`,
+      userId,
+      accountNumber,
+      symbol: "AAPL",
+      brokerOrderId: stopOrderId,
+      quantity: 10,
+      stopPrice: 92,
+      status: "resting",
+      kind: "fixed"
+    });
+
+    // Console cancel is fail-open on the advisory read: empty/timeout still cancels by id.
+    // The tracked row is the only remaining source of the symbol for the tombstone.
+    const gw = gatewayMock({ orders: [[]] });
+    broker.gateway = gw;
+
+    await cancelWorkingOrder({ userId, orderId: stopOrderId, source: "console" });
+    expect(gw.cancelEquityOrder).toHaveBeenCalledWith(accountNumber, stopOrderId);
+    expect(hasOwnerCancelledProtectiveStop(userId, accountNumber, "AAPL")).toBe(true);
+    expect(listBrokerProtectiveStops(accountNumber, userId)).toHaveLength(0);
+
+    const canceledOrders = [order({
+      id: stopOrderId,
+      symbol: "AAPL",
+      side: "sell",
+      type: "stop_market",
+      state: "canceled",
+      clientOrderId: "protstop-local-PS-OWNER-CANCEL-LOOKUP-MISS-AAPL-1"
+    })];
+    const reconcileGw = gatewayMock({ orders: [canceledOrders] });
+
+    const result = await reconcileBrokerProtectiveStops({
+      userId,
+      policy,
+      accountNumber,
+      gateway: reconcileGw,
+      positions: [position({ quantity: 10 })],
+      executionMode: "broker/live",
+      running: true,
+      orders: canceledOrders,
+      ordersListed: true
+    });
+
+    expect(result.placed).toBe(0);
+    expect(reconcileGw.placeEquityOrder).not.toHaveBeenCalled();
+  });
 });
 
 function paperPolicy(): TradingPolicy & { accountNumber: string } {

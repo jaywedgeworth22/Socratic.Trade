@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-20 CURSOR-BUGBOT — Owner-cancel stop tombstone on lookup miss (`cursor/owner-cancel-stop-tombstone-lookup`).** Use the tracked `broker_protective_stops` symbol when the advisory cancel lookup is empty so reconcile cannot re-place a stop the owner just cancelled.  Did not touch #2861.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-lookup.md`.
 > **2026-08-20 CURSOR — Rebase #2818 (`cursor/delayed-yahoo-fallback-stamp-c120`).** Rebase-only onto `origin/main` `ce31c367`.  Stamp **Delayed Quote** on approval cards; keep trading.  Conflicts: DataSourcesSettings + HomeView — kept main.  Do not merge.  Rollout: `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
 > **2026-08-20 CURSOR — #2854 rebased onto main (`ce31c367`).** CONFLICTING/DIRTY was phantom (`merge-tree` clean).  Kept gather inventory skip + 502/429 fail-open.  Did not absorb other clusters.  Do not merge.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
 > **2026-08-20 CURSOR — #2854 rebased onto main (`eefc4f82`).** Real conflict was `test/roic-transcripts.test.ts` vs #2813.  Kept gather `shouldSkipWholeIndexInventory` test + main's skip-covered ROIC test.  Did not absorb #2813 product.  Do not merge.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
