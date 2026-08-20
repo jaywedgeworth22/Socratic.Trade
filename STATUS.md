@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR-BUGBOT — Tradier default order list must keep walking for old GTC opens
+
+#2886 scoped Tradier `getEquityOrders` to 5 pages.  Tradier has no `status=open` filter, so a GTC equity stop on page 6+ disappeared from `liveExitOrderCoverage` and the synthetic-stop monitor could place a second sell.  Default list still filters terminal orders to 24h; the page walk is 50 again for opens.  Do not merge from this seat.
+
+Branch `cursor/tradier-open-orders-page-cap-bugbot`.  Rollout: `docs/rollouts/2026-08-20-tradier-open-orders-page-cap.md`.
+
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
 
 Contract fixture now pins `GET /api/policy` to the Swift `FullPolicy` decoder from both sides, so a rename fails CI instead of silently blanking a phone list.  `api-01` was already fixed on main by #2863 mid-flight, so this branch drops its competing decode and keeps main's.  **`qa-04` (a `/api/mobile/snapshot` contract test) is still OPEN.**

@@ -51,6 +51,10 @@ export function getTradierGateway(userId: string = "local", connectedAccountId?:
 const tradierProbeCache = new Map<string, { at: number; ok: boolean; reason?: string }>();
 const TRADIER_PROBE_TTL_MS = 2 * 60_000;
 
+/** Tradier lists mixed open+terminal newest-first with no status filter.  Walk far enough that an
+ *  older GTC equity stop after several option-only pages stays visible to liveExitOrderCoverage. */
+export const TRADIER_ORDERS_MAX_PAGES = 50;
+
 // Tradier envelopes wrap collections as { orders: { order: [...] } }, collapse a lone element to a
 // bare object { orders: { order: {...} } }, and report empty as null or the string "null". Normalize
 // any of those to a plain array so per-row mapping is uniform.
@@ -582,11 +586,14 @@ class TradierBrokerGateway implements BrokerGateway {
   async getEquityOrders(accountNumber: string, options?: GetEquityOrdersOptions): Promise<EquityOrder[]> {
     const fullHistory = options?.fullHistory === true;
     const sinceMs = options?.since ? Date.parse(options.since) : Date.parse(equityOrdersDefaultSinceIso());
-    const maxPages = fullHistory ? 50 : 5;
+    // Always walk the same page cap.  Tradier has no status=open filter, so a 5-page default
+    // silently dropped older resting GTC equity exits (page 6+) and the synthetic-stop monitor
+    // treated the position as uncovered — the double-sell this loop exists to prevent.
+    // fullHistory only changes the client-side terminal window, not how far we page for opens.
     return this.trackHealth(async () => {
       const all: Record<string, unknown>[] = [];
       const seen = new Set<string>();
-      for (let page = 1; page <= maxPages; page++) {
+      for (let page = 1; page <= TRADIER_ORDERS_MAX_PAGES; page++) {
         const body = await this.request<{ orders?: { order?: unknown } | string }>("GET", `/accounts/${accountNumber}/orders`, {
           query: { page, includeTags: "true" }
         });

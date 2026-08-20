@@ -686,6 +686,39 @@ describe("Tradier adapter — getEquityOrders pagination (double-sell coverage, 
     expect(isLiveOrderState(orders[0].state)).toBe(true);
   });
 
+  it("default list still returns a resting equity exit on page 6 (5-page cap would hide it)", async () => {
+    await seedTradier();
+    const optionOnly = (id: number) => ({
+      id,
+      symbol: "AAPL",
+      side: "buy_to_open",
+      type: "limit",
+      status: "open",
+      quantity: 1,
+      create_date: "2026-07-10",
+      class: "option"
+    });
+    installFetchMock([
+      ...[1, 2, 3, 4, 5].map((page) => ({
+        match: (u: string, m: string) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes(`page=${page}`),
+        body: { orders: { order: [optionOnly(page)] } }
+      })),
+      {
+        match: (u: string, m: string) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes("page=6"),
+        body: { orders: { order: [
+          { id: 60, symbol: "MSFT", side: "sell", type: "stop", status: "open", quantity: 5, create_date: "2026-07-10", stop_price: 300, tag: "protect", class: "equity" }
+        ] } }
+      },
+      { match: (u: string, m: string) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`), body: { orders: "null" } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    expect(orders.map((o) => o.id)).toEqual(["60"]);
+    expect(orders[0]).toMatchObject({ symbol: "MSFT", side: "sell", type: "stop_market", state: "open", stopPrice: 300 });
+    const { isLiveOrderState } = await import("../src/lib/broker-side");
+    expect(isLiveOrderState(orders[0].state)).toBe(true);
+  });
+
   it("terminates on a fully-duplicate page (guards a pager that repeats its last page)", async () => {
     await seedTradier();
     // Every page returns the SAME single equity order. The loop must stop once a page adds no NEW id
