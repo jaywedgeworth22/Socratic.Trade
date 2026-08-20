@@ -138,6 +138,57 @@ describe("Alpaca MCP gateway adapter", () => {
     ]);
   });
 
+  it("default getEquityOrders asks MCP for status all so a just-filled order stays visible", async () => {
+    const calls: Array<{ params?: { name?: string; arguments?: { status?: string } } }> = [];
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body || "{}")));
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "1",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify([
+                  {
+                    id: "ord-filled",
+                    symbol: "AAPL",
+                    side: "buy",
+                    type: "market",
+                    status: "filled",
+                    qty: "1",
+                    filled_qty: "1",
+                    filled_avg_price: "190",
+                    client_order_id: "ref-1",
+                    created_at: "2026-08-20T14:00:00.000Z"
+                  }
+                ])
+              }
+            ]
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+    expect(gateway.ordersListIncludesTerminal).toBe(true);
+    const orders = await gateway.getEquityOrders("MCP_ACC_1");
+
+    expect(calls[0]?.params?.name).toBe("get_orders");
+    expect(calls[0]?.params?.arguments?.status).toBe("all");
+    expect(orders).toEqual([
+      expect.objectContaining({
+        id: "ord-filled",
+        state: "filled",
+        clientOrderId: "ref-1",
+        filledQuantity: 1
+      })
+    ]);
+  });
+
   it("routes placeEquityOrder() to order placement tool", async () => {
     const calls: any[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {

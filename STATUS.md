@@ -37,6 +37,9 @@ Presentation half of that cluster stays open and belongs to #2795 / #2793.
 #2949 only wrote the do-not-replace tombstone after `cancelEquityOrder` returned.  #2886's 30s cancel deadline can throw after the broker already accepted the cancel.  Reconcile then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
 
 Fix: persist the tombstone on cancel throw when the order is a tracked / app-managed protective stop.  Leave the tracked row if the ACK was lost.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-timeout.md`.
+## 2026-08-20 CURSOR-BUGBOT — Alpaca MCP getEquityOrders hid just-filled orders
+
+#2886 scoped REST `getEquityOrders` to open + 24h closed, but the MCP success path still called `get_orders` with `status:"open"`.  `ordersListIncludesTerminal` stayed true, so `reconcilePlacementError` / `flagStalePlacingIntents` treat a missing refId as never-placed.  A market fill that leaves `open` before the place deadline returns is then safe-to-retry — a second submit.  REST-only Alpaca is fine.  MCP now requests `status:"all"` (bounded 500).  Rollout: `docs/rollouts/2026-08-20-alpaca-mcp-orders-include-terminal.md`.
 
 ## 2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday 401 at the edge
 
