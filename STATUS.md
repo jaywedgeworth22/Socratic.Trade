@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
+
+Run-scoped code no longer reads the console-active account.  `debateProposal`, `retryProposalRedTeam` and `applyApprovedPending` now resolve the account from the run's own policy via the new `resolveRunAccountScope(userId, policy)` (account required — no active-account default), so a two-account setup can no longer review account A's proposal against account B's venue, execution mode or strategy prompt, and switching the active account mid-run leaves in-flight reviews pinned.  `retry-red-team.ts` was NOT in the plan — the audit found it and it is fixed here.  Full gate green (lint 0 errors, tsc clean, 7056 tests, build 0); failing-first proven 7/7.  PR body carries the full 21-site `getActiveConnectedAccount` inventory.  Sibling cluster `per-account-visibility` lands next.  Rollout: `docs/rollouts/2026-08-19-run-scoped-account.md`.
+
 ## 2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`)
 
 Cluster `alert-repeat-lock`.  **IN PR #2877.**  Rebased onto `origin/main` `0382e83f`.  Same alert (user + type + fingerprint) is not delivered more than once per 60s.  `price_alert` is now in the existing sent-row repeat-dedup set, keyed by alert id.  `provider_degraded` / `budget_alert` / `kill_switch` share that 60s lock.  Health and usage-limit no longer re-send Pushover on a channel the user already has.  Usage-limit 6h cooldown no longer latches on skipped/failed.  Did not revert #2865.  Did not take `alert-push-delivery`.  Next action: merge #2877 when `verify` is green.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
