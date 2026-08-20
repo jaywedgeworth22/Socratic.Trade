@@ -1,6 +1,7 @@
 # Active Implementation Plan
 
 > **2026-08-19 CURSOR — Price alert evaluation (`cursor/fix-price-alert-evaluation-1a3d`).** Part II cluster `price-alert-evaluation`.  User-scoped `fetchFreshQuotesCascade`, logged `alert.check_error`, staleness gate, `isValidAppSymbol`.  Did not take on alert-push-delivery.  Rollout: `docs/rollouts/2026-08-19-price-alert-evaluation.md`.
+> **2026-08-19 CURSOR — Session-aware market cache freshness (`cursor/market-cache-freshness-5ee3`).** Expert review cluster `market-cache-freshness` / mdi-01.  Friday intraday cache writes keep naive TTL; bar freshness is session-counted; early-close table added.  Sibling `quote-value-provenance` is a separate PR.  Rollout: `docs/rollouts/2026-08-19-market-cache-freshness.md`.
 
 > **2026-08-19 CURSOR — iOS web parity (`cursor/ios-web-parity-502f`, #2857).** #2856 is live on `main` (`a8a0a65b`); TF 1.0.68 is behind.  No leftover iOS slug join on current main.  Folds #2849 Desk subtitle; Home / Insights / Guardrails no longer send users to a missing Strategy page.  Do not merge / deploy / bounce / TF.  HOLD `5674dfaf`.  Do not touch #2841 / #2854 / #2840.  Rollout: `docs/rollouts/2026-08-19-ios-web-parity.md`.
 
