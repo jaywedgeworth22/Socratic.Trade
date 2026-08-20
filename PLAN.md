@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-20 CURSOR-BUGBOT — #2853 drain must not adopt a frozen-but-live worker (`cursor/drain-adopt-live-heartbeat`).** Map presence is liveness; a stale beat timestamp is an event-loop freeze, not a dead worker.  Rollout: `docs/rollouts/2026-08-20-drain-adopt-live-heartbeat.md`.
 > **2026-08-20 CURSOR-BUGBOT — Owner-cancel stop tombstone on cancel timeout (`cursor/cancel-timeout-stop-tombstone`).** Persist the do-not-replace tombstone when `cancelEquityOrder` throws (e.g. #2886 deadline) so reconcile cannot re-place a stop the owner just cancelled.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-timeout.md`.
 > **2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday middleware pass-through (`cursor/peer-quotes-intraday-middleware`).** Same bearer exception as `/api/market/prices` and `/api/market/spx`.  Flatfile stays session-gated.  Rollout: `docs/rollouts/2026-08-20-peer-quotes-intraday-middleware.md`.
 > **2026-08-20 CURSOR-BUGBOT — Owner-cancel stop tombstone on lookup miss (`cursor/owner-cancel-stop-tombstone-lookup`).** Use the tracked `broker_protective_stops` symbol when the advisory cancel lookup is empty so reconcile cannot re-place a stop the owner just cancelled.  Did not touch #2861.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-lookup.md`.

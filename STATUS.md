@@ -9,6 +9,12 @@ Accounting reads no longer take the OLDEST 500 fills.  `listFillEvents` defaults
 **`perf-11` is deliberately NOT closed** - regrouping win rate from per-lot to per-round-trip changes a number feeding every scorecard, the Kelly payoff split, the conviction calibration and the tuner's weight-shift gate at once.  `aggregateRoundTrip` is now exported as the primitive it needs, but the grouping key is an owner decision.
 
 Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `PerformanceSummary` fields kept - a textual merge would have dropped one).  Gate: lint 0 errors, tsc clean, 7205 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-realized-pnl-ledger.md`.
+## 2026-08-20 CURSOR-BUGBOT — #2853 drain adopt steals a frozen-but-live Manual Run
+
+#2853 adopted a `strategy_run_requests` row when the in-process heartbeat was older than 90s.  An event-loop freeze (SQLite `busy_timeout` 60s; measured >120s back-to-back) stops the 15s beat without killing `runStrategyOnce`.  Drain then `releaseStrategyLock` and starts a second gather/place on the same run id.  The still-running worker can already have passed `assertOwned` before `placeEquityOrder`, so the adopted run double-places.
+
+Fix: treat a map entry on this process as live, regardless of beat age.  Only a missing entry (process restart) is an orphan.  Rollout: `docs/rollouts/2026-08-20-drain-adopt-live-heartbeat.md`.
+
 ## 2026-08-20 MONET - R2 is not storing one week; the B2 restore is proven
 
 Owner asked why R2 exceeds a one-week snapshot.  `socratic-trade-bucket` holds TWO unrelated sets: `cold-snapshots/app-<date>.db` (LIVE weekly second-provider DR, retain 1, DB ~4.2 GB) and `trading-live/**` - the ENTIRE pre-cutover litestream replica kept since active replication moved to Backblaze B2 on 2026-08-07, including the ~90k-object L1 backlog the config itself notes.  The second set is the surprise, and it is now prunable: the owner confirmed the B2 restore has been PROVEN, lifting the config's own blocker.
