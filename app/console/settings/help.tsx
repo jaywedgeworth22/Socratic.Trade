@@ -7,6 +7,12 @@
  *  the app actually behaves, and it must never drift into marketing. */
 
 import { useMemo, useState } from "react";
+import {
+  BROKERAGE_ACCOUNT_GLOSSARY_DEFINITION,
+  GUARDRAILS_GLOSSARY_DEFINITION,
+  PAPER_ACCOUNT_GLOSSARY_DEFINITION,
+  PAPER_ACCOUNT_GLOSSARY_TERM
+} from "@/lib/guardrail-copy";
 import { Card, TextInput } from "../ui/primitives";
 
 interface GlossaryEntry {
@@ -28,16 +34,14 @@ const GLOSSARY: GlossaryGroup[] = [
     blurb: "Every screen states which money it is in words — the colors only reinforce.",
     entries: [
       {
-        term: "Alpaca PAPER Account (NOT Real Money)",
+        term: PAPER_ACCOUNT_GLOSSARY_TERM,
         aliases: "paper trading sandbox",
-        definition:
-          "Your broker's practice sandbox: real broker endpoints and order flow, zero real dollars. Good for verifying broker plumbing before using a brokerage account."
+        definition: PAPER_ACCOUNT_GLOSSARY_DEFINITION
       },
       {
         term: "Brokerage Account",
         aliases: "broker connected live trading real account",
-        definition:
-          "A connected brokerage account. The app treats this as the normal trading state and does not wrap the whole console in red; broker-paper accounts are the exceptional state called out as not real money."
+        definition: BROKERAGE_ACCOUNT_GLOSSARY_DEFINITION
       }
     ]
   },
@@ -85,7 +89,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Auto-resume on boot",
         aliases: "restart boot resume",
         definition:
-          "Off (recommended): after a server restart, any Running account stays stopped until a person starts it again — a restored backup or crash-loop can never silently resume trading. On removes that safety net."
+          "Off: after a server restart, any Running account stays stopped until a person starts it again — a restored backup or crash-loop cannot silently resume trading.  On: scheduled runs may resume after a restart when you have opted in."
       }
     ]
   },
@@ -138,8 +142,7 @@ const GLOSSARY: GlossaryGroup[] = [
       {
         term: "Guardrails",
         aliases: "risk rules caps limits",
-        definition:
-          "The per-account hard limits the policy gate enforces: per-order and daily notional, symbol/sector exposure, order counts, drift, and the rest. Editable on the Guardrails screen; loosening one on a brokerage account costs a typed word."
+        definition: GUARDRAILS_GLOSSARY_DEFINITION
       },
       {
         term: "Circuit breaker (kill switch)",

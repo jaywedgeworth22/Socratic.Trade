@@ -8,7 +8,7 @@
  * shared RAG corpus.  Not a paywall.  Multi-user isolation still applies.
  */
 
-export const LEGAL_NOTICE_VERSION = 1;
+export const LEGAL_NOTICE_VERSION = 2;
 
 /** One-line desk sentence — also the strategy-prompt framing. */
 export const LEGAL_NOTICE_SENTENCE = "Not investment advice.  You set authority.";

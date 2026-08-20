@@ -11,6 +11,7 @@
  *  brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
+import { GUARDRAILS_HEADER_SUFFIX } from "@/lib/guardrail-copy";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { formatIndexUniverseList, toggleIncludedIndex } from "@/lib/index-universes";
@@ -245,7 +246,7 @@ function AccountScopedGuardrailsPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "no connected account"} — authority, caps, and hard execution constraints
+          for {reality.account?.label ?? "no connected account"} — {GUARDRAILS_HEADER_SUFFIX}
         </span>
       </div>
 

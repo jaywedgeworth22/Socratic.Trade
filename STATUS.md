@@ -24,6 +24,11 @@ PR on branch `cursor/market-cache-freshness-5ee3`.  Rollout: `docs/rollouts/2026
 ## 2026-08-19 CURSOR — Order provenance guard (`order-provenance-guard`)
 
 Part II cluster: stale-exit auto-remediation no longer cancel-replaces bracket legs or owner-placed GTC sells; owner-cancelled app-managed protective stops stay cancelled (tombstone honored by reconciler).  Branch `cursor/order-provenance-guard-197e`.  Rollout: `docs/rollouts/2026-08-19-order-provenance-guard.md`.
+## 2026-08-19 CURSOR — Copy: guardrail claims match advisory engine (`copy-claims-and-rulings`)
+
+Cluster from Part II expert review.  Added `src/lib/guardrail-copy.ts` as the single source for guardrail-semantics sentences; macro / Guardrails / public pages / iOS `DeskCopy` now describe advisory pre-vetoes (not hard veto).  Stripped paper/live ceremony: `Alpaca (paper)`, lowercase paper chip, no iOS Live pill or brokerage activation confirm, Mock removed from Coach pickers.  Terms §8 mirrors Privacy shared pool; `LEGAL_NOTICE_VERSION=2`.  Engine + AUTOPILOT path unchanged.
+
+Branch `cursor/copy-guardrail-claims-19ca`.  Rollout: `docs/rollouts/2026-08-19-copy-guardrail-claims.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

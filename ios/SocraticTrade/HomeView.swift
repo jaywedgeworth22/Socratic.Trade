@@ -172,8 +172,8 @@ private struct ReadyHomeHero: View {
                             // Paper-only badge — owner does not want "Live" called out (paper is still real capital).
                             if store.displayedActiveAccount(in: snapshot)?.environment.lowercased() == "paper" {
                                 StatusPill(
-                                    "PAPER",
-                                    color: AppPalette.accent.opacity(0.85),
+                                    DeskCopy.paperAccountWord,
+                                    color: AppPalette.accent.opacity(0.75),
                                     systemImage: "doc.text"
                                 )
                             }
@@ -986,7 +986,6 @@ private struct AccountSettingsView: View {
 
 private struct ConnectedAccountSettingsRow: View {
     @EnvironmentObject private var store: MobileStore
-    @State private var confirmingLiveActivation = false
 
     let account: ConnectedAccount
 
@@ -1047,12 +1046,7 @@ private struct ConnectedAccountSettingsRow: View {
                     .accessibilityLabel("Switching to \(account.label)")
             } else {
                 Button("Use") {
-                    // Still confirm before switching to a non-paper brokerage account; wording avoids "Live".
-                    if account.environment.lowercased() != "paper" {
-                        confirmingLiveActivation = true
-                    } else {
-                        activate()
-                    }
+                    activate()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(AppPalette.accent)
@@ -1062,12 +1056,6 @@ private struct ConnectedAccountSettingsRow: View {
                     ? "Switch the active account to \(account.label)"
                     : "Unavailable until the app loads account data")
             }
-        }
-        .alert("Use Brokerage Account?", isPresented: $confirmingLiveActivation) {
-            Button("Use Account", role: .destructive, action: activate)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Switch to \(account.label) (\(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))).  Approved actions will use this account.")
         }
     }
 
