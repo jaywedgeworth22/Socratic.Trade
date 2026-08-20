@@ -414,6 +414,30 @@ export async function sendNotification(
   return event;
 }
 
+/** Exercise policy.notificationSettings.webhookUrl (Discord embeds / legacy JSON). Used by Send test. */
+export async function sendPolicyWebhookTest(
+  userId: string,
+  options: Pick<SendNotificationOptions, "fetcher" | "timeoutMs" | "resolveWebhookHost"> = {}
+): Promise<NotifyChannelResult | null> {
+  const webhookUrl = getPolicy(userId).notificationSettings.webhookUrl?.trim();
+  if (!webhookUrl) return null;
+  return sendLegacyWebhook(
+    {
+      type: "budget_alert",
+      title: "Test notification",
+      payload: {
+        provider: "Socratic.Trade",
+        recommendation: "If you received this, your policy webhook URL is working."
+      }
+    },
+    webhookUrl,
+    options.fetcher ?? fetch,
+    options.timeoutMs ?? 5000,
+    undefined,
+    options.resolveWebhookHost
+  );
+}
+
 async function sendLegacyWebhook(
   input: { type: NotificationEventType; title: string; payload: unknown },
   webhookUrl: string,

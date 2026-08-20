@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { getTaxSummary, getWashSaleLockedSymbols, getWashSaleLockedSymbolsForUser, overlayAccountTaxationType, reconcileOpenLotsAgainstPositions } from "../src/lib/tax";
+import { getTaxSummary, getWashSaleLockedSymbols, getWashSaleLockedSymbolsForUser, overlayAccountTaxationType, realizedPnlNetOfEstimatedTax, reconcileOpenLotsAgainstPositions } from "../src/lib/tax";
 import type { FillEvent } from "../src/lib/types";
 
 beforeAll(() => {
@@ -350,5 +350,19 @@ describe("tax — lot ledger vs live positions (#2548)", () => {
     const lot = tax.openLots.find((l) => l.symbol === "GHOST");
     expect(lot?.ledgerMismatch).toBeUndefined();
     expect(lot?.unrealizedGain).toBeCloseTo(10);
+  });
+});
+
+describe("realizedPnlNetOfEstimatedTax", () => {
+  it("subtracts estimated tax when subtractFromResults is on", () => {
+    expect(realizedPnlNetOfEstimatedTax(1000, 150, true)).toBe(850);
+  });
+
+  it("returns realized unchanged when subtractFromResults is off", () => {
+    expect(realizedPnlNetOfEstimatedTax(1000, 150, false)).toBe(1000);
+  });
+
+  it("returns undefined when realized is undefined", () => {
+    expect(realizedPnlNetOfEstimatedTax(undefined, 150, true)).toBeUndefined();
   });
 });
