@@ -688,7 +688,7 @@ Implemented the audit P0s on `cursor/rag-learning-recall-audit-f94a` / PR #2803.
 
 Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-20-rag-p0-followups.md`.
 
-Next: wait for `verify` on #2803.  P1 leftovers stay open (transcript FTS, 8-K feed dual-class, memory decay/lifecycle, learning vector retry).  Do not enable `SEC_INGEST_WORKER_ENABLED` until a staging ingest proves `buildSecDocument` text is tag-free.
+Local gate: lint 0 errors, `tsc --noEmit` clean, touched-file vitest green, `npm run build` exit 0.  Full `npm test` in this Cloud VM had 37 unrelated env failures (Yahoo/SEC 404, Voyage-vs-SiliconFlow, notify/host-metrics).  Next: wait for `verify` on #2803.  P1 leftovers stay open (transcript FTS, 8-K feed dual-class, memory decay/lifecycle, learning vector retry).  Do not enable `SEC_INGEST_WORKER_ENABLED` until a staging ingest proves `buildSecDocument` text is tag-free.
 
 ## 2026-08-17 CURSOR — RAG / learning / recall audit (report-only)
 

@@ -38,7 +38,20 @@ Touched:
 
 ## Verification State
 
-Targeted vitest for the new/changed files, then the full gate (`npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build`) before claiming done.
+Ran:
+
+```bash
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean after FTS doc_id fallback
+npx vitest run test/rag-sec-document.test.ts test/rag-retrieval-asof.test.ts \
+  test/rag-production-path-contract.test.ts test/rag-eval-harness.test.ts \
+  test/chat-orchestrator-search-knowledge.test.ts test/sec-ingest-worker.test.ts \
+  test/sec-filings.test.ts
+npm test              # 6884 passed, 51 skipped; 37 failed in unrelated files
+npm run build         # Next.js 16.3.1 webpack, exit 0
+```
+
+Touched-file vitest: all 89 tests green after the harness comment/mock isolation fixes.  Full-suite failures (Yahoo/SEC 404s, Voyage-vs-SiliconFlow provider env, notify/host-metrics) are environment noise in this Cloud VM, not the P0 paths.  `verify` CI on #2803 is the merge gate.
 
 ## Next Steps & Blockers
 
