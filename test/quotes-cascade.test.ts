@@ -105,6 +105,22 @@ describe("quoteAgeSecForStalenessGate", () => {
     // Would look "stale" if we aged asOf (~900s) against maxQuoteAgeSec=120 — that is the bug we fixed.
     expect(r.ageSec! < 120).toBe(true);
   });
+
+  it("ages delayed Yahoo fallback by fetchedAt, not the 15m print", () => {
+    const now = Date.now();
+    const r = quoteAgeSecForStalenessGate(
+      {
+        asOf: new Date(now - 18 * 60 * 1000).toISOString(),
+        fetchedAt: new Date(now - 12_000).toISOString(),
+        delayedFallback: true,
+        provider: "yahoo-finance-single"
+      },
+      now
+    );
+    expect(r.delayedFallback).toBe(true);
+    expect(r.venueDelayed).toBe(false);
+    expect(r.ageSec).toBe(12);
+  });
 });
 
 describe("resolveVenueQuoteMode", () => {
@@ -313,5 +329,7 @@ describe("fetchFreshQuotesCascade", () => {
     expect(result.TSLA.price).toBe(203);
     expect(result.TSLA.provider).toBe("yahoo-finance-single");
     expect(result.TSLA.asOf).toBe(staleYahooSingleTime);
+    expect(result.TSLA.delayedFallback).toBe(true);
+    expect(result.TSLA.fetchedAt).toBeTruthy();
   });
 });

@@ -1,5 +1,17 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR — Rebase #2818 onto current main (delayed Yahoo stamp)
+
+Rebase-only of PR **#2818** (`cursor/delayed-yahoo-fallback-stamp-c120`) onto
+`origin/main` `ce31c367`.  Scope stayed stamp user-facing **Delayed Quote** on
+approval cards and keep trading.  Conflicts were only
+`ios/SocraticTrade/DataSourcesSettings.swift` and
+`ios/SocraticTrade/HomeView.swift`; kept main (coordinator-copy cleanup and
+#2857 Desk subtitle fold already landed).  Did not absorb other clusters.
+Do not merge from this rebase.
+
+Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
+`docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
 ## 2026-08-19 MONET — `per-account-visibility` landed for review (tranche-1 cluster)
 
 Screens no longer label one account's data as every account's.  Broker rows in Settings read real per-account policy state and a real per-account pending count (both were previously the active account's, with every other row mislabelled "Inactive" even while trading, and the count dead code that always read 0); the decisions index keeps its by-design all-accounts fetch and gains an account chip; `mobileCommandBacklog` was global across USERS and is now user-scoped.  Each finding was classified wrong-scope vs wrong-label before fixing, so a wrong query is never papered over with a label change.  Full gate green (lint 0 errors, tsc clean, 7071 tests, build 0).  Rollout: `docs/rollouts/2026-08-19-per-account-visibility.md`.
@@ -336,6 +348,22 @@ Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED 
 One dead rag-embed used to 503 `/api/health` after 5 hard failures, Coolify restarted Docker, and the boot interlock re-halted Green/Red.  `rag-embed` and `rag-rerank` now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay critical.  A thrown document-embed batch skips that batch and continues later ones; a thrown query embed returns empty retrieval.  Rebased onto `6429d984` (#2800 + #2829 kept).  Did not steal #2792/#2798/#2800/#2794.
 
 PR **#2812**.  Branch `cursor/rag-embed-soft-degrade-ed6d`.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.
+## 2026-08-18 CURSOR — Delayed Yahoo fallback stamp; keep trading
+
+Owner: stamp user-facing **Delayed Quote** on approval cards when quotes are
+delayed Yahoo fallback.  No coordinator notes on the card or in iOS UI
+(no “full surfaces not just the remote”, no Infisical/remote/owner-cut asides).
+Openings must still go through.  Do not fail-closed.  Do not block Green/Red.
+Did not steal #2792/#2798/#2800/#2794.  No Stripe.
+
+PR **#2818**.  Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
+`docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.
+
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+PR **#2822**.  Branch `cursor/litestream-restore-drill-2cd9`.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 ## 2026-08-18 CURSOR — iOS owner-note UI copy
 
 Owner: coordinator/owner comments do not belong in the iOS UI.  Notes for Jay stay in PRs/docs.  Concrete leak on `main`: Home Desk subtitle `full surfaces, not just the remote`.  Removed that subtitle and the same class of leaked strings (control-remote setup line, Infisical footer, `/api/policy` / `policy.patch` / "not a second copy here" / "phone-safe").  Did not steal #2792/#2798/#2800/#2794 (those own FilingAPI, alert-noise, Pinecone writes, and iOS console handoffs).

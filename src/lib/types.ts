@@ -956,6 +956,12 @@ export interface BrokerQuote {
   venuePriceAuthoritative?: boolean;
   /** Wall-clock ISO when we fetched this quote from the venue (staleness of the snapshot). */
   fetchedAt?: string;
+  /**
+   * True when this price is the delayed Yahoo fallback tape (live broker / Alpaca
+   * snapshot missed).  Owner 2026-08-18: stamp user-facing "Delayed Quote" on approval
+   * cards and keep trading — do not fail-closed openings.
+   */
+  delayedFallback?: boolean;
   /** True when bid/ask were synthesized from price (no real quoted spread) — e.g. a Yahoo batch quote
    *  used by the Test-mode gateway. Consumers (mergeQuoteData provenance, hasRealAsk) must not treat a
    *  synthetic spread as a real quoted one. `syntheticSpread` stays true only when BOTH sides were
@@ -1566,6 +1572,14 @@ export interface TradeProposal {
    * fall back to the conservative equality heuristic.
    */
   referencePriceProvenance?: "provided" | "limit-fallback";
+  /**
+   * True when the generation-time quote was delayed Yahoo fallback.  Owner
+   * 2026-08-18: approval cards stamp user-facing "Delayed Quote"; openings
+   * still go through.  Optional so legacy rows stay valid.
+   */
+  quoteDelayedFallback?: boolean;
+  /** Provider id for the generation-time quote (e.g. yahoo-finance-delayed). */
+  quoteProvider?: string;
   /** Limit price for the take-profit leg of a bracket order. */
   bracketTakeProfit?: number;
   /**
@@ -1974,6 +1988,8 @@ export interface MarketQuote {
   venuePriceAuthoritative?: boolean;
   /** See BrokerQuote.fetchedAt. */
   fetchedAt?: string;
+  /** See BrokerQuote.delayedFallback — carried through mergeQuoteData for approval cards. */
+  delayedFallback?: boolean;
   sentiment?: number;
   peRatio?: number;
   headlines?: string[];
@@ -2241,6 +2257,8 @@ export interface MarketQuoteSummary {
   venuePriceAuthoritative?: boolean;
   /** See BrokerQuote.fetchedAt. */
   fetchedAt?: string;
+  /** See BrokerQuote.delayedFallback. */
+  delayedFallback?: boolean;
   sentiment?: number;
   peRatio?: number;
   analystRating?: string;
@@ -2453,6 +2471,9 @@ export interface PolicyDecision {
     originalType: OrderType;
     originalLimitPrice?: number;
     referencePrice: number;
+    /** True when the backing quote is delayed Yahoo fallback (keep trading). */
+    delayedFallback?: boolean;
+    provider?: string;
   };
 }
 
@@ -2623,6 +2644,12 @@ export interface PendingProposal {
   proposalReferencePrice?: number;
   /** The current price used for the performance figure. */
   proposalCurrentPrice?: number;
+  /**
+   * True when the card's Now price (or the persisted generation quote) is
+   * delayed Yahoo fallback.  Website + iOS stamp user-facing "Delayed Quote".
+   */
+  delayedFallback?: boolean;
+  quoteProvider?: string;
 }
 
 export interface RecentProposal {
@@ -2642,6 +2669,8 @@ export interface RecentProposal {
   proposalReferencePrice?: number;
   /** The current price used for the performance figure. */
   proposalCurrentPrice?: number;
+  delayedFallback?: boolean;
+  quoteProvider?: string;
   /** Broker or network error message when status is placing_failed. */
   errorMessage?: string;
 }

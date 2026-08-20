@@ -25,7 +25,10 @@ import {
 } from "../lib/api";
 import {
   delayAdvantageUsd,
+  delayedFallbackStampLabel,
+  delayedFallbackStampTitle,
   nameMovePct,
+  pendingShowsDelayedFallback,
   resolveProposedPrice,
   resolveProposalStop,
   resolveProposalTarget
@@ -481,6 +484,11 @@ export const ApprovalCard = memo(function ApprovalCard({
         <Chip tone={reality.tone} title={reality.clarification}>
           {reality.word} · {reality.phrase}
         </Chip>
+        {pendingShowsDelayedFallback(pending) && (
+          <Chip tone="warn" title={delayedFallbackStampTitle()}>
+            {delayedFallbackStampLabel()}
+          </Chip>
+        )}
       </header>
 
       <div className="flex flex-col gap-3 px-4 py-3 text-[length:var(--con-fs-sm)]">
@@ -507,6 +515,11 @@ export const ApprovalCard = memo(function ApprovalCard({
               </span>
             </div>
             {priceStrip}
+            {pendingShowsDelayedFallback(pending) && (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]" title={delayedFallbackStampTitle()}>
+                {delayedFallbackStampTitle()}
+              </p>
+            )}
             {p.redTeamVerdict && !p.redTeamVerdict.available && p.redTeamVerdict.failureKind !== "not_configured" && (
               <div className="flex flex-wrap items-center gap-2">
                 <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void retryCritic()}>
@@ -829,6 +842,11 @@ export const ApprovalCard = memo(function ApprovalCard({
         </div>
 
         {priceStrip}
+        {pendingShowsDelayedFallback(pending) && (
+          <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]" title={delayedFallbackStampTitle()}>
+            {delayedFallbackStampTitle()}
+          </p>
+        )}
 
         {/* Since proposed + revalidation */}
         <div className="grid gap-2 sm:grid-cols-2">

@@ -19,7 +19,7 @@ struct ProposalsView: View {
             if snapshot.pendingProposals.isEmpty {
                 EmptyStateCard(
                     title: "No proposals waiting",
-                    message: "New owner decisions will appear here after a strategy run.",
+                    message: "New decisions will appear here after a strategy run.",
                     systemImage: "checkmark.seal"
                 )
             } else {
@@ -288,6 +288,17 @@ private struct ProposalCard: View {
                     DetailLine(label: "Target", value: priceReview.targetValue)
                     if let delay = priceReview.delayValue {
                         DetailLine(label: "Delay", value: delay)
+                    }
+                    if priceReview.showsDelayedFallback {
+                        StatusPill(
+                            priceReview.delayedFallbackStamp,
+                            color: AppPalette.warning,
+                            systemImage: "clock.badge.exclamationmark"
+                        )
+                        Text(priceReview.delayedFallbackNote)
+                            .font(.appCaption)
+                            .foregroundStyle(AppPalette.warning)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if let stop = priceReview.stop, stop > 0 {
                         DetailLine(label: "Stop", value: AppFormat.money(stop))

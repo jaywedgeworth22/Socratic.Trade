@@ -21,6 +21,7 @@ import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap } from "./policy-caps";
+import { isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
 import { quoteAgeSecForStalenessGate } from "./quotes-cascade";
 
 export interface PolicyContext {
@@ -396,19 +397,36 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // Primary path: the quote cascade must supply a trade-time within maxQuoteAgeSec (default 120s).
   // Venue-authoritative delayed feeds (Tradier sandbox): age the FETCH snapshot (`fetchedAt`), not
   // trade-time `asOf` — the ~15m delay is the venue's fill world, not a broken cascade.
+  // Delayed Yahoo fallback (owner 2026-08-18): same rule — age the fetch, stamp
+  // user-facing "Delayed Quote" on the card, KEEP TRADING.  Do not fail-closed
+  // openings.  Do not skip Green/Red.  Do not write coordinator notes into rationale.
   // Backup if data is still old/missing (should be rare once cascade is healthy): convert the order
   // to a LIMIT at the proposal's intended entry (referencePrice / existing limit), so the price the
   // strategy identified as worth buying/shorting is honored instead of chasing a stale market print.
   // Timestamps are read from the run's MarketScan — never fabricated. Exits (sell/cover) are ungated.
-  let quoteStaleMetadata: { ageSec?: number; originalType: any; originalLimitPrice?: number; referencePrice: number } | undefined = undefined;
+  let quoteStaleMetadata: {
+    ageSec?: number;
+    originalType: any;
+    originalLimitPrice?: number;
+    referencePrice: number;
+    delayedFallback?: boolean;
+    provider?: string;
+  } | undefined = undefined;
 
   if (isOpening) {
     const now = (context.now ?? new Date()).getTime();
     const maxQuoteAgeSec = context.policy.maxQuoteAgeSec;
+    const scanQuote =
+      context.marketScan?.quotesBySymbol[symbol] ??
+      context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+    const delayedFallback = isDelayedYahooFallbackQuote(scanQuote, now, maxQuoteAgeSec ?? 120);
+    if (delayedFallback) {
+      proposal.quoteDelayedFallback = true;
+      if (scanQuote?.provider) proposal.quoteProvider = scanQuote.provider;
+      // Stamp lives on the approval card.  Do not append coordinator notes to
+      // rationale — that text is user-facing on website + iOS.
+    }
     if (maxQuoteAgeSec != null && maxQuoteAgeSec > 0) {
-      const scanQuote =
-        context.marketScan?.quotesBySymbol[symbol] ??
-        context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
       const { ageSec, missing, venueDelayed } = quoteAgeSecForStalenessGate(scanQuote, now);
       const isStale = missing || (ageSec !== undefined && ageSec > maxQuoteAgeSec);
 
@@ -437,7 +455,8 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
           ageSec,
           originalType,
           originalLimitPrice,
-          referencePrice
+          referencePrice,
+          ...(delayedFallback ? { delayedFallback: true, provider: scanQuote?.provider } : {})
         };
 
         if (referencePrice > 0) {
@@ -456,9 +475,13 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
           }
 
           const ageText = ageSec !== undefined ? `${ageSec}s old` : "missing/unparseable";
-          const venueNote = venueDelayed ? " venue-delayed snapshot" : "";
+          const tapeNote = delayedFallback
+            ? " delayed quote"
+            : venueDelayed
+              ? " venue-delayed snapshot"
+              : "";
           const warningNote =
-            ` [Stale quote backup: quote${venueNote} timestamp is ${ageText} (max ${maxQuoteAgeSec}s). ` +
+            ` [Stale quote backup: quote${tapeNote} timestamp is ${ageText} (max ${maxQuoteAgeSec}s). ` +
             `Converted to a limit at $${(proposal.limitPrice ?? 0).toFixed(2)} so the proposal's ` +
             `intended entry $${referencePrice.toFixed(2)} is honored — not blocked.]`;
           proposal.rationale = `${proposal.rationale}${warningNote}`;

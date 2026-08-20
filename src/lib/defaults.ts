@@ -136,10 +136,11 @@ export const DEFAULT_POLICY: TradingPolicy = {
   betaScaledStops: true,
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
-  // Quote staleness gate (owner-approved guard enablement 2026-07-28,
-  // docs/guard-enablement-proposal-2026-07-28.md row 1): block OPENING orders whose backing quote is
-  // older than 120s (policy.ts's staleness gate). Exits are never gated, and a blocked opening is
-  // escalatable — a human approval re-runs the gate against a fresh scan, so it self-heals.
+  // Quote staleness gate (owner-approved 2026-07-28; owner 2026-08-18 delayed Yahoo):
+  // age live tape against 120s.  Delayed Yahoo fallback ages the FETCH snapshot, stamps
+  // user-facing "Delayed Quote" on the approval card, and KEEP TRADING — never fail-closed.
+  // Exits are never gated.  A still-stale fetch converts the opening to a limit; it is
+  // not blocked and does not skip Green/Red.
   maxQuoteAgeSec: 120,
   // Owner-approved guard enablement 2026-07-28 (proposal rows 2-4): risk receipts (inform-only
   // correlation + stress notes on every opening), vol-target sizing taper at a generous 25%

@@ -323,6 +323,8 @@ struct PendingProposal: Decodable, Identifiable {
     let performanceSinceProposalPct: Double?
     let proposalReferencePrice: Double?
     let proposalCurrentPrice: Double?
+    let delayedFallback: Bool?
+    let quoteProvider: String?
     let proposal: Proposal
 }
 
@@ -346,6 +348,8 @@ struct Proposal: Decodable {
     let bracketTakeProfit: Double?
     let bracketStopLoss: Double?
     let exitPlan: String?
+    let quoteDelayedFallback: Bool?
+    let quoteProvider: String?
     let scorecard: ProposalScorecardSnippet?
     let redTeamVerdict: RedTeamVerdict?
 }

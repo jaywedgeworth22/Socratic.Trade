@@ -269,3 +269,16 @@ enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeS
 See `docs/rollouts/2026-07-01-data-sources-breadth.md`,
 `docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`, and
 `docs/rollouts/2026-07-26-free-cascade-coverage.md`.
+
+## Delayed Yahoo fallback (owner 2026-08-18)
+
+When live broker / Alpaca snapshot quotes miss, the cascade keeps the freshest Yahoo
+print (~15–20m delayed) so openings still go through.  That tape is expected delay,
+not a broken cascade:
+
+- Cascade FALLBACK and Alpaca `fillMissingQuotesWithClose` stamp `delayedFallback`.
+- Policy ages the FETCH snapshot (`fetchedAt`), not the delayed print.  Openings are
+  never fail-closed.  Green/Red are not skipped.
+- Approval cards (website + iOS) stamp user-facing **Delayed Quote**.
+
+See `docs/rollouts/2026-08-18-delayed-yahoo-fallback-stamp.md`.

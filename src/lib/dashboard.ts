@@ -34,6 +34,7 @@ import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { isUnusableEmptyMarketScan } from "./scan-singleflight";
 import { normalizeSymbol } from "./money";
+import { isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
 import {
   calculatePnl,
   getPerformanceSummary,
@@ -1041,11 +1042,20 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         ? proposalCurrentPrice(item.proposal.symbol)
         : undefined;
       const pct = returnSinceProposalPct(item.proposal.referencePrice, current, item.proposal.side);
+      const scanQuote = scanQuotes?.[normalizeSymbol(item.proposal.symbol)];
+      const decision = "decision" in item ? (item as { decision?: { quoteStale?: { delayedFallback?: boolean } } }).decision : undefined;
+      const delayedFallback =
+        item.proposal.quoteDelayedFallback === true ||
+        decision?.quoteStale?.delayedFallback === true ||
+        isDelayedYahooFallbackQuote(scanQuote);
+      const quoteProvider = item.proposal.quoteProvider ?? scanQuote?.provider;
       return {
         ...item,
         ...(pct != null ? { performanceSinceProposalPct: pct } : {}),
         ...(reference != null ? { proposalReferencePrice: reference } : {}),
-        ...(current != null ? { proposalCurrentPrice: current } : {})
+        ...(current != null ? { proposalCurrentPrice: current } : {}),
+        ...(delayedFallback ? { delayedFallback: true } : {}),
+        ...(quoteProvider ? { quoteProvider } : {})
       };
     });
   const recentProposalsWithPerf = withProposalPerf(recentProposals);

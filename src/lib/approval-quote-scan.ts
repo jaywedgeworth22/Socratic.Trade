@@ -40,6 +40,7 @@ export function buildApprovalQuoteScan(
       asOf: quote.asOf ?? quote.fetchedAt ?? generatedAt,
       venuePriceAuthoritative: quote.venuePriceAuthoritative,
       fetchedAt: quote.fetchedAt,
+      delayedFallback: quote.delayedFallback,
       sector: position?.sector,
       industry: position?.industry,
       syntheticBid: quote.syntheticBid ?? quote.syntheticSpread,

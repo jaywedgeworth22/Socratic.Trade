@@ -53,7 +53,14 @@ export async function fillMissingQuotesWithClose(
     missing.map(async (symbol) => {
       const fb = await getFallback(symbol).catch(() => undefined);
       if (fb && Number.isFinite(fb.price) && fb.price > 0) {
-        quotes[symbol] = { symbol, price: fb.price, asOf: fb.asOf, provider: "yahoo-finance-delayed" };
+        quotes[symbol] = {
+          symbol,
+          price: fb.price,
+          asOf: fb.asOf,
+          provider: "yahoo-finance-delayed",
+          delayedFallback: true,
+          fetchedAt: new Date().toISOString()
+        };
       }
     })
   );

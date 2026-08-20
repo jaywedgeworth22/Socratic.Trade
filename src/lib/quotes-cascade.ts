@@ -11,6 +11,7 @@ import { DEFAULT_POLICY } from "./defaults";
 import { AlpacaSnapshotEnrichmentProvider, fetchWithRetry } from "./data-providers";
 import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
 import { normalizeSymbol } from "./money";
+import { isDelayedYahooFallbackQuote, isYahooFallbackProvider } from "./quote-delayed-fallback";
 import type { BrokerQuote, ConnectedAccount, TradingPolicy } from "./types";
 
 /**
@@ -71,19 +72,29 @@ export function isQuoteFresh(
  *   freshness). The ~15m trade-time delay is the venue, not a broken cascade.
  */
 export function quoteAgeSecForStalenessGate(
-  quote: { asOf?: string; venuePriceAuthoritative?: boolean; fetchedAt?: string } | undefined,
+  quote: {
+    asOf?: string;
+    venuePriceAuthoritative?: boolean;
+    fetchedAt?: string;
+    delayedFallback?: boolean;
+    provider?: string;
+  } | undefined,
   nowMs: number
-): { ageSec?: number; missing: boolean; venueDelayed: boolean } {
-  if (!quote) return { missing: true, venueDelayed: false };
+): { ageSec?: number; missing: boolean; venueDelayed: boolean; delayedFallback: boolean } {
+  if (!quote) return { missing: true, venueDelayed: false, delayedFallback: false };
   const venueDelayed = quote.venuePriceAuthoritative === true;
-  const stamp = venueDelayed ? quote.fetchedAt ?? quote.asOf : quote.asOf;
-  if (!stamp) return { missing: true, venueDelayed };
+  const delayedFallback = isDelayedYahooFallbackQuote(quote, nowMs);
+  // Venue-delayed tape and delayed Yahoo fallback: age the FETCH snapshot, not the
+  // expected ~15m print.  A just-fetched delayed Yahoo quote is not a broken cascade.
+  const stamp = venueDelayed || delayedFallback ? quote.fetchedAt ?? quote.asOf : quote.asOf;
+  if (!stamp) return { missing: true, venueDelayed, delayedFallback };
   const asOfMs = new Date(stamp).getTime();
-  if (Number.isNaN(asOfMs)) return { missing: true, venueDelayed };
+  if (Number.isNaN(asOfMs)) return { missing: true, venueDelayed, delayedFallback };
   return {
     ageSec: Math.round((nowMs - asOfMs) / 1000),
     missing: false,
-    venueDelayed
+    venueDelayed,
+    delayedFallback
   };
 }
 
@@ -419,12 +430,20 @@ export async function fetchFreshQuotesCascade(
   // --- FALLBACK ---
   // For any symbols that could not be resolved to a fresh quote (e.g. during market close / weekend),
   // fall back to the freshest quote found across any level (even if older than the freshness bar).
-  // Prefer venue-authoritative when present.
+  // Prefer venue-authoritative when present.  Yahoo on this path is delayed fallback:
+  // stamp it so approval cards say so, and keep trading (owner 2026-08-18).
   for (const symbol of normalizedSymbols) {
     if (!result[symbol]) {
       const best = bestQuotes[symbol];
       if (best) {
-        result[symbol] = best;
+        const fallback: BrokerQuote = {
+          ...best,
+          fetchedAt: best.fetchedAt ?? fetchedAtIso
+        };
+        if (isYahooFallbackProvider(best.provider)) {
+          fallback.delayedFallback = true;
+        }
+        result[symbol] = fallback;
       }
     }
   }
