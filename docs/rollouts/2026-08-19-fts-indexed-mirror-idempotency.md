@@ -24,6 +24,7 @@ Part II cluster `event-loop-pins` from `docs/reviews/2026-08-18-full-app-expert-
 - `test/sec-ingest-worker.test.ts`
 - `test/sec-filings.test.ts`
 - `test/pinecone-write-class.test.ts`
+- `test/persistence-hardening.test.ts` (schema version 84→85 for migration v85)
 
 ## Decisions & Trade-offs
 
@@ -36,15 +37,15 @@ Part II cluster `event-loop-pins` from `docs/reviews/2026-08-18-full-app-expert-
 ```bash
 npm run lint          # 0 errors
 npx tsc --noEmit      # clean
-npx vitest run test/persist-local-complete.test.ts test/sec-ingest-worker.test.ts test/pinecone-write-class.test.ts test/sec-filings.test.ts -t "insertDocumentChunkFtsBatch|persistLocalComplete|defers ingest when strategy"  # 10 passed
+npx vitest run test/persistence-hardening.test.ts test/persist-local-complete.test.ts test/sec-ingest-worker.test.ts test/pinecone-write-class.test.ts test/sec-filings.test.ts  # 107 passed
 npm run build         # clean
 ```
 
-Full `npm test` was started but slow in cloud VM; targeted suite above covers new paths.
+Rebased onto `origin/main` (2026-08-20); CI `verify` failed on hardcoded migration 84 until `persistence-hardening` retarget.
 
 ## Next Steps & Blockers
 
-- Merge PR; migration v85 backfill runs once at deploy (O(corpus) one-time, acceptable).
+- Green `verify` on PR #2885; owner merge when ready (do not auto-merge from agent).
 - Optional follow-up: route `document-summarizer.ts` FTS mirror through bounded helper; clean orphan index rows on its bulk DELETE.
 
 ## Zero-Code Findings

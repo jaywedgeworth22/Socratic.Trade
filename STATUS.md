@@ -178,7 +178,7 @@ Expert review Part II cluster: chrome bar budget at 360–390px, 44px touch floo
 PR open on `cursor/placement-outcome-truth-6d4a`.  Introduces `src/lib/placement-outcome.ts` so approve reports `placed` only when the broker actually received an order.  Mobile `proposal.approve` no longer stamps `succeeded` for busy/blocked/not_placed; iOS decodes `result.status` and mirrors web approval-card tones.  HTTP 429/408 on the approval path land as `not_placed`, not `rejected_by_broker`.  Rollout: `docs/rollouts/2026-08-19-placement-outcome-truth.md`.
 ## 2026-08-19 CURSOR — FTS indexed mirror idempotency + strategy-run yield (`event-loop-pins`)
 
-Part II cluster `event-loop-pins`: FTS idempotency no longer full-scans the corpus (`document_chunks_fts_index` + rowid DELETE).  `persistLocalComplete` and filing-body ingest mirror through `mirrorFtsChunksBounded` (`planFtsMirrorSlice` + `yieldEventLoop` + `hasInFlightStrategyWork`).  PR branch `cursor/event-loop-pins-fts-indexed-mirror-5b2a`.  Rollout: `docs/rollouts/2026-08-19-fts-indexed-mirror-idempotency.md`.
+Part II cluster `event-loop-pins`: FTS idempotency no longer full-scans the corpus (`document_chunks_fts_index` + rowid DELETE).  `persistLocalComplete` and filing-body ingest mirror through `mirrorFtsChunksBounded` (`planFtsMirrorSlice` + `yieldEventLoop` + `hasInFlightStrategyWork`).  PR **#2885** branch `cursor/event-loop-pins-fts-indexed-mirror-5b2a` rebased onto latest `origin/main`; `test/persistence-hardening.test.ts` retargeted 84→85 for migration v85.  Awaiting green `verify`.  Rollout: `docs/rollouts/2026-08-19-fts-indexed-mirror-idempotency.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
