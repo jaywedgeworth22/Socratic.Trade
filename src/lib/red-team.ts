@@ -15,8 +15,9 @@
 //   (llmFetchCapturing, same soft timeout as Green); a reviewer that still can't answer
 //   declares itself unavailable.
 
-import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
+import { getPolicy } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { resolveRunAccountScope } from "./run-account-scope";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import {
   interactiveStrategyReasoningEffort,
@@ -189,8 +190,15 @@ export async function debateProposal(
   review?: { context?: RedTeamReviewContext; sizing?: RedTeamFinalizedSizing }
 ): Promise<RedTeamDebateResult> {
   const policy = policyOverride ?? getPolicy(userId);
-  const activeAccount = getActiveConnectedAccount(userId);
-  const venue = deriveVenueContract(policy, activeAccount);
+  // The account under review is the one THIS policy trades (`policy.connectedAccountId`), never
+  // whichever account the console happens to have selected. Resolved once, so the venue contract,
+  // the execution state and the strategy prompt below are all read off the SAME account — with two
+  // accounts connected, re-resolving each of them independently let a review of account A's opening
+  // be computed against account B's short capability, execution mode and custom prompt, and let the
+  // answer change mid-run when the owner switched the active account.
+  const accountScope = resolveRunAccountScope(userId, policy);
+  const reviewAccount = accountScope.account;
+  const venue = deriveVenueContract(policy, reviewAccount);
   if (proposal.side === "short" && !venue.sides.includes("short")) {
     return {
       verdict: "reject",
@@ -199,8 +207,8 @@ export async function debateProposal(
       reason: `This ${venue.brokerLabel} account cannot short.  The opening was refused without a reviewer call.`
     };
   }
-  const executionState = deriveExecutionState(policy, activeAccount);
-  const basePrompt = getStrategyPrompt(userId);
+  const executionState = deriveExecutionState(policy, reviewAccount);
+  const basePrompt = accountScope.strategyPrompt;
   const { url, key: llmKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
     userId,
