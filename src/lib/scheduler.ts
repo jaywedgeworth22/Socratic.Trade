@@ -632,6 +632,7 @@ async function tick(): Promise<void> {
 
   // ROIC.ai transcripts: latest-then-deepen-then-archive (key = opt-in; ROIC_TRANSCRIPTS_DISABLED=1).
   // Prefer this over free EarningsCalls previews when the ROIC individual plan is configured.
+  // Cached earningscalls_transcripts + data/roic-artifacts never re-list or re-fetch.
   // Holdings → watchlist, last N fiscal quarters, cap ROIC_TRANSCRIPTS_MAX_PER_RUN.
   // Library helpers existed earlier without a scheduler caller — that left zero ROIC saves.
   if (isRoicTranscriptRefreshDue() && !hasInFlightStrategyWork() && checkMonthlyLlmSpendCeiling().ok) {

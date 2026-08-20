@@ -282,3 +282,65 @@ export function hasAnyEarningsCallsEventForSymbol(symbol: string): boolean {
     .get(normalizeSymbol(symbol)) as { present: number } | undefined;
   return row !== undefined;
 }
+
+const CONTENT_SELECT =
+  `SELECT symbol, fiscal_year, fiscal_quarter, event_id, event_date, content, fetched_at, source_meta, ingested_at
+   FROM earningscalls_transcripts`;
+
+/** Cached transcript rows for one symbol, newest fiscal period first. */
+export function listEarningsCallsTranscriptsForSymbol(symbol: string): EarningsCallsTranscriptRow[] {
+  const rows = getDb()
+    .prepare(
+      `${CONTENT_SELECT}
+       WHERE symbol = ?
+       ORDER BY fiscal_year DESC, fiscal_quarter DESC`
+    )
+    .all(normalizeSymbol(symbol)) as RawRow[];
+  return rows.map(toRow);
+}
+
+export interface EarningsCallsCoverageBucket {
+  symbol: string;
+  count: number;
+}
+
+export interface EarningsCallsTranscriptCoverage {
+  transcriptsWithContent: number;
+  symbolsWithContent: number;
+  symbolsAtDepth: number;
+  symbolsPartial: number;
+  perSymbol: EarningsCallsCoverageBucket[];
+}
+
+/** Local Individual-archive inventory: rows with real transcript text (>= 200 chars). */
+export function summarizeEarningsCallsTranscriptCoverage(
+  depth: number = 20
+): EarningsCallsTranscriptCoverage {
+  const cap = Math.max(1, Math.floor(depth));
+  const rows = getDb()
+    .prepare(
+      `SELECT symbol, COUNT(*) AS count
+       FROM earningscalls_transcripts
+       WHERE content IS NOT NULL AND length(content) >= 200
+       GROUP BY symbol
+       ORDER BY count ASC, symbol ASC`
+    )
+    .all() as Array<{ symbol: string; count: number }>;
+  let transcriptsWithContent = 0;
+  let symbolsAtDepth = 0;
+  let symbolsPartial = 0;
+  const perSymbol: EarningsCallsCoverageBucket[] = [];
+  for (const row of rows) {
+    transcriptsWithContent += row.count;
+    perSymbol.push({ symbol: row.symbol, count: row.count });
+    if (row.count >= cap) symbolsAtDepth += 1;
+    else symbolsPartial += 1;
+  }
+  return {
+    transcriptsWithContent,
+    symbolsWithContent: rows.length,
+    symbolsAtDepth,
+    symbolsPartial,
+    perSymbol
+  };
+}
