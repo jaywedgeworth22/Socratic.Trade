@@ -480,6 +480,15 @@ final class MobileModelsTests: XCTestCase {
         try! JSONDecoder().decode(MobileCommand.self, from: Data(json.utf8))
     }
 
+    func testMobileCommandDecodesPlacementResult() throws {
+        let command = decodeCommand(
+            #"{"id":"cmd","commandType":"proposal.approve","status":"failed","error":"busy","result":{"status":"busy","outcome":"busy","reasons":["A strategy run is in progress."]},"createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}"#
+        )
+        XCTAssertEqual(command.result?.status, "busy")
+        XCTAssertEqual(command.result?.outcome, "busy")
+        XCTAssertEqual(command.result?.reasons?.first, "A strategy run is in progress.")
+    }
+
     private let minimalSnapshotJSON = #"""
     {
       "readiness": {

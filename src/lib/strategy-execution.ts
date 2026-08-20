@@ -52,6 +52,11 @@ import {
   startStrategyLockGuard,
   StrategyLockOwnershipLostError
 } from "./strategy-lock-guard";
+import {
+  isRetryableBrokerHttpError,
+  isTerminalBrokerHttpError,
+  type ExecuteProposalResult
+} from "./placement-outcome";
 import { appendDecisionStep, assertLiveApprovalConfirmation, protectiveExitQuoteFromScan, openingPolicyNotionalCap, autoRevertOnCapBreach, auditWashSaleProceed } from "./strategy";
 
 export interface LiveApprovalConfirmation {
@@ -237,13 +242,7 @@ export async function executeProposal(
   // proposal in the request (computed once before its loop) instead of paying up to
   // LANE_WAITS.approvalPlacement per proposal serially — see app/api/proposals/bulk-approve/route.ts.
   options: { liveConfirmation?: LiveApprovalConfirmation; leaseWaitMs?: number } = {}
-): Promise<{
-  status: string;
-  orderId?: string;
-  brokerState?: string;
-  fillStatus?: string;
-  reasons?: string[];
-}> {
+): Promise<ExecuteProposalResult> {
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
@@ -1272,35 +1271,52 @@ export async function executeProposal(
           // happened is pointless and, worse, concludes not_placed ("safe to retry") for an order
           // that will be refused identically every retry. Mirror the autonomous lane's short-circuit
           // (strategy.ts) and the protective-state block above: honest terminal "blocked".
-          // P2.6 / #1319: pre-flight validation AND definitive broker HTTP 4xx are never
-          // "uncertain". Mirror the autonomous lane (strategy.ts): OrderValidationError → blocked;
-          // broker 4xx (order never accepted) → rejected_by_broker. Reserve uncertain for
-          // timeouts / 5xx / undecodable broker state.
-          if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
-            const isValidation = placeError instanceof OrderValidationError;
-            if (isValidation) {
-              const blockedDecision: PolicyDecision = {
-                ...decision,
-                approved: false,
-                reasons: [...decision.reasons, message]
-              };
-              updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
-              audit(
-                "order_blocked_validation",
-                { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
-                userId,
-                policy.connectedAccountId
-              );
-              await sendNotification(
-                {
-                  type: "block",
-                  title: `${sym} order blocked before submission`,
-                  payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
-                },
-                { policy, userId }
-              );
-              return { status: "blocked", reasons: [message] };
-            }
+          // P2.6 / #1319: pre-flight validation and definitive broker HTTP 4xx are never
+          // "uncertain". OrderValidationError → blocked; terminal 4xx → rejected_by_broker;
+          // HTTP 429/408 → not_placed (retryable). Reserve uncertain for timeouts / 5xx.
+          if (placeError instanceof OrderValidationError) {
+            const blockedDecision: PolicyDecision = {
+              ...decision,
+              approved: false,
+              reasons: [...decision.reasons, message]
+            };
+            updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+            audit(
+              "order_blocked_validation",
+              { proposalId, refId, symbol: sym, side: proposal.side, reason: message, path: "approval" },
+              userId,
+              policy.connectedAccountId
+            );
+            await sendNotification(
+              {
+                type: "block",
+                title: `${sym} order blocked before submission`,
+                payload: { proposalId, refId, proposal, reason: message, decision: blockedDecision }
+              },
+              { policy, userId }
+            );
+            return { status: "blocked", reasons: [message] };
+          }
+          if (isRetryableBrokerHttpError(message)) {
+            const note = `Broker rate-limited or timed out (${message}). Safe to retry.`;
+            updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
+            audit(
+              "order_not_placed_retryable_http",
+              { proposalId, refId, symbol: sym, side: proposal.side, error: message.slice(0, 400), path: "approval" },
+              userId,
+              policy.connectedAccountId
+            );
+            await sendNotification(
+              {
+                type: "run_failed",
+                title: `${sym} order not placed — safe to retry`,
+                payload: { proposalId, refId, error: message, reconcile: "not_placed" }
+              },
+              { policy, userId }
+            );
+            return { status: "not_placed", reasons: [note] };
+          }
+          if (isTerminalBrokerHttpError(message)) {
             updateProposalStatus(proposalId, "rejected_by_broker", undefined, review, review.estimatedNotional, userId, undefined, message);
             audit(
               "order_rejected_by_broker",
