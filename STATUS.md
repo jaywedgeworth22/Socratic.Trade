@@ -4,6 +4,9 @@
 
 Screens no longer label one account's data as every account's.  Broker rows in Settings read real per-account policy state and a real per-account pending count (both were previously the active account's, with every other row mislabelled "Inactive" even while trading, and the count dead code that always read 0); the decisions index keeps its by-design all-accounts fetch and gains an account chip; `mobileCommandBacklog` was global across USERS and is now user-scoped.  Each finding was classified wrong-scope vs wrong-label before fixing, so a wrong query is never papered over with a label change.  Full gate green (lint 0 errors, tsc clean, 7071 tests, build 0).  Rollout: `docs/rollouts/2026-08-19-per-account-visibility.md`.
 
+## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
+
+Run-scoped code no longer reads the console-active account.  `debateProposal`, `retryProposalRedTeam` and `applyApprovedPending` now resolve the account from the run's own policy via the new `resolveRunAccountScope(userId, policy)` (account required — no active-account default), so a two-account setup can no longer review account A's proposal against account B's venue, execution mode or strategy prompt, and switching the active account mid-run leaves in-flight reviews pinned.  `retry-red-team.ts` was NOT in the plan — the audit found it and it is fixed here.  Full gate green (lint 0 errors, tsc clean, 7056 tests, build 0); failing-first proven 7/7.  PR body carries the full 21-site `getActiveConnectedAccount` inventory.  Sibling cluster `per-account-visibility` lands next.  Rollout: `docs/rollouts/2026-08-19-run-scoped-account.md`.
 
 ## 2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`)
 
@@ -34,6 +37,9 @@ Part II cluster: stale-exit auto-remediation no longer cancel-replaces bracket l
 Cluster from Part II expert review.  Added `src/lib/guardrail-copy.ts` as the single source for guardrail-semantics sentences; macro / Guardrails / public pages / iOS `DeskCopy` now describe advisory pre-vetoes (not hard veto).  Stripped paper/live ceremony: `Alpaca (paper)`, lowercase paper chip, no iOS Live pill or brokerage activation confirm, Mock removed from Coach pickers.  Terms §8 mirrors Privacy shared pool; `LEGAL_NOTICE_VERSION=2`.  Engine + AUTOPILOT path unchanged.
 
 Branch `cursor/copy-guardrail-claims-19ca`.  Rollout: `docs/rollouts/2026-08-19-copy-guardrail-claims.md`.
+## 2026-08-20 CURSOR — Wire dead tax / webhook / preset controls (`dead-controls`)
+
+Expert review cluster: wired `taxSettings.subtractFromResults` into Results realized P&L, extended Send test to probe `policy.notificationSettings.webhookUrl` (Discord embed path), and added Preset create/rename/delete on Strategy via `/api/profiles`.  Branch `cursor/wire-dead-controls-8b69`.  Rollout: `docs/rollouts/2026-08-20-wire-dead-controls.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
