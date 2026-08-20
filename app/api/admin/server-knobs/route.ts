@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth/admin";
+import { checkAdmin, requireAdmin } from "@/lib/auth/admin";
+import { userIdForEmail } from "@/lib/auth/identity";
+import { resolveRequestUserId } from "@/lib/request-user";
 import { audit } from "@/lib/db";
 import {
   SERVER_KNOB_GROUPS,
@@ -75,10 +77,22 @@ export async function POST(request: Request) {
     }
   }
 
+  // Record WHICH admin flipped the knob. This used to audit every write under a hardcoded `"local"`,
+  // so with more than one entry in ADMIN_USER_EMAILS the audit row could not answer "who did this?".
+  // `checkAdmin` re-runs the same (cheap, env-only) decision `requireAdmin` just made and returns the
+  // verified email on the allowlist path; the legacy `x-admin-token` path has no email by design, so
+  // it is recorded as the token principal rather than silently attributed to a person.
+  const actor = checkAdmin(request);
+  const actorUserId = actor.email ? userIdForEmail(actor.email) : resolveRequestUserId(request);
+
   const from = resolveServerKnob(id);
   setServerKnobOverride(id, value as boolean | number | null);
   const to = resolveServerKnob(id);
-  audit("server_knob.changed", { id, from, to, override: value }, "local");
+  audit(
+    "server_knob.changed",
+    { id, from, to, override: value, actor: { email: actor.email, via: actor.reason } },
+    actorUserId
+  );
 
   return NextResponse.json(knobsPayload());
 }

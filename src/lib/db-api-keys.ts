@@ -1973,6 +1973,19 @@ export function listChatTurns(userId: string, limit: number = 100): ChatTurn[] {
   return limit > 0 && mapped.length > limit ? mapped.slice(mapped.length - limit) : mapped;
 }
 
+/**
+ * EVERY user's chat turns, most recent `limit` across the whole table, in chronological order.
+ * Unscoped by design and therefore admin-only: the sole caller is the requireAdmin-gated
+ * `/api/admin/transcript`. Ordinary per-caller reads must keep using `listChatTurns(userId, ...)`.
+ */
+export function listAllChatTurns(limit: number = 100): ChatTurn[] {
+  const n = Math.max(1, Number(limit) || 1);
+  const rows = getDb()
+    .prepare("SELECT * FROM chat_turns ORDER BY created_at DESC, rowid DESC LIMIT ?")
+    .all(n) as RawChatTurnRow[];
+  return rows.map(mapChatTurn).reverse();
+}
+
 /** Keep only the most recent `keep` turns for a user (FIFO cap); returns rows deleted. */
 export function trimChatTurns(userId: string, keep: number): number {
   return getDb()
