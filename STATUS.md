@@ -3,6 +3,11 @@
 ## 2026-08-19 MONET — `per-account-visibility` landed for review (tranche-1 cluster)
 
 Screens no longer label one account's data as every account's.  Broker rows in Settings read real per-account policy state and a real per-account pending count (both were previously the active account's, with every other row mislabelled "Inactive" even while trading, and the count dead code that always read 0); the decisions index keeps its by-design all-accounts fetch and gains an account chip; `mobileCommandBacklog` was global across USERS and is now user-scoped.  Each finding was classified wrong-scope vs wrong-label before fixing, so a wrong query is never papered over with a label change.  Full gate green (lint 0 errors, tsc clean, 7071 tests, build 0).  Rollout: `docs/rollouts/2026-08-19-per-account-visibility.md`.
+## 2026-08-20 CURSOR — Rebase #2813 onto current main (ROIC Individual archive)
+
+PR **#2813** (`cursor/roic-individual-archive-9ad4`) rebased onto `origin/main` `ce31c367` (#2798).  Scope unchanged: skip ROIC HTTP when cache/artifacts already cover; persist `earningscalls_transcripts` + `data/roic-artifacts`; ops `roicArchive`.  Conflicts were `src/lib/web-sources/roic-transcripts.ts` and `test/roic-transcripts.test.ts` -- kept this PR's `while (queue.length > 0)` cached-tail drain and main's #2848 strategy-run pause plus the existing #2820 write-class tests.  Did not absorb other clusters.  Did not merge.  Did not spend the Individual key.
+
+Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 
 ## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
 
@@ -325,7 +330,7 @@ Owner cut 2026-08-17: archive, not renew-vs-expire.  Harvest #2763 already persi
 
 Last published coverage (2026-08-16): 608 transcripts / 565 tickers vs a 1,000-issuer universe.  Most names still have only the latest call.  Did not re-walk from this empty cloud checkout.  No Stripe.  Left #2800 / #2798 / #2794 / #2792 alone.
 
-Branch `cursor/roic-individual-archive-9ad4`.  Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
+PR **#2813**.  Branch `cursor/roic-individual-archive-9ad4`.  Rebased onto `ce31c367` (#2798).  Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 

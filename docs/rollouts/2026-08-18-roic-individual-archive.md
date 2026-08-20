@@ -69,10 +69,10 @@ After merge, confirm `GET /api/ops/snapshot` → `roicArchive` and that `roic-tr
 
 ## Next Steps & Blockers
 
-1. Rebased onto `origin/main` (`522b2454`, #2824) so #2813 is conflict-clean.  Did not merge.  Did not spend the Individual key.
-2. Land this branch.  Coolify auto-deploys.  Watch `roicArchive.transcriptsWithContent` / `universeUncovered` / `thinSymbols`.
-2. Owner: renew-vs-expire Individual.  Do not start a second full-universe list while the cursor is still walking gaps.
-3. Leave FilingAPI and Pinecone remainder deadlock to their existing PRs.
+1. Rebased onto `origin/main` (`ce31c367`, #2798) so #2813 is conflict-clean.  Conflicts: `src/lib/web-sources/roic-transcripts.ts` + `test/roic-transcripts.test.ts`.  Kept this PR's cached-tail drain (`while (queue.length > 0)`) and main's #2848 pause + #2820 write-class tests.  Did not merge.  Did not spend the Individual key.
+2. Leave CI green, then land.  Coolify auto-deploys.  Watch `roicArchive.transcriptsWithContent` / `universeUncovered` / `thinSymbols`.
+3. Owner: renew-vs-expire Individual.  Do not start a second full-universe list while the cursor is still walking gaps.
+4. Leave FilingAPI leftover and other clusters to their existing PRs.
 
 ## Zero-Code Findings
 
