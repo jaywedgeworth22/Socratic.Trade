@@ -12,6 +12,11 @@ Part II cluster `price-alert-evaluation`.  `checkPriceAlerts` now uses user-scop
 Expert review cluster `home-proposal-rows`: Home latest-run rows now use persisted `trade_proposals.id` on the strategy trace, shared `proposalChipTone` / `isProposalRowApprovable` helpers, honest warn tones for error/failed/blocked, Approve only on real pending/proposed ids, and a keyboard-operable row button with `SymbolButton` outside the activation target.  Empty `latest.proposals` falls back to `pendingProposals`.  Web console only.
 
 PR **(pending)**.  Branch `cursor/home-proposal-rows-8a57`.  Rollout: `docs/rollouts/2026-08-19-home-proposal-rows.md`.
+## 2026-08-19 CURSOR — Session-aware market cache freshness (`market-cache-freshness` / mdi-01)
+
+Replaced calendar-day cache TTL with session-boundary logic: Friday 10:00 ET screener/OHLC/enrichment writes now expire on their naive TTL (not Monday open).  TTL extension only fires after today's regular or early-close session ends.  `isBarSeriesFresh` now compares the latest bar to the most recently completed trading session instead of a 3-calendar-day window.  Added `getEarlyCloses(year)` for half-day closes.
+
+PR on branch `cursor/market-cache-freshness-5ee3`.  Rollout: `docs/rollouts/2026-08-19-market-cache-freshness.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

@@ -32,7 +32,12 @@ export function currentMarketSession(now = new Date()): MarketSession {
 
   const PRE_OPEN = 4 * 60;       // 04:00
   const OPEN = 9 * 60 + 30;      // 09:30
-  const CLOSE = 16 * 60;         // 16:00
+  const closeEt = getMarketCloseEt({
+    year: parseInt(parts.year, 10),
+    month: parseInt(parts.month, 10),
+    day: parseInt(parts.day, 10)
+  });
+  const CLOSE = closeEt.hour * 60 + closeEt.minute;
   const POST_CLOSE = 20 * 60;    // 20:00
 
   if (totalMinutes >= OPEN && totalMinutes < CLOSE) return "regular";
@@ -153,6 +158,40 @@ export function getMarketHolidays(year: number): Set<string> {
   return holidays;
 }
 
+export interface EarlyCloseTime {
+  hour: number;
+  minute: number;
+}
+
+/** US equity early-close days (1:00 PM ET) for a calendar year. */
+export function getEarlyCloses(year: number): Map<string, EarlyCloseTime> {
+  const closes = new Map<string, EarlyCloseTime>();
+  const halfDay: EarlyCloseTime = { hour: 13, minute: 0 };
+  const holidays = getMarketHolidays(year);
+
+  const thanksgiving = getNthWeekdayOfMonth(year, 10, 4, 4);
+  const dayAfterThanksgiving = new Date(thanksgiving);
+  dayAfterThanksgiving.setUTCDate(dayAfterThanksgiving.getUTCDate() + 1);
+  const dayAfterThanksgivingKey = dayAfterThanksgiving.toISOString().split("T")[0];
+  if (!holidays.has(dayAfterThanksgivingKey)) {
+    closes.set(dayAfterThanksgivingKey, halfDay);
+  }
+
+  const christmasEveKey = `${year}-12-24`;
+  const christmasEveDow = new Date(Date.UTC(year, 11, 24)).getUTCDay();
+  if (christmasEveDow >= 1 && christmasEveDow <= 5 && !holidays.has(christmasEveKey)) {
+    closes.set(christmasEveKey, halfDay);
+  }
+
+  const july3Key = `${year}-07-03`;
+  const july3Dow = new Date(Date.UTC(year, 6, 3)).getUTCDay();
+  if (july3Dow >= 1 && july3Dow <= 5 && !holidays.has(july3Key)) {
+    closes.set(july3Key, halfDay);
+  }
+
+  return closes;
+}
+
 function getNthWeekdayOfMonth(year: number, month: number, weekday: number, n: number): Date {
   const date = new Date(Date.UTC(year, month, 1));
   let count = 0;
@@ -262,6 +301,39 @@ function etWallClockToUtcMs(parts: EtDateParts, hour: number, minute: number): n
 
 const MARKET_OPEN_HOUR_ET = 9;
 const MARKET_OPEN_MINUTE_ET = 30;
+const MARKET_CLOSE_HOUR_ET = 16;
+const MARKET_CLOSE_MINUTE_ET = 0;
+
+function etDateKey(parts: EtDateParts): string {
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function getMarketCloseEt(parts: EtDateParts): EarlyCloseTime {
+  const early = getEarlyCloses(parts.year).get(etDateKey(parts));
+  return early ?? { hour: MARKET_CLOSE_HOUR_ET, minute: MARKET_CLOSE_MINUTE_ET };
+}
+
+function marketCloseUtcMs(parts: EtDateParts): number {
+  const close = getMarketCloseEt(parts);
+  return etWallClockToUtcMs(parts, close.hour, close.minute);
+}
+
+/** Latest ET trading-session date (YYYY-MM-DD) whose EOD bar should be present in cache. */
+export function latestCompletedTradingSessionEtKey(nowMs: number = Date.now()): string {
+  const today = etDateParts(new Date(nowMs));
+  if (isEtCalendarTradingDay(today) && nowMs >= marketCloseUtcMs(today)) {
+    return etDateKey(today);
+  }
+
+  let parts = today;
+  for (let i = 0; i < 10; i++) {
+    parts = addEtCalendarDays(parts, -1);
+    if (isEtCalendarTradingDay(parts)) {
+      return etDateKey(parts);
+    }
+  }
+  return etDateKey(parts);
+}
 
 /** The next US equity market-open instant strictly after `nowMs`, walking forward through ET
  *  calendar days. Bounded to 10 iterations, same bound as adjacentTradingDayStart above — a real
@@ -288,6 +360,7 @@ function nextMarketOpenStrictlyAfterMs(nowMs: number): number {
 function isWeekendOrHolidayClosureAhead(nowMs: number): boolean {
   const today = etDateParts(new Date(nowMs));
   if (!isEtCalendarTradingDay(today)) return true;
+  if (nowMs < marketCloseUtcMs(today)) return false;
   return !isEtCalendarTradingDay(addEtCalendarDays(today, 1));
 }
 
