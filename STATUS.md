@@ -338,6 +338,11 @@ PR **#2818**.  Branch `cursor/delayed-yahoo-fallback-stamp-c120`.  Rollout:
 ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
 
 PR **#2822**.  Branch `cursor/litestream-restore-drill-2cd9`.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+## 2026-08-18 CURSOR — iOS owner-note UI copy
+
+Owner: coordinator/owner comments do not belong in the iOS UI.  Notes for Jay stay in PRs/docs.  Concrete leak on `main`: Home Desk subtitle `full surfaces, not just the remote`.  Removed that subtitle and the same class of leaked strings (control-remote setup line, Infisical footer, `/api/policy` / `policy.patch` / "not a second copy here" / "phone-safe").  Did not steal #2792/#2798/#2800/#2794 (those own FilingAPI, alert-noise, Pinecone writes, and iOS console handoffs).
+
+PR **#2814**.  Branch `cursor/ios-no-owner-note-ui-5139`.  Rollout: `docs/rollouts/2026-08-18-ios-no-owner-note-ui.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
