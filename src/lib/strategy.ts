@@ -206,6 +206,7 @@ import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
+import { isIdempotencyConflictHttpError } from "./placement-outcome";
 import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
 import { runSafetyMaintenance, withDeadline } from "./safety-maintenance";
 import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
@@ -4000,9 +4001,14 @@ export async function runStrategyOnce(
 
             // P2.6: Explicitly intercept pre-flight validation throws and broker 4xx rejections.
             // A 4xx (e.g. 403 Forbidden, 400 Bad Request) means the broker definitively received and rejected it.
+            // HTTP 409 is the exception: Alpaca uses it for a reused client_order_id, which means
+            // the order already exists and must be reconciled rather than marked rejected.
             // OrderValidationError means the adapter blocked it before sending.
-            // Neither case is "uncertain", so we abort the placement loop immediately.
-            if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
+            // Neither terminal case is "uncertain", so we abort the placement loop immediately.
+            if (
+              placeError instanceof OrderValidationError ||
+              (/\bHTTP 4\d\d\b/i.test(message) && !isIdempotencyConflictHttpError(message))
+            ) {
               const status = placeError instanceof OrderValidationError ? "blocked" : "rejected_by_broker";
               const transitionDecision =
                 status === "blocked" ? { ...decision, approved: false, reasons: [...decision.reasons, message] } : decision;

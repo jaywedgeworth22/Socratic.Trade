@@ -9,6 +9,12 @@ Accounting reads no longer take the OLDEST 500 fills.  `listFillEvents` defaults
 **`perf-11` is deliberately NOT closed** - regrouping win rate from per-lot to per-round-trip changes a number feeding every scorecard, the Kelly payoff split, the conviction calibration and the tuner's weight-shift gate at once.  `aggregateRoundTrip` is now exported as the primitive it needs, but the grouping key is an owner decision.
 
 Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `PerformanceSummary` fields kept - a textual merge would have dropped one).  Gate: lint 0 errors, tsc clean, 7205 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-realized-pnl-ledger.md`.
+## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on cancel timeout
+
+#2949 only wrote the do-not-replace tombstone after `cancelEquityOrder` returned.  #2886's 30s cancel deadline can throw after the broker already accepted the cancel.  Reconcile then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
+
+Fix: persist the tombstone on cancel throw when the order is a tracked / app-managed protective stop.  Leave the tracked row if the ACK was lost.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-timeout.md`.
+
 ## 2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday 401 at the edge
 
 #2953 added `/api/market/quotes` and `/api/market/intraday/[symbol]` on the same

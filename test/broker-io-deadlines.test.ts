@@ -7,6 +7,8 @@ import { SCHEDULER_BROKER_TIMEOUT_MS } from "../src/lib/safety-maintenance";
 
 let getOrdersCalls: Array<Record<string, unknown>> = [];
 let createOrderHang = false;
+let createOrderCalls = 0;
+let createOrderSocketFail = false;
 
 vi.mock("@alpacahq/alpaca-trade-api", () => {
   return {
@@ -21,7 +23,15 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
       }
       async getLatestQuotes() { return {}; }
       async createOrder() {
+        createOrderCalls += 1;
         if (createOrderHang) return new Promise(() => undefined);
+        if (createOrderSocketFail) {
+          const err = new TypeError("fetch failed");
+          (err as Error & { cause?: Error }).cause = Object.assign(new Error("other side closed"), {
+            code: "UND_ERR_SOCKET"
+          });
+          throw err;
+        }
         return { id: "ord-1", status: "accepted", filled_qty: "0", filled_avg_price: null };
       }
       async cancelOrder(id: string) {
@@ -37,6 +47,8 @@ beforeEach(async () => {
   vi.unstubAllEnvs();
   getOrdersCalls = [];
   createOrderHang = false;
+  createOrderCalls = 0;
+  createOrderSocketFail = false;
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-broker-io-${randomUUID()}.db`)}`;
 
   const { upsertConnectedAccount } = await import("../src/lib/db");
@@ -79,6 +91,27 @@ describe("broker I/O deadlines", () => {
     await vi.advanceTimersByTimeAsync(ALPACA_BROKER_IO_DEADLINE_MS);
     await expect(pending).rejects.toThrow(/timed out/i);
     createOrderHang = false;
+  });
+
+  it("placeEquityOrder does not retry createOrder after a dead response socket", async () => {
+    createOrderSocketFail = true;
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+
+    await expect(
+      gateway.placeEquityOrder({
+        accountNumber: "MOCK_ACC",
+        symbol: "AAPL",
+        side: "buy",
+        type: "market",
+        quantity: 1,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        refId: "ref-place-socket"
+      })
+    ).rejects.toThrow(/fetch failed|other side closed|UND_ERR_SOCKET/i);
+    expect(createOrderCalls).toBe(1);
+    createOrderSocketFail = false;
   });
 
   it("cancelEquityOrder rejects when cancelOrder hangs past the broker I/O deadline", async () => {
