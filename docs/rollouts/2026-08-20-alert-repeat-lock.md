@@ -37,15 +37,24 @@ Jay (2026-08-19 ~7:05pm CT): do not send the same alert multiple times in a sing
 
 ## Verification State
 
-Focused suites first, then the full gate (recorded after the run):
-
 ```bash
-npm test -- test/notification-repeat-dedup.test.ts test/usage-limit-alerts.test.ts test/connection-health-routing.test.ts test/health-alert-noise-gate.test.ts test/price-alerts-evaluation.test.ts
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+# Focused (this PR) — 6 files, 75/75 passed (2026-08-20 00:38Z)
+PUSHOVER_APP_TOKEN= PUSHOVER_USER_KEY= npm test -- \
+  test/notification-repeat-dedup.test.ts \
+  test/usage-limit-alerts.test.ts \
+  test/connection-health-routing.test.ts \
+  test/health-alert-noise-gate.test.ts \
+  test/price-alerts-evaluation.test.ts \
+  test/notification-status-truth.test.ts
+
+npm run lint          # exit 0
+npx tsc --noEmit      # clean
+npm run build         # succeeded
 ```
+
+Cloud VM has live `PUSHOVER_*` secrets.  Email-fallback cases must stub those env vars empty (commit `c72eb852`); `vi.unstubAllEnvs()` restores the host tokens.
+
+Full `npm test` on this VM is not the gate for this PR: it hits unrelated network/timeout flakes (TwelveData quota, strategy 30s timeouts, Alpaca/Finnhub 404s).  A broader notify-adjacent set was 139 passed / 1 unrelated timeout (`persistence-notification` pre-run portfolio snapshot).  CI `verify` on #2877 is the full-suite source of truth.
 
 ## Next Steps & Blockers
 
