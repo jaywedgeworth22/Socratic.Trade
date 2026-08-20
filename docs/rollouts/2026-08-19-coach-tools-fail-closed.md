@@ -30,9 +30,10 @@ Implements review cluster `coach-tools-and-turns` (Part II, `docs/reviews/2026-0
 npm run lint          # 0 errors (771 warnings, grandfathered)
 npx tsc --noEmit      # clean
 npm test -- test/chat-tools.test.ts test/chat-llm.test.ts  # 38 passed
-npm test              # full suite (pending at handoff)
-npm run build         # pending at handoff
+npm run build         # clean
 ```
+
+Full `npm test` was started in background on this VM; unrelated pre-existing failures observed in `vector-db-document-receipts`, `connection-health-routing`, and `strategy-held-position-retrieval-scope` (timeouts) — none touch `src/lib/chat/*`.
 
 ## Next Steps & Blockers
 
