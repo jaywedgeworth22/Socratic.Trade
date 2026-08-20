@@ -1,3 +1,4 @@
+import "server-only";
 import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";

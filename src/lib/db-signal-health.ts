@@ -5,6 +5,7 @@
 // quantile buckets, top-K churn, gross vs net-of-cost. A row is written ONLY when the observation
 // floor is met — never a fabricated diagnostic. Advisory observability; the opt-in auto-throttle
 // (policy.tuning.signalHealthAutoThrottle) is the only consumer that touches sizing.
+import "server-only";
 import { getDb } from "./db";
 
 /** Per-quantile outcome stats — mirrors CongressQuantileStat (congress-score-eval.ts) so the two

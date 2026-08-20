@@ -1,4 +1,5 @@
 // db-memory-lifecycle.ts — per-vector recency/importance lifecycle (migration 80).
+import "server-only";
 import { getDb } from "./db";
 
 export interface VectorDocLifecycleRow {

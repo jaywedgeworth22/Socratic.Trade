@@ -1,3 +1,4 @@
+import { invalidateDashboardSnapshotCache } from "./dashboard-snapshot-cache";
 import { peekBrokerMutationLease } from "./account-mutation";
 import { describeCancelDustRisk, shouldAlertCancelDustRisk } from "./broker-minimum-guard";
 import { isWorkingOrderState } from "./broker-held-orders";
@@ -225,6 +226,7 @@ export async function cancelWorkingOrder(input: CancelWorkingOrderInput): Promis
   }
   audit("order_cancel", { accountNumber: policy.accountNumber, orderId, result, source }, userId);
   emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { orderId, action: "cancel" } });
+  invalidateDashboardSnapshotCache(userId, policy.accountNumber);
   if (dust && shouldAlertCancelDustRisk(userId, policy.accountNumber, dust.symbol)) {
     await sendNotification(
       {

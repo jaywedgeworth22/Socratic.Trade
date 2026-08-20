@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectedAccount, TaxationType } from "@/lib/types";
-import { mergeAccountCapabilities } from "@/lib/venue-contract";
+import { mergeAccountCapabilities } from "@/lib/venue-contract-pure";
 import { activateAccount, ConsoleApiError } from "../lib/api";
 import { deriveStateInfo, realityForAccount } from "../lib/derive";
 import {

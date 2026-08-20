@@ -5,6 +5,7 @@
 // These writes intentionally do not accept a business-operation lease: usage truth must survive
 // lease loss, process crashes, and successor takeover.
 
+import "server-only";
 import crypto from "crypto";
 import type Database from "better-sqlite3";
 import { getDb } from "./db";

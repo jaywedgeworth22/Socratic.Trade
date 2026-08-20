@@ -1,3 +1,4 @@
+import "server-only";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getPolicy, listConnectedAccounts, listFillEvents } from "./db";
 import { normalizeSymbol } from "./money";
@@ -73,15 +74,7 @@ export function overlayAccountTaxationType(
   };
 }
 
-/** When `subtractFromResults` is on, show realized P&L net of estimated tax liability. */
-export function realizedPnlNetOfEstimatedTax(
-  realized: number | undefined,
-  estimatedTaxLiability: number | undefined,
-  subtractFromResults: boolean
-): number | undefined {
-  if (typeof realized !== "number" || !subtractFromResults) return realized;
-  return Number((realized - (estimatedTaxLiability ?? 0)).toFixed(2));
-}
+export { realizedPnlNetOfEstimatedTax } from "./tax-pure";
 
 export function resolveTaxSettings(settings?: Partial<TaxSettings>): TaxSettings {
   const merged = { ...DEFAULT_TAX_SETTINGS, ...(settings ?? {}) };

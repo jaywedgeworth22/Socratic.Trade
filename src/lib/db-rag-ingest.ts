@@ -4,6 +4,7 @@
 // correctness boundary a separately gated worker can use: deterministic replay keys, atomic
 // claims, fenced lease heartbeats, legal checkpoint transitions, bounded retries/dead letters,
 // quarantine, and auditable cost/verification receipts.
+import "server-only";
 import crypto from "crypto";
 import { getDb } from "./db";
 

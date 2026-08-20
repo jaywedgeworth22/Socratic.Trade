@@ -81,6 +81,11 @@ import {
   dashboardSnapshotCacheKey,
   getOrComputeDashboardSnapshot
 } from "./dashboard-snapshot-cache";
+import {
+  collectSnapshotQuoteSymbols,
+  projectMarketScanForClient,
+  projectOrdersForClientSnapshot
+} from "./dashboard-snapshot-projection";
 
 export {
   DASHBOARD_SNAPSHOT_TTL_MS,
@@ -1078,13 +1083,21 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     accountLabelById,
     getProposalById
   });
-  const clientAudit = audit.map((event) => ({
-    id: event.id,
-    createdAt: event.createdAt,
-    kind: event.kind,
-    payload: asRec(event.payload),
-    connectedAccountId: event.connectedAccountId
-  }));
+  const referencedQuoteSymbols = collectSnapshotQuoteSymbols({
+    positions,
+    orders,
+    pendingProposals: pendingProposalsWithPerf,
+    recentProposals: recentProposalsWithPerf,
+    scan: newestScan
+  });
+  const clientLatestScan = projectMarketScanForClient(newestScan, referencedQuoteSymbols);
+  const clientLatestStrategyRun = latestStrategyRun?.marketScan
+    ? {
+        ...latestStrategyRun,
+        marketScan: projectMarketScanForClient(latestStrategyRun.marketScan as MarketScan, referencedQuoteSymbols)
+      }
+    : latestStrategyRun;
+  const clientOrders = projectOrdersForClientSnapshot(orders);
 
   // One summary log per request — only when it's actually slow or something degraded, so normal
   // requests stay quiet. `timedOutSections` is populated by withDeadline(...) above whenever an
@@ -1122,13 +1135,12 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     options,
     symbolMetaBySymbol,
     stopPlanBySymbol,
-    orders,
+    orders: clientOrders,
     orderPriceFallbacks,
-    audit: clientAudit,
     auditFeed,
     unifiedFeed,
-    latestStrategyRun,
-    latestScan: newestScan,
+    latestStrategyRun: clientLatestStrategyRun,
+    latestScan: clientLatestScan,
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId, policy.connectedAccountId),
     pendingProposals: pendingProposalsWithPerf,

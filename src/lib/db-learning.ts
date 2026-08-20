@@ -1,5 +1,6 @@
 // db-learning.ts — audit-event helpers, counterfactual learning watermarks/candidates,
 // learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
+import "server-only";
 import { getDb } from "./db";
 import { mergeHorizonRows } from "./outcome-horizons";
 import { yieldEventLoop } from "./slow-sync-guard";

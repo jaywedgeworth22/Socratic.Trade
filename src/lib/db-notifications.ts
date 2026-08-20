@@ -1,4 +1,5 @@
 // db-notifications.ts — notification events + alert lifecycle (acknowledge, auto-ack, repeat-dedup)
+import "server-only";
 import crypto from "crypto";
 import { audit, getDb } from "./db";
 import type {
