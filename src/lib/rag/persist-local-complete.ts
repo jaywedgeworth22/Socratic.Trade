@@ -2,15 +2,13 @@
 // Artifact + full FTS (bare SEC accession) + ledger persist without storeDocument(full body).
 
 import { getDb } from "../db";
-import {
-  insertDocumentChunkFts,
-  insertIngestedAccession
-} from "../db-learning";
+import { insertIngestedAccession } from "../db-learning";
 import {
   bareSecAccession,
   pineconeWriteClass,
   type PineconeWriteClass
 } from "./pinecone-write-class";
+import { mirrorFtsChunksBounded, type FtsMirrorRow } from "./mirror-fts-bounded";
 
 export interface LocalCompleteChunk {
   content_hash: string;
@@ -33,32 +31,62 @@ export interface PersistLocalCompleteResult {
   accession: string;
   ftsRows: number;
   writeClass: PineconeWriteClass;
+  ftsMirrorComplete: boolean;
+  ftsMirrorOffset: number;
+  abortedByStrategy: boolean;
 }
 
 export function pinBareSecAccession(accession: string): string {
   return bareSecAccession(accession) ?? accession.trim();
 }
 
-export function persistLocalComplete(input: PersistLocalCompleteInput): PersistLocalCompleteResult {
-  const ticker = input.ticker.trim().toUpperCase();
-  const accession = pinBareSecAccession(input.accession);
-  const source = input.source ?? "sec-edgar";
-  const writeClass = input.pineconeWriteClass ?? pineconeWriteClass();
-  let ftsRows = 0;
+function buildFtsMirrorRows(
+  input: PersistLocalCompleteInput,
+  ticker: string,
+  accession: string,
+  source: string
+): FtsMirrorRow[] {
+  const rows: FtsMirrorRow[] = [];
   for (const chunk of input.chunks) {
     const hash = String(chunk.content_hash ?? "").trim();
     const text = String(chunk.text ?? "");
     if (!hash || !text.trim()) continue;
-    insertDocumentChunkFts(hash, ticker, source, accession, text);
-    ftsRows += 1;
+    rows.push({
+      contentHash: hash,
+      symbol: ticker,
+      source,
+      accession,
+      text
+    });
   }
-  if (input.recordLedger !== false) {
-    insertIngestedAccession(accession, input.docType, ticker, ftsRows, {
+  return rows;
+}
+
+export async function persistLocalComplete(
+  input: PersistLocalCompleteInput
+): Promise<PersistLocalCompleteResult> {
+  const ticker = input.ticker.trim().toUpperCase();
+  const accession = pinBareSecAccession(input.accession);
+  const source = input.source ?? "sec-edgar";
+  const writeClass = input.pineconeWriteClass ?? pineconeWriteClass();
+  const ftsRows = buildFtsMirrorRows(input, ticker, accession, source);
+  const mirror = await mirrorFtsChunksBounded(ftsRows, {
+    resumeKey: { symbol: ticker, source, accession }
+  });
+  if (mirror.complete && input.recordLedger !== false) {
+    insertIngestedAccession(accession, input.docType, ticker, ftsRows.length, {
       pineconeWriteClass: writeClass,
       pineconeVectorCount: input.pineconeVectorCount ?? 0
     });
   }
-  return { accession, ftsRows, writeClass };
+  return {
+    accession,
+    ftsRows: mirror.offset,
+    writeClass,
+    ftsMirrorComplete: mirror.complete,
+    ftsMirrorOffset: mirror.offset,
+    abortedByStrategy: mirror.abortedByStrategy
+  };
 }
 
 export function hasLocalFilingCopy(accession: string): boolean {

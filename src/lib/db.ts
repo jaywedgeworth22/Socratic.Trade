@@ -3150,6 +3150,32 @@ const MIGRATIONS: Migration[] = [
         );
       }
     }
+  },
+  {
+    version: 85,
+    name: "document_chunks_fts_index",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS document_chunks_fts_index (
+          content_hash TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          source TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          fts_rowid INTEGER NOT NULL,
+          PRIMARY KEY (content_hash, symbol, source, accession)
+        );
+      `);
+      const ftsTable = database
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks_fts'")
+        .get();
+      if (!ftsTable) return;
+      database.exec(`
+        INSERT OR REPLACE INTO document_chunks_fts_index
+          (content_hash, symbol, source, accession, fts_rowid)
+        SELECT content_hash, symbol, source, accession, rowid
+        FROM document_chunks_fts;
+      `);
+    }
   }
 ];
 

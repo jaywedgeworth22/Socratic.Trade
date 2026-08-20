@@ -282,6 +282,48 @@ describe("insertDocumentChunkFtsBatch (2026-08-10 lock-contention fix, sub-batch
       .get("acc-multi-batch-test") as { n: number };
     expect(written.n).toBe(97);
   });
+
+  it("keeps document_chunks_fts_index at one row per occurrence on re-insert", async () => {
+    const { insertDocumentChunkFts, insertDocumentChunkFtsBatch } = await import("../src/lib/db-learning");
+    const row = {
+      contentHash: "hash-idem",
+      symbol: "AAPL",
+      source: "sec-edgar",
+      accession: "acc-idem-index",
+      text: "first text"
+    };
+    await insertDocumentChunkFtsBatch([row]);
+    await insertDocumentChunkFtsBatch([
+      { ...row, text: "updated text" }
+    ]);
+    const indexCount = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM document_chunks_fts_index
+         WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?`
+      )
+      .get(row.contentHash, row.symbol, row.source, row.accession) as { n: number };
+    const ftsCount = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM document_chunks_fts
+         WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?`
+      )
+      .get(row.contentHash, row.symbol, row.source, row.accession) as { n: number };
+    expect(indexCount.n).toBe(1);
+    expect(ftsCount.n).toBe(1);
+    const stored = getDb()
+      .prepare("SELECT text FROM document_chunks_fts WHERE rowid = (SELECT fts_rowid FROM document_chunks_fts_index WHERE content_hash = ?)")
+      .get(row.contentHash) as { text: string };
+    expect(stored.text).toBe("updated text");
+
+    insertDocumentChunkFts(row.contentHash, row.symbol, row.source, row.accession, "third text");
+    const indexAfterSingle = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM document_chunks_fts_index
+         WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?`
+      )
+      .get(row.contentHash, row.symbol, row.source, row.accession) as { n: number };
+    expect(indexAfterSingle.n).toBe(1);
+  });
 });
 
 describe("nextFtsBatchGroupSize (2026-08-13 adaptive stretch budget)", () => {
