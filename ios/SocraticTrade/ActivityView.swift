@@ -7,6 +7,7 @@ struct ActivityView: View {
         SnapshotScaffold { snapshot in
             DailyActivityCard(snapshot: snapshot)
             SchedulerActivityCard(snapshot: snapshot)
+            AlertActivitySection(notifications: snapshot.notifications)
             FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedItem: $presentedItem)
             CommandActivitySection(commands: snapshot.recentCommands)
         }
@@ -72,6 +73,96 @@ private struct SchedulerActivityCard: View {
                 LabeledContent("Cadence", value: snapshot.policy.runCadenceMinutes.map { "\($0) minutes" } ?? "Manual")
             }
         }
+    }
+}
+
+private struct AlertActivitySection: View {
+    let notifications: [MobileNotification]
+
+    private var ordered: [MobileNotification] {
+        notifications.sorted { lhs, rhs in
+            let leftOpen = lhs.acknowledgedAt == nil
+            let rightOpen = rhs.acknowledgedAt == nil
+            if leftOpen != rightOpen { return leftOpen }
+            let leftUrgent = isUrgent(lhs.type)
+            let rightUrgent = isUrgent(rhs.type)
+            if leftUrgent != rightUrgent { return leftUrgent }
+            return lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            SectionHeading("Alerts", subtitle: "runs, kills, and other notices")
+            if ordered.isEmpty {
+                EmptyStateCard(
+                    title: "No alerts yet",
+                    message: "Failed runs and kill-switch trips will appear here after they fire.",
+                    systemImage: "bell"
+                )
+            } else {
+                ForEach(ordered) { event in
+                    AlertActivityRow(event: event)
+                }
+            }
+        }
+    }
+
+    private func isUrgent(_ type: String) -> Bool {
+        type == "run_failed" || type == "kill_switch"
+    }
+}
+
+private struct AlertActivityRow: View {
+    let event: MobileNotification
+
+    private var urgent: Bool {
+        event.type == "run_failed" || event.type == "kill_switch"
+    }
+
+    var body: some View {
+        AppCard(padding: 13) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(event.title)
+                        .font(.appHeadline)
+                        .foregroundStyle(urgent ? AppPalette.negative : .primary)
+                    Spacer()
+                    if event.acknowledgedAt == nil {
+                        StatusPill("Open", color: urgent ? AppPalette.negative : AppPalette.warning)
+                    }
+                }
+                Text(alertTypeLabel(event.type))
+                    .font(.appCaption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(AppFormat.dateTime(event.createdAt))
+                    .font(.appFootnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .overlay {
+            if urgent && event.acknowledgedAt == nil {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(AppPalette.negative.opacity(0.45), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(event.title). \(alertTypeLabel(event.type))")
+    }
+}
+
+private func alertTypeLabel(_ type: String) -> String {
+    switch type {
+    case "run_failed": return "Strategy run failed"
+    case "kill_switch": return "Kill switch"
+    case "pending_approval": return "Waiting for approval"
+    case "fill": return "Fill"
+    case "price_alert": return "Price alert"
+    case "limit_order_stale": return "Stale limit"
+    case "provider_degraded": return "Provider"
+    case "budget_alert": return "Budget"
+    default: return type.replacingOccurrences(of: "_", with: " ")
     }
 }
 

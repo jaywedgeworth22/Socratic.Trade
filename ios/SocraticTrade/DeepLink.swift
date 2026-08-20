@@ -5,17 +5,25 @@ enum DeepLinkDestination: Equatable {
     case tab(AppTab)
     /// The Proposals tab, scrolled to and highlighting one proposal.
     case proposal(id: String)
+    /// The Assets tab, scrolled to one ticker (orders / watchlist query).
+    case symbol(String)
 
     /// The tab that must be selected to show this destination.
     var tab: AppTab {
         switch self {
         case .tab(let tab): return tab
         case .proposal: return .proposals
+        case .symbol: return .markets
         }
     }
 
     var proposalId: String? {
         if case .proposal(let id) = self { return id }
+        return nil
+    }
+
+    var focusedSymbol: String? {
+        if case .symbol(let symbol) = self { return symbol }
         return nil
     }
 }
@@ -74,7 +82,15 @@ enum DeepLink {
             return nil
         case "orders", "watchlist":
             // Holdings, orders, watchlist, and alerts all live on the Assets tab.
-            return segments.count == 2 ? .tab(.markets) : nil
+            // A `?symbol=` query still lands here; path-only stays `.tab(.markets)` so
+            // the APNs contract rows that only assert the tab keep passing.
+            guard segments.count == 2 else { return nil }
+            if let symbol = normalizedSymbol(
+                components.queryItems?.first(where: { $0.name.lowercased() == "symbol" })?.value
+            ) {
+                return .symbol(symbol)
+            }
+            return .tab(.markets)
         case "activity":
             return segments.count == 2 ? .tab(.activity) : nil
         case "assistant", "coach":
@@ -99,5 +115,17 @@ enum DeepLink {
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
         guard trimmed.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
         return trimmed
+    }
+
+    /// Uppercases a ticker and accepts the same charset the website parser uses.
+    private static func normalizedSymbol(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        let upper = trimmed.uppercased()
+        guard upper.count <= 10 else { return nil }
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        guard upper.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
+        return upper
     }
 }

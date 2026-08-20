@@ -8,7 +8,7 @@
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
 import type { ConnectedAccount } from "@/lib/types";
@@ -35,7 +35,7 @@ import {
   startStrategy,
   stopEverything
 } from "../lib/api";
-import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
+import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact, SENTENCE_GAP } from "../lib/format";
 import { loginProviderLabel } from "../lib/labels";
 import type { ConsoleStreamHealth } from "../lib/useConsoleData";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -423,7 +423,7 @@ function ControlSheet({
     };
     const closeOnlyOption = {
         id: "close_only",
-        title: "Close-only",
+        title: "Exit-only",
         body:
           "No new buys. Protective sells and the app's stop monitor keep working. This is what the automatic circuit breakers choose.",
         available: state !== "close_only",
@@ -486,7 +486,7 @@ function ControlSheet({
                   </Btn>
                 )}
                 {o.id === "close_only" && (
-                  <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void act("close_only", () => setSystemState("close_only", snapshot.policy.connectedAccountId), "Close-only", "No new buys. Protective exits keep working.")}>
+                  <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void act("close_only", () => setSystemState("close_only", snapshot.policy.connectedAccountId), "Exit-only", "No new buys. Protective exits keep working.")}>
                     {busy === "close_only" ? "Switching…" : "Confirm"}
                   </Btn>
                 )}
@@ -544,6 +544,7 @@ export function TypedConfirm({
   variant?: "danger" | "pos" | "primary";
   note?: string;
 }) {
+  const inputId = useId();
   const matches = value.trim().toUpperCase() === phrase;
   // Only a destructive confirm gets the red frame; other typed rituals use the
   // caution (warn) tint so red stays reserved for reality/STOP/destruction.
@@ -554,11 +555,12 @@ export function TypedConfirm({
   return (
     <div className={cx("mt-3 rounded-control border p-3", frameClass)}>
       {note && <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{note}</p>}
-      <label className="con-label">
+      <label className="con-label" htmlFor={inputId}>
         Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{phrase}</span>
       </label>
       <div className="flex gap-2">
         <TextInput
+          id={inputId}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete="off"
@@ -668,7 +670,7 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   if (m.includes("halted") || m.includes("stopped")) {
     return {
       title: "The system is stopped",
-      detail: `${message} Start it (or switch to Close-only) from the run-state chip in the top bar.`,
+      detail: `${message} Start it (or switch to Exit-only) from the run-state chip in the top bar.`,
       note:
         "While stopped, nothing buys or sells — and this app's automatic stop-losses are paused too. Broker-held brackets keep resting at your broker."
     };
@@ -1002,22 +1004,32 @@ function deriveFreshnessLabel(fetchedAt: Date | null, error: string | null, stre
  *  overlays anything at document end there, so a bottom-anchored strip is
  *  invisible on mobile. This is the only mobile freshness surface; the
  *  desktop-only FreshnessStrip below no longer renders a mobile variant. */
+function OfflineBanner() {
+  return (
+    <span className="shrink-0 font-semibold text-[color:var(--con-warn)]">
+      You’re offline.{SENTENCE_GAP}Showing the last snapshot.
+    </span>
+  );
+}
+
 export function MobileFreshnessBar({
   snapshot,
   fetchedAt,
   error,
-  stream
+  stream,
+  online = true
 }: {
   snapshot: DashboardSnapshot;
   fetchedAt: Date | null;
   error: string | null;
   stream: ConsoleStreamHealth;
+  online?: boolean;
 }) {
   const spend = deriveSpend(snapshot);
   const freshnessLabel = deriveFreshnessLabel(fetchedAt, error, stream);
   // PR-E3: when healthy, collapse to one short line (Fresh · Today) instead of
   // repeating clock + label + spend + delayed chip. Unhealthy keeps the detail.
-  const healthy = !error && freshnessLabel === "fresh" && fetchedAt != null;
+  const healthy = online && !error && freshnessLabel === "fresh" && fetchedAt != null;
   return (
     <div className="flex items-center gap-3 border-t border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-4 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] lg:hidden">
       {healthy ? (
@@ -1041,6 +1053,7 @@ export function MobileFreshnessBar({
             <ShieldCheck size={12} />
             Deployed today: {fmtMoney(spend.usedNotional)}
           </span>
+          {!online && <OfflineBanner />}
           {error && (
             <span className="shrink-0 font-semibold text-[color:var(--con-warn)]" title={error}>
               delayed
@@ -1056,12 +1069,14 @@ export function FreshnessStrip({
   snapshot,
   fetchedAt,
   error,
-  stream
+  stream,
+  online = true
 }: {
   snapshot: DashboardSnapshot;
   fetchedAt: Date | null;
   error: string | null;
   stream: ConsoleStreamHealth;
+  online?: boolean;
 }) {
   const spend = deriveSpend(snapshot);
   const scanAt = snapshot.latestStrategyRun?.marketScan?.generatedAt;
@@ -1104,6 +1119,7 @@ export function FreshnessStrip({
           {typeof spend.capNotional === "number" ? ` of ${fmtMoneyWhole(spend.capNotional)}` : ""}
           <Meter value={spend.usedNotional} max={spend.capNotional} className="w-16" />
         </span>
+        {!online && <OfflineBanner />}
         {error && (
           <span className="font-semibold text-[color:var(--con-warn)]" title={error}>
             refresh failing — showing last good data

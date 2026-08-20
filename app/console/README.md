@@ -28,7 +28,7 @@ of the existing UI):
   load-bearing, one keystroke/tap away.
 - **One-click STOP that never sells**, with the honest sentence about
   app-managed synthetic stops pausing while broker-held brackets keep resting,
-  and **Close-only as the middle verb** ("what the circuit breakers choose").
+  and **Exit-only as the middle verb** ("what the circuit breakers choose"; wire id stays `close_only`).
 - **Asymmetric friction**: stopping/tightening/rejecting is one tap;
   starting brokerage automation / Autopilot / wind-down / loosening brokerage
   constraints / broker approval costs a typed phrase (paste disabled — the

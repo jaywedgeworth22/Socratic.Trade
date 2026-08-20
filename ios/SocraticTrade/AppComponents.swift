@@ -21,7 +21,7 @@ enum AppFormat {
         "strategy.run_once": "Run Once",
         "strategy.start": "Start Agent",
         "strategy.stop": "Stop Agent",
-        "strategy.close_only": "Close Only",
+        "strategy.close_only": "Exit Only",
         "strategy.liquidating": "Wind Down",
         "proposal.approve": "Approve Proposal",
         "proposal.reject": "Reject Proposal",
@@ -726,6 +726,11 @@ struct SwipeRevealAction: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .accessibilityAction(named: Text(title)) {
+                guard isEnabled else { return }
+                perform()
+            }
+            .accessibilityHint("Swipe left to \(title.lowercased()), or use this action.")
             .offset(x: offset)
             .background(alignment: .trailing) {
                 if offset < 0 {

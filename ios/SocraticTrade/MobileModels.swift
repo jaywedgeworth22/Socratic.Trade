@@ -22,6 +22,8 @@ struct MobileSnapshot: Decodable {
     let recentCommands: [MobileCommand]
     /// Last-good `/api/scan` universe.  Same seed `/console/scan` keeps when Refresh 503s.
     let latestScan: MarketScanResponse?
+    /// Alert Center rows for Activity.  Optional so older payloads still decode.
+    let notifications: [MobileNotification]
 
     private enum CodingKeys: String, CodingKey {
         case currentUser
@@ -41,6 +43,7 @@ struct MobileSnapshot: Decodable {
         case alerts
         case recentCommands
         case latestScan
+        case notifications
     }
 
     init(from decoder: Decoder) throws {
@@ -68,7 +71,19 @@ struct MobileSnapshot: Decodable {
         alerts = try values.decodeIfPresent([PriceAlert].self, forKey: .alerts) ?? []
         recentCommands = try values.decodeIfPresent([MobileCommand].self, forKey: .recentCommands) ?? []
         latestScan = try values.decodeIfPresent(MarketScanResponse.self, forKey: .latestScan)
+        notifications = try values.decodeIfPresent([MobileNotification].self, forKey: .notifications) ?? []
     }
+}
+
+/// Public Activity row.  Payload and webhook URL stay off the wire.
+struct MobileNotification: Decodable, Identifiable, Equatable {
+    let id: String
+    let type: String
+    let title: String
+    let createdAt: String
+    let status: String
+    let acknowledgedAt: String?
+    let connectedAccountId: String?
 }
 
 /// The server's own description of what this deployment's mobile control plane offers —

@@ -72,6 +72,15 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertNil(destination("https://socratictrade.com/mobile"))
     }
 
+    func testExtractsASymbolFromOrdersAndWatchlistQuery() {
+        XCTAssertEqual(destination("https://socratictrade.com/console/orders?symbol=AAPL"), .symbol("AAPL"))
+        XCTAssertEqual(destination("https://socratictrade.com/console/watchlist?symbol=tsla"), .symbol("TSLA"))
+        XCTAssertEqual(destination("https://socratictrade.com/console/orders?symbol=AAPL")?.tab, .markets)
+        XCTAssertEqual(destination("https://socratictrade.com/console/orders?symbol=AAPL")?.focusedSymbol, "AAPL")
+        XCTAssertEqual(destination("https://socratictrade.com/console/orders"), .tab(.markets))
+        XCTAssertNil(destination("https://socratictrade.com/console/orders?symbol=")?.focusedSymbol)
+    }
+
     func testMalformedProposalIdsFallBackToTheProposalsListInsteadOfDroppingTheLink() {
         XCTAssertEqual(destination("https://socratictrade.com/console/approvals?proposal="), .tab(.proposals))
         XCTAssertEqual(
@@ -99,7 +108,8 @@ final class DeepLinkTests: XCTestCase {
             .tab(.scan),
             .tab(.guardrails),
             .tab(.results),
-            .proposal(id: "proposal-1")
+            .proposal(id: "proposal-1"),
+            .symbol("AAPL")
         ] {
             XCTAssertTrue(AppTab.customizable.contains(destination.tab), "\(destination)")
         }

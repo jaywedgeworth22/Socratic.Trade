@@ -29,6 +29,7 @@ import { addToWatchlist, removeFromWatchlist } from "./watchlist";
 import type {
   HoldingHorizon,
   IndexUniverse,
+  NotificationEvent,
   NotificationEventType,
   RiskRules,
   StrategyAuthority,
@@ -1283,6 +1284,19 @@ export function markStaleRunningMobileCommands(now: number = Date.now()): number
     count++;
   }
   return count;
+}
+
+/** Public iOS Activity rows. Payload and webhook URL stay off the wire. */
+export function serializeMobileNotifications(events: NotificationEvent[]) {
+  return events.map((event) => ({
+    id: event.id,
+    type: event.type,
+    title: event.title,
+    createdAt: event.createdAt,
+    status: event.status,
+    acknowledgedAt: event.acknowledgedAt ?? null,
+    connectedAccountId: event.connectedAccountId ?? null
+  }));
 }
 
 export function mobileControlCatalog() {

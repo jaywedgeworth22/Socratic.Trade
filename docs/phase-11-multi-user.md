@@ -379,10 +379,9 @@ set of trading controls:
   watchlist, alerts, and recent commands.
 - `GET /api/mobile/events` streams command and dashboard freshness updates for
   the signed-in user.
-- `/mobile` is a phone-first PWA control surface using the same command model as
-  the native app. It has clear Start/Stop/Close-only/Run-once controls, approval
-  cards, watchlist and alert controls, command history, backend-source-of-truth
-  messaging, and a danger-zone deletion workflow.
+- `/mobile` redirects to `/console`.  The live phone surfaces are the website at
+  phone width and the native iOS app (`ios/SocraticTrade/`), both using the same
+  backend command model.
 - `ios/SocraticTrade/` provides a SwiftUI starter that uses the same endpoints
   and keeps only the backend session on-device.
 - Account deletion routes reuse the audited M7 deletion lifecycle: prepare first,

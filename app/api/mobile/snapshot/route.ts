@@ -1,7 +1,8 @@
 import { getDashboardSnapshot } from "@/lib/dashboard";
-import { listMobileCommands, mobileControlCatalog, mobileReadiness } from "@/lib/mobile-api";
+import { listMobileCommands, mobileControlCatalog, mobileReadiness, serializeMobileNotifications } from "@/lib/mobile-api";
 import { compactMobileMarketScan } from "@/lib/mobile-scan";
 import { resolveRequestUser } from "@/lib/request-user";
+import { listNotificationEvents } from "@/lib/db";
 import { listAlerts } from "@/lib/alerts";
 import { listWatchlist } from "@/lib/watchlist";
 import { isWorkingOrderState } from "@/lib/broker-held-orders";
@@ -50,6 +51,7 @@ export async function GET(request: Request) {
     watchlist: listWatchlist(user.userId),
     alerts: listAlerts(user.userId, "all"),
     recentCommands: listMobileCommands({ userId: user.userId, limit: 30 }),
+    notifications: serializeMobileNotifications(listNotificationEvents(user.userId, 40)),
     // Same last-good universe `/console/scan` paints when live Refresh 503s.
     latestScan: compactMobileMarketScan(snapshot.latestScan)
   });
