@@ -2526,6 +2526,14 @@ export interface EquityOrderInput {
   trailPercent?: number;
 }
 
+/** Scoped broker order-list fetch. Default: open orders plus terminal orders inside a bounded window. */
+export interface GetEquityOrdersOptions {
+  /** ISO timestamp — include terminal orders created on or after this instant. */
+  since?: string;
+  /** Walk full broker history (status all, unbounded pagination). */
+  fullHistory?: boolean;
+}
+
 export interface BrokerGateway {
   /**
    * True when getEquityOrders returns a list that reliably includes recently-TERMINAL orders
@@ -2535,15 +2543,14 @@ export interface BrokerGateway {
    * treated as `uncertain` (keep 'placing' + the protected alert), because absence can't distinguish
    * "never placed" from "placed, filled, and already aged out of a live-only list" — and dropping a
    * possibly-real order is the money-path hazard. Undefined ⇒ conservative (treated as false).
-   * Alpaca sets this true (getEquityOrders pages status:"all"); Robinhood leaves it unset because its
-   * get_equity_orders terminal-inclusion window can't be verified without a live token.
+   * Alpaca sets this true (default getEquityOrders includes terminal orders inside the bounded window).
    */
   readonly ordersListIncludesTerminal?: boolean;
   getAccounts(): Promise<BrokerageAccount[]>;
   getPortfolio(accountNumber: string): Promise<Portfolio>;
   getEquityPositions(accountNumber: string): Promise<EquityPosition[]>;
   getOptionPositions?(accountNumber: string): Promise<OptionPosition[]>;
-  getEquityOrders(accountNumber: string): Promise<EquityOrder[]>;
+  getEquityOrders(accountNumber: string, options?: GetEquityOrdersOptions): Promise<EquityOrder[]>;
   getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>>;
   getEquityTradability(accountNumber: string, symbols: string[]): Promise<Record<string, { tradable: boolean; fractional: boolean; reason?: string }>>;
   reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder>;

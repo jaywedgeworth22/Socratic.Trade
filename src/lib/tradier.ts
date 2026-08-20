@@ -12,6 +12,7 @@ import type {
   ReviewedOrder,
   BrokerGateway,
   EquityOrderInput,
+  GetEquityOrdersOptions,
   OptionPosition
 } from "./types";
 import { normalizeSymbol, roundCents } from "./money";
@@ -23,6 +24,7 @@ import { fetchDailyOHLC } from "./history";
 // they are broker-agnostic helpers exported from ./alpaca (no Alpaca SDK behavior involved).
 import { fillMissingQuotesWithClose, estimateReviewNotional } from "./alpaca";
 import { mergeAccountCapabilities } from "./venue-contract";
+import { TRADIER_BROKER_IO_DEADLINE_MS, equityOrdersDefaultSinceIso, withDeadline } from "./inflight-deadline";
 
 /**
  * Tradier broker gateway. Hand-rolled REST (single Bearer token, no SDK), mirroring the Alpaca
@@ -54,9 +56,15 @@ const TRADIER_PROBE_TTL_MS = 2 * 60_000;
 // any of those to a plain array so per-row mapping is uniform.
 function arr<T>(x: unknown): T[] {
   if (x === null || x === undefined) return [];
-  if (typeof x === "string") return x.trim().toLowerCase() === "null" ? [] : [];
+    if (typeof x === "string") return x.trim().toLowerCase() === "null" ? [] : [];
   if (Array.isArray(x)) return x as T[];
   return [x as T];
+}
+
+function tradierOrderCreatedMs(order: Record<string, unknown>): number {
+  const raw = order.create_date ?? order.transaction_date ?? order.created_at;
+  const parsed = typeof raw === "string" || typeof raw === "number" ? Date.parse(String(raw)) : NaN;
+  return Number.isFinite(parsed) ? parsed : NaN;
 }
 
 function optionalNumber(value: unknown): number | undefined {
@@ -336,7 +344,7 @@ class TradierBrokerGateway implements BrokerGateway {
       }
       body = form.toString();
     }
-    const response = await fetch(url, { method, headers, body });
+    const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(TRADIER_BROKER_IO_DEADLINE_MS) });
     let parsed: unknown = undefined;
     const text = await response.text();
     if (text) {
@@ -360,10 +368,16 @@ class TradierBrokerGateway implements BrokerGateway {
   // Wrap a call for the admin connections-health page ("tradier-broker"), mirroring Alpaca's
   // trackHealth. logApiHealth swallows its own errors; the broker call is never affected by a
   // logging failure.
-  private async trackHealth<T>(fn: () => Promise<T>): Promise<T> {
+  private async trackHealth<T>(fn: () => Promise<T>, opts?: { deadlineMs?: number }): Promise<T> {
     const start = Date.now();
+    const runOnce = () => {
+      const call = fn();
+      return opts?.deadlineMs != null
+        ? withDeadline(call, opts.deadlineMs, "Tradier broker call timed out")
+        : call;
+    };
     try {
-      const result = await fn();
+      const result = await runOnce();
       logApiHealth({ service: "tradier-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
       return result;
     } catch (err) {
@@ -565,39 +579,40 @@ class TradierBrokerGateway implements BrokerGateway {
     });
   }
 
-  async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
+  async getEquityOrders(accountNumber: string, options?: GetEquityOrdersOptions): Promise<EquityOrder[]> {
+    const fullHistory = options?.fullHistory === true;
+    const sinceMs = options?.since ? Date.parse(options.since) : Date.parse(equityOrdersDefaultSinceIso());
+    const maxPages = fullHistory ? 50 : 5;
     return this.trackHealth(async () => {
       const all: Record<string, unknown>[] = [];
       const seen = new Set<string>();
-      for (let page = 1; page <= 50; page++) {
+      for (let page = 1; page <= maxPages; page++) {
         const body = await this.request<{ orders?: { order?: unknown } | string }>("GET", `/accounts/${accountNumber}/orders`, {
           query: { page, includeTags: "true" }
         });
         const ordersField = typeof body.orders === "object" && body.orders ? (body.orders as Record<string, unknown>).order : undefined;
         const rows = arr<Record<string, unknown>>(ordersField);
         if (rows.length === 0) break; // genuinely no more pages
-        // Pagination continuation is decided on the RAW page (ALL classes), NOT the post-equity-filter
-        // count. A mixed equity+options account can have a page holding only option/combo rows sitting
-        // BEFORE a later page that carries a resting protective EQUITY exit; breaking as soon as a page
-        // yields zero *equity* rows would stop before that exit, hiding it from liveExitOrderCoverage
-        // and letting the synthetic-stop monitor place a DUPLICATE. Advance while the raw page adds any
-        // NEW order id (of any class); stop only on an empty page or a page that is entirely duplicates
-        // (the guard against a pager that repeats its last page unboundedly, up to the 50-page cap).
         let newThisPage = 0;
         for (const o of rows) {
           const id = String(o.id);
           if (seen.has(id)) continue;
           seen.add(id);
           newThisPage += 1;
-          // Only EQUITY-class rows are RETURNED: mapping an option/combo as an EquityOrder coerces
-          // option sides/types (buy_to_open, debit) into equity-looking orders on the underlying,
-          // polluting dashboard/coverage state. A multi-leg OTOCO/OCO/OTO container is not itself
-          // class "equity", so its resting equity stop/limit legs are surfaced from its `leg` array.
           for (const eq of equityRowsFromTradierOrder(o)) all.push(eq);
         }
-        if (newThisPage === 0) break; // fully-duplicate page — done
+        if (newThisPage === 0) break;
       }
-      return all.map((o) => mapTradierOrder(o));
+      const scoped = fullHistory
+        ? all
+        : all.filter((o) => {
+            const state = String(o.status ?? "").toLowerCase();
+            const working = state === "open" || state === "pending" || state === "partially_filled" || state === "held";
+            if (working) return true;
+            const createdMs = tradierOrderCreatedMs(o);
+            return Number.isFinite(sinceMs) && Number.isFinite(createdMs) && createdMs >= sinceMs;
+          });
+      return scoped.map((o) => mapTradierOrder(o));
     });
   }
 
