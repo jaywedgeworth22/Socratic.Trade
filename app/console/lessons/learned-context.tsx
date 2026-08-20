@@ -26,6 +26,7 @@ import {
   rejectPendingLearnedContext,
   type PendingLearnedItem
 } from "../lib/learned-context";
+import { isOwnerAuthoredLearnedSource } from "@/lib/learned-context/directive-block";
 import type { LearnedContextRow } from "@/lib/types";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
@@ -169,6 +170,13 @@ function ApprovalEffect({ item, withPreview }: { item: PendingLearnedItem; withP
           preserved, and re-approving replaces the same block instead of duplicating it. The date is stamped at
           approval time.
         </p>
+        {!isOwnerAuthoredLearnedSource(item.source) && (
+          <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+            You did not write this text yourself, so the block records where it came from, and any span that reads as an
+            instruction to the AI is replaced with a QUARANTINED_INSTRUCTION_LIKE_DATA marker before it lands.  Your own
+            directives are never altered.
+          </p>
+        )}
         {withPreview && (
           <pre
             title="The exact block approval appends to your strategy prompt. The date is stamped at approval time."

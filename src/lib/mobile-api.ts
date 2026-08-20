@@ -38,6 +38,12 @@ import type {
   TradingPolicy
 } from "./types";
 import { retryProposalRedTeam } from "./retry-red-team";
+import {
+  mobileCommandStatusForPlacement,
+  placementCommandErrorMessage,
+  resolvePlacementOutcome,
+  type ExecuteProposalResult
+} from "./placement-outcome";
 import { executeProposal, LiveApprovalConfirmationError, LiveApprovalConfirmation } from "./strategy-execution";
 
 export const MOBILE_COMMAND_TYPES = [
@@ -854,6 +860,8 @@ function summarizeResult(result: unknown): unknown {
   return {
     ok: obj.ok,
     status: obj.status,
+    outcome: obj.outcome,
+    reasons: obj.reasons,
     runId: obj.runId,
     proposalId: obj.proposalId,
     orderId: obj.orderId,
@@ -1078,6 +1086,12 @@ function errorPayload(error: unknown): { message: string; result?: unknown } {
 export async function executeMobileCommand(command: MobileCommandRecord): Promise<PublicMobileCommand> {
   try {
     const result = await runCommand(command);
+    if (command.commandType === "proposal.approve") {
+      const placement = resolvePlacementOutcome(result as ExecuteProposalResult);
+      const commandStatus = mobileCommandStatusForPlacement(placement.outcome);
+      const error = placementCommandErrorMessage(placement);
+      return toPublicMobileCommand(finishCommand(command, commandStatus, placement, error));
+    }
     return toPublicMobileCommand(finishCommand(command, "succeeded", result));
   } catch (error) {
     const payload = errorPayload(error);

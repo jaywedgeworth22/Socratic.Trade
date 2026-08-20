@@ -32,6 +32,7 @@ beforeEach(() => {
   delete process.env.RAG_PINECONE_WRITE_CLASS;
   const db = getDb();
   db.exec(`
+    DELETE FROM document_chunks_fts_index;
     DELETE FROM document_chunks_fts;
     DELETE FROM chunk_occurrences;
     DELETE FROM ingested_accessions;
@@ -145,11 +146,11 @@ describe("selectSignalChunks", () => {
 });
 
 describe("persistLocalComplete + section key", () => {
-  it("writes bare-accession FTS that joins a section occurrence", () => {
+  it("writes bare-accession FTS that joins a section occurrence", async () => {
     const chunks = chunkDocument(tenKFixture(), {});
     const signal = selectSignalChunks(chunks, "10-K");
     const picked = signal[0]!;
-    persistLocalComplete({
+    await persistLocalComplete({
       ticker: "NVDA",
       accession: ACCESSION,
       docType: "10-K",

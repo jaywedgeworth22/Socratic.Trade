@@ -76,6 +76,7 @@ enum ProposalActionFeedback: Equatable {
     case pending(action: ProposalAction, status: String)
     case failed(action: ProposalAction, message: String)
     case succeeded(action: ProposalAction)
+    case placementSettled(action: ProposalAction, status: String, reasons: [String]?)
 
     enum ProposalAction: String, Equatable {
         case approve
@@ -84,7 +85,8 @@ enum ProposalActionFeedback: Equatable {
 
     var action: ProposalAction {
         switch self {
-        case .sending(let action), .pending(let action, _), .failed(let action, _), .succeeded(let action):
+        case .sending(let action), .pending(let action, _), .failed(let action, _), .succeeded(let action),
+             .placementSettled(let action, _, _):
             return action
         }
     }
@@ -92,13 +94,20 @@ enum ProposalActionFeedback: Equatable {
     var isInFlight: Bool {
         switch self {
         case .sending, .pending: return true
-        case .failed, .succeeded: return false
+        case .failed, .succeeded, .placementSettled: return false
         }
     }
 
     var isSettledSuccess: Bool {
-        if case .succeeded = self { return true }
-        return false
+        switch self {
+        case .succeeded:
+            return true
+        case .placementSettled(let action, let status, _):
+            guard action == .approve else { return true }
+            return status == "filled" || status == "placed" || status == "paper"
+        default:
+            return false
+        }
     }
 }
 
@@ -221,16 +230,36 @@ final class MobileStore: ObservableObject {
         case "queued", "running":
             return .pending(action: action, status: command.status)
         case "failed":
+            if action == .approve, let result = command.result {
+                return approvePlacementFeedback(action: action, result: result, fallback: command.error)
+            }
             let detail = command.error?.trimmingCharacters(in: .whitespacesAndNewlines)
             let message = (detail?.isEmpty == false)
                 ? detail!
                 : "Command failed — check Activity for details."
             return .failed(action: action, message: message)
         case "succeeded":
+            if action == .approve, let result = command.result {
+                return approvePlacementFeedback(action: action, result: result, fallback: nil)
+            }
             return .succeeded(action: action)
         default:
             return nil
         }
+    }
+
+    private func approvePlacementFeedback(
+        action: ProposalActionFeedback.ProposalAction,
+        result: MobileCommandResult,
+        fallback: String?
+    ) -> ProposalActionFeedback {
+        let status = result.status ?? "error"
+        let reasons = result.reasons
+        if let fallback = fallback?.trimmingCharacters(in: .whitespacesAndNewlines), !fallback.isEmpty,
+           reasons?.isEmpty != false {
+            return .placementSettled(action: action, status: status, reasons: [fallback])
+        }
+        return .placementSettled(action: action, status: status, reasons: reasons)
     }
 
     func isSnapshotStale(at now: Date = Date()) -> Bool {

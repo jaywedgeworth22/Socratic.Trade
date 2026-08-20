@@ -7,6 +7,19 @@ Every performance number now says what it measures.  Basis and window travel wit
 **Not closed, stated openly:** `perf-17` - the SPY benchmark is total-return or price-return depending on which history provider answered, and an intraday tip is compared against an EOD close.  Confirmed by reading the provider cascade, not papered over; normalising that is its own change.  Also open: the coach tool context still passes raw win rate with no sample count.
 
 Gate: lint 0 errors, tsc clean, 7140 tests, build 0, `xcodebuild build` 0.  Rollout: `docs/rollouts/2026-08-20-pnl-basis-labels.md`.
+## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on lookup miss
+
+`cancelWorkingOrder` only tombstoned an owner-cancelled app-managed stop when the advisory pre-cancel broker read returned the order.  Console cancel is fail-open on that read (timeout, throw, or a working GTC stop missing from scoped `getEquityOrders`).  The broker cancel still ran, but `cancelledSymbol` stayed empty, so the do-not-replace tombstone and `broker_protective_stops` delete were skipped.  The next reconcile tick then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
+
+Fix: take the symbol from the tracked `broker_protective_stops` row when the lookup has no order.  Did not touch #2861.  Did not change cancel fail-open doctrine.
+
+**IN PR #2949.**  Branch `cursor/owner-cancel-stop-tombstone-lookup`.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-lookup.md`.
+
+## 2026-08-20 MONET - `prompt-trust-boundary` up for review
+
+Untrusted content can no longer reach the always-trusted strategy prompt unlabelled.  The trust boundary now lives AT THE SINK: `mergeStrategyDirectiveBlock` requires `source`, runs containment itself and returns `{ prompt, contained }`, so a future caller cannot write an unscanned directive by forgetting a helper (the required parameter proved itself by breaking the one stale 4-arg call site at compile time).  Coach URL lessons are contained at ingest and dropped + audited on a real hijack idiom; the forgeable unauthenticated `POST /api/chat-history` is deleted; a `MockLLM` semantic-gate fallback is audited instead of silent; the revalidation rationale is contained and the reviewer prompt carries a data-not-command clause.
+
+**Owner text is never altered** - containment keys on provenance, so `owner-coach` passes byte-for-byte.  `learningReviewMode: "decide"` auto-apply and `learningReviewEnabled` are untouched: the second review round established that as an owner choice with an existing off-switch, and re-gating it would be paternalism.  Gate: lint 0 errors, tsc clean, 7146 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-prompt-trust-boundary.md`.
 
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
 
@@ -175,6 +188,15 @@ PR **#2886**.  Branch `cursor/broker-io-deadlines-85a9`.  SHA `54ed4a3c`.  Rollo
 ## 2026-08-19 CURSOR — Phone touch viewport cluster (`phone-touch-viewport`)
 
 Expert review Part II cluster: chrome bar budget at 360–390px, 44px touch floor on all interactive classes, 16px input anti-zoom, overlay scroll-lock + dvh/visualViewport + history back.  PR branch `cursor/phone-touch-viewport-b809`.  Rollout: `docs/rollouts/2026-08-19-phone-touch-viewport.md`.  Next: owner phone-width spot-check; mweb-06/mweb-09 may need follow-up.
+## 2026-08-19 CURSOR — Placement outcome truth (`placement-outcome-truth`)
+
+PR open on `cursor/placement-outcome-truth-6d4a`.  Introduces `src/lib/placement-outcome.ts` so approve reports `placed` only when the broker actually received an order.  Mobile `proposal.approve` no longer stamps `succeeded` for busy/blocked/not_placed; iOS decodes `result.status` and mirrors web approval-card tones.  HTTP 429/408 on the approval path land as `not_placed`, not `rejected_by_broker`.  Rollout: `docs/rollouts/2026-08-19-placement-outcome-truth.md`.
+## 2026-08-19 CURSOR — FTS indexed mirror idempotency + strategy-run yield (`event-loop-pins`)
+
+Part II cluster `event-loop-pins`: FTS idempotency no longer full-scans the corpus (`document_chunks_fts_index` + rowid DELETE).  `persistLocalComplete` and filing-body ingest mirror through `mirrorFtsChunksBounded` (`planFtsMirrorSlice` + `yieldEventLoop` + `hasInFlightStrategyWork`).  PR **#2885** branch `cursor/event-loop-pins-fts-indexed-mirror-5b2a` rebased onto latest `origin/main`; `test/persistence-hardening.test.ts` retargeted 84→85 for migration v85.  Awaiting green `verify`.  Rollout: `docs/rollouts/2026-08-19-fts-indexed-mirror-idempotency.md`.
+## 2026-08-19 CURSOR — Green Bull strict schema (`green-request-schema`)
+
+Part II cluster `green-request-schema`: `exitPlan` was in Bull `properties` but missing from `BULL_PROPOSAL_REQUIRED_KEYS`, so OpenAI strict mode 400'd every Green seat.  Added `exitPlan` to required keys, invariant test (properties ⊆ required), and `json_object` post-parse completeness via `filterRepairedProposals`.  Branch `cursor/green-bull-schema-769b`.  Rollout: `docs/rollouts/2026-08-19-green-bull-schema.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

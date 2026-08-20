@@ -41,6 +41,7 @@ import { resolveSourceNumber } from "../source-settings";
 import { rankHighInterestSymbols } from "../rag/demand-first-symbols";
 import { chunkDocument } from "../rag/chunk";
 import { persistLocalComplete } from "../rag/persist-local-complete";
+import { mirrorFtsChunksBounded } from "../rag/mirror-fts-bounded";
 import {
   pineconeWriteClass,
   writesFullBodyToPinecone
@@ -145,6 +146,8 @@ export interface IngestResult {
    *  unconfigured) — every later filing in this run would meet the same fate, so bulk
    *  loops should stop instead of fetching/chunking documents that cannot embed. */
   budgetExhausted?: boolean;
+  /** FTS mirror paused because a strategy run is in flight — accession stays un-ledgered. */
+  deferredStrategy?: boolean;
 }
 
 export interface RefreshFilingBodiesResult {
@@ -622,7 +625,7 @@ export async function ingestFiling(
       url: filingRef.url
     };
   const localChunks = chunkDocument(document, {});
-  persistLocalComplete({
+  const localComplete = await persistLocalComplete({
     ticker,
     accession: filingRef.accession,
     docType: filingRef.docType,
@@ -630,6 +633,13 @@ export async function ingestFiling(
     pineconeWriteClass: writeClass,
     recordLedger: writeClass !== "full-body"
   });
+  if (!localComplete.ftsMirrorComplete) {
+    return {
+      skipped: true,
+      chunks: 0,
+      ...(localComplete.abortedByStrategy ? { deferredStrategy: true } : {})
+    };
+  }
   assertSecFilingLease(leaseGuard);
   try {
     const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
@@ -733,26 +743,25 @@ export async function ingestFiling(
   }
 
   try {
-    const { insertDocumentChunkFts } = await import("../db");
-    runWithActiveVectorCommitProof(result.managedCommitProof, () => timeSync(
-      "filingFtsMirror",
-      `${document.doc_id} ${localChunks.length} chunks`,
-      () => {
-      // Mirror the committed chunks into the local FTS table so hybrid/lexical retrieval covers the
-      // PRODUCTION filing-body path. Must run inside the transaction so FTS failures rollback
-      // and allow the filing ingestion to be retried on subsequent ticks.
-      // Use the same managed document key storeDocument writes on chunk_occurrences.accession
-      // (doc_id). Bare SEC accessions in FTS cannot join to composite occurrence keys.
-      const managedAccession = document.doc_id;
-      for (const chunk of localChunks) {
-        insertDocumentChunkFts(
-          chunk.content_hash,
-          chunk.ticker[0] ?? ticker,
-          "sec-edgar",
-          managedAccession,
-          chunk.text
-        );
-      }
+    const managedAccession = document.doc_id;
+    const ftsRows = localChunks.map((chunk) => ({
+      contentHash: chunk.content_hash,
+      symbol: chunk.ticker[0] ?? ticker,
+      source: "sec-edgar" as const,
+      accession: managedAccession,
+      text: chunk.text
+    }));
+    const mirror = await mirrorFtsChunksBounded(ftsRows, {
+      resumeKey: { symbol: ticker, source: "sec-edgar", accession: managedAccession }
+    });
+    if (!mirror.complete) {
+      return {
+        skipped: true,
+        chunks: result.indexed,
+        ...(mirror.abortedByStrategy ? { deferredStrategy: true } : {})
+      };
+    }
+    runWithActiveVectorCommitProof(result.managedCommitProof, () => {
       insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted, {
         pineconeWriteClass: writeClass,
         pineconeVectorCount: result.attempted + signal.indexed
@@ -767,7 +776,7 @@ export async function ingestFiling(
         pinecone_write_class: writeClass,
         pinecone_vector_count: result.attempted + signal.indexed
       });
-    }));
+    });
   } catch (err) {
     return { skipped: true, chunks: result.indexed, error: err instanceof Error ? err.message : "document-commit-proof-lost" };
   }

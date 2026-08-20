@@ -60,7 +60,7 @@ import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./str
 import { resolveLlmEndpoint } from "./llm-provider";
 import { implicitGreenRotationFallbacks, isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
 import { maybeOpenRouterCreditsExhaustedHint } from "./openrouter-credits";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation } from "./llm-call";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation, toGeminiJsonSchema } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
 import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
 import {
@@ -6152,8 +6152,22 @@ async function proposeTrades(input: {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
               try {
-                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-                return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: unknown[] };
+                let proposals: TradeProposal[] = (parsed.proposals ?? []) as TradeProposal[];
+                if (bullAttemptUsesJsonObjectTransport(attempt.provider, attempt.model, attempt.transport, schema)) {
+                  const { kept, dropped } = filterRepairedProposals(
+                    parsed.proposals ?? [],
+                    allowedSides,
+                    proposalSymbols.length > 0 ? proposalSymbols : undefined,
+                    venue.orderTypes
+                  );
+                  if (dropped > 0) {
+                    console.warn(`[Bull] json_object response carried ${dropped} incomplete proposal(s); keeping ${kept.length}.`);
+                    audit("strategy_bull_json_object_incomplete_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
+                  }
+                  proposals = kept;
+                }
+                return { text, proposals, truncated, wireOutputCap, finishReason };
               } catch {
                 // AMBIGUITY GUARD before repair (Codex P1, round 9), mirroring the Red Team's:
                 // a malformed reply carrying MORE THAN ONE `proposals` payload (e.g. a
@@ -6683,8 +6697,28 @@ export const BULL_PROPOSAL_REQUIRED_KEYS = [
   "autonomyOverride",
   "bracketStopLoss",
   "bracketTakeProfit",
+  "exitPlan",
   "stopPlan"
 ] as const;
+
+/**
+ * True when the Bull LLM attempt uses bare `json_object` (no provider-side schema enforcement).
+ * Mirrors llm-call's openAiChatResponseFormat / openAiResponsesTextFormat routing so the happy-path
+ * parse can run the same completeness gate as the jsonrepair fallback.
+ */
+export function bullAttemptUsesJsonObjectTransport(
+  provider: string,
+  model: string,
+  transport: string,
+  proposalSchema: Record<string, unknown>
+): boolean {
+  if (transport === "anthropic-messages") return false;
+  const isDeepSeek = provider === "deepseek" || /^deepseek\//i.test(model);
+  if (isDeepSeek) return true;
+  const isGemini = provider === "gemini" || /^google\//i.test(model);
+  if (isGemini) return toGeminiJsonSchema(proposalSchema).unsupported;
+  return false;
+}
 
 /**
  * Completeness gate for proposals recovered via jsonrepair (Codex P1, PR #1696): repair proves
@@ -6798,6 +6832,7 @@ export function filterRepairedProposals(
       // schema is nullable here); anything else must be a finite number.
       (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
         .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
+      (record.exitPlan === null || typeof record.exitPlan === "string") &&
       // Schema range for conviction (Codex P1, round 5): the contract bounds confidenceScore to
       // 1-100; sanitize would CLAMP a repaired 999 to maximum conviction instead of rejecting it.
       (record.confidenceScore as number) >= 1 && (record.confidenceScore as number) <= 100 &&
