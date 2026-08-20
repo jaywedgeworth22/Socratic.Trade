@@ -27,6 +27,14 @@ catches up.  Receipt: `docs/rollouts/2026-08-20-ct-price-service.md`.
 
 # Current Handoff
 
+## 2026-08-20 MONET - iOS test target compiles again, three stale tests fixed (owner-directed)
+
+`xcodebuild test` was failing at BUILD on clean main (5 errors - `MobileModelsTests` encoded a `Decodable`-only `MobileSnapshot`), so no iOS test ran at all and three stale `DeskModelsTests` assertions sat invisible.  That is `qa-01`/`qa-02` from the review happening for real: the required gate never runs the Swift tests.
+
+Fixed test-side, not model-side: `MobileStore` caches the RAW response bytes and never re-encodes, so the tests now seed the cache the same way; adding `Encodable` would have bent a production model to satisfy a test.  The two catalog assertions were STALE - #2887 deliberately removed the `"Mock (offline)"` option, its provider branch and its availability bypass (keyless offline = the mock/demo path the rules forbid), so `provider(for:)` falls through to `openai` and `firstAvailable` returns nil with no keys.  The self-contradictory scan test now follows the implementation's joined-warnings form, which is also the honest one - the second warning is what tells the owner they are looking at a stale fallback scan.
+
+Verified: `xcodebuild test -only-testing:SocraticTradeTests/DeskModelsTests` exit 0, zero failures, 59s.  **Next: `qa-01`/`qa-02` are now actionable - add `xcodebuild test` to CI so a red Swift target cannot hide again.**  Rollout: `docs/rollouts/2026-08-20-ios-test-target-repair.md`.
+
 ## 2026-08-20 MONET - `pnl-basis-labels` up for review
 
 Every performance number now says what it measures.  Basis and window travel with the value through `performance.ts` / `benchmark.ts` to both the console and iOS, so "Unrealized P&L" stops meaning three different things across Results, Home and the phone; an empty sample reads as no-data rather than a confident `0%`; and mark-to-market sums a book with shorts on `|basis|` instead of netting short against long (`costBasis` changed meaning net -> gross; identical for an all-long book, and the single consumer was grep-confirmed).  `-` (unavailable) vs `n/a` (computed no-ratio) preserved.

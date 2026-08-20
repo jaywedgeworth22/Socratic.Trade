@@ -6,19 +6,28 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(CoachModelCatalog.provider(for: "claude-sonnet-5"), "anthropic")
         XCTAssertEqual(CoachModelCatalog.provider(for: "grok-4.5"), "xai")
         XCTAssertEqual(CoachModelCatalog.provider(for: "gemini-flash-latest"), "gemini")
+        XCTAssertEqual(CoachModelCatalog.provider(for: "mistral-medium"), "mistral")
+        XCTAssertEqual(CoachModelCatalog.provider(for: "deepseek-reasoner"), "deepseek")
+        XCTAssertEqual(CoachModelCatalog.provider(for: "kimi-latest"), "moonshot")
         XCTAssertEqual(CoachModelCatalog.provider(for: "gpt-5.4-mini"), "openai")
-        XCTAssertEqual(CoachModelCatalog.provider(for: "mock"), "mock")
+        // No "mock" branch.  PR #2887 removed the "Mock (offline)" option, its provider branch and
+        // its availability bypass: a keyless offline model is exactly the mock/demo path the
+        // product rules forbid.  An unrecognised id therefore falls through to the OpenAI-family
+        // default rather than resolving to a fake provider.
+        XCTAssertEqual(CoachModelCatalog.provider(for: "mock"), "openai")
+        XCTAssertEqual(CoachModelCatalog.provider(for: "something-unrecognised"), "openai")
     }
 
-    func testFirstAvailablePrefersAKeyedProviderThenMock() {
+    func testFirstAvailableRequiresAKeyedProvider() {
         XCTAssertEqual(
             CoachModelCatalog.firstAvailable(providers: ["anthropic": true])?.id,
             "claude-haiku-4.5"
         )
-        XCTAssertEqual(
-            CoachModelCatalog.firstAvailable(providers: [:])?.id,
-            "mock"
-        )
+        // With no key for any provider there is NO keyless option left to offer (#2887), so the
+        // caller gets nil and must say "no model configured" rather than silently answering from
+        // a fake one.
+        XCTAssertNil(CoachModelCatalog.firstAvailable(providers: [:]))
+        XCTAssertNil(CoachModelCatalog.firstAvailable(providers: ["anthropic": false]))
     }
 
     func testAuthorityCopyNeverCallsAutopilotARunState() {
@@ -80,8 +89,16 @@ final class DeskModelsTests: XCTestCase {
             DeskCopy.scanCountLine(names: 0, scanned: scan.scannedSymbols, quotes: scan.returnedQuotes, watched: 2),
             "0 names · 505 scanned · 0 quotes · 2 watched"
         )
+        // errorDescription is a pure function of `scan.warnings`: it joins EVERY non-empty warning
+        // with the two-space sentence gap.  Showing only the first would hide the half that tells
+        // the owner what they are actually looking at (a stale fallback scan), so the joined form
+        // is the intended behavior and the assertion follows it.  The presence or absence of the
+        // top-level "error"/"code" fields does not change this — see the second decode below.
         let error = MobileAPIError.scanQuotesUnavailable(scan)
-        XCTAssertEqual(error.errorDescription, "This operation was aborted")
+        XCTAssertEqual(
+            error.errorDescription,
+            "This operation was aborted  Live Nasdaq screener data was unavailable; showing the latest completed strategy scan as a stale fallback."
+        )
         XCTAssertFalse((error.errorDescription ?? "").localizedCaseInsensitiveContains("Guardrails"))
         XCTAssertFalse((error.errorDescription ?? "").localizedCaseInsensitiveContains("No Candidates"))
 
@@ -96,6 +113,9 @@ final class DeskModelsTests: XCTestCase {
           "topCandidates": []
         }
         """#.utf8)
+        // Same warnings, but a body with NO top-level "error"/"code" (an older or partial server
+        // shape).  The message the owner sees must be identical either way — the warnings are the
+        // only input.
         let joinedScan = try JSONDecoder().decode(MarketScanResponse.self, from: joinedJSON)
         let joined = MobileAPIError.scanQuotesUnavailable(joinedScan)
         XCTAssertEqual(
