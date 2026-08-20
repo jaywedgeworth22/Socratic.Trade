@@ -20,6 +20,11 @@ Screens no longer label one account's data as every account's.  Broker rows in S
 PR **#2813** (`cursor/roic-individual-archive-9ad4`) rebased onto `origin/main` `d3e2c9ee` (#2892).  Scope unchanged: skip ROIC HTTP when cache/artifacts already cover; persist `earningscalls_transcripts` + `data/roic-artifacts`; ops `roicArchive`.  Conflicts were `src/lib/web-sources/roic-transcripts.ts` and `test/roic-transcripts.test.ts` -- kept this PR's `while (queue.length > 0)` cached-tail drain and main's #2848 strategy-run pause plus the existing #2820 write-class tests.  Did not absorb other clusters.  Did not merge.  Did not spend the Individual key.
 
 Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
+## 2026-08-20 CURSOR — #2854 rebased onto main (`ce31c367`)
+
+#2854 was CONFLICTING/DIRTY against `origin/main` again (Jay landing open issue PRs tonight).  `git merge-tree --write-tree` exited 0 (phantom / docs-union).  Rebased `cursor/gather-no-pinecone-inventory-befc` onto `ce31c367` (5/5 clean).  Kept gather skip + congress 502 / Massive 429 fail-open only.  Did not absorb other clusters.  Did not flip `RAG_PINECONE_WRITE_CLASS`.  Did not prune.  Did not merge / deploy / bounce / TF.
+
+PR **#2854**.  Branch `cursor/gather-no-pinecone-inventory-befc`.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.
 
 ## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
 
