@@ -52,8 +52,8 @@ export async function runEvaluationHarness() {
     }
     evaluated++;
 
-    // Production path only.  retrieveFusedContext (search-fusion) is research/eval-only
-    // and must not be the merge-gate retriever — Green/Red/chat call retrieveContextDetailed.
+    // Production path only.  Search-fusion is research/eval-only and must not be the
+    // merge-gate retriever — Green/Red/chat call retrieveContextDetailed.
     const results = await retrieveContextDetailed(item.query, symbol, 50, "local", {
       asOf: resolveRetrievalAsOf(),
       strictAsOf: true,
