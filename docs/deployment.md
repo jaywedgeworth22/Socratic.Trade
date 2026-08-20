@@ -11,13 +11,41 @@ in historical rollouts as archival, not live targets.
 **Auto-deploy:** every push to `main` triggers Coolify via the repo webhook to
 Coolify's **manual** GitHub webhook endpoint
 (`https://host.jays.services/webhooks/source/github/events/manual`), not the
-GitHub-App integration alone. HMAC must match the app's
-`manual_webhook_secret_github`. Merge == live; do **not** post deploy claims or
-manually trigger deploys (ANNOUNCE-THEN-DEPLOY is retired).
+GitHub-App integration alone.  HMAC must match the app's
+`manual_webhook_secret_github`.  Do **not** post deploy claims or manually
+trigger deploys (ANNOUNCE-THEN-DEPLOY is retired).
+
+**Coolify `watch_paths` (already live, 2026-08-18):** ASC applied the list
+on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`).  App stayed healthy.  No
+bounce.  Do **not** re-apply from a PR.  Watched: `Dockerfile`,
+`.dockerignore`, `package.json`, `package-lock.json`, `next.config.mjs`,
+`postcss.config.mjs`, `tsconfig.json`, `middleware.ts`,
+`instrumentation.ts`, `instrumentation-client.ts`,
+`sentry.server.config.ts`, `sentry.edge.config.ts`,
+`litestream.coolify.yml`, `src`, `src/**`, `app`, `app/**`, `public`,
+`public/**`, `scripts`, `scripts/**`.  Omitted: `docs/**`, `STATUS.md`,
+`PLAN.md`, `docs/rollouts`, `ios/`, `test/`.  Auto-deploy stays on.
+Stop-old-first stays.  `health_check_start_period` stays 60.
+
+**Weekday RTH latch:** Coolify still receives the webhook.  The Dockerfile
+refuses the **image build before `npm ci`** during regular US equity hours
+(Mon–Fri 09:30–16:00 ET, 09:30–13:00 ET on NYSE early-close days) unless
+`HOTFIX=1` or `RTH_DEPLOY_OVERRIDE=1`.  `watch_paths` does not know about
+market hours.  A refused build must not swap the named container.
+
+Keep consistent container names and **stop-old-first**; do **not** enable
+rolling / zero-downtime (two Litestream writers).  Docker HEALTHCHECK is
+`GET /api/live` (process + SQLite).  Do not point Coolify HTTP health at
+`/api/health` — that probe can 503 or exceed 5s while Next is up, which
+is `running:unhealthy` and Cloudflare `no available server` (7:22–7:43pm
+CT after #2810 on 2026-08-17).  Do not add the latch to
+`scripts/coolify-prod-start.sh`.  Do not `FORCE_RESTORE`.  Do not bounce
+the live box from an agent.  This repo does not PATCH live Coolify.
 
 Canonical detail:
 
 - `docs/rollouts/2026-07-10-auto-deploy-on.md`
+- `docs/rollouts/2026-08-18-rth-deploy-latch.md` (weekday RTH build latch)
 - `docs/rollouts/2026-08-07-hetzner-fleet-cutover.md` (and ops follow-up notes)
 - `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md` (webhook signature drift)
 - `AGENTS.md` → production / Coolify stanzas
@@ -27,9 +55,18 @@ Canonical detail:
 1. A pull request passes the required `verify` check and merges to `main`
    (prefer `gh pr merge <n> --squash --auto`).
 2. GitHub delivers the push to Coolify's manual webhook (HMAC-validated).
-3. Coolify serializes builds (`concurrent_builds` pinned to **1**), builds with
-   the app's **Dockerfile** pack, and starts `scripts/coolify-prod-start.sh`
-   with `DB_BOOTSTRAP=live`.
+3. Coolify serializes builds (`concurrent_builds` pinned to **1**) and builds
+   with the app's **Dockerfile** pack.  The first app step (before `npm ci`)
+   is `tsx scripts/assert-rth-deploy-latch.ts`.  Unwatched paths (docs /
+   STATUS / PLAN / ios / test) do not start a deploy (`watch_paths` already
+   live).  Weekday RTH on a watched path exits 2 unless `HOTFIX=1` /
+   `RTH_DEPLOY_OVERRIDE=1`.  A refused build must keep the last healthy
+   named container.  Otherwise Coolify **stop-old-first** (consistent name,
+   one Litestream writer) and starts `scripts/coolify-prod-start.sh` with
+   `DB_BOOTSTRAP=live`.
+   Traefik must see Docker `healthy` via `/api/live` once the process is
+   up — a finished deploy must not sit `running:unhealthy` for extra
+   minutes.
 4. Boot injects Infisical secrets, restores SQLite when the marker-guarded
    bootstrap requires it, and runs Litestream (when R2 is enabled) around Next.js.
 

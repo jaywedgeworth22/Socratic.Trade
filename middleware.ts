@@ -55,6 +55,7 @@ const ALLOWED = (process.env.ALLOWED_EMAILS || "")
 // Paths that never require a user identity.
 const PUBLIC_PREFIXES = [
   "/api/health",
+  "/api/live",
   "/api/ops",
   "/api/webhooks",
   "/api/csp-report",

@@ -609,6 +609,25 @@ Owner cut 2026-08-17: archive, not renew-vs-expire.  Harvest #2763 already persi
 Last published coverage (2026-08-16): 608 transcripts / 565 tickers vs a 1,000-issuer universe.  Most names still have only the latest call.  Did not re-walk from this empty cloud checkout.  No Stripe.  Left #2800 / #2798 / #2794 / #2792 alone.
 
 PR **#2813**.  Branch `cursor/roic-individual-archive-9ad4`.  Rebased onto `d3e2c9ee` (#2892).  Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
+## 2026-08-18 CURSOR — Coolify RTH deploy latch (`HOTFIX=1` escape)
+## 2026-08-18 CURSOR — Coolify RTH latch + skip docs-only rebuilds (#2811 503)
+## 2026-08-18 CURSOR — Coolify RTH latch + skip docs-only + `/api/live`
+## 2026-08-18 CURSOR — Coolify RTH latch; `watch_paths` already live
+
+Jay wanted auto-deploy only outside RTH unless `HOTFIX=1`.  ASC refined
+tonight's 503: #2810 ~7m, #2811 ~6m, `processStartedAt` 00:49:27Z is #2811
+completing.  7:22–7:43pm CT #2810 was up (litestream log, no ERROR) while
+public 503 continued — `running:unhealthy` / Traefik.  ASC then applied
+`watch_paths` live on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`): runtime
+trees only; omitted `docs/**`, `STATUS.md`, `PLAN.md`, `ios/`, `test/`.
+App stayed healthy.  No bounce.  Auto-deploy still on.  Stop-old-first
+kept.  `health_check_start_period` still 60.  **Do not re-apply from this
+PR.**  Still shipping the in-repo RTH latch + `/api/live` HEALTHCHECK.
+Rebased onto `main` after #2824.  Did not bounce, `FORCE_RESTORE`, or PATCH
+Coolify.  Did not touch #2792/#2798/#2800/#2794.
+
+PR **#2817**.  Branch `cursor/rth-deploy-latch-c039`.
+Rollout: `docs/rollouts/2026-08-18-rth-deploy-latch.md`.
 
 ## 2026-08-18 CURSOR — Health JSON monitors + OPS token + R2 retain=1
 
@@ -628,6 +647,11 @@ Branch `cursor/health-json-monitors-ac72` rebased onto `main` 2026-08-18
 (PR #2816).  Runbook:
 `docs/runbooks/uptime-health-json-monitors.md`.  Rollout:
 `docs/rollouts/2026-08-18-health-json-monitors.md`.
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
