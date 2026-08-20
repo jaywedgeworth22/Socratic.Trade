@@ -93,6 +93,9 @@ Branch `cursor/copy-guardrail-claims-19ca`.  Rollout: `docs/rollouts/2026-08-19-
 ## 2026-08-20 CURSOR — Wire dead tax / webhook / preset controls (`dead-controls`)
 
 Expert review cluster: wired `taxSettings.subtractFromResults` into Results realized P&L, extended Send test to probe `policy.notificationSettings.webhookUrl` (Discord embed path), and added Preset create/rename/delete on Strategy via `/api/profiles`.  Branch `cursor/wire-dead-controls-8b69`.  Rollout: `docs/rollouts/2026-08-20-wire-dead-controls.md`.
+## 2026-08-19 CURSOR — Account write guards (`cursor/account-write-guards-940d`)
+
+Expert review tranche-1 cluster `account-write-guards`: `strategyAuthority` now stays pinned on profile activate/copy/import (mirrors existing `systemState` guard).  `setActiveConnectedAccount` rejects draining rows; `upsertConnectedAccount` clears `is_draining` on reconnect.  No new TypedConfirm ceremony.  PR open on branch `cursor/account-write-guards-940d`.  Rollout: `docs/rollouts/2026-08-19-account-write-guards.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
