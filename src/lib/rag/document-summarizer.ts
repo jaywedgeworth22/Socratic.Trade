@@ -17,6 +17,7 @@ import {
   DocumentAbstract,
   getDb,
   deleteDocumentAbstractByAccessionAndSource,
+  deleteDocumentChunkFtsBySourceAccession,
   insertDocumentChunkFts
 } from "../db";
 import { storeDocument } from "../vector-db";
@@ -460,11 +461,11 @@ export async function generateAndStoreDocumentAbstract(
       input.accessionOrEventId,
       input.sourceType
     );
-    // Drop stale FTS rows for this abstract accession (content_hash will change).
+    // Drop stale FTS rows and their index keys together. Leaving the index
+    // behind lets a later same-hash remirror DELETE a reused FTS5 rowid that
+    // now belongs to another filing.
     try {
-      db.prepare(
-        "DELETE FROM document_chunks_fts WHERE source = ? AND accession = ?"
-      ).run("document-summarizer", abstractId);
+      deleteDocumentChunkFtsBySourceAccession("document-summarizer", abstractId);
     } catch {
       // FTS table may be absent in very old test DBs
     }

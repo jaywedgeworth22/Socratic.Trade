@@ -250,4 +250,60 @@ describe("Document Abstracts & Summarizer", () => {
     expect(row?.modelUsed).toBe(DOCUMENT_HIGHLIGHT_MODEL);
     expect(row?.summaryText).toMatch(/35%|guidance|backlog/i);
   });
+
+  it("model-stamp refresh does not wipe a later filing FTS row that reused a summarizer rowid", async () => {
+    const { insertDocumentChunkFts } = await import("../src/lib/db-learning");
+    const accession = "0000789019-24-000088";
+    const abstractId = `abstract:earnings-summary:MSFT:${accession}`;
+    await generateAndStoreDocumentAbstract({
+      ticker: "MSFT",
+      accessionOrEventId: accession,
+      sourceType: "earnings-summary",
+      headline: "MSFT stamp",
+      chunks: [
+        { id: "c1", text: "Azure cloud growth accelerated to 31% YoY with strong demand." },
+        { id: "c2", text: "Capital expenditure increased for AI infrastructure buildout." }
+      ]
+    });
+    getDb()
+      .prepare(
+        "UPDATE document_abstracts SET model_used = ? WHERE accession_or_event_id = ?"
+      )
+      .run("document-synthesizer-v1", accession);
+
+    insertDocumentChunkFts(
+      "victim-filing-hash",
+      "AAPL",
+      "sec-edgar",
+      "0000320193-26-000088",
+      "Item 1A Risk Factors written after the abstract FTS rows."
+    );
+
+    await generateAndStoreDocumentAbstract({
+      ticker: "MSFT",
+      accessionOrEventId: accession,
+      sourceType: "earnings-summary",
+      headline: "MSFT stamp",
+      chunks: [
+        { id: "c1", text: "Azure cloud growth accelerated to 31% YoY with strong demand." },
+        { id: "c2", text: "Capital expenditure increased for AI infrastructure buildout." }
+      ]
+    });
+
+    const victim = getDb()
+      .prepare("SELECT text FROM document_chunks_fts WHERE content_hash = ?")
+      .get("victim-filing-hash") as { text: string } | undefined;
+    expect(victim?.text).toMatch(/Risk Factors/);
+    const orphanIndex = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM document_chunks_fts_index
+         WHERE source = 'document-summarizer' AND accession = ?
+           AND content_hash NOT IN (
+             SELECT content_hash FROM document_chunks_fts
+             WHERE source = 'document-summarizer' AND accession = ?
+           )`
+      )
+      .get(abstractId, abstractId) as { n: number };
+    expect(orphanIndex.n).toBe(0);
+  });
 });
