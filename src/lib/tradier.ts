@@ -24,8 +24,7 @@ import { fetchDailyOHLC } from "./history";
 // they are broker-agnostic helpers exported from ./alpaca (no Alpaca SDK behavior involved).
 import { fillMissingQuotesWithClose, estimateReviewNotional } from "./alpaca";
 import { mergeAccountCapabilities } from "./venue-contract";
-import { TRADIER_BROKER_IO_DEADLINE_MS, equityOrdersDefaultSinceIso } from "./inflight-deadline";
-import { withDeadline } from "./safety-maintenance";
+import { TRADIER_BROKER_IO_DEADLINE_MS, equityOrdersDefaultSinceIso, withDeadline } from "./inflight-deadline";
 
 /**
  * Tradier broker gateway. Hand-rolled REST (single Bearer token, no SDK), mirroring the Alpaca

@@ -40,6 +40,16 @@ export function equityOrdersDefaultSinceIso(nowMs = Date.now()): string {
   return new Date(nowMs - EQUITY_ORDERS_TERMINAL_LOOKBACK_MS).toISOString();
 }
 
+/** Race a broker promise against a hard timeout.  Lives here (not safety-maintenance) so
+ *  alpaca/tradier can import it without a circular broker-gateway load. */
+export async function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export type SettleKind = "fulfilled" | "rejected" | "pending";
 
 export type SettleOutcome<T> =
