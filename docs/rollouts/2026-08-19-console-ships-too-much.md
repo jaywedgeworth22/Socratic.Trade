@@ -8,6 +8,7 @@ Part II cluster `console-ships-too-much` from `docs/reviews/2026-08-18-full-app-
 
 - Added `server-only` guard to `src/lib/db.ts` and every `src/lib/db-*.ts` module (+ `src/lib/db/client.ts`).
 - Split client-safe venue helpers into `src/lib/venue-contract-pure.ts`; `brokers.tsx` imports from there.
+- Split `realizedPnlNetOfEstimatedTax` into `src/lib/tax-pure.ts`; `results/page.tsx` imports from there (`server-only` on `tax.ts` otherwise trips webpack via `performance` → `db*`).
 - Added `src/lib/dashboard-snapshot-projection.ts` and project snapshot at return time:
   - drop raw `audit[]` (keep `auditFeed` / `unifiedFeed`)
   - trim `latestScan` / `latestStrategyRun.marketScan` `quotesBySymbol` to referenced symbols
@@ -19,6 +20,8 @@ Part II cluster `console-ships-too-much` from `docs/reviews/2026-08-18-full-app-
 
 - `package.json`, `package-lock.json`
 - `src/lib/venue-contract-pure.ts`, `src/lib/venue-contract.ts`
+- `src/lib/tax-pure.ts`, `src/lib/tax.ts`
+- `app/console/results/page.tsx`
 - `src/lib/dashboard-snapshot-projection.ts`, `src/lib/dashboard.ts`
 - `src/lib/db.ts`, `src/lib/db-*.ts`, `src/lib/db/client.ts`
 - `src/lib/order-cancel.ts`
