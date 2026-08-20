@@ -68,21 +68,22 @@ was dropped; the kind-based copy from #2800 remains.
 
 ## Verification State
 
-Commands actually run on this branch:
+Commands actually run after the 2026-08-20 rematch (`d84e2cac`):
 
 ```bash
-npm run lint
-npx tsc --noEmit
+npm run lint          # exit 0 (warnings only)
+npx tsc --noEmit      # exit 0
 ./node_modules/.bin/vitest run test/health-alert-noise-gate.test.ts \
   test/health-lane-cap.test.ts test/ops-snapshot.test.ts \
   test/retired-direct-vendors.test.ts test/connections-health-route.test.ts
+# 5 files / 38 passed
+npm run build         # exit 0 — webpack UnhandledSchemeError gone
 ```
 
-Lint exit 0 (warnings only).  tsc exit 0.  Targeted: 5 files / 37 passed.
-
-`test/connection-health-routing.test.ts` has 5 pre-existing failures in this cloud VM
-(Pushover preferred over Resend; `RAG_EMBED_PROVIDER=siliconflow`).  Not caused by
-this change; not used as the gate.
+Full `npm test` in this cloud VM collected unrelated env failures (Yahoo OHLC,
+usage-monitor fetch, vector-db receipt mocks, strategy 30s timeouts) while still
+running after 20+ minutes.  Not used as the gate.  GitHub `verify` on this head
+is the authority.
 
 ## Next Steps & Blockers
 
