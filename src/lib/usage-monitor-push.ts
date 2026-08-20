@@ -13,7 +13,9 @@
 //   - Fire-and-forget + never throws: the ledger functions promise "never break the caller", so
 //     everything here swallows its own errors. Cost/RAG events are queued and flushed on a short
 //     debounce; high-volume market-data/broker calls are aggregated per-provider and flushed as a
-//     single `requests`-count event per window (never one POST per call).
+//     single `requests`-count event per window (never one POST per call). Call-volume windows are
+//     persisted to settings on drain and ACKed after a successful POST so a crash/outage can replay
+//     them. Counts still sitting in the ~2s in-memory aggregate (not yet drained) can still be lost.
 //   - Health is reported via `logApiHealth({ service: "usage-monitor" })` so the operator sees the
 //     connection status without the push ever affecting trading.
 //
@@ -23,6 +25,8 @@
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
+import { getDb } from "./db";
+import { deleteInternalSetting, setInternalSetting } from "./db-settings";
 import { getGitSha } from "./git-sha";
 import { suppressUsageMonitorProvider } from "./usage-monitor-provider-policy";
 import {
@@ -248,7 +252,8 @@ function isStaleBuffered(receivedAt: number, ttlMs: number, now: number): boolea
  * Bound the in-memory failure buffer so a multi-day receiver outage can't grow ST's own memory
  * without limit. This is safe to trim aggressively: llm/rag/provider-dispatch events dropped here
  * are still recoverable — the durable DB-backed ledgers replay them independently via
- * usage-monitor-replay.ts. Call-volume aggregates are best-effort only (rebuilt on the next window).
+ * usage-monitor-replay.ts. Call-volume aggregates are persisted to settings on drain and replayed
+ * after a crash or monitor outage (same windowId event identity).
  */
 function trimBufferedEvents(now: number): void {
   const ttlMs = queueTtlMs();
@@ -282,9 +287,135 @@ interface CallVolumeEntry {
   service?: string;
   keySource?: string;
   userId?: string;
+  label?: string;
   requests: number;
   successes: number;
   failures: number;
+}
+
+export const CALL_VOLUME_SETTING_PREFIX = "usage_monitor_callvolume:v1:";
+
+export interface PersistedCallVolumeWindow {
+  windowId: string;
+  provider: string;
+  service?: string;
+  keySource?: string;
+  userId?: string;
+  label?: string;
+  requests: number;
+  successes: number;
+  failures: number;
+  occurredAt: string;
+}
+
+function callVolumeSettingKey(windowId: string): string {
+  return `${CALL_VOLUME_SETTING_PREFIX}${windowId}`;
+}
+
+function parsePersistedCallVolumeWindow(raw: unknown): PersistedCallVolumeWindow | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const parsed = raw as Partial<PersistedCallVolumeWindow>;
+  if (
+    typeof parsed.windowId !== "string" ||
+    typeof parsed.provider !== "string" ||
+    typeof parsed.requests !== "number" ||
+    typeof parsed.successes !== "number" ||
+    typeof parsed.failures !== "number" ||
+    typeof parsed.occurredAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    windowId: parsed.windowId,
+    provider: parsed.provider,
+    service: typeof parsed.service === "string" ? parsed.service : undefined,
+    keySource: typeof parsed.keySource === "string" ? parsed.keySource : undefined,
+    userId: typeof parsed.userId === "string" ? parsed.userId : undefined,
+    label: typeof parsed.label === "string" ? parsed.label : undefined,
+    requests: parsed.requests,
+    successes: parsed.successes,
+    failures: parsed.failures,
+    occurredAt: parsed.occurredAt,
+  };
+}
+
+export function persistCallVolumeWindows(windows: PersistedCallVolumeWindow[]): void {
+  try {
+    for (const window of windows) {
+      setInternalSetting(callVolumeSettingKey(window.windowId), window);
+    }
+  } catch {
+    // Unit tests and early boot can run without a migrated DB.  In-memory flush still runs.
+  }
+}
+
+export function ackCallVolumeWindows(windowIds: string[]): void {
+  if (windowIds.length === 0) return;
+  try {
+    for (const windowId of windowIds) {
+      deleteInternalSetting(callVolumeSettingKey(windowId));
+    }
+  } catch {
+    // Same no-DB path as persist.
+  }
+}
+
+export function loadPersistedCallVolumeWindows(): PersistedCallVolumeWindow[] {
+  try {
+    const rows = getDb()
+      .prepare("SELECT value FROM settings WHERE key LIKE ?")
+      .all(`${CALL_VOLUME_SETTING_PREFIX}%`) as Array<{ value: string }>;
+    return rows
+      .map((row) => {
+        try {
+          return parsePersistedCallVolumeWindow(JSON.parse(row.value));
+        } catch {
+          return null;
+        }
+      })
+      .filter((row): row is PersistedCallVolumeWindow => row !== null);
+  } catch {
+    return [];
+  }
+}
+
+function callVolumeDraft(window: PersistedCallVolumeWindow): UsageMonitorDraft {
+  return {
+    environment: usageMonitorEnv(),
+    provider: window.provider,
+    service: window.service,
+    project: PROJECT,
+    billingMode: "actual",
+    metricType: "usage",
+    unit: "request",
+    requests: window.requests,
+    confidence: "actual",
+    occurredAt: window.occurredAt,
+    metadata: cleanMetadata({
+      successes: window.successes,
+      failures: window.failures,
+      keySource: window.keySource ?? null,
+      userId: window.userId ?? null,
+      label: window.label ?? null,
+    }),
+  };
+}
+
+export async function createCallVolumeUsageMonitorEvent(
+  window: PersistedCallVolumeWindow
+): Promise<UsageMonitorEvent> {
+  return {
+    ...callVolumeDraft(window),
+    eventId: await telemetryIdempotencyKey("provider-call-volume", window.windowId),
+  };
+}
+
+function ackQueuedCallVolume(items: QueuedUsageEvent[]): void {
+  ackCallVolumeWindows(
+    items
+      .filter((item) => item.kind === "provider-call-volume" && item.sourceId)
+      .map((item) => item.sourceId as string)
+  );
 }
 
 interface PendingUsageEvent {
@@ -299,6 +430,8 @@ interface PendingUsageEvent {
 interface QueuedUsageEvent {
   event: UsageMonitorEvent;
   receivedAt: number;
+  kind?: string;
+  sourceId?: string;
 }
 
 interface PushState {
@@ -397,6 +530,8 @@ function normalizeRetainedQueues(prior: PushState): void {
         return {
           event: normalizeRetainedEvent(wrapper.event) as UsageMonitorEvent,
           receivedAt: typeof wrapper.receivedAt === "number" ? wrapper.receivedAt : now,
+          kind: typeof wrapper.kind === "string" ? wrapper.kind : undefined,
+          sourceId: typeof wrapper.sourceId === "string" ? wrapper.sourceId : undefined,
         };
       }
       // Old shape: `entry` IS the raw event.
@@ -628,7 +763,7 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
  */
 export function recordProviderCall(
   provider: string,
-  opts: { service?: string; ok?: boolean; keySource?: string; userId?: string } = {}
+  opts: { service?: string; ok?: boolean; keySource?: string; userId?: string; label?: string } = {}
 ): void {
   if (!usageMonitorEnabled()) return;
   // Never re-count the telemetry channel's own health calls (would loop).
@@ -637,9 +772,10 @@ export function recordProviderCall(
   // but never enter the Usage Monitor feed.
   if (suppressUsageMonitorProvider(provider)) return;
   try {
-    // Key by credential lane too, so a user's own market-data key isn't conflated with shared/
-    // operator quota in the monitor.
-    const key = [provider, opts.service ?? "", opts.keySource ?? "", opts.userId ?? ""].join("|");
+    const label = opts.label?.trim() || undefined;
+    // Key by credential lane + optional usage label so a peer-serving miss (congress-read)
+    // is not conflated with this app's own Massive spend.
+    const key = [provider, opts.service ?? "", opts.keySource ?? "", opts.userId ?? "", label ?? ""].join("|");
     const existing = state.callVolume.get(key);
     if (!existing) {
       // Bound distinct lanes: callVolume is drained each flush, but while the breaker is open the
@@ -662,6 +798,7 @@ export function recordProviderCall(
         service: opts.service,
         keySource: opts.keySource,
         userId: opts.userId,
+        label,
         requests: 0,
         successes: 0,
         failures: 0,
@@ -706,35 +843,33 @@ function scheduleFlush(delayMs = flushDelayMs()): void {
 
 function drainCallVolume(now: string): PendingUsageEvent[] {
   const events: PendingUsageEvent[] = [];
+  const persisted: PersistedCallVolumeWindow[] = [];
   for (const entry of state.callVolume.values()) {
     if (entry.requests <= 0) continue;
     // Defense in depth: never flush a retired family even if a stale HMR map entry slipped in.
     if (suppressUsageMonitorProvider(entry.provider)) continue;
+    const windowId = entry.windowId || randomDeliveryId();
+    const window: PersistedCallVolumeWindow = {
+      windowId,
+      provider: entry.provider,
+      service: entry.service,
+      keySource: entry.keySource,
+      userId: entry.userId,
+      label: entry.label,
+      requests: entry.requests,
+      successes: entry.successes,
+      failures: entry.failures,
+      occurredAt: now,
+    };
+    persisted.push(window);
     events.push({
       kind: "provider-call-volume",
-      // HMR can preserve a pre-upgrade global map entry without windowId.
-      sourceId: entry.windowId || randomDeliveryId(),
+      sourceId: windowId,
       receivedAt: Date.now(),
-      event: {
-        environment: usageMonitorEnv(),
-        provider: entry.provider,
-        service: entry.service,
-        project: PROJECT,
-        billingMode: "actual",
-        metricType: "usage",
-        unit: "request",
-        requests: entry.requests,
-        confidence: "actual",
-        occurredAt: now,
-        metadata: cleanMetadata({
-          successes: entry.successes,
-          failures: entry.failures,
-          keySource: entry.keySource ?? null,
-          userId: entry.userId ?? null,
-        }),
-      },
+      event: callVolumeDraft(window),
     });
   }
+  persistCallVolumeWindows(persisted);
   state.callVolume.clear();
   return events;
 }
@@ -749,6 +884,8 @@ async function resolvePendingEvents(
         eventId: await telemetryIdempotencyKey(kind, sourceId),
       },
       receivedAt,
+      kind,
+      sourceId,
     }))
   );
 }
@@ -833,7 +970,10 @@ async function flushUsageMonitorOnce(): Promise<void> {
   for (let i = 0; i < pending.length; i += MAX_BATCH) {
     const batch = pending.slice(i, i + MAX_BATCH);
     const result = await postBatch(batch.map((q) => q.event));
-    if (result.ok) continue;
+    if (result.ok) {
+      ackQueuedCallVolume(batch);
+      continue;
+    }
     if (result.collisionKey) {
       // The monitor already holds a distinct event under this key.  Re-sending the
       // colliding row 409s the whole remaining batch forever and paints the
@@ -841,10 +981,13 @@ async function flushUsageMonitorOnce(): Promise<void> {
       // Drop only the named row — same contract as the durable replay lane — and
       // retry the rest.  A 409 is proof the receiver is up, not an outage.
       const remaining: QueuedUsageEvent[] = [];
+      const acked: QueuedUsageEvent[] = [];
       for (const q of pending.slice(i)) {
         const key = await usageMonitorV2IdempotencyKey(q.event.eventId);
-        if (key !== result.collisionKey) remaining.push(q);
+        if (key === result.collisionKey) acked.push(q);
+        else remaining.push(q);
       }
+      ackQueuedCallVolume(acked);
       if (remaining.length > 0) {
         state.queue.unshift(...remaining);
         trimBufferedEvents(Date.now());

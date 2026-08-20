@@ -1,6 +1,8 @@
 # Cross-App Coordination Audit — 2026-08-17
 
-**Status:** report only.  No code, secrets, or deploy changes in this PR.
+**Status:** report landed (#2802).  Follow-ups are in progress on
+`cursor/cross-app-coordination-followups-1212` (this tree implements the ST
+slice of §7).
 
 **Auditor:** Cursor Cloud (portfolio architect / contracts / SRE / product).
 **Scope date:** 2026-08-17.  Evidence from `Socratic.Trade` HEAD plus GitHub `main`
@@ -431,42 +433,41 @@ infrastructure-independent.**  CT's Senate path is not Mac-independent.
 
 ## 7. Prioritized portfolio fixes
 
-Do not implement in this PR.  Suggested order for later seats.
+Suggested order.  ST items 1 / 3 (label) / 4 / 6 / 7 are on this follow-up
+branch.  Peer-repo items (2, 3 CT last-resort, 5, 8) land as separate PRs.
+Item 9 stays deferred until the triangle is a matched pair.
 
 ### P1 — do next (gates and identity)
 
-1. **Rewrite ST `shared-package-pin-check.yml` for vendor-era CT.**  Compare
-   ST lock ref and UM lock ref to CT `VENDOR-PROVENANCE.md` release (and a
-   real commit SHA once provenance has one).  Fail when CT `app/package.json`
-   reintroduces the npm dep.  Stop exiting 0 on "peer spec missing."  Add the
-   same triangle to UM (or one reusable workflow in FLEET).
+1. **Rewrite ST `shared-package-pin-check.yml` for vendor-era CT.**  **Done
+   (ST).**  `scripts/check-shared-package-pin.mjs` compares ST/UM npm pins +
+   lock SHAs to CT `VENDOR-PROVENANCE.md` + vendor `package.json`.  Fails when
+   CT is unreadable, versions diverge, or CT reintroduces the npm dep.  Still
+   not a required merge check.
 2. **Reconcile CT `AGENTS.md` CI runner policy** with the retired
    self-hosted / `oracle-ci` world.  Until that file matches ST/FLEET, every
-   CT session will try to revive banned runners.
+   CT session will try to revive banned runners.  **Peer PR.**
 3. **Split or last-resort the shared Massive key.**  Owner already pointed
-   the cascade at ST.  CT should treat direct Massive as fallback; ST should
-   keep metering (already done) and optionally tag `label: congress-read` on
-   peer-serving cache misses.  Do **not** mint `MASSIVE_API_KEY_ALT` as a
-   second production key.
+   the cascade at ST.  CT should treat direct Massive as fallback; ST tags
+   `label: congress-read` on peer-serving cache misses.  Do **not** mint
+   `MASSIVE_API_KEY_ALT` as a second production key.  **ST label done; CT
+   last-resort is a peer PR.**
 4. **Infisical rotation runbook:** fleet keys live only in the shared
-   project; app projects must not shadow them.  Document the merge order in
-   ST `AGENTS.md` the same way CT did on 2026-08-16.
+   project; app projects must not shadow them.  **Done (ST `AGENTS.md`).**
 
 ### P2 — this month
 
 5. **UM operations:** add a bounded `congress.trade/api/health` probe next to
    ST, with the same "do not paint degraded on retired / last-resort lanes"
-   rule.
-6. **Durable ST call-volume replay** (or accept the loss and say so on the
-   UM Massive card).
-7. **Doc refresh in ST:** `congress-trade-consume.md` client path;
-   `congress-trade-share.md` FMP rationale; FEATURE-ENABLEMENT Quiver row;
-   `congress-trade-events.ts` comment that still says
-   `congress-trade-client`.
+   rule.  **Peer PR.**
+6. **Durable ST call-volume replay.**  **Done (ST).**  Persist windows to
+   settings on drain; ACK after a successful POST; replay loads leftovers.
+   Counts still sitting in the ~2s in-memory aggregate can still be lost.
+7. **Doc refresh in ST:** consume client path, share FMP rationale,
+   FEATURE-ENABLEMENT Quiver row, events comment.  **Done (ST).**
 8. **CT vendor hygiene:** stop tracking unused `dist/` + `node_modules/`
    under `app/vendor/congress-trading-shared/` once Deno-only is proven.
-   Put a 40-hex commit on `VENDOR-PROVENANCE.md` so
-   `check-shared-package-pin.mjs` matches the file it parses.
+   Put a 40-hex commit on `VENDOR-PROVENANCE.md`.  **Peer PR.**
 9. **Promote the rewritten pin-check to required** only after ST+CT+UM land
    as a matched pair (the current "not required" comment is why coordinated
    bumps work — keep that until the gate understands vendor-era CT).

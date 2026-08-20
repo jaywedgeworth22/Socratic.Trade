@@ -17,7 +17,7 @@ schemas are imported from `@jaywedgeworth22/congress-trading-shared`. Local alia
 backward-compatible App B naming.
 
 ## 1. Cache-aside market reads (`CONGRESS_TRADE_READS_ENABLED`)
-`src/lib/congress-trade-client.ts` reads App A's public endpoints (`/api/market/bundle|ref|refs|prices|spx`).
+`src/lib/api-clients/congress.ts` reads App A's public endpoints (`/api/market/bundle|ref|refs|prices|spx`).
 Wired as the **first tier** of `fetchDailyOHLC` (`src/lib/history.ts`): App B reuses App A's EOD closes
 before calling its own keyed history providers (Massive/Tradier/Marketstack), saving that quota. `^GSPC`
 flows through the same path via `/api/market/spx`.
@@ -39,7 +39,7 @@ flows through the same path via `/api/market/spx`.
 App A stores fundamentals + analyst consensus (its own enrichment + our donated push) and now serves them
 at **`GET /api/market/fundamentals/:ticker`** and **`GET /api/market/analyst/:ticker`** (date-ascending
 rows; `?from=&to=` like `/market/insider`). App B reads them via `getAppAFundamentals` / `getAppAAnalyst`
-(`congress-trade-client.ts`), surfaced through the **`CongressTradeEnrichmentProvider`** in
+(`src/lib/api-clients/congress.ts`), surfaced through the **`CongressTradeEnrichmentProvider`** in
 `src/lib/data-providers.ts`, registered ahead of the paid fundamentals providers (Finnhub/FMP/…) so App A's
 free, already-stored values win those fields. Maps onto existing `SymbolEnrichment` fields
 (peRatio, eps, beta, dividendYield, fiftyTwoWeekHigh/Low, fcfYield, debtToEquity, epsGrowth,
@@ -112,7 +112,7 @@ member's trades are scored (which needs the price push to fill in), so this ligh
 then the activity proxy carries it. No extra calls when there are no clusters.
 
 **New App A analytics endpoints (2026-06-25, App A PRs #77/#79/#80).** Three additional read functions
-wired into `congress-trade-client.ts` (all gated on `CONGRESS_ANALYTICS_ENABLED`):
+wired into `src/lib/api-clients/congress.ts` (all gated on `CONGRESS_ANALYTICS_ENABLED`):
 
 - **`getAppAConviction(opts)`** → `GET /api/analytics/conviction?window=&limit=` — composite 0–100
   conviction score per ticker (`convictionScore: number | null`, direction-aware BUY/SELL). `null` = thin
