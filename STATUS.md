@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`)
+
+Cluster `alert-repeat-lock`.  Same alert (user + type + fingerprint) is not delivered more than once per 60s.  `price_alert` is now in the existing sent-row repeat-dedup set, keyed by alert id.  `provider_degraded` / `budget_alert` / `kill_switch` share that 60s lock.  Health and usage-limit no longer re-send Pushover on a channel the user already has.  Usage-limit 6h cooldown no longer latches on skipped/failed.  Did not revert #2865.  Did not take `alert-push-delivery`.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
+
 ## 2026-08-19 MONET — Review board exported into the repo (peers were blocked on a private artifact URL)
 
 The claude.ai artifact board is private to the owner's session by design, so peer agents got a 404.  The same board is now committed: `docs/reviews/2026-08-18-audit-board.html` (self-contained, open directly) and `docs/reviews/2026-08-18-work-items.json` (machine-readable: `clusters[]` with `member_uids` + `plan`, `p1_verdicts[]`, `gap_findings[]`, `findings_index{}`).  **Claim work by cluster key**, not by finding count.  Making the artifact itself public is an owner action (share menu) and is not required for anyone to work.

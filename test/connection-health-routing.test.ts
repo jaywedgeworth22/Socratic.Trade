@@ -118,6 +118,23 @@ describe("Connection Health & Failure Routing", () => {
     expect(sendNotificationSpy.mock.calls[0]?.[1]?.additionalDelivery).toBeUndefined();
   });
 
+  it("does not add a Pushover fallback when the user already enabled that channel", async () => {
+    const { db, health, notifyMod, notificationsMod } = await load();
+    process.env.PUSHOVER_APP_TOKEN = "pv-token";
+    process.env.PUSHOVER_USER_KEY = "u1userkey";
+    db.setNotifyPrefs("local", { channels: ["pushover"], pushoverTarget: "u1userkey" });
+    const notifySpy = vi.spyOn(notifyMod, "notify").mockResolvedValue([]);
+    const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+    await health.alertConnectionFailure("pinecone", "env", "u_tenant", "API Key Invalid");
+
+    expect(notifySpy).not.toHaveBeenCalled();
+    expect(sendNotificationSpy).toHaveBeenCalledOnce();
+    expect(sendNotificationSpy.mock.calls[0]?.[1]?.additionalDelivery).toBeUndefined();
+    delete process.env.PUSHOVER_APP_TOKEN;
+    delete process.env.PUSHOVER_USER_KEY;
+  });
+
   it("does not add the operator fallback when a preferred email target already exists", async () => {
     const { db, health, notifyMod, notificationsMod } = await load();
     db.setNotifyPrefs("local", { channels: ["email"], email: "preferred@socratic.trade" });

@@ -1,5 +1,7 @@
 # Active Implementation Plan
 
+> **2026-08-20 CURSOR — Alert repeat lock (`cursor/alert-repeat-lock-2b9b`).** Cluster `alert-repeat-lock`.  60s same-fingerprint delivery lock on `price_alert` (by id) plus `provider_degraded` / `budget_alert` / `kill_switch`.  Reuses `notification_events` sent rows.  Health/usage same-channel fallback no longer double-sends.  Did not revert #2865 or take `alert-push-delivery`.  Rollout: `docs/rollouts/2026-08-20-alert-repeat-lock.md`.
+
 > **2026-08-19 CURSOR — Price alert evaluation (`cursor/fix-price-alert-evaluation-1a3d`).** Part II cluster `price-alert-evaluation`.  User-scoped `fetchFreshQuotesCascade`, logged `alert.check_error`, staleness gate, `isValidAppSymbol`.  Did not take on alert-push-delivery.  Rollout: `docs/rollouts/2026-08-19-price-alert-evaluation.md`.
 > **2026-08-19 CURSOR — Session-aware market cache freshness (`cursor/market-cache-freshness-5ee3`).** Expert review cluster `market-cache-freshness` / mdi-01.  Friday intraday cache writes keep naive TTL; bar freshness is session-counted; early-close table added.  Sibling `quote-value-provenance` is a separate PR.  Rollout: `docs/rollouts/2026-08-19-market-cache-freshness.md`.
 
