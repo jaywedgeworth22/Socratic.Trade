@@ -17,6 +17,9 @@ PR **(pending)**.  Branch `cursor/home-proposal-rows-8a57`.  Rollout: `docs/roll
 Replaced calendar-day cache TTL with session-boundary logic: Friday 10:00 ET screener/OHLC/enrichment writes now expire on their naive TTL (not Monday open).  TTL extension only fires after today's regular or early-close session ends.  `isBarSeriesFresh` now compares the latest bar to the most recently completed trading session instead of a 3-calendar-day window.  Added `getEarlyCloses(year)` for half-day closes.
 
 PR on branch `cursor/market-cache-freshness-5ee3`.  Rollout: `docs/rollouts/2026-08-19-market-cache-freshness.md`.
+## 2026-08-19 CURSOR — Order provenance guard (`order-provenance-guard`)
+
+Part II cluster: stale-exit auto-remediation no longer cancel-replaces bracket legs or owner-placed GTC sells; owner-cancelled app-managed protective stops stay cancelled (tombstone honored by reconciler).  Branch `cursor/order-provenance-guard-197e`.  Rollout: `docs/rollouts/2026-08-19-order-provenance-guard.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

@@ -727,8 +727,9 @@ function account(environment: "paper" | "live"): ConnectedAccount {
 }
 
 function order(overrides: Partial<EquityOrder> = {}): EquityOrder {
+  const id = overrides.id ?? "limit-1";
   return {
-    id: "limit-1",
+    id,
     symbol: "AAPL",
     side: "buy",
     type: "limit",
@@ -736,6 +737,7 @@ function order(overrides: Partial<EquityOrder> = {}): EquityOrder {
     quantity: 10,
     filledQuantity: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
+    clientOrderId: `app-ref-${id}`,
     ...overrides
   };
 }
