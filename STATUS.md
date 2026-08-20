@@ -682,6 +682,26 @@ Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-ou
 ## 2026-08-17 CURSOR — Architecture & backend audit (docs-only)
 
 Read-only audit of framework, API, queues, persistence, caching, concurrency, recovery, and durability against `main` `4980322b`.  No product fixes.  Report: `docs/audits/2026-08-17-architecture-backend.md`.  PR #2807, branch `cursor/architecture-backend-audit-6186`.  Headline: no active P0 in code; new gap is stale `strategy_run_requests` (F3); Litestream L2/L3 wedge remains owner-ops (F1, already tracked).  Rollout: `docs/rollouts/2026-08-17-architecture-backend-audit.md`.
+## 2026-08-17 CURSOR — Brokers + data-cascade reliability audit (report-only)
+
+Read-only audit at `main` `4980322b`.  No broker mutations.  Report:
+`docs/audits/2026-08-17-brokers-data-cascade.md`.
+
+Highest remaining defects: Alpaca still sends `type: "stop_market"` (Tradier maps to
+`"stop"`; protective stops use that type; the current test pins the wrong wire word);
+Tradier plain-order prices skip `roundCents`; Marketstack history and ROIC financials
+skip `admitProviderRequests`; ROIC/Yahoo quote-only `asOf` is fetch time.
+
+FilingAPI: `main` is retired (#2787).  Owner reversal #2792 (soft-skip 401, CONFLICTING)
+is the live product question — do not claim Plus checkout and do not treat retirement
+as final.  #2788 re-retires.  #2798 mutes leftover 401s.  #2800 skips `vix-yahoo`
+re-probe while Cboe serves.
+
+Already closed on this HEAD: T sub-penny 422 (#2751), UND_ERR_SOCKET single-blip halt
+(#2720), RH MCP extra args (#2576), ROIC 714-row crash loop (#2750).
+
+Branch `cursor/brokers-data-cascade-audit-bed0`.  PR #2805.
+Rollout: `docs/rollouts/2026-08-17-brokers-data-cascade-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 

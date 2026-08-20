@@ -268,7 +268,12 @@ enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeS
   sector/industry/daysToEarnings/insiderSentiment in wave C; a missing, invalid, or 401
   key skips the lane (ROIC + SEC EDGAR cover the class) and does not fail health.
   SEC XBRL is default ON. Additional RapidAPI scarce lanes: yh-finance-apidojo,
+  FilingAPI.dev is retired on `main` (2026-08-17, #2787); ROIC.ai covers fundamentals/transcripts and
+  SEC EDGAR covers 10-K/10-Q bodies.  Open #2792 is an owner reversal (keep the lane; soft-skip
+  missing/401 keys; do not buy Plus).  SEC XBRL is default ON. Additional RapidAPI scarce lanes: yh-finance-apidojo,
   real-time-finance-data, seeking-alpha-rapidapi.
+  Brokers + cascade reliability audit (2026-08-17, report-only):
+  `docs/audits/2026-08-17-brokers-data-cascade.md`.
 - **Enrichment coverage report** — after each cascade run, Admin → Enrichment Coverage
   (`/admin/enrichment-coverage`), `/api/admin/enrichment-coverage`, and ops snapshot
   `enrichmentCoverage` show per-field fill rate, winning/most-frequent source, missing
