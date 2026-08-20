@@ -741,6 +741,9 @@ Owner reversed the #2787 retirement.  Keep `FilingApiEnrichmentProvider`, the `f
 Aug 6: five Green Team runs died on OpenRouter `Empty response` across rotated models while the credits-low monitor flapped.  Green Team **is** the Bull proposer and already failed over on empty HTTP-200s when `llmFallbackModels` was set (#2313 / 2026-07-31).  Remaining gaps: malformed HTTP-200 JSON did not fail over; a rotating Green seat with no owner fallbacks was a single-model chain; `run_failed` never named a below-threshold OpenRouter balance.
 
 Branch `cursor/green-empty-failover-credits-7003`.  Rollout: `docs/rollouts/2026-08-17-green-empty-failover-credits.md`.
+## 2026-08-17 CURSOR — Website favicon cropped offset ST
+
+Issue #2731.  Website tab icon is the iOS App Icon's offset candlestick ST (S higher than T), cropped so it barely fits, transparent background.  Generator: `node scripts/generate-favicon-st.mjs`.  iOS App Icon was not written.  Branch `cursor/favicon-crop-st-e6ee`.  Rollout: `docs/rollouts/2026-08-17-favicon-crop-st.md`.
 
 ## 2026-08-17 GROK — Effort-board hygiene
 
