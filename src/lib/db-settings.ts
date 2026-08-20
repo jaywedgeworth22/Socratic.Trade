@@ -1,5 +1,6 @@
 // db-settings.ts — user/global settings, internal settings, DataPoolConsent, MarketDataDemand
 // All functions depend on getDb() and audit() from "./db" (the core barrel).
+import "server-only";
 import { audit } from "./db";
 import { activeAlertMutes, ALERT_MUTE_DURATION_MS, ALERT_MUTE_SETTING_KEY, type AlertMuteMap } from "./alert-mutes";
 import { getDrizzle } from "./db/client";

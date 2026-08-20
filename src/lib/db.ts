@@ -3,6 +3,7 @@
 // this file re-exports them all so every existing `import ... from "./db"` (or
 // `"../lib/db"`, `"@/lib/db"`, etc.) continues to resolve without any changes.
 
+import "server-only";
 import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";

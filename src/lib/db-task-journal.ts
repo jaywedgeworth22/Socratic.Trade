@@ -9,6 +9,7 @@
 // Hard rule: journaling is OBSERVABILITY, never on the money path. Every writer in this
 // module is wrapped so a journal failure (locked DB mid-deploy, write-fence abort during
 // account deletion, schema not yet migrated) can never break the lane being journaled.
+import "server-only";
 import crypto from "crypto";
 import { getDb } from "./db";
 

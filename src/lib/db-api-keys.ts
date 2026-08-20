@@ -1,6 +1,7 @@
 // db-api-keys.ts — field-level encryption, user API keys, connected accounts,
 // synthetic stops, watchlist, price alerts, notify prefs, chat turns, memory,
 // and the catch-all listUsers helper.
+import "server-only";
 import crypto from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";

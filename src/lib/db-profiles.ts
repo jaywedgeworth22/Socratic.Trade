@@ -1,6 +1,7 @@
 // db-profiles.ts — strategy profiles (create/read/update/delete/activate),
 // plus mergePolicy / normalizeScoringWeights helpers used only by this module
 // and the re-exported getPolicy / setPolicy / getStrategyPrompt / setStrategyPrompt.
+import "server-only";
 import crypto from "crypto";
 import { getDb, audit } from "./db";
 import { getInternalSetting, getUserSetting, setInternalSetting, setUserSetting } from "./db-settings";

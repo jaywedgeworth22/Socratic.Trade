@@ -1,4 +1,5 @@
 // db-fills.ts — fill events, portfolio snapshots, excursions
+import "server-only";
 import crypto from "crypto";
 import { getDb } from "./db";
 import type {

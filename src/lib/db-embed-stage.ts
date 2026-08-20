@@ -28,6 +28,7 @@
 // WEBPACK TRAP: reachable from scheduler.ts (via vector-db.ts and audit-prune.ts) — no "os"
 // import, no "node:" import specifiers in this module.
 
+import "server-only";
 import { audit, getDb } from "./db";
 import { timeSync } from "./slow-sync-guard";
 

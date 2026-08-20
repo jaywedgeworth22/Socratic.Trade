@@ -7,6 +7,7 @@
 //
 // Row-level shapes are defined locally (NOT imported from ./congress-share) to keep the db barrel
 // free of a cycle: congress-share imports from ./db, and ./db re-exports this module.
+import "server-only";
 import { getDb } from "./db";
 
 // ── Row shapes (a structural subset of congress-share's payload types) ──────────

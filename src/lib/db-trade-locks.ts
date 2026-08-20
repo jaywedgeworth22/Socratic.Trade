@@ -1,4 +1,5 @@
 // db-trade-locks.ts — CRUD for scoped, expiring trade locks (migration 79).
+import "server-only";
 import { getDb } from "./db";
 import {
   lockCoversQuery,
