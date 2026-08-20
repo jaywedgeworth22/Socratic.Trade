@@ -704,6 +704,61 @@ describe("Tradier adapter — getEquityOrders pagination (double-sell coverage, 
     const orderPages = records.filter((r) => r.method === "GET" && r.url.includes(`/accounts/${ACCT}/orders`));
     expect(orderPages.length).toBeLessThanOrEqual(2); // page 1 (new) + page 2 (all dup -> stop); never 50
   });
+
+  it("keeps pending_cancel / pending_replace GTC equity stops older than 24h on the default path", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`),
+        body: {
+          orders: {
+            order: [
+              {
+                id: 71,
+                symbol: "MSFT",
+                side: "sell",
+                type: "stop",
+                status: "pending_cancel",
+                quantity: 5,
+                create_date: "2026-07-10",
+                stop_price: 300,
+                tag: "protect-cancel",
+                class: "equity"
+              },
+              {
+                id: 72,
+                symbol: "AAPL",
+                side: "sell",
+                type: "stop",
+                status: "pending_replace",
+                quantity: 2,
+                create_date: "2026-07-10",
+                stop_price: 180,
+                tag: "protect-replace",
+                class: "equity"
+              },
+              {
+                id: 73,
+                symbol: "NVDA",
+                side: "sell",
+                type: "market",
+                status: "filled",
+                quantity: 1,
+                create_date: "2026-07-10",
+                class: "equity"
+              }
+            ]
+          }
+        }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const { isLiveOrderState } = await import("../src/lib/broker-side");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    expect(orders.map((o) => o.id).sort()).toEqual(["71", "72"]);
+    expect(orders.every((o) => isLiveOrderState(o.state))).toBe(true);
+    expect(orders.some((o) => o.id === "73")).toBe(false);
+  });
 });
 
 describe("Tradier adapter — OTOCO/OCO equity legs surface for coverage (codex-autofix reconciliation)", () => {

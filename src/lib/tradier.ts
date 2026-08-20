@@ -16,7 +16,7 @@ import type {
   OptionPosition
 } from "./types";
 import { normalizeSymbol, roundCents } from "./money";
-import { isRejectedOrCanceledState } from "./broker-side";
+import { isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
@@ -606,9 +606,11 @@ class TradierBrokerGateway implements BrokerGateway {
       const scoped = fullHistory
         ? all
         : all.filter((o) => {
-            const state = String(o.status ?? "").toLowerCase();
-            const working = state === "open" || state === "pending" || state === "partially_filled" || state === "held";
-            if (working) return true;
+            // Must match isLiveOrderState, not a hand-rolled subset. pending_cancel /
+            // pending_replace still fill until Tradier confirms them dead. Dropping a
+            // week-old GTC stop in that state hides it from liveExitOrderCoverage and
+            // the synthetic-stop monitor (and account-drain) can stack a second exit.
+            if (isLiveOrderState(String(o.status ?? ""))) return true;
             const createdMs = tradierOrderCreatedMs(o);
             return Number.isFinite(sinceMs) && Number.isFinite(createdMs) && createdMs >= sinceMs;
           });
