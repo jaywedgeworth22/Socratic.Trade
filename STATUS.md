@@ -1,3 +1,20 @@
+# Current Status
+
+## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
+
+FMP is banned for market data (owner ruling 2026-08-20); it stays valid only as a
+latency-race competitor being timed.  New `src/lib/market-realtime.ts` plus token-gated
+peer routes `/api/market/quotes` and `/api/market/intraday/[symbol]` replace it for CT.
+Intraday bars are the important half: CT schedules snapshots retrospectively, so a live
+quote can never honestly answer a past due-time.  Robinhood first, Alpaca fallback,
+delayed Yahoo opt-in and flagged.  ROIC rejected (daily-only, 4h cache).
+
+Gates: lint 0 errors, tsc clean, 639 files / 7191 tests, build ok.
+
+BLOCKER: production recovered from the 08:17Z outage on the LAST GOOD IMAGE (77d7d7b6)
+and is four merges behind origin/main.  Do not add a build to that queue until it
+catches up.  Receipt: `docs/rollouts/2026-08-20-ct-price-service.md`.
+
 # Current Handoff
 
 ## 2026-08-20 MONET - `pnl-basis-labels` up for review
