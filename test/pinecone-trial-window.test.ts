@@ -53,7 +53,18 @@ describe("pinecone trial window", () => {
     expect(state.effectiveDailyWriteUnits).toBe(200_000);
   });
 
+  it("defaults the implied trial calendar to 2026-08-27 (7 days from 2026-08-19)", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { pineconeTrialEndsAtMs, pineconeTrialRemainingDays, PINECONE_CURRENT_TRIAL_ENDS_AT } =
+      await load();
+    expect(PINECONE_CURRENT_TRIAL_ENDS_AT).toBe("2026-08-27T00:00:00.000Z");
+    const now = Date.UTC(2026, 7, 20, 2, 59, 0); // 2026-08-19 21:59 CT
+    expect(pineconeTrialEndsAtMs(now)).toBe(Date.parse("2026-08-27T00:00:00.000Z"));
+    expect(pineconeTrialRemainingDays(now)).toBe(7);
+  });
+
   it("paces remaining trial dollars across remaining days instead of a flat 2.5M fuse", async () => {
+    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     const { assessPineconeTrialWindow } = await load();
     // $62 of write-units already delivered (~15.5M WU at $4/M) with 14 days left.
@@ -109,6 +120,7 @@ describe("pinecone trial window", () => {
   });
 
   it("paces the last ~$45 so the trial finishes instead of dumping the reserve in one day", async () => {
+    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     const { assessPineconeTrialWindow } = await load();
     const spentWu = Math.round(((300 - 45) / 4) * 1_000_000);
