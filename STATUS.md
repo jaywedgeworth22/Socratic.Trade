@@ -9,6 +9,7 @@ on this PR: 5-minute connection-alert mute on `DB_BOOTSTRAP=live` boot, plus
 vendors STOPPED.  Merge kept main's `pineconeIngest` snapshot and `stoppedReasonKind`
 hard-stop check.  Boot-grace uses `process.uptime()` so `db.ts` cannot pull `node:fs` into
 client webpack (old `verify-hosted` failure).  Local lint/tsc/38 targeted tests/`next build` green.
+Implements the 2026-08-17 audit gaps the owner asked to fix.  Website honors `?proposal=` / `?symbol=`.  iOS Assets honors `?symbol=` and Activity lists snapshot alerts (`run_failed` / `kill_switch` visible).  Exit-only copy, Lessons width, Watchlist cards, skip link, assertive error toasts, TypedConfirm `htmlFor`, More `aria-expanded`, 44pt scan star, swipe VO action, offline banner, PWA UI tree deleted (redirect + `/api/mobile` kept), Playwright iPhone-13 project + landmark smoke.  iOS More Postures when Stop is primary; Connections Safari handoff.  **IN PR #2942.**  Local lint 0 errors, `tsc` clean, focused vitest 11/11.  Dispatched `verify` on `d52b354a` was green (run 32329145996).  Merged `origin/main` `ee1286e0` (phantom DIRTY).  Next: re-kick `verify` on the new head and merge.  Rollout: `docs/rollouts/2026-08-20-web-ios-parity-fixes.md`.
 
 Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
 

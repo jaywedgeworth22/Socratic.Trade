@@ -66,20 +66,32 @@ The 2026-08-17 parity audit (`docs/audits/2026-08-17-web-ios-parity.md`, PR #280
 
 ## Verification State
 
-Commands to run after this note:
+Commands actually run:
 
 ```bash
 npm run lint
+# 0 errors, 757 grandfathered warnings
 npx tsc --noEmit
+# clean
 npx vitest run test/console-deep-links.test.ts test/mobile-api.test.ts test/pwa-retired-redirect.test.ts
-npm test
-npm run build
+# 3 files, 11 tests passed
 ```
+
+Full local `npm test` in this Cloud VM hit unrelated network/host flakes (Yahoo history, TwelveData quota, SEC CIK 404s, usage-budget monitor, server-metrics host metadata, vector-db receipt/lease) and was stopped.  Authoritative gate is GitHub CI.
+
+Dispatched `CI` `workflow_dispatch` on head `d52b354a` (cloud-proxy pushes do not fire `pull_request` events):
+
+- https://github.com/jaywedgeworth22/Socratic.Trade/actions/runs/32329145996
+- `verify-hosted` success (lint, tsc, npm test, npm run build) — 17m 34s
+- `verify` aggregator success
 
 iOS `xcodebuild` is not available on this Linux Cloud VM.  Swift changes are compile-shaped to match existing patterns (`DeepLinkDestination` exhaustive switch, optional `notifications` decode).
 
+Merged `origin/main` `ee1286e0` after GitHub reported DIRTY; `git merge-tree --write-tree` was clean (phantom).
+
 ## Next Steps & Blockers
 
+- Re-kick `verify` on the post-merge head so the ruleset sees a green SHA.
 - Reviewer: confirm a push tap to Approvals / Orders / Watchlist rings the row on the website.
 - Next iOS TestFlight should include Activity alerts + symbol focus.
 - P3 backlog remains in the audit.
