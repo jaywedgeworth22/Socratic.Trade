@@ -200,8 +200,15 @@ export async function cancelWorkingOrder(input: CancelWorkingOrderInput): Promis
   // ADVISORY ONLY — the cancel always executes regardless of `dust`. Cancel is the operator's
   // emergency lever and must never be blocked or delayed by this warning.
   const result = await gateway.cancelEquityOrder(policy.accountNumber, orderId);
-  const cancelledSymbol = lookup.order ? normalizeSymbol(lookup.order.symbol) : undefined;
+  // The pre-cancel read is advisory and may time out, throw, or miss a working GTC stop
+  // that is still cancellable by id.  The tracked broker_protective_stops row already
+  // has the symbol — use it so an owner cancel still writes the do-not-replace tombstone.
   const managedStopRow = listBrokerProtectiveStops(policy.accountNumber, userId).find((row) => row.brokerOrderId === orderId);
+  const cancelledSymbol = lookup.order
+    ? normalizeSymbol(lookup.order.symbol)
+    : managedStopRow
+      ? normalizeSymbol(managedStopRow.symbol)
+      : undefined;
   const managedStopClientOrderId = lookup.order?.clientOrderId;
   if (
     cancelledSymbol

@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on lookup miss
+
+`cancelWorkingOrder` only tombstoned an owner-cancelled app-managed stop when the advisory pre-cancel broker read returned the order.  Console cancel is fail-open on that read (timeout, throw, or a working GTC stop missing from scoped `getEquityOrders`).  The broker cancel still ran, but `cancelledSymbol` stayed empty, so the do-not-replace tombstone and `broker_protective_stops` delete were skipped.  The next reconcile tick then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
+
+Fix: take the symbol from the tracked `broker_protective_stops` row when the lookup has no order.  Did not touch #2861.  Did not change cancel fail-open doctrine.
+
+Branch `cursor/owner-cancel-stop-tombstone-lookup`.  Rollout: `docs/rollouts/2026-08-20-owner-cancel-stop-tombstone-lookup.md`.
+
 ## 2026-08-20 MONET - `prompt-trust-boundary` up for review
 
 Untrusted content can no longer reach the always-trusted strategy prompt unlabelled.  The trust boundary now lives AT THE SINK: `mergeStrategyDirectiveBlock` requires `source`, runs containment itself and returns `{ prompt, contained }`, so a future caller cannot write an unscanned directive by forgetting a helper (the required parameter proved itself by breaking the one stale 4-arg call site at compile time).  Coach URL lessons are contained at ingest and dropped + audited on a real hijack idiom; the forgeable unauthenticated `POST /api/chat-history` is deleted; a `MockLLM` semantic-gate fallback is audited instead of silent; the revalidation rationale is contained and the reviewer prompt carries a data-not-command clause.
