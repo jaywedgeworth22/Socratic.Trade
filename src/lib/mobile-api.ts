@@ -1153,10 +1153,14 @@ export async function processPendingMobileCommands(options: { limit?: number } =
   }
 }
 
-export function mobileCommandBacklog(): { queued: number; running: number } {
+/** Scoped to the requesting user (api-contract-web-ios:api-10) — this backlog gauge renders on
+ *  the iOS Home/Activity screens as if it were "your commands"; unscoped, it silently counted
+ *  every user's queued/running mobile commands, which would misattribute another user's activity
+ *  as the signed-in user's own. */
+export function mobileCommandBacklog(userId: string): { queued: number; running: number } {
   const rows = getDb()
-    .prepare("SELECT status, COUNT(*) AS n FROM mobile_commands WHERE status IN ('queued','running') GROUP BY status")
-    .all() as Array<{ status: MobileCommandStatus; n: number }>;
+    .prepare("SELECT status, COUNT(*) AS n FROM mobile_commands WHERE user_id = ? AND status IN ('queued','running') GROUP BY status")
+    .all(userId) as Array<{ status: MobileCommandStatus; n: number }>;
   return {
     queued: rows.find((row) => row.status === "queued")?.n ?? 0,
     running: rows.find((row) => row.status === "running")?.n ?? 0
@@ -1321,6 +1325,6 @@ export function mobileReadiness(userId: string) {
     dataPoolConsent: consent,
     legalNotice: getLegalNoticeConsent(userId),
     needsAppConsent: needsAppConsent(userId),
-    commandBacklog: mobileCommandBacklog()
+    commandBacklog: mobileCommandBacklog(userId)
   };
 }

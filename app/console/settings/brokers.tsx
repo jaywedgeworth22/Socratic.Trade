@@ -20,15 +20,6 @@ import {
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
-import {
-  ALPACA_BROKERAGE_LABEL,
-  ALPACA_CONNECTED_TOAST_BROKERAGE,
-  ALPACA_CONNECTED_TOAST_PAPER,
-  ALPACA_PAPER_LABEL,
-  REALITY_PAPER_WORD,
-  TRADIER_PRODUCTION_LABEL,
-  TRADIER_SANDBOX_LABEL
-} from "@/lib/guardrail-copy";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
 import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X, Info } from "lucide-react";
 import {
@@ -194,14 +185,20 @@ export function BrokerAccountsCard() {
   const renderAccountRow = (account: ConnectedAccount) => {
     const r = realityForAccount(account);
     const needsReconnect = rhNeedsReconnect(account);
-    const isCurrentLoaded = account.isActive;
-    const stateInfo = isCurrentLoaded && snapshot?.policy ? deriveStateInfo(snapshot.policy) : null;
+    // Every row — loaded or not — reads the SAME per-account projection the chrome.tsx
+    // account-switcher already trusts (snapshot.connectedAccountPolicies, built read-only in
+    // dashboard.ts via peekPolicy for every connected account). The scheduler runs each
+    // connected account independently of which one happens to be loaded in this browser tab, so
+    // a non-active account (e.g. a live Roth IRA) can genuinely be running Autopilot right now —
+    // this used to unconditionally chip every "Other Accounts" row "Inactive" regardless.
+    const policyForAccount = snapshot.connectedAccountPolicies?.[account.id];
+    const stateInfo = policyForAccount ? deriveStateInfo(policyForAccount) : null;
 
-    const pendingCount = isCurrentLoaded
-      ? (snapshot.pendingProposals ?? []).length
-      : (snapshot.pendingProposals ?? []).filter(
-          (p) => (p as { proposal?: { accountId?: string }; accountId?: string }).proposal?.accountId === account.id || (p as { accountId?: string }).accountId === account.id
-        ).length;
+    // A real per-account pending-proposal count. snapshot.pendingProposals is scoped
+    // server-side to the ACTIVE account only (dashboard.ts), so filtering it for another
+    // account's id could never find a match — connectedAccountPendingCounts is a dedicated
+    // per-account COUNT query that actually covers every connected account.
+    const pendingCount = snapshot.connectedAccountPendingCounts?.[account.id] ?? 0;
 
     const accountTypeWord = account.taxationType
       ? (TAXATION_WORD[account.taxationType] ?? account.taxationType)
@@ -283,8 +280,12 @@ export function BrokerAccountsCard() {
                   {stateInfo.label}
                 </Chip>
               ) : (
-                <Chip tone="muted">
-                  {account.isActive ? "Loaded" : "Inactive"}
+                // Reachable only when this account's id is genuinely missing from
+                // connectedAccountPolicies (an older-shaped cached snapshot, or a brand-new
+                // connection before the next refresh) -- never assert "Inactive" for a state we
+                // don't actually know, since the scheduler may be running this account right now.
+                <Chip tone="muted" title="This account's run state was not included in the last snapshot.">
+                  State unknown
                 </Chip>
               )}
               {pendingCount > 0 && (
@@ -328,7 +329,7 @@ export function BrokerAccountsCard() {
               >
                 {busy === account.id ? "Loading…" : r.tone === "paper" ? (
                   <>
-                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[length:var(--con-fs-2xs)] leading-tight lowercase font-medium">{REALITY_PAPER_WORD}</Chip>
+                    Load <Chip tone="paper" className="ml-1 inline-flex items-center px-1.5 py-0 text-[length:var(--con-fs-2xs)] leading-tight uppercase font-semibold">PAPER</Chip>
                   </>
                 ) : r.tone === "live" ? (
                   <>
@@ -611,7 +612,7 @@ function AlpacaConnectSheet({
         apiSecret: apiSecret.trim() || undefined,
         taxationType: taxationType || undefined
       });
-      toast.push("pos", "Alpaca account connected", inferredPaper ? ALPACA_CONNECTED_TOAST_PAPER : ALPACA_CONNECTED_TOAST_BROKERAGE);
+      toast.push("pos", "Alpaca account connected", inferredPaper ? "Connected as Alpaca PAPER Account (NOT Real Money)." : "Connected as a brokerage account.");
       setLabel("");
       setAccountNumber("");
       setApiKey("");
@@ -632,7 +633,7 @@ function AlpacaConnectSheet({
           Paste the API key pair from your Alpaca dashboard. Paper accounts are inferred from the credentials
           (&quot;PA…&quot; account numbers and &quot;PK…&quot; keys are paper) — currently reading as{" "}
           <span className={inferredPaper ? "font-bold text-[color:var(--con-paper)]" : "font-bold text-[color:var(--con-accent)]"}>
-            {inferredPaper ? ALPACA_PAPER_LABEL : ALPACA_BROKERAGE_LABEL}
+            {inferredPaper ? "Alpaca PAPER Account (NOT Real Money)" : "Brokerage Account"}
           </span>
           . Credentials are stored server-side and never shown again.
         </p>
@@ -777,7 +778,7 @@ function TradierConnectSheet({
           against Tradier&apos;s sandbox and a production token only against the live API, so you
           choose the environment explicitly — currently reading as{" "}
           <span className={isLive ? "font-bold text-[color:var(--con-accent)]" : "font-bold text-[color:var(--con-paper)]"}>
-            {isLive ? TRADIER_PRODUCTION_LABEL : TRADIER_SANDBOX_LABEL}
+            {isLive ? "Tradier Production (LIVE — Real Money)" : "Tradier Sandbox (Paper — NOT Real Money)"}
           </span>
           . The token is stored server-side and never shown again.
         </p>
