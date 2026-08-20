@@ -286,9 +286,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
   // is still wrapped so a health-logging failure can never affect the real broker call.
   // The Alpaca SDK ships no types, so this.alpaca.* calls are already `any`; a constrained
   // generic here would collapse those returns to `unknown` at every call site.
-  private async trackHealth(fn: () => Promise<any>, opts?: { deadlineMs?: number }): Promise<any> {
+  private async trackHealth(fn: () => Promise<any>, opts?: { deadlineMs?: number; retryTransient?: boolean }): Promise<any> {
     const start = Date.now();
-    const attempts = 2;
+    // Reads may retry a dead keep-alive socket. createOrder must not: if Alpaca
+    // accepted the first POST and the response socket died, a retry with the
+    // same client_order_id returns HTTP 409, which the placement catch treated
+    // as rejected_by_broker and hid the live order.
+    const attempts = opts?.retryTransient === false ? 1 : 2;
     let lastErr: unknown;
     const runOnce = () => {
       const call = fn();
@@ -743,7 +747,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
             time_in_force: trailingTif.timeInForce,
             client_order_id: input.refId
           }),
-          { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS }
+          { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS, retryTransient: false }
         );
         return {
           orderId: raw.id,
@@ -840,7 +844,10 @@ class AlpacaBrokerGateway implements BrokerGateway {
           }
         }
 
-        const raw = await this.trackHealth(() => this.alpaca.createOrder(orderOptions), { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS });
+        const raw = await this.trackHealth(
+          () => this.alpaca.createOrder(orderOptions),
+          { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS, retryTransient: false }
+        );
         return {
           orderId: raw.id,
           refId: input.refId,
@@ -927,7 +934,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           limit_price: input.type === "limit" && input.limitPrice != null ? String(roundAlpacaPrice(input.limitPrice)) : undefined,
           client_order_id: input.refId
         }),
-        { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS }
+        { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS, retryTransient: false }
       );
       return {
         orderId: raw.id,

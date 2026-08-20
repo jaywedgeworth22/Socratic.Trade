@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyPlacementOutcomeKind,
+  isIdempotencyConflictHttpError,
   isRetryableBrokerHttpError,
   isTerminalBrokerHttpError,
   mobileCommandStatusForPlacement,
@@ -34,6 +35,14 @@ describe("placement outcome resolver", () => {
     expect(isTerminalBrokerHttpError("Broker HTTP 403 Forbidden")).toBe(true);
     expect(isTerminalBrokerHttpError("HTTP 400 Bad Request")).toBe(true);
     expect(isRetryableBrokerHttpError("HTTP 403 Forbidden")).toBe(false);
+  });
+
+  it("treats HTTP 409 as an idempotency conflict, not a terminal rejection", () => {
+    const message = "Alpaca order failed: HTTP 409 — {\"code\":40010000,\"message\":\"client_order_id already exists\"}";
+    expect(isIdempotencyConflictHttpError(message)).toBe(true);
+    expect(isRetryableBrokerHttpError(message)).toBe(false);
+    expect(isTerminalBrokerHttpError(message)).toBe(false);
+    expect(isTerminalBrokerHttpError("Alpaca order failed: HTTP 403 Forbidden")).toBe(true);
   });
 
   it("resolvePlacementOutcome preserves the executeProposal payload and adds outcome", () => {

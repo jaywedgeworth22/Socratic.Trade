@@ -23,9 +23,23 @@ export function isRetryableBrokerHttpError(message: string): boolean {
   return /\bHTTP (429|408)\b/i.test(message);
 }
 
-/** Definitive broker HTTP 4xx excluding retryable rate-limit / timeout responses. */
+/**
+ * Alpaca 409 on `client_order_id` means that idempotency key already exists at
+ * the broker — usually because the first createOrder was accepted and the
+ * response socket died. That is a live order, not a rejection. Callers must
+ * reconcile by refId instead of marking rejected_by_broker.
+ */
+export function isIdempotencyConflictHttpError(message: string): boolean {
+  return /\bHTTP 409\b/i.test(message);
+}
+
+/** Definitive broker HTTP 4xx excluding retryable limits and idempotency conflicts. */
 export function isTerminalBrokerHttpError(message: string): boolean {
-  return /\bHTTP 4\d\d\b/i.test(message) && !isRetryableBrokerHttpError(message);
+  return (
+    /\bHTTP 4\d\d\b/i.test(message) &&
+    !isRetryableBrokerHttpError(message) &&
+    !isIdempotencyConflictHttpError(message)
+  );
 }
 
 export function classifyPlacementOutcomeKind(status: string, reasons?: string[]): PlacementOutcomeKind {
