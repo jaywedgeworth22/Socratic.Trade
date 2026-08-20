@@ -104,6 +104,8 @@ describe("SEC Ingestion Worker and State Machine (P5)", () => {
     // date-only fallback derived from filedAt.
     const storeCall = vi.mocked(storeDocument).mock.calls[0]?.[0] as any;
     expect(storeCall.acceptance_datetime).toBe("2026-07-15T21:37:12.000Z");
+    expect(storeCall.text).toContain("iPhones");
+    expect(storeCall.text).not.toMatch(/<html|<script|<body/i);
 
     // Multi-document accessions: the vector document id must carry the task's document identity
     // (sequence + documentName) so a second document in the same accession can never supersede

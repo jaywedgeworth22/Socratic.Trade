@@ -15,6 +15,7 @@ import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from ".
 import { fetchDailyOHLC } from "../history";
 import { fetchYahooFinanceQuote } from "../yahoo-finance";
 import { citationStalenessEnabled, defaultDedupeSimilarity, defaultMinScore, defaultRelevanceFloor, isStale, retrieveContextDetailed } from "../vector-db";
+import { resolveRetrievalAsOf } from "../rag/retrieval-asof";
 import type { RetrieveOptions } from "../vector-db";
 import { derivePromptRagConsumption, stableRagEvidenceRef } from "../rag/evidence-consumption";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
@@ -569,7 +570,9 @@ export function buildProductionDeps(): ToolDeps {
       // Forward ALL retrieval options: as-of (point-in-time), the doc_type the intent classifier extracted
       // (previously dropped here), and the relevance floor. docType matching is casing-tolerant downstream.
       const options: RetrieveOptions = {
-        ...(args.as_of ? { asOf: args.as_of } : {}),
+        // Live chat used to omit asOf, which made VECTOR_ASOF_STRICT a no-op.  Question
+        // date wins when the tool supplies a parseable as_of; otherwise "now".
+        asOf: resolveRetrievalAsOf(args.as_of),
         ...(args.doc_type ? { docType: [args.doc_type] } : {}),
         minScore: defaultMinScore(),
         // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor +

@@ -21,7 +21,7 @@ import { insertDocumentChunkFtsBatch, countDocumentChunkFts, getDb } from "../db
 import { hasInFlightStrategyWork } from "../db-execution";
 import { serverKnobBool } from "../server-knobs";
 import { chunkDocument } from "./chunk";
-import { filingTextFromParsedSections } from "./pinecone-write-class";
+import { buildSecDocument } from "./sec-document";
 import {
   FTS_MIRROR_HEARTBEAT_MS,
   FTS_MIRROR_MAX_CHUNKS_PER_TICK,
@@ -299,22 +299,20 @@ export class SecIngestWorker {
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
 
       const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
-      const doc = {
-        text: filingTextFromParsedSections(sections, rawContent),
-        doc_id: vectorDocId,
+      // Same builder as incremental ingestFiling: parsed section text, never raw HTML.
+      const doc = buildSecDocument({
+        rawContent,
+        sections,
+        documentName,
         ticker: task.symbol,
+        docId: vectorDocId,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
-        doc_type: task.payload.docType as string,
-        source: "sec-edgar",
-        published_at: task.payload.filedAt as string,
-        // Point-in-time correctness: pass the SEC acceptance timestamp through when the queued
-        // payload carries it, so chunkDocument does not fall back to a date-only stamp that
-        // makes same-day filings retrievable for as-of queries earlier that day.
+        docType: typeof task.payload.docType === "string" ? task.payload.docType : "filing",
+        publishedAt: task.payload.filedAt as string,
         ...(typeof task.payload.acceptanceDateTime === "string" && task.payload.acceptanceDateTime
-          ? { acceptance_datetime: task.payload.acceptanceDateTime }
-          : {}),
-        sections
-      };
+          ? { acceptanceDateTime: task.payload.acceptanceDateTime }
+          : {})
+      });
 
       const chunks = chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
       await writeLocalArtifact(task.cik, task.accession, sequence, "chunks.json", JSON.stringify(chunks));
@@ -377,21 +375,19 @@ export class SecIngestWorker {
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
 
       const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
-      const doc = {
-        text: filingTextFromParsedSections(sections, rawContent),
-        doc_id: vectorDocId,
+      const doc = buildSecDocument({
+        rawContent,
+        sections,
+        documentName,
         ticker: task.symbol,
+        docId: vectorDocId,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
-        doc_type: task.payload.docType as string,
-        source: "sec-edgar",
-        published_at: task.payload.filedAt as string,
-        // Same acceptance pass-through as the chunk stage: preserve the accepted-at timestamp
-        // for point-in-time (as-of) retrieval instead of a date-only fallback.
+        docType: typeof task.payload.docType === "string" ? task.payload.docType : "filing",
+        publishedAt: task.payload.filedAt as string,
         ...(typeof task.payload.acceptanceDateTime === "string" && task.payload.acceptanceDateTime
-          ? { acceptance_datetime: task.payload.acceptanceDateTime }
-          : {}),
-        sections
-      };
+          ? { acceptanceDateTime: task.payload.acceptanceDateTime }
+          : {})
+      });
 
       // Heartbeat across storeDocument AND the FTS mirror.  #2680 yielded inside the
       // batch helper but left this interval covering only storeDocument; a 88-279s

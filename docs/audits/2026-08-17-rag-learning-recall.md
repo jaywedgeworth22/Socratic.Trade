@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-08-17 |
-| Status | Report-only (no product-code change) |
+| Status | Report + P0 follow-ups (parsed-text SEC writer, chat asOf, production-eval path) |
 | Author | Cursor (RAG architect / IR / data-quality / ML-eval / continual-learning safety) |
 | Branch | `cursor/rag-learning-recall-audit-f94a` |
 | Tree | `main` at audit start (`4980322b` and ancestors) |
@@ -333,10 +333,10 @@ Ordered by severity × blast radius.  All are in-repo.
 
 | Pri | IDs | Work | Why first |
 | --- | --- | --- | --- |
-| P0 | I1, I6 | Unified SEC document builder (parsed text only) | Stops poisoning the index if the worker is enabled |
-| P0 | R1 | Production-eval merge gate on `retrieveContextDetailed` | Stops shipping regressions the harness cannot see |
-| P0 | T2, T3 | Pass `asOf: now` (or question date) on chat + desk | Makes prod `VECTOR_ASOF_STRICT` real |
-| P1 | I2, S5 | Ticker→CIK map; no sentinel CIK | Dual-class + 8-K recall |
+| P0 | I1, I6 | Unified SEC document builder (parsed text only) | **Landed** — `buildSecDocument` in worker + `ingestFiling` |
+| P0 | R1 | Production-eval merge gate on `retrieveContextDetailed` | **Landed** — harness + contract test; `eval:rag-production` remains the live CLI |
+| P0 | T2, T3 | Pass `asOf: now` (or question date) on chat + desk | **Landed for chat.**  Strategy Autopilot already passed `runAsOf`.  Ticker desk has no RAG retrieve yet. |
+| P1 | I2, S5 | Ticker→CIK map; no sentinel CIK | **I2 landed** (`getCikForTicker` + `loadTickerCikMap`).  S5 (8-K feed) still open. |
 | P1 | S1 + corpus-storage A/B | Local FTS + hydrate; then transcript lexical join | Approved design; unlocks post-trial storage |
 | P1 | L1, L2 | Wire decay + lifecycle | Continual-learning safety already written |
 | P1 | L7 | Vector-write retry queue | Silent learning loss |
@@ -380,11 +380,12 @@ Ordered by severity × blast radius.  All are in-repo.
 
 ## 9. Next agent actions
 
-1. Land I1 before anyone flips `SEC_INGEST_WORKER_ENABLED` on.
-2. Add a CI job that runs `scripts/eval/rag-production-eval.ts` against a pinned gold JSON with `VECTOR_ASOF_STRICT=on`.
-3. Default `asOf` on chat + desk retrieve.
-4. Wire `recordVectorDocSeen` + `blendedScore` behind a flag.
-5. Expand the production gold set per §5 (start with 10-K/10-Q/8-K/summary; add transcripts after S3/S4).
-6. Keep this file as the living gap list; tick IDs in the next rollout note rather than rewriting the architecture.
+P0 from this audit (I1, R1, T2, I2) landed on `cursor/rag-learning-recall-audit-f94a`.  Remaining:
 
-Zero product code was changed in this audit.
+1. Nightly/CI live `eval:rag-production` against a pinned gold JSON (`VECTOR_ASOF_STRICT=on`) once n≥50.
+2. S5: 8-K feed dual-class + per-symbol submissions poll.
+3. Wire `recordVectorDocSeen` + `blendedScore` behind a flag (L1/L2).
+4. Expand the production gold set per §5 (start with 10-K/10-Q/8-K/summary; add transcripts after S3/S4).
+5. Do not flip `SEC_INGEST_WORKER_ENABLED` on until a staging ingest proves `buildSecDocument` text is tag-free.
+
+P0 product code is in this follow-up, not the original report-only commit.
