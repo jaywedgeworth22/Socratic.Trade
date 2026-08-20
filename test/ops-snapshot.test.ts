@@ -159,6 +159,24 @@ describe("ops diagnostic snapshot", () => {
     expect(rejection!.detail).toContain("symbol=AAPL");
   });
 
+  it("omits retired FilingAPI leftover failures and treats expected-limit lanes as ok", async () => {
+    const { logApiHealth } = await import("../src/lib/db-health");
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service: "filingapi", ok: false, errorText: "HTTP 401 Unauthorized", keySource: "env" });
+    }
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service: "vix-yahoo", ok: false, errorText: "HTTP 429", soft: true, keySource: "none" });
+    }
+    logApiHealth({ service: "roic", ok: true, latencyMs: 12, keySource: "env" });
+
+    const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
+    const snapshot = buildOpsSnapshot({ runsPerUser: 1, auditPerUser: 1 });
+    const deps = snapshot.dependencies ?? {};
+    expect(deps.filingapi).toBeUndefined();
+    expect(deps["vix-yahoo"]?.ok).toBe(true);
+    expect(deps.roic?.ok).toBe(true);
+  });
+
   it("summarizeBrokerOrderList separates live working from historical done_for_day", async () => {
     const { summarizeBrokerOrderList } = await import("../src/lib/ops-snapshot");
     const summary = summarizeBrokerOrderList([

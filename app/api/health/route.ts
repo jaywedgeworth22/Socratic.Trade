@@ -1,5 +1,6 @@
 import { getInternalSetting, getServiceHealthSummaries, databasePath, resolveApiKeyWithSource, alertStorageWarning } from "@/lib/db";
-import { HEALTH_REASON_CONSECUTIVE_FAILURES } from "@/lib/db-health";
+import { isHardStoppedHealthSummary } from "@/lib/db-health";
+import { isIntentionalOffHealthService } from "@/lib/retired-direct-vendors";
 import { activeEmbeddingProvider } from "@/lib/vector-db";
 import type { RagEmbedRerankProvider } from "@/lib/rag-metering";
 import { getProviderTierStatus, isDataProvidersDegraded } from "@/lib/provider-tier";
@@ -19,7 +20,6 @@ import { getLease } from "@/lib/scheduler-lease";
 import { getTradingLivenessSummary } from "@/lib/trading-liveness";
 import { getOpenRouterCreditStatus } from "@/lib/openrouter-credits";
 import { authorizeOpsRequest } from "@/lib/ops-auth";
-import { isIntentionalOffHealthService } from "@/lib/retired-direct-vendors";
 import { statSync, statfsSync } from "fs";
 import { dirname } from "path";
 
@@ -215,6 +215,7 @@ export async function GET(request: Request) {
     // pinned failed forever by an old missing-key "none" lane (no future success is logged to "none").
     const configuredService = new Set<string>();
     for (const summary of summaries) {
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       if (summary.keySource === "env" || summary.keySource === "user") configuredService.add(summary.service);
     }
     // Configured lanes that are NOT hard-stopped (env OR user). Critical liveness must not 503
@@ -223,15 +224,14 @@ export async function GET(request: Request) {
     // every Coolify deploy (healthcheck requires HTTP 200 on /api/health).
     const configuredLaneHealthy = new Set<string>();
     for (const summary of summaries) {
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       if (summary.keySource !== "env" && summary.keySource !== "user") continue;
-      const hardStopped =
-        summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
-      if (!hardStopped) configuredLaneHealthy.add(summary.service);
+      if (!isHardStoppedHealthSummary(summary)) configuredLaneHealthy.add(summary.service);
     }
     for (const summary of summaries) {
       // Retired vendors (FilingAPI, FMP, Quiver, UW) keep historical failure rows. Public
       // health must not list them as live ok:false — that pages UptimeRobot / Pushover.
-      if (isIntentionalOffHealthService(summary.service)) continue;
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
       if (!isGlobal) continue;
       // Ignore a stale "none"/null lane once the service has a real configured lane — otherwise it
@@ -242,7 +242,7 @@ export async function GET(request: Request) {
       // Only the HARD reason (>=5 consecutive failures) fails liveness. The SOFT heuristics
       // ("active this hour but no success yet") that a single cold-start 500 can trip mark the
       // service degraded but must NOT 503.
-      const hardStopped = summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
+      const hardStopped = isHardStoppedHealthSummary(summary);
       const existing = dependencies[summary.service];
       // Prefer any healthy configured lane (including user keys not shown as "global" rows).
       const nextOk = !hardStopped || configuredLaneHealthy.has(summary.service);

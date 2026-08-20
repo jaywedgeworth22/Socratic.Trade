@@ -1,13 +1,13 @@
 import { autonomyAuthorityWord, autonomyStatusLabel } from "./autonomy-labels";
 import { getInternalSetting } from "./db-settings";
 import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy, getServiceHealthSummaries, databasePath } from "./db";
+import { isHardStoppedHealthSummary } from "./db-health";
+import { isIntentionalOffHealthService } from "./retired-direct-vendors";
 import { getTaskJournalSummary } from "./db-task-journal";
 import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { computeAccountTradingLiveness } from "./trading-liveness";
 import { getLastEnrichmentCoverageReport } from "./enrichment-coverage";
-import { isHardStoppedHealthSummary } from "./db-health";
-import { isIntentionalOffHealthService } from "./retired-direct-vendors";
 import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
 import { pineconeTrialState } from "./pinecone-trial-window";
 import { pineconeWuExhaustedUntil } from "./pinecone-wu-breaker";

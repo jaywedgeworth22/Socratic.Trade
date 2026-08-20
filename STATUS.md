@@ -1,5 +1,25 @@
 # Current Handoff
 
+## 2026-08-20 CURSOR — Rematch #2798 onto current main (alert-noise leftover)
+
+PR **#2798** (`cursor/alert-noise-retired-boot-64c1`) rematched onto `origin/main` after
+#2799/#2800 landed the overlapping FilingAPI omit and hard-stop-only ops `ok`.  Unique leftover
+on this PR: 5-minute connection-alert mute on `DB_BOOTSTRAP=live` boot, plus
+`getServiceHealthSummaries` stamps `intentionalOff` so leftover 401 rows cannot paint retired
+vendors STOPPED.  Merge kept main's `pineconeIngest` snapshot and `stoppedReasonKind`
+hard-stop check.  Boot-grace uses `process.uptime()` so `db.ts` cannot pull `node:fs` into
+client webpack (old `verify-hosted` failure).  Local lint/tsc/38 targeted tests/`next build` green.
+
+Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
+
+## 2026-08-17 CURSOR — Alert-noise leftover after the 4:23pm CT burst
+
+Owner All Messages 4:23–4:38pm CT.  Live ST is healthy after the 21:35:38Z Coolify restart of
+`5f9b4aaf`.  Most cards were boot probes, expected fuses, or leftover FilingAPI 401s.  This
+branch stamps retired vendors OFF in health summaries, aligns ops-snapshot `ok` with hard-stop
+only, and mutes connection pages for the first 5 minutes of a `DB_BOOTSTRAP=live` boot.
+
+Branch `cursor/alert-noise-retired-boot-64c1`.  Rollout: `docs/rollouts/2026-08-17-alert-noise-retired-boot.md`.
 ## 2026-08-19 CURSOR — Pinecone trial end in 7 days
 
 Owner: set the Standard-trial calendar to 7 days from 2026-08-19 21:59 CT.  Default +
