@@ -227,6 +227,83 @@ describe("order provenance guard", () => {
     expect(result.placed).toBe(0);
     expect(reconcileGw.placeEquityOrder).not.toHaveBeenCalled();
   });
+
+  it("tombstones an owner-cancelled protective stop when cancelEquityOrder times out", async () => {
+    const { cancelWorkingOrder } = await import("../src/lib/order-cancel");
+    const { reconcileBrokerProtectiveStops } = await import("../src/lib/broker-protective-stops");
+    const { hasOwnerCancelledProtectiveStop } = await import("../src/lib/order-provenance");
+    const { listBrokerProtectiveStops, setPolicy, upsertBrokerProtectiveStop } = await import("../src/lib/db");
+
+    const userId = "local";
+    const accountNumber = "PS-OWNER-CANCEL-TIMEOUT";
+    const policy: TradingPolicy = {
+      ...DEFAULT_POLICY,
+      accountNumber,
+      activeBroker: "robinhood",
+      robinhoodBrokerStops: true,
+      riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 8 }
+    };
+    setPolicy(policy, userId);
+
+    const stopOrderId = "broker-stop-timeout";
+    upsertBrokerProtectiveStop({
+      id: `protstop-${userId}-${accountNumber}-AAPL`,
+      userId,
+      accountNumber,
+      symbol: "AAPL",
+      brokerOrderId: stopOrderId,
+      quantity: 10,
+      stopPrice: 92,
+      status: "resting",
+      kind: "fixed"
+    });
+
+    const openStop = order({
+      id: stopOrderId,
+      symbol: "AAPL",
+      side: "sell",
+      type: "stop_market",
+      state: "open",
+      clientOrderId: "protstop-local-PS-OWNER-CANCEL-TIMEOUT-AAPL-1"
+    });
+    const gw = gatewayMock({ orders: [[openStop]] });
+    gw.cancelEquityOrder = vi.fn(async () => {
+      throw new Error("Alpaca broker call timed out");
+    });
+    broker.gateway = gw;
+
+    await expect(cancelWorkingOrder({ userId, orderId: stopOrderId, source: "console" }))
+      .rejects.toThrow(/timed out/i);
+    expect(gw.cancelEquityOrder).toHaveBeenCalledWith(accountNumber, stopOrderId);
+    expect(hasOwnerCancelledProtectiveStop(userId, accountNumber, "AAPL")).toBe(true);
+    // Cancel ACK was lost — keep the tracked row so a still-live stop is not orphaned.
+    expect(listBrokerProtectiveStops(accountNumber, userId)).toHaveLength(1);
+
+    const canceledOrders = [order({
+      id: stopOrderId,
+      symbol: "AAPL",
+      side: "sell",
+      type: "stop_market",
+      state: "canceled",
+      clientOrderId: "protstop-local-PS-OWNER-CANCEL-TIMEOUT-AAPL-1"
+    })];
+    const reconcileGw = gatewayMock({ orders: [canceledOrders] });
+
+    const timeoutResult = await reconcileBrokerProtectiveStops({
+      userId,
+      policy,
+      accountNumber,
+      gateway: reconcileGw,
+      positions: [position({ quantity: 10 })],
+      executionMode: "broker/live",
+      running: true,
+      orders: canceledOrders,
+      ordersListed: true
+    });
+
+    expect(timeoutResult.placed).toBe(0);
+    expect(reconcileGw.placeEquityOrder).not.toHaveBeenCalled();
+  });
 });
 
 function paperPolicy(): TradingPolicy & { accountNumber: string } {
