@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday 401 at the edge
+
+#2953 added `/api/market/quotes` and `/api/market/intraday/[symbol]` on the same
+`APP_B_INGEST_TOKEN` path as `/api/market/prices` and `/api/market/spx`, but the
+middleware bearer pass-through stayed on those two older paths.  A peer call with
+only the ingest token never reaches `verifySecuritiesImportToken`; the edge
+returns 401.  CT swallows 401s and falls back, so wiring the FMP replacement
+would keep writing `missed_window` with no visible auth error.
+
+Fix: extend the existing pass-through.  `/api/market/flatfile` stays session-gated.
+Handlers still validate the token.  Rollout:
+`docs/rollouts/2026-08-20-peer-quotes-intraday-middleware.md`.
+
 ## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
 
 FMP is banned for market data (owner ruling 2026-08-20); it stays valid only as a

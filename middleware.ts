@@ -96,6 +96,17 @@ function isPublicPath(pathname: string): boolean {
   return pathname.startsWith("/api/auth/callback/") || pathname.startsWith("/api/auth/signin/");
 }
 
+/** Token-gated peer-read market routes. Handlers still call verifySecuritiesImportToken.
+ *  Keep this list explicit so /api/market/flatfile stays session-gated. */
+function isPeerMarketReadPath(pathname: string): boolean {
+  return (
+    pathname === "/api/market/spx" ||
+    pathname === "/api/market/quotes" ||
+    pathname.startsWith("/api/market/prices/") ||
+    pathname.startsWith("/api/market/intraday/")
+  );
+}
+
 // --- Security response headers -------------------------------------------------
 //
 // Applied to EVERY response the middleware returns (allowed, 401, 403, redirects). X-Frame-Options
@@ -403,13 +414,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     // Allow unauthenticated requests with an x-admin-token or bearer token to reach the admin route handlers.
     // The middleware does NOT validate the token; the route handler's `requireAdmin()` or custom auth (like verifySecuritiesImportToken) will strictly validate it.
   } else if (
-    (pathname.startsWith("/api/market/prices/") || pathname === "/api/market/spx") &&
+    isPeerMarketReadPath(pathname) &&
     (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer ")
   ) {
     // Allow unauthenticated requests with a bearer token to reach the token-gated market READ handlers
-    // (congress.trade cache-aside price pulls). The middleware does NOT validate the token; the route
-    // handler's verifySecuritiesImportToken (APP_B_INGEST_TOKEN) strictly validates it. Deliberately
-    // scoped to these two paths only — /api/market/flatfile stays session-gated.
+    // (congress.trade cache-aside price pulls, plus the #2953 quotes/intraday peer routes). The
+    // middleware does NOT validate the token; the route handler's verifySecuritiesImportToken
+    // (APP_B_INGEST_TOKEN) strictly validates it. /api/market/flatfile stays session-gated.
   } else {
     // No verified identity and auth is configured (or armed) → FAIL CLOSED.
     return withSecurityHeaders(
