@@ -47,6 +47,9 @@ export async function register() {
   const { assertEncryptionKeyConfiguredInProduction } = await import("./src/lib/db-api-keys");
   assertEncryptionKeyConfiguredInProduction();
 
+  const { assertAuthSecretConfiguredInLiveBootstrap } = await import("./src/lib/auth-secret-guard");
+  assertAuthSecretConfiguredInLiveBootstrap();
+
   if (process.env.SENTRY_DSN) {
     await import("./sentry.server.config");
   }

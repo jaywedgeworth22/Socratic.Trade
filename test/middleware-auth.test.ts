@@ -474,6 +474,30 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("FAIL CLOSED: DB_BOOTSTRAP=live + auth unconfigured → 401 (no PRIMARY fallback)", async () => {
+    vi.stubEnv("DB_BOOTSTRAP", "live");
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+    vi.stubEnv("AUTH_SECRET", "");
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard");
+    const res = await middleware(req);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBeNull();
+  });
+
+  it("FAIL CLOSED: DB_BOOTSTRAP=live + auth unconfigured → redirect to /login for pages", async () => {
+    vi.stubEnv("DB_BOOTSTRAP", "live");
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+    vi.stubEnv("AUTH_SECRET", "");
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/console");
+    const res = await middleware(req);
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/login");
+  });
+
   // ── Test 4: authConfigured=false → PRIMARY fallback (dev/test) ───────────────
   it("no auth env (authConfigured=false) → PRIMARY_EMAIL fallback (dev/test behavior)", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");

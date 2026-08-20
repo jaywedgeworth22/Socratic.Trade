@@ -148,6 +148,11 @@ Part II clusters `ios-state-outcome-truth` + `web-ios-contract-drift` (stop-loss
 Expert review `qa-test-strategy:qa-03` (narrowed `merge-gate-blindspots`): classify regex in `ci.yml` / `e2e.yml` treated all `docs/**` as documentation, but `app/api/llm-usage/model-stats/route.ts` imports `docs/benchmarks/*.json` at build time.  Changed paths under `docs/benchmarks/` now force the full verify/smoke gate.  No Swift required gate; `land.sh` unchanged (no docs-only regex there).
 
 Branch `cursor/fix-ci-docs-benchmarks-skip-e4ac`.  Rollout: `docs/rollouts/2026-08-19-ci-benchmarks-docs-only-fix.md`.
+## 2026-08-19 CURSOR — Identity fail-closed in live bootstrap (`identity-fails-open`)
+
+Expert review cluster `identity-fails-open` (sec-01): live prod without `AUTH_SECRET` silently made every anonymous request the owner.  Added `assertAuthSecretConfiguredInLiveBootstrap()` at boot (alongside `ENCRYPTION_KEY`), gated middleware `PRIMARY_EMAIL` fallback on `DB_BOOTSTRAP !== "live"`, and made `resolveRequestUser` refuse anonymous / `local-fallback` provenance in live bootstrap.  Dev/test without `AUTH_SECRET` unchanged.
+
+PR **#TBD**.  Branch `cursor/identity-fails-open-535a`.  Rollout: `docs/rollouts/2026-08-19-identity-fails-open.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 
