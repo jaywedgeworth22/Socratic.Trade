@@ -32,6 +32,10 @@ OpenRouter `baai/bge-m3` (DeepInfra) sums every string in one embed `input[]` ag
 
 Dashboard and strategy both `Promise.all` `getAccounts` + `getPortfolio`.  Each used to call Alpaca `GET /v2/account`, so the dashboard's 6s getAccounts deadline lost to a duplicate in-flight read (Roth IRA recoverable_issue storm).  REST `getAccount` is now in-flight coalesced and reused for 15s per connected account.  Rollout: `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
 
+## 2026-08-18 IRA Ignore/Block already existed — they were not wired
+
+`iraWashSaleHandling` is Ignore / Auto / Block.  `washSaleMinLossUsd` is optional (blank = every loss).  Ignore does not steer Green.  Auto feeds priced lock costs so Green can weigh them.  Block refuses.  Prompt `agentic-strategy@2.14.0`.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
+
 ## 2026-08-18 rag-embed soft-degrade (health + store)
 
 A hard-stopped `rag-embed` / `rag-rerank` lane no longer 503s `/api/health`.  Coolify treats a 503 as container death; the restart re-halts autonomy via the boot interlock.  Those lanes now degrade like OpenRouter credits (`ok: false`, `degraded: true`, HTTP 200).  `pinecone` and `alpaca-broker` stay the only critical liveness deps.  One dead document-embed batch skips that batch and continues later batches; a thrown query embed returns empty retrieval.  Green/Red already skip RAG on lookup failure and do not halt.  Rollout: `docs/rollouts/2026-08-18-rag-embed-soft-degrade.md`.

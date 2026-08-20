@@ -246,6 +246,12 @@ Sentry 7d: Pinecone terminated 360 (1T), OpenRouter embed 21 (1X), rerank 14 (22
 Owner follow-up: data cascade + OpenRouter still failing.  #2831's PR-attached `verify` stayed cancelled (dispatch green does not count).  This PR now also carries Green 400 failover and the Nasdaq UA/retry transport so Scan has a universe and the enrichment cascade can run.  Cursor **#2840** still owns embed 8192 pack (32-text / 8193 tok bge-m3 400s).
 
 Branch `grok/prod-triage-2026-08-18`.  Issue #2833.  Rollouts: `docs/rollouts/2026-08-18-openrouter-and-cascade.md`, `docs/rollouts/2026-08-18-prod-triage-alpaca-account-cache.md`.
+## 2026-08-18 CURSOR — IRA Ignore/Block already existed; they were not wired
+## 2026-08-18 CURSOR — IRA Ignore / Auto / Block + optional min-loss
+
+Owner: min-loss should be optional, and Auto must be a choosable IRA option (not only Ignore vs Block).  `iraWashSaleHandling` is now `block | auto | disregard`.  Blank `washSaleMinLossUsd` means every loss is in play (no hidden $50 IRA default).  Ignore does not steer Green.  Auto proceeds and Green weighs priced lock costs.  Block refuses.
+
+Prompt `agentic-strategy@2.14.0`.  Branch `cursor/ira-wash-sale-factor-a1df`.  PR #2842.  Rollout: `docs/rollouts/2026-08-18-ira-wash-sale-existing-options.md`.
 
 ## 2026-08-18 CURSOR — rag-embed soft-degrade rebased onto main (hotfix)
 

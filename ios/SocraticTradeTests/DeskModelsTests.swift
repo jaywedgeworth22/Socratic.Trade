@@ -215,6 +215,9 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(disregarded.sameAccount, "not applicable")
         XCTAssertEqual(disregarded.crossAccount, "ignored")
 
+        let auto = DeskCopy.iraWashSaleRows(handling: "auto")
+        XCTAssertEqual(auto.crossAccount, "auto")
+
         let blocked = DeskCopy.iraWashSaleRows(handling: "block")
         XCTAssertEqual(blocked.sameAccount, "not applicable")
         XCTAssertEqual(blocked.crossAccount, "blocked")
@@ -231,6 +234,7 @@ final class DeskModelsTests: XCTestCase {
             "washSaleGuard": true,
             "washSaleHandling": "block",
             "iraWashSaleHandling": "disregard",
+            "washSaleMinLossUsd": 50,
             "shortTermRatePct": 24,
             "longTermRatePct": 15
           }
@@ -239,6 +243,7 @@ final class DeskModelsTests: XCTestCase {
         let policy = try JSONDecoder().decode(FullPolicy.self, from: json)
         XCTAssertEqual(policy.taxSettings?.taxationType, "roth_ira")
         XCTAssertEqual(policy.taxSettings?.iraWashSaleHandling, "disregard")
+        XCTAssertEqual(policy.taxSettings?.washSaleMinLossUsd, 50)
         XCTAssertTrue(DeskCopy.isIraTaxation(policy.taxSettings?.taxationType))
     }
 

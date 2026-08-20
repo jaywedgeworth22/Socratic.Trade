@@ -234,7 +234,9 @@ function AccountScopedGuardrailsPage() {
   const taxationType = activeConnectedAccount(snapshot)?.taxationType ?? policy.taxSettings?.taxationType ?? "taxable";
   const isIra = isIraTaxation(taxationType);
   const taxRuleDefs = TAX_RULES.filter((def) => {
-    if (isIra) return def.path === "taxSettings.iraWashSaleHandling";
+    if (isIra) {
+      return def.path === "taxSettings.iraWashSaleHandling" || def.path === "taxSettings.washSaleMinLossUsd";
+    }
     return def.path !== "taxSettings.iraWashSaleHandling";
   });
 

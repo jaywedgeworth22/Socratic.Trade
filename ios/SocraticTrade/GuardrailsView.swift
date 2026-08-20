@@ -125,7 +125,12 @@ struct GuardrailsView: View {
                         let rows = DeskCopy.iraWashSaleRows(handling: tax.iraWashSaleHandling)
                         policyRow("Same-Account Wash Sale", rows.sameAccount)
                         policyRow("Cross-Account Replacement", rows.crossAccount)
-                        Text("Same-account wash sales do not apply in an IRA.  Cross-account replacement buys are ignored unless you blocked them.")
+                        if let floor = tax.washSaleMinLossUsd {
+                            policyRow("Wash-Sale Minimum Loss", String(format: "$%.0f", floor))
+                        } else {
+                            policyRow("Wash-Sale Minimum Loss", "optional")
+                        }
+                        Text("Same-account wash sales do not apply in an IRA.  Cross-account replacement buys are ignored, Auto (weighed), or blocked.  Minimum loss is optional — blank means every loss.")
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

@@ -250,6 +250,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     synonyms: [
       "ira wash sale",
       "ignore wash sale",
+      "auto wash sale",
       "disregard wash sale",
       "roth rebuy",
       "roth wash sale",
@@ -263,7 +264,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "tax",
     backingField: "taxSettings.iraWashSaleHandling",
     disclosure: "advanced",
-    help: "Disregard (default) lets an IRA rebuy of a taxable-loss-locked stock proceed, annotated and audited: brokers don't report cross-account IRA wash sales to the IRS, so this is an explicit audit-risk acceptance made on your behalf by default. Block refuses the rebuy instead (a stricter opt-in) — Rev. Rul. 2008-5 permanently destroys the deduction.",
+    help: "Ignore (default) does not constrain this IRA. Auto lets Green weigh the priced forfeited deduction, then proceeds. Block refuses. Minimum loss is optional (blank = every loss).",
     anchor: "tax"
   },
   // Strategy (account scope)
