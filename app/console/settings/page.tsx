@@ -307,7 +307,7 @@ export default function SettingsPage() {
       {/* ── THIS BROWSER ── */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
-          <Chip tone="muted" title="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
+          <Chip tone="muted" title="Settings tagged THIS BROWSER are stored in this browser only.  They change how the console looks here, not how the strategy trades.">
             THIS BROWSER
           </Chip>
           <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -369,7 +369,7 @@ function AdvancedActionConfirmationCard() {
         next ? "Typed confirmation on" : "Typed confirmation off",
         next
           ? "Approving a broker order, replacing a live order, and loosening a guardrail ask you to type the phrase first."
-          : "Those are now ordinary one-click actions. Winding down (which sells) and account deletion still confirm."
+          : "Those are now ordinary one-click actions.  Winding down (which sells) and account deletion still confirm."
       );
     } catch (error) {
       toast.push("neg", "Couldn't save", error instanceof ConsoleApiError ? error.message : String(error));
@@ -381,7 +381,7 @@ function AdvancedActionConfirmationCard() {
     <Card title="Advanced action confirmation">
       <Field
         label="Type a phrase to confirm high-impact live actions"
-        hint="One switch for your whole login — it applies across every account you connect. On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless."
+        hint="One switch for your whole login — it applies across every account you connect.  On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click.  Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless."
       >
         <div className="flex items-center gap-3">
           <Toggle
@@ -609,7 +609,7 @@ function ScanShapeCard() {
             id="scan-limit"
             value={String(candidateLimit ?? "")}
             emptyValue={0}
-            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs. Saves when you click away."
+            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run.  More = wider view, slower and costlier runs.  Saves when you click away."
             onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanCandidateLimit: parsed }))}
             onBlur={() => commitNumber("marketScanCandidateLimit", candidateLimit, policy.marketScanCandidateLimit)}
           />
@@ -619,7 +619,7 @@ function ScanShapeCard() {
             id="scan-reserve"
             value={String(outlierReserve ?? "")}
             emptyValue={0}
-            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity). Saves when you click away."
+            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity).  Saves when you click away."
             onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanOutlierReserve: parsed }))}
             onBlur={() => commitNumber("marketScanOutlierReserve", outlierReserve, policy.marketScanOutlierReserve)}
           />
@@ -641,13 +641,13 @@ function BootBehaviorCard() {
     <Card title="After a restart">
       <div
         className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
-        title="Controls what happens to Running accounts when the server process restarts. Off keeps the safety net: a human must start trading again."
+        title="Controls what happens to Running accounts when the server process restarts.  Off keeps the safety net: a human must start trading again."
       >
         <div>
           <div className="text-[length:var(--con-fs-sm)] font-semibold">Auto-resume on boot</div>
           <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
             Off (recommended): whenever the server restarts, any Running account is stopped until a person starts it
-            again — a restored backup or crash-loop can never silently resume trading. Turning this ON removes that
+            again — a restored backup or crash-loop can never silently resume trading.  Turning this ON removes that
             safety net.
           </p>
         </div>

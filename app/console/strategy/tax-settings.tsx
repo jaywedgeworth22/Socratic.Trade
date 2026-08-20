@@ -99,7 +99,7 @@ export function TaxSettingsCard() {
               id="taxtype"
               value={taxation}
               disabled={autoSave.saving}
-              title="How gains in this account are taxed. Drives the tax estimates and the wash-sale handling."
+              title="How gains in this account are taxed.  Drives the tax estimates and the wash-sale handling."
               onChange={(e) => {
                 const prev = draft.taxationType;
                 const next = e.target.value as TaxationType;
@@ -119,7 +119,7 @@ export function TaxSettingsCard() {
               id="st-rate"
               value={String(shortTermRatePct)}
               emptyValue={0}
-              title="Your estimated tax rate on gains from positions held one year or less. Used only for the tax estimates — not advice. Saves when you click away."
+              title="Your estimated tax rate on gains from positions held one year or less.  Used only for the tax estimates — not advice.  Saves when you click away."
               onValueChange={(parsed) => setDraft((d) => ({ ...d, shortTermRatePct: parsed }))}
               onBlur={() => {
                 if ((draft.shortTermRatePct ?? current?.shortTermRatePct ?? 24) !== (current?.shortTermRatePct ?? 24)) {
@@ -133,7 +133,7 @@ export function TaxSettingsCard() {
               id="lt-rate"
               value={String(longTermRatePct)}
               emptyValue={0}
-              title="Your estimated tax rate on gains from positions held more than one year. Used only for the tax estimates — not advice. Saves when you click away."
+              title="Your estimated tax rate on gains from positions held more than one year.  Used only for the tax estimates — not advice.  Saves when you click away."
               onValueChange={(parsed) => setDraft((d) => ({ ...d, longTermRatePct: parsed }))}
               onBlur={() => {
                 if ((draft.longTermRatePct ?? current?.longTermRatePct ?? 15) !== (current?.longTermRatePct ?? 15)) {
@@ -151,7 +151,7 @@ export function TaxSettingsCard() {
               <div>
                 <div className="text-[length:var(--con-fs-sm)] font-semibold">Same-IRA wash sales</div>
                 <p className="mt-0.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-                  Ignored automatically. This account has no taxable loss deduction inside the IRA, so Block / Ask /
+                  Ignored automatically.  This account has no taxable loss deduction inside the IRA, so Block / Ask /
                   Auto is not the relevant control.
                 </p>
               </div>
@@ -160,14 +160,14 @@ export function TaxSettingsCard() {
             <div className="mt-3 max-w-md">
               <Field
                 label="Taxable-loss rebuy inside this IRA"
-                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore (default) does not constrain this IRA. Auto lets Green weigh it, then proceeds. Block refuses. Minimum loss in Tax rules below is optional (blank = every loss)."
+                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days.  Ignore (default) does not constrain this IRA.  Auto lets Green weigh it, then proceeds.  Block refuses.  Minimum loss in Tax rules below is optional (blank = every loss)."
                 htmlFor="ira-wash-sale"
               >
                 <Select
                   id="ira-wash-sale"
                   value={iraWashSaleHandling}
                   disabled={autoSave.saving}
-                  title="Controls cross-account IRA replacement buys after a taxable loss. Same-IRA wash sales are already ignored. Default: ignore/disregard and annotate."
+                  title="Controls cross-account IRA replacement buys after a taxable loss.  Same-IRA wash sales are already ignored.  Default: ignore/disregard and annotate."
                   onChange={(e) => {
                     const prev = draft.iraWashSaleHandling;
                     const next = e.target.value as IraWashSaleHandling;
@@ -190,7 +190,7 @@ export function TaxSettingsCard() {
             <div>
               <div className="text-[length:var(--con-fs-sm)] font-semibold">Taxable-account wash-sale guard</div>
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                Blocks rebuying a symbol this taxable account closed at a loss within 30 days. A taxable-account loss
+                Blocks rebuying a symbol this taxable account closed at a loss within 30 days.  A taxable-account loss
                 can also lock replacement buys across your other accounts, including IRAs.
               </p>
             </div>

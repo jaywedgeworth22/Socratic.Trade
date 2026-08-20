@@ -407,7 +407,7 @@ function ChromeBar({
           <Link
             href="/admin"
             className="hidden items-center gap-1.5 rounded-control border border-[color:var(--con-line-strong)] px-2.5 text-[length:var(--con-fs-xs)] font-medium text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] md:flex sm:h-8"
-            title="Admin portal — operator diagnostics: connections, LLM spend, RAG coverage, server. Visible because this login has admin rights."
+            title="Admin portal — operator diagnostics: connections, LLM spend, RAG coverage, server.  Visible because this login has admin rights."
           >
             <ShieldCheck size={14} />
             Admin

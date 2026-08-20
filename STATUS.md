@@ -24,6 +24,13 @@ Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `Performa
 #2853 adopted a `strategy_run_requests` row when the in-process heartbeat was older than 90s.  An event-loop freeze (SQLite `busy_timeout` 60s; measured >120s back-to-back) stops the 15s beat without killing `runStrategyOnce`.  Drain then `releaseStrategyLock` and starts a second gather/place on the same run id.  The still-running worker can already have passed `assertOwned` before `placeEquityOrder`, so the adopted run double-places.
 
 Fix: treat a map entry on this process as live, regardless of beat age.  Only a missing entry (process restart) is an orphan.  Rollout: `docs/rollouts/2026-08-20-drain-adopt-live-heartbeat.md`.
+## 2026-08-20 MONET - the two-space sentence rule now renders on the web
+
+The defect was not missing gaps in source.  Two literal ASCII spaces typed into JSX collapse to ONE at render, so the source looked compliant and the screen was not -- which is exactly how this stayed broken while looking fixed.
+
+Measured 698 real violations across 73 files (the review estimated ~600) and fixed 652.  The 46 remaining are entirely inside files held by peer PRs #2795 / #2793 / #2828.  `scripts/copy-rules-lint.mjs` ships with the fix and asserts on RENDERED output via a renderCollapse() implementation of the CSS whitespace rule, so this cannot silently regress.
+
+Worth knowing for anyone doing mass regex edits on TSX: building the fixer produced three bugs in the fixer, and only running the app's test suite caught them.  Two altered executable code, one corrupted numbered headings on the public legal pages.  Do not trust a non-AST regex pass on source without running the tests.
 
 ## 2026-08-20 MONET - R2 is not storing one week; the B2 restore is proven
 

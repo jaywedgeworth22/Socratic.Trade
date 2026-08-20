@@ -155,8 +155,8 @@ export function OverlaysPanel({
     <div id="overlays" className="scroll-mt-28">
       <Card title="Overlays" collapsible defaultOpen action={<SaveStatus status={status} />}>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Regime-tagged playbooks injected into the proposer as DATA, never as commands.  They cannot
-          raise risk limits.  Off by default until you enable them here.
+          Regime-tagged playbooks injected into the proposer as DATA, never as commands.  They cannot
+          raise risk limits.  Off by default until you enable them here.
         </p>
         <div className="mb-4 flex flex-wrap items-end gap-3">
           <label className="flex items-center gap-2 text-[length:var(--con-fs-sm)]">

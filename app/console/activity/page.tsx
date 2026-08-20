@@ -240,7 +240,7 @@ function UnifiedFeed({ groups }: { groups: UnifiedActivityGroup[] }) {
       <DayGroups
         items={visible}
         timestamp={(g) => g.updatedAt}
-        emptyText="Nothing has happened yet. Run the strategy once and its story starts here."
+        emptyText="Nothing has happened yet.  Run the strategy once and its story starts here."
         renderItem={(g) => <FeedGroupCard key={g.id} g={g} multiAccount={multiAccount} />}
       />
       {system.length > 0 && <SystemBucket groups={system} />}
@@ -424,7 +424,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                           <Chip tone={statusTone(p.status)}>{feedStatusLabel(p.status)}</Chip>
                           <Chip tone={r.tone}>{r.word}</Chip>
                           {typeof p.performanceSinceProposalPct === "number" && (
-                            <Tooltip content="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
+                            <Tooltip content="Raw side-adjusted move since the proposal's reference price, not benchmark-relative.  For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
                               <span>
                                 <SignedText value={p.performanceSinceProposalPct}>
                                   since: {fmtPct(p.performanceSinceProposalPct, 2, true)}

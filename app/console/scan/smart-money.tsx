@@ -24,13 +24,19 @@ const compactUsd = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0
 });
 
+// Owner copy rule (docs/FLEET-UI-COPY.md "Money"): compact suffixes are
+// lowercase ($1.2m, not $1.2M) — Intl always emits uppercase K/M/B/T.
+function fmtCompactUsd(v: number): string {
+  return compactUsd.format(v).toLowerCase();
+}
+
 /** Congressional disclosures report a size BAND, not an exact amount. */
 function amountBand(low?: number, high?: number): string | undefined {
   const hasLow = typeof low === "number" && Number.isFinite(low);
   const hasHigh = typeof high === "number" && Number.isFinite(high);
-  if (hasLow && hasHigh) return low === high ? compactUsd.format(low!) : `${compactUsd.format(low!)}–${compactUsd.format(high!)}`;
-  if (hasLow) return `${compactUsd.format(low!)}+`;
-  if (hasHigh) return `up to ${compactUsd.format(high!)}`;
+  if (hasLow && hasHigh) return low === high ? fmtCompactUsd(low!) : `${fmtCompactUsd(low!)}–${fmtCompactUsd(high!)}`;
+  if (hasLow) return `${fmtCompactUsd(low!)}+`;
+  if (hasHigh) return `up to ${fmtCompactUsd(high!)}`;
   return undefined;
 }
 
@@ -67,7 +73,7 @@ function FeedFreshness({ meta }: { meta: FeedMeta | undefined }) {
   return (
     <span
       className="whitespace-nowrap text-[length:var(--con-fs-xs)] font-normal normal-case tracking-normal text-[color:var(--con-faint)]"
-      title="When this feed was last refreshed from its sources. It updates automatically in the background."
+      title="When this feed was last refreshed from its sources.  It updates automatically in the background."
     >
       updated <Ago iso={meta.fetchedAt} />
     </span>
@@ -178,7 +184,7 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
       >
         {congress.length === 0 ? (
           <Empty>
-            No congressional disclosures cached yet. The feed refreshes automatically in the background — check back after
+            No congressional disclosures cached yet.  The feed refreshes automatically in the background — check back after
             the next refresh.
           </Empty>
         ) : (
@@ -219,7 +225,7 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
         padded={false}
       >
         {insider.length === 0 ? (
-          <Empty>No insider filings cached yet. Open-market Form 4 buys and sells accumulate here as they're filed.</Empty>
+          <Empty>No insider filings cached yet.  Open-market Form 4 buys and sells accumulate here as they're filed.</Empty>
         ) : (
           <div className="flex flex-col px-2 pb-3 pt-1">
             {insider.map((f, i) => (
@@ -231,7 +237,7 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
 
       <Card
         title={
-          <span className="flex items-center gap-2" title="Latest 13F-HR holdings from a curated set of official SEC filers.  Observe only — the app does not auto-copy these books.">
+          <span className="flex items-center gap-2" title="Latest 13F-HR holdings from a curated set of official SEC filers.  Observe only — the app does not auto-copy these books.">
             13F Superinvestors
             <FeedFreshness meta={ws?.thirteenF} />
           </span>
@@ -244,7 +250,7 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
         padded={false}
       >
         {thirteenF.length === 0 ? (
-          <Empty>No 13F holdings cached yet.  The weekly SEC pull fills this after the next refresh.</Empty>
+          <Empty>No 13F holdings cached yet.  The weekly SEC pull fills this after the next refresh.</Empty>
         ) : (
           <div className="flex flex-col px-2 pb-3 pt-1">
             {thirteenF.map((r, i) => (
@@ -276,7 +282,7 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
         padded={false}
       >
         {ark.length === 0 ? (
-          <Empty>No ARK holdings cached yet.  The daily official CSV pull fills this after the next refresh.</Empty>
+          <Empty>No ARK holdings cached yet.  The daily official CSV pull fills this after the next refresh.</Empty>
         ) : (
           <div className="flex flex-col px-2 pb-3 pt-1">
             {ark.map((r, i) => (
