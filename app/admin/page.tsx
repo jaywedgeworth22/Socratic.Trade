@@ -447,7 +447,7 @@ export default function OperatorDashboard() {
                     </span>
                     <span className="con-num font-semibold">{server?.metrics?.cpu ? `${currentCpu.toFixed(1)}%` : "Unavailable"}</span>
                   </div>
-                  {server?.metrics?.cpu ? <Meter value={currentCpu} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
+                  {server?.metrics?.cpu ? <Meter value={currentCpu} max={100} label="CPU load" /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
                 </div>
 
                 {/* RAM */}
@@ -521,7 +521,7 @@ export default function OperatorDashboard() {
                                 {fmt(m.mtd)} · {m.pctUsed.toFixed(1)}%
                               </span>
                             </div>
-                            <Meter value={Math.min(m.pctUsed, 100)} max={100} />
+                            <Meter value={Math.min(m.pctUsed, 100)} max={100} label={m.label} />
                             <div className="mt-0.5 text-right text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
                               {m.alertBasis === "pace" ? `pace → ${m.projectedPct.toFixed(0)}% by month end` : "absolute usage"}
                               {m.exceeded ? ` (>${r2.thresholdPct}% threshold)` : ""}

@@ -134,7 +134,8 @@ function CapUtilization({
   band,
   kind,
   note,
-  daily
+  daily,
+  label
 }: {
   band: (UtilizationMeter & { symbol?: string }) | undefined;
   kind: "money" | "pct" | "count";
@@ -143,6 +144,7 @@ function CapUtilization({
    *  "Used $1,200 of $5,000 today" instead of the point-in-time "Current usage" wording
    *  used for exposure caps, which have no daily reset. */
   daily?: boolean;
+  label?: string;
 }) {
   const fmtUsed = (v: number) => (kind === "money" ? fmtMoney(v) : kind === "pct" ? fmtPct(v, 1) : fmtNum(v));
   const fmtLimit = (v: number) => (kind === "money" ? fmtMoneyWhole(v) : kind === "pct" ? fmtPct(v, 1) : fmtNum(v));
@@ -168,7 +170,7 @@ function CapUtilization({
           {band.pct !== undefined ? ` · ${fmtPct(band.pct, 1)}` : ""}
         </span>
       </div>
-      <Meter value={ratio} max={100} />
+      <Meter value={ratio} max={100} label={label ?? (daily ? "Used today" : "Current usage")} />
     </div>
   );
 }
@@ -283,12 +285,12 @@ function AccountScopedGuardrailsPage() {
               draft={draft}
               hint="Choose one daily opening budget. Percent is the account-relative default; switching modes clears the other value before save."
             />
-            <CapUtilization band={risk.dailyNotional} kind="money" daily />
+            <CapUtilization band={risk.dailyNotional} kind="money" daily label="Max Spend Per Day" />
           </div>
           {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path) && !SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
-              {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily />}
+              {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily label="Max Daily Orders" />}
             </div>
           ))}
           <div className="con-card-title pt-3">Schedule</div>
@@ -306,7 +308,7 @@ function AccountScopedGuardrailsPage() {
           {SHORTS.map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
-              {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" />}
+              {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" label="Max Short Exposure" />}
             </div>
           ))}
           <div className="con-card-title pt-3">Options And Event Contracts</div>
@@ -360,13 +362,14 @@ function AccountScopedGuardrailsPage() {
               <CapUtilization
                 band={isBlank(policy.maxSymbolExposurePct) ? exposure.symbolNotional : exposure.symbolPct}
                 kind={isBlank(policy.maxSymbolExposurePct) ? "money" : "pct"}
+                label="Max In One Stock"
               />
             </div>
             {EXPOSURE.filter((def) => !EXPOSURE_FIELD_PATHS.has(def.path)).map((def) => (
               <div key={def.path}>
                 <PolicyFieldRow def={def} policy={policy} draft={draft} />
-                {def.path === "maxGrossExposurePct" && <CapUtilization band={exposure.grossPct} kind="pct" />}
-                {def.path === "maxNetExposurePct" && <CapUtilization band={exposure.netPct} kind="pct" />}
+                {def.path === "maxGrossExposurePct" && <CapUtilization band={exposure.grossPct} kind="pct" label="Max Gross Exposure" />}
+                {def.path === "maxNetExposurePct" && <CapUtilization band={exposure.netPct} kind="pct" label="Max Net Exposure" />}
               </div>
             ))}
           </AdvancedGroup>
