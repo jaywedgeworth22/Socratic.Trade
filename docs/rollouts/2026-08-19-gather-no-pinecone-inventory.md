@@ -35,7 +35,7 @@ Gather retrieval stays query/id scoped (`retrieveContextDetailed`).  Whole-index
 - Legacy short-circuit no longer awaits App A alone.  Paid providers on that off-path run without an App A coverage hint (free-first, default ON, still uses the two-wave planner).
 - Massive 429: `retries: 0`, suppress health, stop remaining symbols this enrich call.  A 404 stays a miss.
 - Did not touch #2850 / #2849 / #2841 / #2856 / #2857.  Did not merge, deploy, bounce, or TF.
-- Rebase vs later main: `git merge-tree --write-tree origin/main origin/cursor/gather-no-pinecone-inventory-befc` exited 0.  Overlap was `STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md` only.  No iOS files.  Rebase applied clean (3/3).
+- Rebase vs later main: `git merge-tree --write-tree origin/main HEAD` exited 0.  Overlap was `STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md` only.  No iOS files.  Rebase onto `ce31c367` applied clean (5/5).
 
 ## Verification State
 
