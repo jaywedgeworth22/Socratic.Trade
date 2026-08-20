@@ -17,7 +17,7 @@ import {
   scanLitestreamRuntimeLogFile
 } from "@/lib/runtime-health";
 import { getLease } from "@/lib/scheduler-lease";
-import { getTradingLivenessSummary } from "@/lib/trading-liveness";
+import { getTradingLivenessSummary, toPublicTradingLiveness } from "@/lib/trading-liveness";
 import { getOpenRouterCreditStatus } from "@/lib/openrouter-credits";
 import { authorizeOpsRequest } from "@/lib/ops-auth";
 import { statSync, statfsSync } from "fs";
@@ -58,10 +58,16 @@ function leaseOwnerWithoutPid(owner: string): string {
 // boot interlock (see the trading-liveness note below).
 //
 // Failure mode worth knowing: authorizeOpsRequest fails closed on an UNCONFIGURED secret — with
-// neither OPS_DIAGNOSTIC_TOKEN nor ADMIN_REINDEX_TOKEN set it returns false for everyone, quietly,
-// so the operator sees the public view too. That is the same condition that already makes
-// /api/ops/snapshot unusable, so it is a token-provisioning problem, not a health-route one; the
-// full lease owner is still on /api/ready (session-gated, no ops token needed) either way.
+// OPS_DIAGNOSTIC_TOKEN unset it returns false for everyone, quietly, so the operator sees the
+// public view too.  ADMIN_REINDEX_TOKEN is not a fallback.  That is the same condition that
+// already makes /api/ops/snapshot unusable, so it is a token-provisioning problem, not a
+// health-route one; the full lease owner is still on /api/ready (session-gated, no ops token
+// needed) either way.
+//
+// External paging: HTTP 200/503 is liveness only (DB + pinecone / alpaca-broker hard-stops).
+// schedulerStale, tradingLiveness.degraded, and storage.litestreamTiersDegraded are JSON flags
+// that MUST stay 200 so a Coolify restart cannot "heal" them.  Page those with keyword/JSON
+// monitors — see docs/runbooks/uptime-health-json-monitors.md.
 export async function GET(request: Request) {
   const checks: Record<string, unknown> = {};
   let ok = true;
@@ -79,15 +85,19 @@ export async function GET(request: Request) {
     checks.db = error instanceof Error ? error.message : "error";
   }
 
+  const schedulerStaleMs = 5 * 60_000;
   if (lastTick) {
     const ageMs = Date.now() - new Date(lastTick).getTime();
     checks.schedulerLastTick = lastTick;
     checks.schedulerAgeSeconds = Math.round(ageMs / 1000);
-    // The scheduler ticks every 60s; >5 min of silence is degraded (not a hard failure here —
-    // the process may legitimately be a non-scheduler instance).
-    if (ageMs > 5 * 60_000) checks.schedulerStale = true;
+    // Always emit the boolean so keyword/JSON monitors can key on `"schedulerStale":true`.
+    // Never 503s — a restart cannot write a fresher tick if the scheduler is the thing that died.
+    checks.schedulerStale = ageMs > schedulerStaleMs;
   } else {
     checks.schedulerLastTick = null;
+    checks.schedulerAgeSeconds = null;
+    // No heartbeat after the process has been up long enough to have ticked once.
+    checks.schedulerStale = release.processUptimeSeconds > schedulerStaleMs / 1000;
   }
 
   // Scheduler lease state (additive; only meaningful when SCHEDULER_SINGLE_LEADER is on).
@@ -115,8 +125,8 @@ export async function GET(request: Request) {
   // Per active-autonomy account (policy.systemState === "active"), report the age of the most
   // recent COMPLETED strategy run and a consecutive-failed-runs count. `degraded`-only — NEVER
   // 503s (see trading-liveness.ts's header comment: a 503 here would trigger a container restart,
-  // which re-halts autonomy via the boot interlock — the exact loop 6b.1 fixed). Omitted entirely
-  // when there are zero active-autonomy accounts (nothing to be live about).
+  // which re-halts autonomy via the boot interlock — the exact loop 6b.1 fixed). Always emitted
+  // (zeros when there are no active-autonomy accounts) so JSON monitors can key the field.
   //
   // PUBLIC route (no requireAdmin): same convention as the dependencies section below — expose
   // ONLY a minimal aggregate, never the per-account rows. The full summary carries userId,
@@ -126,24 +136,14 @@ export async function GET(request: Request) {
   // external uptime probe without leaking account identity.
   try {
     const liveness = getTradingLivenessSummary();
-    if (liveness) {
-      const degradedCount = liveness.accounts.filter((a) => a.degraded).length;
-      const oldestCompletedRunAgeSeconds = liveness.accounts.reduce<number | null>((oldest, a) => {
-        if (a.lastCompletedRunAgeSeconds === null) return oldest;
-        return oldest === null ? a.lastCompletedRunAgeSeconds : Math.max(oldest, a.lastCompletedRunAgeSeconds);
-      }, null);
-      checks.tradingLiveness = {
-        activeAccounts: liveness.accounts.length,
-        autopilotAccounts: liveness.accounts.filter((a) => a.strategyAuthority === "decide").length,
-        runningAskFirstAccounts: liveness.accounts.filter((a) => a.strategyAuthority !== "decide").length,
-        degraded: degradedCount,
-        oldestCompletedRunAgeSeconds,
-        marketOpen: liveness.marketOpen
-      };
-      if (liveness.degraded) checks.tradingLivenessDegraded = true;
-    }
+    const publicLiveness = toPublicTradingLiveness(liveness);
+    // Always emit so `tradingLiveness.degraded` exists for JSON-path monitors even when
+    // every account is halted.  The boolean sibling is the unique keyword substring.
+    checks.tradingLiveness = publicLiveness;
+    checks.tradingLivenessDegraded = publicLiveness.degraded > 0;
   } catch {
-    // never let trading-liveness reporting break the liveness probe
+    checks.tradingLiveness = toPublicTradingLiveness(null);
+    checks.tradingLivenessDegraded = false;
   }
 
   // Market-data tier honesty (nightly provider-tier check).  Surfaced so ops can see whether
@@ -503,7 +503,12 @@ export async function GET(request: Request) {
       );
     }
   } catch {
-    // never let storage monitoring break the health probe
+    // never let storage monitoring break the health probe — still emit the monitor field
+    if (!checks.storage || typeof checks.storage !== "object") {
+      checks.storage = { litestreamTiersDegraded: false };
+    } else if (!("litestreamTiersDegraded" in (checks.storage as object))) {
+      (checks.storage as { litestreamTiersDegraded: boolean }).litestreamTiersDegraded = false;
+    }
   }
 
   return Response.json({ ok, checks }, { status: ok ? 200 : 503 });

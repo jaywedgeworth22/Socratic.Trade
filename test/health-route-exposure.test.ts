@@ -107,6 +107,10 @@ describe("/api/health exposure", () => {
     expect(body.checks.release).toHaveProperty("sha");
     expect(body.checks.db).toBe("ok");
     expect(typeof body.checks.schedulerAgeSeconds).toBe("number");
+    expect(body.checks.schedulerStale).toBe(false);
+    expect(typeof body.checks.tradingLiveness.degraded).toBe("number");
+    expect(body.checks.tradingLivenessDegraded).toBe(false);
+    expect(typeof body.checks.storage.litestreamTiersDegraded).toBe("boolean");
     // .claude/skills/deploy-verify/SKILL.md greps exactly these litestream fields with no token.
     for (const key of ["litestreamAgeSeconds", "litestreamState", "litestreamStatus", "litestreamDegradedReasons"]) {
       expect(body.checks.storage).toHaveProperty(key);

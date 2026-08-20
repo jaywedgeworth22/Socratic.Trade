@@ -600,6 +600,25 @@ Last published coverage (2026-08-16): 608 transcripts / 565 tickers vs a 1,000-i
 
 PR **#2813**.  Branch `cursor/roic-individual-archive-9ad4`.  Rebased onto `d3e2c9ee` (#2892).  Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
 
+## 2026-08-18 CURSOR — Health JSON monitors + OPS token + R2 retain=1
+
+UptimeRobot/Pushover must page on `schedulerStale`, `tradingLiveness.degraded`,
+and `litestreamTiersDegraded` — not on HTTP 200 of `/api/health`.  Those flags
+never 503.  Pinecone / alpaca-broker stay critical.  rag-embed degrade not
+rewritten.  `OPS_DIAGNOSTIC_TOKEN` is required (no `ADMIN_REINDEX_TOKEN`
+fallback); existing prod token works, did not mint a second.  Host-verified:
+weekly retain is already 1 (`R2_COLD_SNAPSHOT_DEFAULT_RETAIN=1`,
+`R2_COLD_SNAPSHOT_RETAIN` unset, `cold-snapshots/` has exactly
+`app-2026-08-16.db`).  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused leftover
+(`weekly/` prefix empty) and does not drive weekly retain — left alone.
+Did not delete live R2 objects.  No Coolify edits.  Did not steal
+#2792/#2798/#2800/#2794.
+
+Branch `cursor/health-json-monitors-ac72` rebased onto `main` 2026-08-18
+(PR #2816).  Runbook:
+`docs/runbooks/uptime-health-json-monitors.md`.  Rollout:
+`docs/rollouts/2026-08-18-health-json-monitors.md`.
+
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
 Owner: $230.44 of $300 trial left, 12 days; likely Builder ~Aug 30; keep using Pinecone, do not prune.  Question: is more storage better for Green/Red, or is condensing the corpus?  **Hybrid: condense-first for Pinecone, store-more locally.**  Builder is 10 GB / 5M WU (hard cap), not unlimited raw 10-Ks.  Do not flip write-class.  Do not raise the 2.5M fuse (pacer already ~4.8M/day).  FilingAPI stays #2792.
