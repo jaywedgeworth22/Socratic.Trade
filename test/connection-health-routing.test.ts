@@ -30,6 +30,9 @@ describe("Connection Health & Failure Routing", () => {
     process.env.PRIMARY_USER_EMAIL = "admin@socratic.trade";
     process.env.RESEND_API_KEY = "re_test_key";
     process.env.NOTIFY_EMAIL_FROM = "alerts@socratic.trade";
+    delete process.env.PUSHOVER_APP_TOKEN;
+    delete process.env.PUSHOVER_ST_API_TOKEN;
+    delete process.env.PUSHOVER_USER_KEY;
     
     // Clear out cooldown keys from DB
     const { db } = await load();
@@ -116,6 +119,23 @@ describe("Connection Health & Failure Routing", () => {
       })
     );
     expect(sendNotificationSpy.mock.calls[0]?.[1]?.additionalDelivery).toBeUndefined();
+  });
+
+  it("does not add a Pushover fallback when the user already enabled that channel", async () => {
+    const { db, health, notifyMod, notificationsMod } = await load();
+    process.env.PUSHOVER_APP_TOKEN = "pv-token";
+    process.env.PUSHOVER_USER_KEY = "u1userkey";
+    db.setNotifyPrefs("local", { channels: ["pushover"], pushoverTarget: "u1userkey" });
+    const notifySpy = vi.spyOn(notifyMod, "notify").mockResolvedValue([]);
+    const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+    await health.alertConnectionFailure("pinecone", "env", "u_tenant", "API Key Invalid");
+
+    expect(notifySpy).not.toHaveBeenCalled();
+    expect(sendNotificationSpy).toHaveBeenCalledOnce();
+    expect(sendNotificationSpy.mock.calls[0]?.[1]?.additionalDelivery).toBeUndefined();
+    delete process.env.PUSHOVER_APP_TOKEN;
+    delete process.env.PUSHOVER_USER_KEY;
   });
 
   it("does not add the operator fallback when a preferred email target already exists", async () => {

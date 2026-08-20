@@ -80,7 +80,7 @@ struct ProposalsView: View {
             SymbolInfoSheet(symbol: presented.symbol)
         }
         .alert(
-            "Confirm Live Order",
+            DeskCopy.proposalConfirmOrderTitle,
             isPresented: Binding(
                 get: { confirmingProposal != nil },
                 set: { isPresented in
@@ -92,7 +92,7 @@ struct ProposalsView: View {
             TextField(expectedConfirmation(for: proposal), text: $confirmationText)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
-            Button("Approve Live Order", role: .destructive) {
+            Button(DeskCopy.proposalApproveOrderButton, role: .destructive) {
                 approveConfirmedLiveProposal(proposal)
             }
             .disabled(!confirmationMatches(proposal))
@@ -100,7 +100,7 @@ struct ProposalsView: View {
                 resetConfirmation()
             }
         } message: { proposal in
-            Text("Type exactly “\(expectedConfirmation(for: proposal))”.  This places a live order.")
+            Text("Type exactly “\(expectedConfirmation(for: proposal))”.  This places the order through your connected account.")
         }
     }
 
@@ -263,11 +263,13 @@ private struct ProposalCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    StatusPill(
-                        executionModeLabel,
-                        color: executionModeColor,
-                        systemImage: executionModeSystemImage
-                    )
+                    if proposal.executionMode == "broker/paper" {
+                        StatusPill(
+                            executionModeLabel,
+                            color: AppPalette.accent.opacity(0.75),
+                            systemImage: executionModeSystemImage
+                        )
+                    }
                     if let confidence = proposal.proposal.confidenceScore {
                         StatusPill("\(Int(confidence.rounded()))% confidence", color: AppPalette.accent)
                     }
@@ -338,7 +340,7 @@ private struct ProposalCard: View {
                 Divider()
 
                 if requiresTypedConfirmation {
-                    Label("Typed confirmation required for this live order", systemImage: "keyboard.badge.ellipsis")
+                    Label(DeskCopy.proposalTypedConfirmHint, systemImage: "keyboard.badge.ellipsis")
                         .font(.appCaption)
                         .foregroundStyle(AppPalette.warning)
                 }
@@ -362,19 +364,11 @@ private struct ProposalCard: View {
     }
 
     private var executionModeLabel: String {
-        switch proposal.executionMode {
-        case "broker/live": return "Live"
-        case "broker/paper": return "Paper"
-        default: return "Unknown"
-        }
-    }
-
-    private var executionModeColor: Color {
-        proposal.executionMode == "broker/live" ? AppPalette.negative : AppPalette.accent
+        proposal.executionMode == "broker/paper" ? DeskCopy.paperAccountWord : ""
     }
 
     private var executionModeSystemImage: String {
-        proposal.executionMode == "broker/live" ? "dollarsign.circle.fill" : "questionmark.circle"
+        "doc.text"
     }
 
     private var priceReview: ProposalPriceReview {

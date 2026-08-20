@@ -49,12 +49,18 @@ function normalizedProvider(provider: string): string {
   return provider.trim().toLowerCase().replace(/\s+/g, "-") || "unknown";
 }
 
-function shouldSend(input: Required<Pick<UsageLimitAlertInput, "userId" | "provider" | "operation" | "limitName">>): boolean {
-  const key = `${ALERT_KEY_PREFIX}:${input.userId}:${normalizedProvider(input.provider)}:${input.operation}:${input.limitName}`;
-  const last = getInternalSetting<string>(key);
-  if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
-  setInternalSetting(key, new Date().toISOString());
-  return true;
+function usageAlertKey(input: Required<Pick<UsageLimitAlertInput, "userId" | "provider" | "operation" | "limitName">>): string {
+  return `${ALERT_KEY_PREFIX}:${input.userId}:${normalizedProvider(input.provider)}:${input.operation}:${input.limitName}`;
+}
+
+/** Read-only. A prior FAILED/SKIPPED attempt must not latch this cooldown. */
+function recentlyAlerted(input: Required<Pick<UsageLimitAlertInput, "userId" | "provider" | "operation" | "limitName">>): boolean {
+  const last = getInternalSetting<string>(usageAlertKey(input));
+  return Boolean(last && Date.now() - Date.parse(last) < cooldownMs());
+}
+
+function markAlerted(input: Required<Pick<UsageLimitAlertInput, "userId" | "provider" | "operation" | "limitName">>): void {
+  setInternalSetting(usageAlertKey(input), new Date().toISOString());
 }
 
 function operatorAlertEmail(): string | undefined {
@@ -92,11 +98,13 @@ async function notifyOperatorEmailFallback(
   body: string,
   data: unknown,
   options: UsageLimitAlertOptions
-): Promise<void> {
+): Promise<boolean> {
   assertUsageAlertActive(options);
   const prefs = getNotifyPrefs(userId);
   const config = loadNotifyConfig();
   if (isPushoverDeliverable(prefs, config)) {
+    // sendNotification already attempted Pushover when the user enabled that channel.
+    if (prefs.channels.includes("pushover")) return false;
     const forcedPrefs: NotifyPrefs = {
       ...prefs,
       channels: ["pushover"],
@@ -111,14 +119,14 @@ async function notifyOperatorEmailFallback(
       signal: options.signal
     });
     assertUsageAlertActive(options);
-    return;
+    return true;
   }
-  if (prefs.channels.includes("email") && prefs.email.trim()) return;
+  if (prefs.channels.includes("email") && prefs.email.trim()) return false;
 
   assertUsageAlertActive(options);
   const fallbackEmail = operatorAlertEmail();
-  if (!fallbackEmail) return;
-  if (!config.email.resendKey || !config.email.from) return;
+  if (!fallbackEmail) return false;
+  if (!config.email.resendKey || !config.email.from) return false;
 
   const forcedPrefs: NotifyPrefs = {
     ...prefs,
@@ -134,6 +142,7 @@ async function notifyOperatorEmailFallback(
     signal: options.signal
   });
   assertUsageAlertActive(options);
+  return true;
 }
 
 /**
@@ -155,7 +164,7 @@ export async function alertUsageLimitHit(
       limitName: input.limitName
     };
     assertUsageAlertActive(options);
-    if (!shouldSend(sendKey)) return;
+    if (recentlyAlerted(sendKey)) return;
 
     assertUsageAlertActive(options);
     const status = input.status ?? "exceeded";
@@ -184,7 +193,7 @@ export async function alertUsageLimitHit(
     // must be real" — no force-include). A legacy stored enabledEvents array predating this event
     // type was backfilled once by migration 78 (db.ts); after that the toggle is genuinely the
     // user's.
-    await sendNotification(
+    const event = await sendNotification(
       { type: "budget_alert", title, payload },
       {
         userId,
@@ -194,8 +203,9 @@ export async function alertUsageLimitHit(
       }
     );
     assertUsageAlertActive(options);
-    await notifyOperatorEmailFallback(userId, title, body, payload, options);
+    const fallbackSent = await notifyOperatorEmailFallback(userId, title, body, payload, options);
     assertUsageAlertActive(options);
+    if (event.status === "sent" || fallbackSent) markAlerted(sendKey);
   } catch {
     // A failed ownership fence is control flow, not a best-effort alert failure.
     assertUsageAlertActive(options);

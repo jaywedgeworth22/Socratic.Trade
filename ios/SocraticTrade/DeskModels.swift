@@ -179,13 +179,11 @@ enum CoachModelCatalog {
         .init(id: "claude-haiku-4.5", label: "Claude Haiku", provider: "anthropic", detail: "fast Claude"),
         .init(id: "claude-sonnet-5", label: "Claude Sonnet", provider: "anthropic", detail: "balanced Claude"),
         .init(id: "grok-4.5", label: "Grok", provider: "xai", detail: "default Grok"),
-        .init(id: "gemini-flash-latest", label: "Gemini Flash", provider: "gemini", detail: "stable Flash"),
-        .init(id: "mock", label: "Mock (offline)", provider: "mock", detail: "keyless offline path")
+        .init(id: "gemini-flash-latest", label: "Gemini Flash", provider: "gemini", detail: "stable Flash")
     ]
 
     static func provider(for model: String) -> String {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if trimmed == "mock" { return "mock" }
         if trimmed.hasPrefix("claude") { return "anthropic" }
         if trimmed.hasPrefix("grok") { return "xai" }
         if trimmed.hasPrefix("gemini") { return "gemini" }
@@ -196,13 +194,11 @@ enum CoachModelCatalog {
     }
 
     static func firstAvailable(providers: [String: Bool]) -> Option? {
-        options.first { option in
-            option.provider == "mock" || providers[option.provider] == true
-        }
+        options.first { providers[$0.provider] == true }
     }
 
     static func isAvailable(_ option: Option, providers: [String: Bool]) -> Bool {
-        option.provider == "mock" || providers[option.provider] == true
+        providers[option.provider] == true
     }
 }
 
@@ -664,6 +660,13 @@ enum DeskCopy {
         let labels = (values ?? []).compactMap(indexUniverseLabel)
         return labels.isEmpty ? "none" : labels.joined(separator: ", ")
     }
+
+    /// Mirror of `src/lib/guardrail-copy.ts` — keep sentences aligned.
+    static let guardrailsHeaderSuffix = "authority, caps, and adjustable preferences"
+    static let paperAccountWord = "paper"
+    static let proposalConfirmOrderTitle = "Confirm Order"
+    static let proposalApproveOrderButton = "Approve Order"
+    static let proposalTypedConfirmHint = "Typed confirmation required for this order"
 
     /// Same destination as web readiness (`/console/guardrails`).  iOS has no Strategy tab.
     static let universeNeedsIndex =

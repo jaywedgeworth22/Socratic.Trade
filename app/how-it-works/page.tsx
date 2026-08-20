@@ -87,14 +87,7 @@ const DECISION_FILE: Array<{ title: string; body: string }> = [
   }
 ];
 
-const AUTHORITY_ITEMS: string[] = [
-  "Scope: symbol, watchlist, strategy, sector, account, or market regime.",
-  "Permission: suggest only, delegated action, close-only, or halted.",
-  "Limits: max notional, max daily loss, max concurrent positions, concentration, and side permissions.",
-  "Evidence threshold: minimum source count, contradiction tolerance, and freshness window.",
-  "Review mode: notify before action, notify after action, or alert only when blocked.",
-  "Override explanation: when the agent chooses offense during stress, it must say what changed its mind and what would have blocked it."
-];
+import { HOW_IT_WORKS_AUTHORITY_ITEMS } from "@/lib/guardrail-copy";
 
 const LEARNING_ITEMS: Array<{ title: string; body: string }> = [
   {
@@ -186,7 +179,7 @@ export default function HowItWorksPage() {
           </p>
           <Card className="p-5">
             <ul className="space-y-2">
-              {AUTHORITY_ITEMS.map((item) => (
+              {HOW_IT_WORKS_AUTHORITY_ITEMS.map((item) => (
                 <li key={item} className="flex gap-2 text-sm leading-relaxed text-muted">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
                   <span>{item}</span>

@@ -42,6 +42,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useDirtyActionGuard, useNextUnloadBypass } from "../lib/useDirtyGuard";
 import type { ConsoleTheme } from "../lib/useConsoleTheme";
 import { useToast } from "../ui/toast";
+import { BREAKER_FIRED_NOTE } from "@/lib/guardrail-copy";
 import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
@@ -659,7 +660,7 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
     return {
       title: "A circuit breaker is holding new entries",
       detail: message,
-      note: "A breaker tripping means a hard limit did its job. Review what fired before loosening anything.",
+      note: BREAKER_FIRED_NOTE,
       fixHref: "/console/guardrails",
       fixLabel: "Review Guardrails"
     };
