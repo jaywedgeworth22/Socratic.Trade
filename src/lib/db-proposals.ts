@@ -1,4 +1,5 @@
 // db-proposals.ts — trade proposal CRUD
+import "server-only";
 import { audit, getDb } from "./db";
 import { scopeAccount } from "./db-execution";
 import { canonicalModelId } from "./model-identity";

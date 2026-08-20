@@ -101,7 +101,8 @@ export interface DashboardSnapshot {
    *  entry carries its own as_of so the UI always age-tags it. Optional: older payloads
    *  and empty stores simply omit it ("—" remains the last resort). */
   orderPriceFallbacks?: Record<string, { price: number; asOf: string; source?: string }>;
-  audit: AuditEvent[];
+  /** Raw audit rows are server-only feed input; console clients use auditFeed/unifiedFeed. */
+  audit?: AuditEvent[];
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;

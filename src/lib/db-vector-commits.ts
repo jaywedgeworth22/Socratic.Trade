@@ -1,5 +1,6 @@
 // Durable two-phase vector commit and transcript-version receipts.
 
+import "server-only";
 import { getDb } from "./db";
 
 export type VectorCommitState = "pending" | "receipts_persisted" | "committed" | "aborted";

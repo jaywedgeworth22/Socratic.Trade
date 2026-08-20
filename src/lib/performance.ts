@@ -508,6 +508,12 @@ export function getPerformanceSummary(
       cash: snapshot.cash,
       positionsValue: snapshot.positionsValue
     })),
+    // No fabricated baseline: an account with no persisted portfolio snapshots yet has no real
+    // equity curve to show. A synthetic "$100 + realized P&L" curve used to stand in here, but
+    // that $100 is not real starting capital — it got rendered as money on the chart axis and
+    // could feed deriveDayPnl a fake baseline (a real live equity read minus a fake $100+realized
+    // "yesterday" reads as almost the whole account moving in a day). "Not enough history yet" is
+    // the honest state; the chart already renders that sentence for <2 points.
     paperEquityCurve:
       paperSnapshots.length > 0
         ? paperSnapshots.map((snapshot) => ({
@@ -517,7 +523,7 @@ export function getPerformanceSummary(
             cash: snapshot.cash,
             positionsValue: snapshot.positionsValue
           }))
-        : syntheticPaperCurve(paperFills),
+        : [],
     liveRealizedPnl: livePnl.realized,
     paperRealizedPnl: paperPnl.realized,
     liveUnrealizedPnl: livePnl.unrealized,
@@ -526,6 +532,8 @@ export function getPerformanceSummary(
     paperWinRate: winRate(paperPnl.closedLots),
     liveAverageReturnPct: averageReturn(livePnl.closedLots),
     paperAverageReturnPct: averageReturn(paperPnl.closedLots),
+    liveClosedLotCount: livePnl.closedLots.length,
+    paperClosedLotCount: paperPnl.closedLots.length,
     attribution: combineAttribution(livePnl.attribution, paperPnl.attribution),
     fills: allFills.slice(-100)
   };
@@ -1653,16 +1661,6 @@ function isAccountingFill(fill: FillEvent): boolean {
   // type narrowing to "broker/paper" | "broker/live", so it's compared as a plain string here.
   const legacyMode = fill.executionMode as string | undefined;
   return !fill.brokerOrderId && (legacyMode === undefined || legacyMode === "test/local");
-}
-
-function syntheticPaperCurve(fills: FillEvent[]) {
-  const accountingFills = fills
-    .filter(isAccountingFill)
-    .sort((a, b) => a.filledAt.localeCompare(b.filledAt));
-  return accountingFills.map((fill, index) => {
-    const realized = calculatePnl(accountingFills.slice(0, index + 1)).realized;
-    return { timestamp: fill.filledAt, equity: 100 + realized, source: "paper" as const };
-  });
 }
 
 function addAttribution(map: Map<string, RunAttribution>, fill: FillEvent, realizedPnl: number): void {

@@ -1,5 +1,6 @@
 // db-execution.ts — DAILY_RESET_TIME_ZONE, daily stats, day-trade counting,
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
+import "server-only";
 import { audit, getDb } from "./db";
 import type { StrategyRunFinishStatus } from "./strategy-run-status";
 import type { StrategyRunRow } from "./types";

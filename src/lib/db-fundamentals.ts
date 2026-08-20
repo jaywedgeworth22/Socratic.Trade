@@ -41,6 +41,7 @@
  * reaching for the latest-value store.
  */
 
+import "server-only";
 import { getDb } from "./db";
 import type { Database } from "better-sqlite3";
 import { normalizeSymbol } from "./money";

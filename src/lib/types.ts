@@ -2900,6 +2900,12 @@ export interface PerformanceSummary {
   paperWinRate: number;
   liveAverageReturnPct: number;
   paperAverageReturnPct: number;
+  /** Count of CLOSED lots feeding liveWinRate/liveAverageReturnPct (0 for an account that has
+   *  never closed a lot). winRate/averageReturn compute to 0 — not undefined — for an empty lot
+   *  list, so consumers MUST gate the "0%" / "+0.00%" render on this count being > 0, never on
+   *  the value itself (an account with exactly one break-even closed lot has a genuine 0%). */
+  liveClosedLotCount: number;
+  paperClosedLotCount: number;
   attribution: RunAttribution[];
   fills: FillEvent[];
 }

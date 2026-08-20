@@ -1,3 +1,20 @@
+# Current Status
+
+## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
+
+FMP is banned for market data (owner ruling 2026-08-20); it stays valid only as a
+latency-race competitor being timed.  New `src/lib/market-realtime.ts` plus token-gated
+peer routes `/api/market/quotes` and `/api/market/intraday/[symbol]` replace it for CT.
+Intraday bars are the important half: CT schedules snapshots retrospectively, so a live
+quote can never honestly answer a past due-time.  Robinhood first, Alpaca fallback,
+delayed Yahoo opt-in and flagged.  ROIC rejected (daily-only, 4h cache).
+
+Gates: lint 0 errors, tsc clean, 639 files / 7191 tests, build ok.
+
+BLOCKER: production recovered from the 08:17Z outage on the LAST GOOD IMAGE (77d7d7b6)
+and is four merges behind origin/main.  Do not add a build to that queue until it
+catches up.  Receipt: `docs/rollouts/2026-08-20-ct-price-service.md`.
+
 # Current Handoff
 
 ## 2026-08-20 MONET - iOS test target compiles again, three stale tests fixed (owner-directed)
@@ -8,6 +25,13 @@ Fixed test-side, not model-side: `MobileStore` caches the RAW response bytes and
 
 Verified: `xcodebuild test -only-testing:SocraticTradeTests/DeskModelsTests` exit 0, zero failures, 59s.  **Next: `qa-01`/`qa-02` are now actionable - add `xcodebuild test` to CI so a red Swift target cannot hide again.**  Rollout: `docs/rollouts/2026-08-20-ios-test-target-repair.md`.
 
+## 2026-08-20 MONET - `pnl-basis-labels` up for review
+
+Every performance number now says what it measures.  Basis and window travel with the value through `performance.ts` / `benchmark.ts` to both the console and iOS, so "Unrealized P&L" stops meaning three different things across Results, Home and the phone; an empty sample reads as no-data rather than a confident `0%`; and mark-to-market sums a book with shorts on `|basis|` instead of netting short against long (`costBasis` changed meaning net -> gross; identical for an all-long book, and the single consumer was grep-confirmed).  `-` (unavailable) vs `n/a` (computed no-ratio) preserved.
+
+**Not closed, stated openly:** `perf-17` - the SPY benchmark is total-return or price-return depending on which history provider answered, and an intraday tip is compared against an EOD close.  Confirmed by reading the provider cascade, not papered over; normalising that is its own change.  Also open: the coach tool context still passes raw win rate with no sample count.
+
+Gate: lint 0 errors, tsc clean, 7140 tests, build 0, `xcodebuild build` 0.  Rollout: `docs/rollouts/2026-08-20-pnl-basis-labels.md`.
 ## 2026-08-20 CURSOR-BUGBOT — owner-cancel protective-stop tombstone on lookup miss
 
 `cancelWorkingOrder` only tombstoned an owner-cancelled app-managed stop when the advisory pre-cancel broker read returned the order.  Console cancel is fail-open on that read (timeout, throw, or a working GTC stop missing from scoped `getEquityOrders`).  The broker cancel still ran, but `cancelledSymbol` stayed empty, so the do-not-replace tombstone and `broker_protective_stops` delete were skipped.  The next reconcile tick then treated the cancelled stop as a stale resting row and re-placed protection the owner had just removed.
@@ -21,6 +45,17 @@ Fix: take the symbol from the tracked `broker_protective_stops` row when the loo
 Untrusted content can no longer reach the always-trusted strategy prompt unlabelled.  The trust boundary now lives AT THE SINK: `mergeStrategyDirectiveBlock` requires `source`, runs containment itself and returns `{ prompt, contained }`, so a future caller cannot write an unscanned directive by forgetting a helper (the required parameter proved itself by breaking the one stale 4-arg call site at compile time).  Coach URL lessons are contained at ingest and dropped + audited on a real hijack idiom; the forgeable unauthenticated `POST /api/chat-history` is deleted; a `MockLLM` semantic-gate fallback is audited instead of silent; the revalidation rationale is contained and the reviewer prompt carries a data-not-command clause.
 
 **Owner text is never altered** - containment keys on provenance, so `owner-coach` passes byte-for-byte.  `learningReviewMode: "decide"` auto-apply and `learningReviewEnabled` are untouched: the second review round established that as an owner choice with an existing off-switch, and re-gating it would be paternalism.  Gate: lint 0 errors, tsc clean, 7146 tests, build 0.  Rollout: `docs/rollouts/2026-08-20-prompt-trust-boundary.md`.
+## 2026-08-20 CURSOR — Stale hosting/stack copy sweep (docs only)
+
+Swept current-truth docs and GitHub About for Vercel / Cloudflare Workers /
+PWA-as-current / retired preview hosts.  README and GitHub About already
+point at Coolify / socratictrade.com — left those alone.  Fixed PLAN.md
+Current Status + acceptance checks, leftover AGENTS.md preview/PWA/Mac-pm2
+present-tense, ops-diagnostics `trading.jays.services`, and matching
+ops/litestream/UX-program current-truth lines.  No product code.
+
+**IN PR #2945.**  Branch `cursor/stale-hosting-docs-b392`.  Rollout:
+`docs/rollouts/2026-08-20-stale-hosting-docs.md`.
 
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
 
@@ -198,6 +233,9 @@ Part II cluster `event-loop-pins`: FTS idempotency no longer full-scans the corp
 ## 2026-08-19 CURSOR — Green Bull strict schema (`green-request-schema`)
 
 Part II cluster `green-request-schema`: `exitPlan` was in Bull `properties` but missing from `BULL_PROPOSAL_REQUIRED_KEYS`, so OpenAI strict mode 400'd every Green seat.  Added `exitPlan` to required keys, invariant test (properties ⊆ required), and `json_object` post-parse completeness via `filterRepairedProposals`.  Branch `cursor/green-bull-schema-769b`.  Rollout: `docs/rollouts/2026-08-19-green-bull-schema.md`.
+## 2026-08-19 CURSOR — console-ships-too-much cluster (server DB boundary + snapshot projection)
+
+PR **#2884** (`cursor/console-ships-too-much-6790`).  `server-only` on all `src/lib/db*` modules; `venue-contract-pure.ts` so `brokers.tsx` no longer pulls the DB layer; dashboard snapshot drops raw `audit[]`, trims `quotesBySymbol` and order history, and ack/cancel/replace invalidate the 10s cache.  Connections client chunk grep: 0 `getDb` / `better-sqlite3` hits after `npm run build`.  Rollout: `docs/rollouts/2026-08-19-console-ships-too-much.md`.
 
 ## 2026-08-19 MONET — Full-app review Part II: adversarial re-verify + gap coverage + deduped fix plan
 

@@ -3,6 +3,7 @@
 // ingest/refresh policy lives in src/lib/economic-calendar.ts. Rows are a small rolling
 // cache of upcoming scheduled macro events (CPI/FOMC/NFP class) — shared market data,
 // not per-user state.
+import "server-only";
 import { getDb } from "./db";
 
 export interface EconomicEventRow {

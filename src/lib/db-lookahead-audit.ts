@@ -6,6 +6,7 @@
 // with an honest three-way classification: clean | mismatch | unverifiable. Unverifiable rows are
 // deliberate receipts of the coverage gap (factors with no point-in-time source), never noise to
 // suppress. Advisory observability only — findings never gate a trade.
+import "server-only";
 import { getDb } from "./db";
 
 export type LookaheadClassification = "clean" | "mismatch" | "unverifiable";

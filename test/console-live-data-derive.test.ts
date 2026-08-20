@@ -63,6 +63,28 @@ describe("console live-data derivations", () => {
     });
   });
 
+  it("perf-15: uses GROSS (|basis|) cost basis for the percentage — net signed basis hides a real return on a short-heavy book", () => {
+    // Long: cost basis +1000, up $100 (1100 mark). Short: cost basis -1000 (net signed), the
+    // price dropped 100 -> 90 so the short is ALSO up $100 (marketValue -900 vs basis -1000).
+    // Net signed sum of the two bases is exactly 0 — the old `costBasis > 0` guard falls through
+    // to `undefined`, hiding a genuine +10% return on the $2,000 of capital actually committed
+    // (gross). This must not be confused with 0%: the real per-position math (positions.tsx) already
+    // divides by Math.abs(costBasis) row by row — the account-level figure must match.
+    const snapshot = snapshotWith({
+      positions: [
+        { symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1_100 },
+        { symbol: "SHRT", quantity: -10, averageCost: 100, marketValue: -900 }
+      ],
+      portfolio: { equityMarketValue: 200, cash: 0, buyingPower: 0 } satisfies Partial<Portfolio>
+    });
+
+    const result = deriveMarkToMarket(snapshot);
+    expect(result?.unrealizedPnl).toBeCloseTo(200, 5); // +100 long, +100 short
+    expect(result?.costBasis).toBeCloseTo(2_000, 5); // gross: |1000| + |-1000|
+    expect(result?.unrealizedPct).not.toBeUndefined();
+    expect(result?.unrealizedPct).toBeCloseTo(10, 5); // 200 / 2000
+  });
+
   it("derives daily notional, order, and deployed-capital utilization", () => {
     const snapshot = snapshotWith({
       positions: [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1_200 }],

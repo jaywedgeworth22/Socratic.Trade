@@ -1069,7 +1069,17 @@ export function robinhoodMcpDataEnabled(): boolean {
  */
 export async function fetchRobinhoodHistoricals(
   symbol: string,
-  opts: { interval?: string; span?: string; userId: string }
+  opts: {
+    interval?: string;
+    span?: string;
+    userId: string;
+    /** Explicit RFC3339 window. When given, `startTime` wins over the `span` shorthand and
+     *  `endTime` bounds the far end — required for INTRADAY reads, where "5 years back until
+     *  now" would blow past the row cap long before reaching the minute of interest. */
+    startTime?: string;
+    endTime?: string;
+    bounds?: string;
+  }
 ): Promise<OHLCBar[] | null> {
   if (!robinhoodMcpDataEnabled()) return null;
   const sym = normalizeSymbol(symbol);
@@ -1078,12 +1088,17 @@ export async function fetchRobinhoodHistoricals(
   try {
     const raw = await callRobinhoodMcpTool(userId, "get_equity_historicals", {
       symbols: [sym],
-      start_time: robinhoodHistoricalsStartTime(opts.span ?? "5year"),
+      start_time: opts.startTime ?? robinhoodHistoricalsStartTime(opts.span ?? "5year"),
+      ...(opts.endTime ? { end_time: opts.endTime } : {}),
       interval: opts.interval ?? "day",
-      bounds: "regular"
+      bounds: opts.bounds ?? "regular"
     });
     const bars = parseRobinhoodHistoricals(raw, sym);
-    return bars.length >= 2 ? bars : null;
+    // The >=2 floor exists so a single stale print cannot satisfy the DAILY cascade. An explicit
+    // intraday window is a different question ("what traded between 14:40 and 15:40"), where one
+    // bar is a legitimate answer for a thin name — so only apply the floor to span-style reads.
+    const minBars = opts.startTime ? 1 : 2;
+    return bars.length >= minBars ? bars : null;
   } catch {
     return null;
   }

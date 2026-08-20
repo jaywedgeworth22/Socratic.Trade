@@ -13,6 +13,7 @@
 //     transcript not yet available. `fetched_at` anchors the negative TTL.
 //   - `ingested_at` tracks the separate downstream RAG-ingest step: content can be cached
 //     (no more provider spend) while ingest retries later for free.
+import "server-only";
 import { getDb } from "./db";
 import { normalizeSymbol } from "./money";
 

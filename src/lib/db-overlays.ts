@@ -1,4 +1,5 @@
 // db-overlays.ts — owner-authored advisory strategy overlays (migration 81).
+import "server-only";
 import crypto from "crypto";
 import { getDb } from "./db";
 import { parseOverlayRegimes, type OverlayRegimeTag, type StrategyOverlay } from "./overlay-router";

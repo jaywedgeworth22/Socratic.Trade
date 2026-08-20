@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
-import { realizedPnlNetOfEstimatedTax } from "@/lib/tax";
+import { realizedPnlNetOfEstimatedTax } from "@/lib/tax-pure";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleApiError, fetchAccountPerformance, fetchLookaheadAudit, fetchSignalHealth, type LookaheadAuditResponse, type SignalHealthResponse } from "../lib/api";
 import {
@@ -92,9 +92,16 @@ function bucketFor(
   performance: PerformanceSummary | null,
   environment: "paper" | "live",
   pricesUnavailable = false
-): { realized?: number; unrealized?: number; winRate?: number; avgReturn?: number; curve: EquityCurvePoint[] } {
+): {
+  realized?: number;
+  unrealized?: number;
+  winRate?: number;
+  avgReturn?: number;
+  closedLotCount: number;
+  curve: EquityCurvePoint[];
+} {
   if (!performance) {
-    return { realized: undefined, unrealized: undefined, winRate: undefined, avgReturn: undefined, curve: [] };
+    return { realized: undefined, unrealized: undefined, winRate: undefined, avgReturn: undefined, closedLotCount: 0, curve: [] };
   }
   const bucket =
     environment === "paper"
@@ -103,6 +110,7 @@ function bucketFor(
           unrealized: performance.paperUnrealizedPnl,
           winRate: performance.paperWinRate,
           avgReturn: performance.paperAverageReturnPct,
+          closedLotCount: performance.paperClosedLotCount,
           curve: performance.paperEquityCurve
         }
       : {
@@ -110,6 +118,7 @@ function bucketFor(
           unrealized: performance.liveUnrealizedPnl,
           winRate: performance.liveWinRate,
           avgReturn: performance.liveAverageReturnPct,
+          closedLotCount: performance.liveClosedLotCount,
           curve: performance.liveEquityCurve
         };
   return pricesUnavailable ? { ...bucket, unrealized: undefined } : bucket;
@@ -149,6 +158,7 @@ export default function ResultsPage() {
       unrealized={perf?.paperUnrealizedPnl}
       winRate={perf?.paperWinRate}
       avgReturn={perf?.paperAverageReturnPct}
+      closedLotCount={perf?.paperClosedLotCount ?? 0}
       curve={perf?.paperEquityCurve ?? []}
       netOfTax={subtractFromResults}
     />
@@ -161,6 +171,7 @@ export default function ResultsPage() {
       unrealized={perf?.liveUnrealizedPnl}
       winRate={perf?.liveWinRate}
       avgReturn={perf?.liveAverageReturnPct}
+      closedLotCount={perf?.liveClosedLotCount ?? 0}
       curve={perf?.liveEquityCurve ?? []}
       netOfTax={subtractFromResults}
     />
@@ -241,8 +252,8 @@ export default function ResultsPage() {
               <Stat
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
-                sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
-                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others. Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would."
+                sub={`Trailing ~${perf.benchmark.points} session${perf.benchmark.points === 1 ? "" : "s"} (${perf.benchmark.startDate} → ${perf.benchmark.endDate})`}
+                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others. Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would. This window is bounded to your most recently stored equity snapshots — a rolling window, not necessarily your full account history."
               />
               <Stat
                 label={perf.benchmark.benchmarkSymbol}
@@ -951,6 +962,7 @@ function BucketCard({
   unrealized,
   winRate,
   avgReturn,
+  closedLotCount,
   curve,
   netOfTax = false
 }: {
@@ -960,15 +972,26 @@ function BucketCard({
   unrealized?: number;
   winRate?: number;
   avgReturn?: number;
+  /** Number of CLOSED lots behind winRate/avgReturn. Zero closed lots must render as "no data
+   *  yet" (EM_DASH), never a fabricated "0%"/"+0.00%" — winRate/avgReturn both compute to 0 (not
+   *  undefined) for an empty lot list, so the value itself can't distinguish "no trades closed"
+   *  from "closed trades that genuinely broke even". Gate on this count, not the value. */
+  closedLotCount: number;
   curve: Array<{ timestamp: string; equity: number; source: "live" | "paper" }>;
   netOfTax?: boolean;
 }) {
-  const hasAny = curve.length > 0 || (realized ?? 0) !== 0 || (unrealized ?? 0) !== 0;
+  const realizedBasisNote =
+    "All-time, app-booked closed lots (this app's own FIFO lot ledger). Exits of positions this app did not open — pre-app holdings, manual trades — are not included.";
+  const unrealizedBasisNote =
+    "This app's lot ledger: average entry price of app-booked open lots × quantity, marked to the latest known price. May differ from your broker's own cost-basis figure for positions built partly outside this app.";
   return (
     <Card title={title}>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <div className="con-card-title" title={netOfTax ? "Realized P&L minus estimated tax at your configured short- and long-term rates." : undefined}>
+          <div
+            className="con-card-title"
+            title={netOfTax ? `${realizedBasisNote} Net of estimated tax at your configured short- and long-term rates.` : realizedBasisNote}
+          >
             Realized P&amp;L{netOfTax ? " (net of est. tax)" : ""}
           </div>
           <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
@@ -976,19 +999,23 @@ function BucketCard({
           </div>
         </div>
         <div>
-          <div className="con-card-title">Unrealized P&amp;L</div>
+          <div className="con-card-title" title={unrealizedBasisNote}>
+            Unrealized P&amp;L
+          </div>
           <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
             {typeof unrealized === "number" ? <SignedText value={unrealized}>{fmtSignedMoney(unrealized)}</SignedText> : <Dash />}
           </div>
         </div>
         <div>
-          <div className="con-card-title">Win rate</div>
-          <div className="con-num mt-0.5">{hasAny && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
+          <div className="con-card-title" title="Share of CLOSED lots that were profitable. Shows — until this bucket has closed at least one lot — a 0% here would otherwise be indistinguishable from “no trades closed yet”.">
+            Win rate
+          </div>
+          <div className="con-num mt-0.5">{closedLotCount > 0 && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
         </div>
         <div>
           <div className="con-card-title" title="Capital-weighted realized return across closed lots (sum of P&amp;L ÷ sum of entry notional). Not the same as account NAV change — open positions and cash are excluded. Unweighted trade averages were retired because small round-trips dominated. The SPY panel below is the account equity time-weighted return.">Avg return / closed capital</div>
           <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices. It is not adjusted for SPY or market beta.">
-            {hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
+            {closedLotCount > 0 && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
           </div>
         </div>
       </div>

@@ -555,7 +555,7 @@ interface TradierHistoryResponse {
  * the owner's local connection).  We do not fall back to leftover env paper keys —
  * those would silently spend the operator credential on every tenant history miss.
  */
-function resolveAlpacaHistoryCredential(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
+export function resolveAlpacaHistoryCredential(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
   const scoped = userId ? getConnectedAccountByBroker("alpaca", userId) ?? getConnectedAccountByBroker("alpaca-mcp", userId) : undefined;
   const acct = scoped ?? getConnectedAccountByBroker("alpaca", "local") ?? getConnectedAccountByBroker("alpaca-mcp", "local");
   return {
