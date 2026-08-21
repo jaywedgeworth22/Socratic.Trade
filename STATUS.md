@@ -90,6 +90,15 @@ outside this ask and affects every iOS PR.
 `WrappingHStackTests.swift` -> `LayoutMathTests.swift` rename needs `xcodegen` on a Mac.
 
 Rollout: `docs/rollouts/2026-08-21-ios-adaptive-tabs-ipad-layout.md`.
+## 2026-08-20 CLAUDE - login screen: hero wordmark, one set of provider buttons, fuller legal copy
+
+Owner screenshot review of the iOS sign-in screen.  Four changes, mirrored on the website login where the surface is shared: a new first value bullet ("Configure strategic framework and guardrails"), the candlestick wordmark scaled from a 24pt top-bar glyph to a headline that fills the content column, all three provider buttons rendered at identical width/height/radius, and the owner's expanded disclaimer (account at SocraticTrade.com, Terms/Privacy linked below, AI output not guaranteed though the framework is user-defined, educational/experimental/informational use only).
+
+The Apple button was narrower than the other two for a concrete reason worth recording: `ASAuthorizationAppleIDButton` hard-caps its width at 375pt, and the login content column was 400pt.  Fix is to narrow the column to 352, not to stretch the Apple host -- a prior comment in `LoginView.swift` already warned that stretching it past the cap trips unsatisfiable autoresizing constraints.
+
+Label-size parity inside the Apple button is NOT achievable without replacing it with a custom control, which would put Sign in with Apple branding compliance on us at App Review.  Google/GitHub labels went 15 -> 17pt medium to close most of the gap; the remaining difference is Apple's own.
+
+Verified with a simulator screenshot, not just a green build.  Copy and layout only -- no auth, session, or order path touched.  Rollout: `docs/rollouts/2026-08-20-login-hero-and-legal-copy.md`.
 
 ## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
 
