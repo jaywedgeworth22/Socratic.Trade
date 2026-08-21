@@ -413,7 +413,7 @@ function ApprovalsPageInner() {
           <Card>
             <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]">
               <strong>The system is stopped.</strong> The server refuses approving or rejecting proposals while stopped —
-              start it (or switch to Exit-only) from the Stopped button in the top bar first. Run once can still create
+              start it (or switch to Exit-only) from the Stopped button in the top bar first. Run Once can still create
               proposals.
             </p>
           </Card>
@@ -430,7 +430,7 @@ function ApprovalsPageInner() {
                       names the lightning glyph it renders as. */}
                   <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
                     When a run stages a trade that needs your approval, it shows up here.{SENTENCE_GAP}
-                    Need a cycle now? Use <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong>{" "}
+                    Need a cycle now? Use <strong className="font-semibold text-[color:var(--con-fg)]">Run Once</strong>{" "}
                     — the <span aria-hidden>⚡</span> lightning button in the
                     top bar
                     {stopped ? (
