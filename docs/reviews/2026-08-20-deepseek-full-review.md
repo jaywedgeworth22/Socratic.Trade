@@ -94,3 +94,7 @@ Quick wins from the track (S-effort each): `exit 1` in `scripts/rth-deploy-drain
 3. `830c892f` (P1, S) — make ios-build a required check; `410bda84` (P1, S) — privacy manifest.
 4. `d9f81e44` (P1, S) — iOS dictionary crash; `179cc4b2` (P2, M) — staleness gate decouple.
 5. The P2 batch: `28c50b28` tab titles, `cdee1562` read-opacity, `7e93bbcc` legal cache, `3a8bcdcf` from-draft rate limit, `d6f0a9d3` API error honesty, `220c6cc6` watchdog RTH awareness (M), `34b8fbe7` CSP enforcement (M), `68d11cc9` retired-lane script deletions, `7db3350e` ops doc rewrite, mobile `bf05f16a`/`acc07df6` remnants.
+
+## 10. HANDOFF (owner direction 2026-08-21)
+
+Owner directed that DEEPSEEK not implement fixes; the review is complete and is handed to the fleet as actionable instructions.  **See `docs/handoffs/2026-08-21-deepseek-review-handoff.md`** (master note: claim protocol, full work list with board ids, first-wave suggestions) and the per-area handoff files `docs/handoffs/2026-08-21-{desktop-web,mobile-web,ios,backend-ops}-handoff.md` (exact file:line anchors, fix approach, failing-first tests, verify commands, pitfalls, avoid-lists).  All findings are on the board — `board claim <id>` before work; do not re-file.
