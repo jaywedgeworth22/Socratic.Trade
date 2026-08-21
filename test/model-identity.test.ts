@@ -26,19 +26,19 @@ describe("canonicalModelId — family identity for Results / price benchmarking 
   });
 
   it("collapses every Claude Opus / Sonnet / Haiku / Fable onto the catalog family id", () => {
-    expect(canonicalModelId("claude-opus-5")).toBe("claude-opus-5");
-    expect(canonicalModelId("claude-opus-4-8")).toBe("claude-opus-5");
-    expect(canonicalModelId("anthropic/claude-opus-latest")).toBe("claude-opus-5");
-    expect(canonicalModelId("claude-3-opus")).toBe("claude-opus-5");
-    expect(canonicalModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
-    expect(canonicalModelId("claude-sonnet-4-6")).toBe("claude-sonnet-5");
-    expect(canonicalModelId("claude-sonnet-latest")).toBe("claude-sonnet-5");
-    expect(canonicalModelId("openrouter/~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-5");
-    expect(canonicalModelId("claude-haiku-4.5")).toBe("claude-haiku-4.5");
-    expect(canonicalModelId("claude-haiku-4-5")).toBe("claude-haiku-4.5");
-    expect(canonicalModelId("claude-3-5-haiku")).toBe("claude-haiku-4.5");
-    expect(canonicalModelId("claude-fable-5")).toBe("claude-fable-5");
-    expect(canonicalModelId("anthropic/claude-fable-latest")).toBe("claude-fable-5");
+    expect(canonicalModelId("claude-opus-5")).toBe("claude-opus-latest");
+    expect(canonicalModelId("claude-opus-4-8")).toBe("claude-opus-latest");
+    expect(canonicalModelId("anthropic/claude-opus-latest")).toBe("claude-opus-latest");
+    expect(canonicalModelId("claude-3-opus")).toBe("claude-opus-latest");
+    expect(canonicalModelId("claude-sonnet-5")).toBe("claude-sonnet-latest");
+    expect(canonicalModelId("claude-sonnet-4-6")).toBe("claude-sonnet-latest");
+    expect(canonicalModelId("claude-sonnet-latest")).toBe("claude-sonnet-latest");
+    expect(canonicalModelId("openrouter/~anthropic/claude-sonnet-latest")).toBe("claude-sonnet-latest");
+    expect(canonicalModelId("claude-haiku-4.5")).toBe("claude-haiku-latest");
+    expect(canonicalModelId("claude-haiku-4-5")).toBe("claude-haiku-latest");
+    expect(canonicalModelId("claude-3-5-haiku")).toBe("claude-haiku-latest");
+    expect(canonicalModelId("claude-fable-5")).toBe("claude-fable-latest");
+    expect(canonicalModelId("anthropic/claude-fable-latest")).toBe("claude-fable-latest");
   });
 
   it("keeps distinct product lines separate (Flash vs Flash Lite vs Pro; Terra vs Luna vs Sol)", () => {

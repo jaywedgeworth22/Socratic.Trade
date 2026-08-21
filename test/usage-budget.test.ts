@@ -59,8 +59,8 @@ function status(providers: Array<{
 
 describe("usage-budget: cheaperModel", () => {
   it("maps known models down a tier and returns undefined when none", () => {
-    expect(budget.cheaperModel("openai/gpt-4o")).toBe("openai/gpt-5.4-mini");
-    expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-4-6");
+    expect(budget.cheaperModel("openai/gpt-4o")).toBe("openai/gpt-mini-latest");
+    expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-latest");
     expect(budget.cheaperModel("claude-haiku-4-5-20251001")).toBeUndefined(); // already cheapest (prefix)
     expect(budget.cheaperModel("openai/gpt-5.4-nano")).toBeUndefined();
     expect(budget.cheaperModel(undefined)).toBeUndefined();
@@ -87,8 +87,8 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBe("openai/gpt-5.4-mini");
-    expect(decision.redTeamLlmModel).toBe("openai/gpt-5.4-mini");
+    expect(decision.llmModel).toBe("openai/gpt-mini-latest");
+    expect(decision.redTeamLlmModel).toBe("openai/gpt-mini-latest");
   });
 
   it("skips the cycle when over budget and already on the cheapest tier", async () => {
@@ -175,7 +175,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBe("openai/gpt-5.4-mini");
+    expect(decision.llmModel).toBe("openai/gpt-mini-latest");
   });
 });
 

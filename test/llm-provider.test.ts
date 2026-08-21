@@ -33,7 +33,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("openrouter");
     expect(endpoint.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(endpoint.key).toBe("sk-or-test-key");
-    expect(endpoint.model).toBe("anthropic/claude-sonnet-5");
+    expect(endpoint.model).toBe("anthropic/claude-sonnet-latest");
     expect(endpoint.transport).toBe("chat-completions");
   });
 
@@ -72,59 +72,58 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.key).toBeUndefined();
   });
 
-  it("maps Flash-class aliases to current OpenRouter Gemini 3.7 Flash", async () => {
+  it("maps Flash-class aliases to the owner OpenRouter Flash wire slug", async () => {
     const { normalizeOpenRouterModelId, OPENROUTER_GEMINI_FLASH, OPENROUTER_GEMINI_FLASH_BATCH } =
       await import("../src/lib/llm-provider");
     expect(normalizeOpenRouterModelId("gemini-flash-latest")).toBe(OPENROUTER_GEMINI_FLASH);
     expect(normalizeOpenRouterModelId("google/gemini-flash-latest")).toBe(OPENROUTER_GEMINI_FLASH);
     expect(normalizeOpenRouterModelId("google/gemini-3.6-flash")).toBe(OPENROUTER_GEMINI_FLASH);
     expect(normalizeOpenRouterModelId("google/gemini-3.6-flash:batch")).toBe(OPENROUTER_GEMINI_FLASH_BATCH);
-    expect(normalizeOpenRouterModelId("gemini-3.5-flash")).toBe("google/gemini-3.5-flash");
+    expect(normalizeOpenRouterModelId("gemini-3.5-flash")).toBe(OPENROUTER_GEMINI_FLASH);
     expect(normalizeOpenRouterModelId("google/gemini-3.7-flash")).toBe(OPENROUTER_GEMINI_FLASH);
   });
 
-  it("maps Mistral Medium to the dash OpenRouter slug, never the period form", async () => {
+  it("maps Mistral Medium to the owner OpenRouter period slug", async () => {
     const { normalizeOpenRouterModelId } = await import("../src/lib/llm-provider");
-    expect(normalizeOpenRouterModelId("mistral-medium-latest")).toBe("mistralai/mistral-medium-3-5");
-    expect(normalizeOpenRouterModelId("mistral-medium-3-5")).toBe("mistralai/mistral-medium-3-5");
-    expect(normalizeOpenRouterModelId("mistral-medium-3.5")).toBe("mistralai/mistral-medium-3-5");
-    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3.5")).toBe("mistralai/mistral-medium-3-5");
-    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3-5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistral-medium-latest")).toBe("mistralai/mistral-medium-3.5");
+    expect(normalizeOpenRouterModelId("mistral-medium-3-5")).toBe("mistralai/mistral-medium-3.5");
+    expect(normalizeOpenRouterModelId("mistral-medium-3.5")).toBe("mistralai/mistral-medium-3.5");
+    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3.5")).toBe("mistralai/mistral-medium-3.5");
+    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3-5")).toBe("mistralai/mistral-medium-3.5");
     expect(normalizeOpenRouterModelId("gpt-5.4-nano")).toBe("openai/gpt-5.4-nano");
   });
 
-  it("emits live OpenRouter public ids, never the untilded -latest 404s", async () => {
-    // Verified GET https://openrouter.ai/api/v1/models 2026-08-18 (413 models).
+  it("emits owner OpenRouter wire slugs for catalog families and aliases", async () => {
     const { normalizeOpenRouterModelId } = await import("../src/lib/llm-provider");
     const cases: Array<[string, string]> = [
-      ["claude-sonnet-5", "anthropic/claude-sonnet-5"],
-      ["claude-sonnet-latest", "anthropic/claude-sonnet-5"],
-      ["anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-5"],
-      ["~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-5"],
-      ["openrouter/~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-5"],
-      ["claude-haiku-4.5", "anthropic/claude-haiku-4.5"],
-      ["claude-haiku-latest", "anthropic/claude-haiku-4.5"],
-      ["anthropic/claude-haiku-latest", "anthropic/claude-haiku-4.5"],
-      ["~anthropic/claude-haiku-latest", "anthropic/claude-haiku-4.5"],
-      ["claude-opus-5", "anthropic/claude-opus-5"],
-      ["claude-opus-latest", "anthropic/claude-opus-5"],
-      ["anthropic/claude-opus-latest", "anthropic/claude-opus-5"],
-      ["~anthropic/claude-opus-latest", "anthropic/claude-opus-5"],
-      ["claude-fable-5", "anthropic/claude-fable-5"],
-      ["claude-fable-latest", "anthropic/claude-fable-5"],
-      ["anthropic/claude-fable-latest", "anthropic/claude-fable-5"],
-      ["~anthropic/claude-fable-latest", "anthropic/claude-fable-5"],
-      ["grok-4.5", "x-ai/grok-4.5"],
-      ["grok-latest", "x-ai/grok-4.5"],
-      ["x-ai/grok-latest", "x-ai/grok-4.5"],
-      ["~x-ai/grok-latest", "x-ai/grok-4.5"],
-      ["gpt-5.4-mini", "openai/gpt-5.4-mini"],
-      ["gpt-mini-latest", "openai/gpt-5.4-mini"],
-      ["openai/gpt-mini-latest", "openai/gpt-5.4-mini"],
-      ["~openai/gpt-mini-latest", "openai/gpt-5.4-mini"],
-      ["kimi-latest", "~moonshotai/kimi-latest"],
-      ["moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
-      ["~moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
+      ["claude-sonnet-5", "anthropic/claude-sonnet-latest"],
+      ["claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
+      ["anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
+      ["~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
+      ["openrouter/~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
+      ["claude-haiku-4.5", "anthropic/claude-haiku-latest"],
+      ["claude-haiku-latest", "anthropic/claude-haiku-latest"],
+      ["anthropic/claude-haiku-latest", "anthropic/claude-haiku-latest"],
+      ["~anthropic/claude-haiku-latest", "anthropic/claude-haiku-latest"],
+      ["claude-opus-5", "anthropic/claude-opus-latest"],
+      ["claude-opus-latest", "anthropic/claude-opus-latest"],
+      ["anthropic/claude-opus-latest", "anthropic/claude-opus-latest"],
+      ["~anthropic/claude-opus-latest", "anthropic/claude-opus-latest"],
+      ["claude-fable-5", "anthropic/claude-fable-latest"],
+      ["claude-fable-latest", "anthropic/claude-fable-latest"],
+      ["anthropic/claude-fable-latest", "anthropic/claude-fable-latest"],
+      ["~anthropic/claude-fable-latest", "anthropic/claude-fable-latest"],
+      ["grok-4.5", "x-ai/grok-latest"],
+      ["grok-latest", "x-ai/grok-latest"],
+      ["x-ai/grok-latest", "x-ai/grok-latest"],
+      ["~x-ai/grok-latest", "x-ai/grok-latest"],
+      ["gpt-5.4-mini", "openai/gpt-mini-latest"],
+      ["gpt-mini-latest", "openai/gpt-mini-latest"],
+      ["openai/gpt-mini-latest", "openai/gpt-mini-latest"],
+      ["~openai/gpt-mini-latest", "openai/gpt-mini-latest"],
+      ["kimi-latest", "moonshotai/kimi-latest"],
+      ["moonshotai/kimi-latest", "moonshotai/kimi-latest"],
+      ["~moonshotai/kimi-latest", "moonshotai/kimi-latest"],
       ["deepseek-reasoner", "deepseek/deepseek-r1"],
       ["deepseek/deepseek-reasoner", "deepseek/deepseek-r1"],
       ["deepseek-r1", "deepseek/deepseek-r1"]
@@ -132,10 +131,5 @@ describe("resolveLlmEndpoint", () => {
     for (const [input, expected] of cases) {
       expect(normalizeOpenRouterModelId(input), input).toBe(expected);
     }
-    expect(normalizeOpenRouterModelId("anthropic/claude-sonnet-latest")).not.toBe("anthropic/claude-sonnet-latest");
-    expect(normalizeOpenRouterModelId("x-ai/grok-latest")).not.toBe("x-ai/grok-latest");
-    expect(normalizeOpenRouterModelId("openai/gpt-mini-latest")).not.toBe("openai/gpt-mini-latest");
-    expect(normalizeOpenRouterModelId("moonshotai/kimi-latest")).not.toBe("moonshotai/kimi-latest");
-    expect(normalizeOpenRouterModelId("deepseek/deepseek-reasoner")).not.toBe("deepseek/deepseek-reasoner");
   });
 });

@@ -13,11 +13,12 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
   it("offers the three GPT-5.6 API tiers plus the genuinely cheaper Mini/Nano choices and GPT-4o", () => {
     expect(openAi.options.map((option) => option.value)).toEqual([
       "gpt-5.4-nano",
-      "gpt-5.4-mini",
+      "gpt-mini-latest",
       "gpt-5.6-luna",
       "gpt-5.6-terra",
       "gpt-5.6-sol",
-      "gpt-4o"
+      "gpt-4o",
+      "gpt-4o-mini"
     ]);
     expect(openAi.options.find((option) => option.value === "gpt-5.6-terra")?.recommendedGreen).toBe(true);
     expect(openAi.options.find((option) => option.value === "gpt-5.6-sol")?.recommendedRed).toBe(true);
@@ -29,7 +30,7 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
   });
 
   it("has a visible reasoning control and role-specific recommendation for every curated OpenAI option", () => {
-    for (const option of openAi.options.filter((o) => o.value !== "gpt-4o")) {
+    for (const option of openAi.options.filter((o) => o.value !== "gpt-4o" && o.value !== "gpt-4o-mini")) {
       expect(reasoningCapabilityForModel(option.value)).toBeDefined();
       expect(recommendedReasoningEffortForModel(option.value, "green")).toBeTruthy();
       expect(recommendedReasoningEffortForModel(option.value, "red")).toBeTruthy();

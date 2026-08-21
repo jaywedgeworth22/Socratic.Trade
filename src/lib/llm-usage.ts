@@ -91,6 +91,7 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "gpt-5.5": [5, 30],
   "gpt-5.4": [2.5, 15],
   "gpt-5.4-mini": [0.75, 4.5],
+  "gpt-mini-latest": [0.75, 4.5],
   "gpt-5.4-nano": [0.2, 1.25],
   "gpt-5.6": [5, 30],
   "gpt-5.6-sol": [5, 30],
@@ -100,13 +101,18 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "grok-build-latest": [1, 2],
   "grok-4.3": [1.25, 2.5],
   "grok-4.5": [1.25, 2.5],
+  "grok-latest": [1.25, 2.5],
   "claude-fable-5": [10, 50],
+  "claude-fable-latest": [10, 50],
   "claude-opus-4-8": [5, 25],
   "claude-opus-5": [5, 25],
+  "claude-opus-latest": [5, 25],
   "claude-sonnet-5": [3, 15],
   "claude-sonnet-4-6": [3, 15],
+  "claude-sonnet-latest": [3, 15],
   "claude-haiku-4-5": [1, 5],
   "claude-haiku-4.5": [1, 5],
+  "claude-haiku-latest": [1, 5],
   // Gemini (lite listed first so the prefix match prefers it over the base flash key).
   "gemini-3.1-flash-lite": [0.25, 1.5],
   "gemini-flash-lite-latest": [0.25, 1.5],
@@ -120,6 +126,7 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "gemini-2.5-flash": [0.3, 2.5],
   "gemini-2.5-pro": [1.25, 10],
   "mistral-large-2512": [2, 6],
+  "mistral-large-latest": [2, 6],
   "mistral-medium-3-5": [1.5, 7.5],
   "mistral-medium-latest": [1.5, 7.5],
   "mistral-small-latest": [0.15, 0.6],
@@ -128,9 +135,13 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "mistral-medium": [0.4, 2],
   "mistral-small": [0.1, 0.3],
   "deepseek-v4-flash": [0.14, 0.28],
+  "deepseek-flash-latest": [0.14, 0.28],
   "deepseek-v4-pro": [0.435, 0.87],
+  "deepseek-pro-latest": [0.435, 0.87],
   "deepseek-reasoner": [0.55, 2.19],
+  "deepseek-r1": [0.55, 2.19],
   "llama-70b-latest": [0.72, 0.72],
+  "llama-3.3-70b-instruct": [0.72, 0.72],
   "deepseek-chat": [0.14, 0.28],
   "kimi-latest": [0.3, 1.2],
   "kimi-k3": [0.3, 1.2]
@@ -155,6 +166,8 @@ function priceForModel(model: string | undefined): [number, number] {
   m = m.replace(/^openrouter\//, ""); // strip leading "openrouter/" if present
   const slashIdx = m.indexOf("/");
   if (slashIdx !== -1) m = m.slice(slashIdx + 1); // strip one vendor segment (e.g. "openai/")
+  const canonical = canonicalModelId(model);
+  if (canonical && MODEL_PRICE_PER_M[canonical]) return MODEL_PRICE_PER_M[canonical];
   if (MODEL_PRICE_PER_M[m]) return MODEL_PRICE_PER_M[m];
   // Prefix match (e.g. dated suffixes like claude-haiku-4-5-20251001).
   // Longest-prefix wins so family aliases cannot shadow a more specific tier snapshot

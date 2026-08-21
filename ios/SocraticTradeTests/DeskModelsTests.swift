@@ -21,7 +21,7 @@ final class DeskModelsTests: XCTestCase {
     func testFirstAvailableRequiresAKeyedProvider() {
         XCTAssertEqual(
             CoachModelCatalog.firstAvailable(providers: ["anthropic": true])?.id,
-            "claude-haiku-4.5"
+            "claude-haiku-latest"
         )
         // With no key for any provider there is NO keyless option left to offer (#2887), so the
         // caller gets nil and must say "no model configured" rather than silently answering from

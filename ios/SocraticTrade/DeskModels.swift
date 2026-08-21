@@ -174,11 +174,11 @@ enum CoachModelCatalog {
     static let storageKey = "console.assistant.model"
 
     static let options: [Option] = [
-        .init(id: "gpt-5.4-mini", label: "GPT Mini", provider: "openai", detail: "low-cost OpenAI"),
+        .init(id: "gpt-mini-latest", label: "GPT Mini (5.4)", provider: "openai", detail: "low-cost OpenAI"),
         .init(id: "gpt-5.6-terra", label: "GPT Terra", provider: "openai", detail: "balanced OpenAI"),
-        .init(id: "claude-haiku-4.5", label: "Claude Haiku", provider: "anthropic", detail: "fast Claude"),
-        .init(id: "claude-sonnet-5", label: "Claude Sonnet", provider: "anthropic", detail: "balanced Claude"),
-        .init(id: "grok-4.5", label: "Grok", provider: "xai", detail: "default Grok"),
+        .init(id: "claude-haiku-latest", label: "Claude Haiku (4.5)", provider: "anthropic", detail: "fast Claude"),
+        .init(id: "claude-sonnet-latest", label: "Claude Sonnet (5)", provider: "anthropic", detail: "balanced Claude"),
+        .init(id: "grok-latest", label: "Grok (4.5)", provider: "xai", detail: "default Grok"),
         .init(id: "gemini-flash-latest", label: "Gemini Flash", provider: "gemini", detail: "stable Flash")
     ]
 

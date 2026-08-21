@@ -40,9 +40,9 @@ describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
 
 describe("modelDisplayName — strips the OpenRouter routing prefix before the curated lookup", () => {
   it("resolves a curated model routed through OpenRouter to its curated display name, not the raw id", () => {
-    expect(modelDisplayName("x-ai/grok-4.5")).toBe("Grok 4.5");
+    expect(modelDisplayName("x-ai/grok-4.5")).toBe("Grok");
     expect(modelDisplayName("google/gemini-3.5-flash")).toBe("Gemini Flash");
-    expect(modelDisplayName("anthropic/claude-sonnet-4-6")).toBe("Claude Sonnet 5");
+    expect(modelDisplayName("anthropic/claude-sonnet-4-6")).toBe("Claude Sonnet");
   });
 
   it("falls back to the bare id (prefix stripped) for a routed but uncatalogued model", () => {
@@ -50,7 +50,7 @@ describe("modelDisplayName — strips the OpenRouter routing prefix before the c
   });
 
   it("is unaffected for bare ids (pre-routing / direct calls)", () => {
-    expect(modelDisplayName("grok-4.5")).toBe("Grok 4.5");
+    expect(modelDisplayName("grok-4.5")).toBe("Grok");
     expect(modelDisplayName("")).toBe("");
     expect(modelDisplayName(null)).toBe("");
   });
