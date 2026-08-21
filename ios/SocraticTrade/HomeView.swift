@@ -72,7 +72,7 @@ private struct ReadinessChecklistHero: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Finish setup to trade")
                             .font(.appTitle3.weight(.bold))
-                        Text("Phone is a control remote — connect an account and symbol universe, then Run Once.")
+                        Text("Connect an account and a symbol universe, then tap Run Once.")
                             .font(.appSubheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -84,14 +84,14 @@ private struct ReadinessChecklistHero: View {
                         done: !needsAccount,
                         title: "Connect a broker account",
                         detail: needsAccount
-                            ? "Link Alpaca or Robinhood in the full desk, then select it here."
+                            ? "Connect Alpaca or Robinhood in Account & Settings, then select it here."
                             : (snapshot.readiness.activeConnectedAccount?.label ?? "Account ready")
                     )
                     ChecklistRow(
                         done: !needsUniverse,
                         title: "Add a symbol universe",
                         detail: needsUniverse
-                            ? "In Socratic.Trade console → Strategy, include an index or symbols."
+                            ? DeskCopy.universeNeedsIndex
                             : "Universe ready for strategy runs"
                     )
                 }
@@ -106,7 +106,7 @@ private struct ReadinessChecklistHero: View {
                     .buttonStyle(.borderedProminent)
                     .tint(AppPalette.accent)
                 } else if needsUniverse {
-                    Text("Open the desktop console to edit Strategy universe (indices + extra symbols), then pull to refresh here.")
+                    Text(DeskCopy.universeRefreshAfterGuardrails)
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -172,8 +172,8 @@ private struct ReadyHomeHero: View {
                             // Paper-only badge — owner does not want "Live" called out (paper is still real capital).
                             if store.displayedActiveAccount(in: snapshot)?.environment.lowercased() == "paper" {
                                 StatusPill(
-                                    "PAPER",
-                                    color: AppPalette.accent.opacity(0.85),
+                                    DeskCopy.paperAccountWord,
+                                    color: AppPalette.accent.opacity(0.75),
                                     systemImage: "doc.text"
                                 )
                             }
@@ -182,11 +182,21 @@ private struct ReadyHomeHero: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-                        Text(AppFormat.money(snapshot.portfolio?.totalMarketValue))
-                            .font(.appLargeTitle.weight(.bold))
-                            .foregroundStyle(AppPalette.accent)
-                            .minimumScaleFactor(0.7)
-                            .lineLimit(1)
+                        if snapshot.portfolio != nil {
+                            Text(AppFormat.money(snapshot.portfolio?.totalMarketValue))
+                                .font(.appLargeTitle.weight(.bold))
+                                .foregroundStyle(AppPalette.accent)
+                                .minimumScaleFactor(0.7)
+                                .lineLimit(1)
+                        } else {
+                            // A large-title em-dash reads as a stray bar when the broker
+                            // timed out.  Spell the wait instead.
+                            Text(DeskCopy.equityWaitingOnBroker)
+                                .font(.appTitle3.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .minimumScaleFactor(0.8)
+                                .lineLimit(2)
+                        }
                         Text("Equity")
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
@@ -314,7 +324,7 @@ private struct AgentOverviewCard: View {
 
     private var readinessMessage: String {
         if !snapshot.readiness.hasAccount {
-            return "Connect an account in Socratic.Trade, then select it in Account & Settings before running the agent."
+            return "Connect an account in Account & Settings before running the agent."
         }
         return "Add an index or symbol universe before requesting a strategy run."
     }
@@ -369,6 +379,16 @@ private struct StrategyControlsCard: View {
                     if plan.showStart {
                         startButton
                     }
+                    if plan.showCloseOnly || plan.showWindDown {
+                        DisclosureGroup("More Postures") {
+                            VStack(spacing: 10) {
+                                if plan.showCloseOnly { closeOnlyButton }
+                                if plan.showWindDown { windDownButton }
+                            }
+                            .padding(.top, 8)
+                        }
+                        .font(.appSubheadline.weight(.semibold))
+                    }
                 } else if plan.showStart {
                     startButton
                     if let reason = plan.startDisabledReason, !plan.startEnabled {
@@ -376,24 +396,36 @@ private struct StrategyControlsCard: View {
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
-                }
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        if plan.showCloseOnly { closeOnlyButton }
-                        if plan.showWindDown { windDownButton }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
+                        VStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
                     }
-                    VStack(spacing: 10) {
-                        if plan.showCloseOnly { closeOnlyButton }
-                        if plan.showWindDown { windDownButton }
+                    if plan.showStop {
+                        stopButton
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
+                        VStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
+                    }
+                    if plan.showStop {
+                        stopButton
                     }
                 }
 
-                if plan.primary != .stop, plan.showStop {
-                    stopButton
-                }
-
-                Text("Close Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
+                Text("Exit Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -452,7 +484,7 @@ private struct StrategyControlsCard: View {
     // allows protective commands, same as Stop — no extra ceremony beyond existing controls).
     private var closeOnlyButton: some View {
         CommandButton(
-            "Close Only",
+            "Exit Only",
             systemImage: "arrow.down.right.circle",
             isBusy: store.isBusy("strategy.close_only")
         ) {
@@ -494,7 +526,10 @@ private struct PortfolioOverviewCard: View {
             } else {
                 EmptyStateCard(
                     title: "No portfolio available",
-                    message: "Select a connected account or retry when the broker is reachable.",
+                    message: DeskCopy.portfolioUnavailableMessage(
+                        hasConnectedAccount: snapshot.readiness.hasAccount
+                            || snapshot.readiness.activeConnectedAccount != nil
+                    ),
                     systemImage: "briefcase"
                 )
             }
@@ -512,7 +547,7 @@ private struct DeskShortcutsCard: View {
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeading("Desk", subtitle: "full surfaces, not just the remote")
+                SectionHeading("Desk")
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     shortcut("Coach", systemImage: "bubble.left.and.bubble.right.fill", tab: .coach)
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)
@@ -639,7 +674,7 @@ private struct PerformanceOverviewCard: View {
             } else {
                 EmptyStateCard(
                     title: "No performance history",
-                    message: "Performance appears after the selected account has fills or portfolio snapshots.",
+                    message: "Performance appears after the selected account has fills or portfolio history.",
                     systemImage: "chart.xyaxis.line"
                 )
             }
@@ -713,7 +748,7 @@ private struct HomeAttentionCard: View {
                     selectedTab = .markets
                 }
                 AttentionRow(
-                    title: "Commands in flight",
+                    title: "In Progress",
                     value: "\(commandsInFlight)",
                     emphasize: commandsInFlight > 0
                 ) {
@@ -769,7 +804,9 @@ private struct AccountSettingsView: View {
                 alertsSection
                 policySection
                 GuardrailTighteningSection()
+                LlmBudgetSection()
                 DataSourcesSection()
+                legalSection
                 adminSection
                 sessionSection
                 deletionSection
@@ -784,6 +821,7 @@ private struct AccountSettingsView: View {
             .sheet(isPresented: $showingAdminPortal) {
                 AdminPortalView()
             }
+            .storeTransientAlerts()
         }
     }
 
@@ -839,9 +877,10 @@ private struct AccountSettingsView: View {
                     ConnectedAccountSettingsRow(account: account)
                 }
             } else {
-                Text("No connected accounts.  Connect one in Socratic.Trade, then return here to select it.")
+                Text("No connected accounts.  Connect one on the website, then return here to select it.")
                     .foregroundStyle(.secondary)
             }
+            Link("Open Connections", destination: URL(string: "https://socratictrade.com/console/connections")!)
         }
     }
 
@@ -850,13 +889,14 @@ private struct AccountSettingsView: View {
         Section("Current Policy") {
             LabeledContent("Authority", value: AppFormat.strategyAuthorityValue(store.snapshot?.policy.strategyAuthority))
             LabeledContent("Horizon", value: AppFormat.policyHorizonValue(store.snapshot?.policy.holdingHorizon))
-            LabeledContent("Max Order", value: AppFormat.money(store.snapshot?.policy.maxOrderNotional))
-            LabeledContent("Daily Cap", value: AppFormat.money(store.snapshot?.policy.maxDailyNotional))
+            LabeledContent("Indices", value: DeskCopy.joinedIndexList(store.snapshot?.policy.includedIndices))
+            LabeledContent("Max Order", value: PolicyTightening.Cap.maxOrderNotional.displayValue(in: store.snapshot?.policy))
+            LabeledContent("Daily Cap", value: PolicyTightening.Cap.maxDailyNotional.displayValue(in: store.snapshot?.policy))
             LabeledContent("Daily Orders", value: store.snapshot?.policy.maxDailyOrders.map(String.init) ?? "—")
             NavigationLink {
                 GuardrailsView()
             } label: {
-                Label("View Full Policy", systemImage: "shield.checkered")
+                Label("View Guardrails", systemImage: "shield.checkered")
             }
         }
     }
@@ -896,6 +936,19 @@ private struct AccountSettingsView: View {
         .task { await push.refreshState() }
     }
 
+    @ViewBuilder
+    private var legalSection: some View {
+        Section {
+            LabeledContent("Notice", value: "Not investment advice.  You set authority.")
+            Link("Terms", destination: URL(string: "https://socratictrade.com/terms-and-conditions")!)
+            Link("Privacy", destination: URL(string: "https://socratictrade.com/privacy-policy")!)
+        } header: {
+            Text("Legal")
+        } footer: {
+            Text("After you accept, this notice stays dismissed until the terms change.  You can delete your account in the section below.")
+        }
+    }
+
     private var sessionSection: some View {
         Section {
             Button("Sign Out", role: .destructive) {
@@ -905,7 +958,7 @@ private struct AccountSettingsView: View {
                 }
             }
         } footer: {
-            Text("Signing out clears the app’s local Socratic.Trade session.  Broker and provider credentials remain on the backend.")
+            Text("Signing out only leaves this phone.  Broker and provider keys stay with your account.")
         }
     }
 
@@ -944,7 +997,7 @@ private struct AccountSettingsView: View {
         } header: {
             Text("Delete Account")
         } footer: {
-            Text("Reviewing is read-only and does not pause the agent.  Final confirmation prepares and deletes this app account, its server-stored secrets, proposals, fills, watchlists, alerts, and learned context.  Provider-side OAuth grants must be revoked separately.")
+            Text("Reviewing is read-only and does not pause the agent.  Final confirmation deletes this app account, saved keys, proposals, fills, watchlists, alerts, and learned context.  Revoke broker logins separately if you want those gone too.")
         }
     }
 
@@ -970,7 +1023,6 @@ private struct AccountSettingsView: View {
 
 private struct ConnectedAccountSettingsRow: View {
     @EnvironmentObject private var store: MobileStore
-    @State private var confirmingLiveActivation = false
 
     let account: ConnectedAccount
 
@@ -1031,12 +1083,7 @@ private struct ConnectedAccountSettingsRow: View {
                     .accessibilityLabel("Switching to \(account.label)")
             } else {
                 Button("Use") {
-                    // Still confirm before switching to a non-paper brokerage account; wording avoids "Live".
-                    if account.environment.lowercased() != "paper" {
-                        confirmingLiveActivation = true
-                    } else {
-                        activate()
-                    }
+                    activate()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(AppPalette.accent)
@@ -1046,12 +1093,6 @@ private struct ConnectedAccountSettingsRow: View {
                     ? "Switch the active account to \(account.label)"
                     : "Unavailable until the app loads account data")
             }
-        }
-        .alert("Use Brokerage Account?", isPresented: $confirmingLiveActivation) {
-            Button("Use Account", role: .destructive, action: activate)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Switch execution context to \(account.label) (\(AppFormat.accountBrokerEnvironmentLine(broker: account.broker, environment: account.environment))).  Future approved actions will target this account after backend validation.")
         }
     }
 
@@ -1063,5 +1104,127 @@ private struct ConnectedAccountSettingsRow: View {
                 operationID: operationID
             )
         }
+    }
+}
+
+struct LlmBudgetSection: View {
+    @EnvironmentObject private var store: MobileStore
+
+    @State private var response: LlmBudgetResponse?
+    @State private var tokenText = ""
+    @State private var costText = ""
+    @State private var isLoading = false
+    @State private var isSaving = false
+    @State private var loadError: String?
+
+    var body: some View {
+        Section {
+            if isLoading && response == nil {
+                HStack {
+                    ProgressView()
+                    Text("loading your daily AI budget")
+                        .foregroundStyle(.secondary)
+                }
+            } else if let loadError, response == nil {
+                Text(loadError)
+                    .foregroundStyle(AppPalette.negative)
+                Button("Retry") { Task { await load() } }
+            } else {
+                LabeledContent("Daily Token Cap") {
+                    TextField("blank = no cap", text: $tokenText)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .disabled(isSaving)
+                        .onSubmit { Task { await commitTokens() } }
+                }
+                LabeledContent("Daily Cost Cap") {
+                    TextField("blank = no cap", text: $costText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .disabled(isSaving)
+                        .onSubmit { Task { await commitCost() } }
+                }
+                if let response {
+                    LabeledContent("Today") {
+                        Text("\(Int(response.today.tokens)) tokens · \(AppFormat.money(response.today.costUsd))")
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Cap") {
+                        Text(response.enforced ? "on" : "no cap")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button("Save Caps") {
+                    Task { await saveBoth() }
+                }
+                .disabled(isSaving)
+                if let loadError, response != nil {
+                    Text(loadError)
+                        .font(.appCaption)
+                        .foregroundStyle(AppPalette.negative)
+                }
+            }
+        } header: {
+            Text("Daily AI Budget")
+        } footer: {
+            Text("Optional daily limit for model and research spend.  Leave a field blank for no cap.  When a cap is set, strategy, chat, and research pause for the rest of the day once spend reaches it.")
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            apply(try await store.fetchLlmBudget())
+            loadError = nil
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func saveBoth() async {
+        await commitTokens()
+        await commitCost()
+    }
+
+    private func commitTokens() async {
+        await commit(field: "tokenBudget", text: tokenText)
+    }
+
+    private func commitCost() async {
+        await commit(field: "costBudgetUsd", text: costText)
+    }
+
+    private func commit(field: String, text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value: Any
+        if trimmed.isEmpty {
+            value = NSNull()
+        } else if let parsed = Double(trimmed), parsed >= 0 {
+            value = parsed
+        } else {
+            loadError = "Enter a non-negative number, or leave the field blank."
+            return
+        }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            apply(try await store.patchLlmBudget([field: value]))
+            loadError = nil
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func apply(_ next: LlmBudgetResponse) {
+        response = next
+        tokenText = next.tokenBudget.map { formatNumber($0) } ?? ""
+        costText = next.costBudgetUsd.map { formatNumber($0) } ?? ""
+    }
+
+    private func formatNumber(_ value: Double) -> String {
+        if value == floor(value) { return String(Int(value)) }
+        return String(value)
     }
 }

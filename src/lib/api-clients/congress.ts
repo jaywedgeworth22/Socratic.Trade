@@ -82,6 +82,11 @@ export function getCongressTradeClient(): CongressTradeClient {
             cache: "no-store"
           });
           logApiHealth({ service: "congress.trade", ok: res.ok, latencyMs: Date.now() - start, errorText: res.ok ? undefined : `HTTP ${res.status}` });
+          // Live `9d71dda4`: a 502 must fail-open gather, not keep pulling the
+          // rest of the 250-name batch.  404 stays a miss (return the body).
+          if (!res.ok && (res.status === 429 || res.status >= 500)) {
+            throw new Error(`HTTP ${res.status}`);
+          }
           return res;
         } catch (err) {
           logApiHealth({ service: "congress.trade", ok: false, latencyMs: Date.now() - start, errorText: err instanceof Error ? err.message : String(err) });

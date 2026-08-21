@@ -6,7 +6,6 @@
 // Congress.Trade fundamentals/analyst read-back is opt-in only (default OFF).
 //
 // Owner 2026-08-04: FMP, QuiverQuant, and Unusual Whales are NEVER called from this app.
-// Owner 2026-08-17: FilingAPI.dev is NEVER called — ROIC.ai + SEC EDGAR cover that class.
 // Congressional disclosures/analytics come from Congress.Trade; fundamentals do not default there.
 //
 // A quota-scarce RapidAPI-hosted FAILOVER tier (Mboum Finance, YH Finance 15, Alpha Vantage's
@@ -45,7 +44,14 @@ import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
 import { resolveQuiverApiKey } from "./quiver-provider";
-import { isDirectVendorAccessAllowed, isRetiredDirectVendorUrl } from "./retired-direct-vendors";
+import { isDirectVendorAccessAllowed } from "./retired-direct-vendors";
+import {
+  clearFilingApiKeyRejected,
+  isFilingApiAuthStatus,
+  isFilingApiKeyRejected,
+  markFilingApiKeyRejected,
+  shouldUseFilingApiKey
+} from "./filingapi-auth";
 import { NasdaqCalendarEnrichmentProvider } from "./nasdaq-calendar-provider";
 import { WisesheetsEnrichmentProvider, resolveWisesheetsApiKey } from "./wisesheets-provider";
 import { SimFinEnrichmentProvider, resolveSimFinApiKey } from "./simfin-provider";
@@ -411,6 +417,12 @@ export function analystScoreFromMean(mean: number): number {
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
 const CONCURRENCY = 5;
+
+/** 502/429/timeout must fail-open the rest of gather.  A 404 is a miss. */
+export function isLatchingEnrichmentTransportError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /\b(429|500|502|503|504)\b/.test(msg) || /abort|timeout|fetch failed/i.test(msg);
+}
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
 const originalSet = cache.set.bind(cache);
 cache.set = function (key: string, value: { expiresAt: number; data: SymbolEnrichment }) {
@@ -653,9 +665,6 @@ export async function fetchWithRetry(
     apiKey?: string;
   } = {}
 ): Promise<Response> {
-  if (isRetiredDirectVendorUrl(url)) {
-    throw new Error(`retired vendor host refused: ${url.split("?")[0]}`);
-  }
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
   const healthService = options.healthService ?? options.service;
@@ -849,8 +858,16 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
     if (misses.length === 0) return result;
 
     const client = getCongressTradeClient();
-    await Promise.all(
-      misses.map(async (symbol) => {
+    // Live `9d71dda4`: App A 502'd in the gather window.  Bound concurrency and
+    // stop remaining symbol pulls after the first latching 5xx/429/timeout so
+    // congress cannot own the event loop or skip Green.  A per-symbol 404 is a
+    // miss, not a latch.
+    let latchingUpstream = false;
+    for (let i = 0; i < misses.length && !latchingUpstream; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+        if (latchingUpstream) return;
         // Track whether EITHER read failed at the transport level (timeout/5xx/401 →
         // []). A genuine "App A has nothing" (both reads OK, no fresh rows) is
         // negative-cached; a transport error is NOT, so a fixed outage/token is retried
@@ -868,12 +885,22 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           congressFundamentalsEnabled()
             ? client.getFundamentals(symbol, { from: fromDate })
                 .then((r) => { recordProviderCall(this.name, { service: "fundamentals", ok: true, userId: this.userId }); return r; })
-                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "fundamentals", ok: false, userId: this.userId }); return [] as FundamentalRow[]; })
+                .catch((err: unknown) => {
+                  transportError = true;
+                  if (isLatchingEnrichmentTransportError(err)) latchingUpstream = true;
+                  recordProviderCall(this.name, { service: "fundamentals", ok: false, userId: this.userId });
+                  return [] as FundamentalRow[];
+                })
             : Promise.resolve([] as FundamentalRow[]),
           congressFundamentalsEnabled()
             ? client.getAnalyst(symbol, { from: fromDate })
                 .then((r) => { recordProviderCall(this.name, { service: "analyst", ok: true, userId: this.userId }); return r; })
-                .catch(() => { transportError = true; recordProviderCall(this.name, { service: "analyst", ok: false, userId: this.userId }); return [] as AnalystRow[]; })
+                .catch((err: unknown) => {
+                  transportError = true;
+                  if (isLatchingEnrichmentTransportError(err)) latchingUpstream = true;
+                  recordProviderCall(this.name, { service: "analyst", ok: false, userId: this.userId });
+                  return [] as AnalystRow[];
+                })
             : Promise.resolve([] as AnalystRow[]),
         ]);
 
@@ -996,7 +1023,8 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           writeEnrichmentCache(this.name, symbol, "shared", this.userId, {}, now + CONGRESS_NEG_TTL_MS);
         }
       })
-    );
+      );
+    }
     return result;
   }
 }
@@ -1110,12 +1138,11 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values. Set SEC_XBRL_ENRICHMENT_ENABLED=0 to disable.
   if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
-  // FilingAPI.dev: RETIRED (owner 2026-08-17). ROIC.ai covers fundamentals/transcripts/
-  // statements/prices; 10-K/10-Q bodies stay on SEC EDGAR. A leftover FILINGAPI key must
-  // never register a cascade lane or open a socket to filingapi.dev.
+  // FilingAPI.dev (FILINGAPI / FILINGAPI_KEY): optional. Missing / known-401 keys skip
+  // the lane; ROIC + SEC EDGAR cover the same fields. A later valid key registers again.
   const filingApi = resolveApiKeyWithSource("filingapi", userId);
-  if (filingApi.key) {
-    console.warn("[data-providers] FilingAPI key present but direct access is retired; not registering filingapi");
+  if (shouldUseFilingApiKey(filingApi.key)) {
+    providers.push(withHealthLane(new FilingApiEnrichmentProvider(filingApi.key, filingApi.source, userId), filingApi.source));
   }
   // Wisesheets + SimFin: two new (2026-08-02) free/keyed fundamentals "second opinions" layered
   // on top of FMP/roic/SEC-XBRL above, both key-gated on their own env var (process.env only,
@@ -1141,7 +1168,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
     console.warn("[data-providers] QuiverQuant key present but direct access is retired; not registering quiverquant");
   }
   // Keyless Nasdaq earnings-calendar backfill for daysToEarnings — registered after every paid
-  // per-symbol source (Yahoo/ROIC) that already fills this field cheaper in one call,
+  // per-symbol source (Yahoo/FMP/FilingApi/ROIC) that already fills this field cheaper in one call,
   // so it only spends its own (market-wide-per-date, not per-symbol) calls on genuine gaps — the
   // context.coveredFields short-circuit inside NasdaqCalendarEnrichmentProvider.enrich already
   // enforces this at the per-symbol level regardless of registration order. Fully keyless/self-
@@ -1379,13 +1406,20 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       const freeProviders = freeIndexes.map((i) => this.providers[i]);
       let freeRuns: ProviderRun[];
       if (enrichmentShortCircuitEnabled()) {
-        // App A still leads the free wave when short-circuit is on (coverage hint for paid).
+        // Coverage hint still comes from App A's result before the paid wave.
+        // Do not await congress.trade alone — a 404/empty App A must not latch
+        // gather while Yahoo/Finnhub sit idle (live `9d71dda4` 01:01:53Z).
         const congressProvider = freeProviders.find((p) => p.name === "congress.trade");
-        const appAResult = congressProvider
-          ? await run(congressProvider, normalized)
-          : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
         const otherFree = freeProviders.filter((p) => p.name !== "congress.trade");
-        const otherResults = await Promise.all(otherFree.map((p) => run(p, normalized)));
+        const [appAResult, ...otherResults] = await Promise.all([
+          congressProvider
+            ? run(congressProvider, normalized)
+            : Promise.resolve({
+                name: "congress.trade",
+                data: {} as Record<string, SymbolEnrichment>
+              } satisfies ProviderRun),
+          ...otherFree.map((p) => run(p, normalized))
+        ]);
         const byName = new Map<string, ProviderRun>();
         for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
         freeRuns = freeProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
@@ -1454,28 +1488,22 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         }
       }
     } else if (enrichmentShortCircuitEnabled()) {
-      // Legacy short-circuit: App A first, then every other non-scarce provider in parallel.
+      // Legacy short-circuit: do not await congress.trade alone.  Live `9d71dda4`
+      // 502'd App A in the same window as gather; Yahoo/Finnhub must keep
+      // running so Green can start.  Paid providers run without an App A hint
+      // on this path (free-first, default ON, still uses the two-wave planner).
       const waveOneProviders = legacyWaveOneIndexes.map((i) => this.providers[i]);
       const congressProvider = waveOneProviders.find((p) => p.name === "congress.trade");
-      const appAResult = congressProvider
-        ? await run(congressProvider, normalized)
-        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
-      const appA = appAResult.data;
-      const coveredFields: Record<string, ReadonlySet<string>> = {};
-      const analystSource: Record<string, string> = {};
-      for (const s of normalized) {
-        const e = appA[s];
-        if (e) {
-          coveredFields[s] = new Set(Object.keys(e));
-          const srcKey = e.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
-          if (srcKey) analystSource[s] = srcKey;
-        }
-      }
-      const context: EnrichmentContext = { coveredFields, analystSource };
       const otherProviders = waveOneProviders.filter((p) => p.name !== "congress.trade");
-      const otherResults = await Promise.all(
-        otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
-      );
+      const [appAResult, ...otherResults] = await Promise.all([
+        congressProvider
+          ? run(congressProvider, normalized)
+          : Promise.resolve({
+              name: "congress.trade",
+              data: {} as Record<string, SymbolEnrichment>
+            } satisfies ProviderRun),
+        ...otherProviders.map((p) => run(p, normalized))
+      ]);
       const byName = new Map<string, ProviderRun>();
       for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
       const waveOneRuns = waveOneProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
@@ -3849,16 +3877,21 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
       else misses.push(symbol);
     }
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+    const rateLimit = { tripped: false };
+    for (let i = 0; i < misses.length && !rateLimit.tripped; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
+          if (rateLimit.tripped) {
+            result[symbol] = {};
+            return;
+          }
           try {
             // Two independent reads: FINRA short interest (shares) + free float (shares). Both are
             // needed to compute short % of float — Massive returns neither as a ready-made percentage.
             const [shortRaw, floatRaw] = await Promise.allSettled([
-              this.getJson(`${this.base}/stocks/v1/short-interest?ticker=${encodeURIComponent(symbol)}&limit=1&sort=settlement_date.desc`),
-              this.getJson(`${this.base}/stocks/vX/float?ticker=${encodeURIComponent(symbol)}&limit=1`)
+              this.getJson(`${this.base}/stocks/v1/short-interest?ticker=${encodeURIComponent(symbol)}&limit=1&sort=settlement_date.desc`, rateLimit),
+              this.getJson(`${this.base}/stocks/vX/float?ticker=${encodeURIComponent(symbol)}&limit=1`, rateLimit)
             ]);
 
             const shortInterest = shortRaw.status === "fulfilled" ? massiveFirstResult(shortRaw.value)?.short_interest : undefined;
@@ -3887,10 +3920,15 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
         })
       );
     }
+    if (rateLimit.tripped) {
+      for (const symbol of misses) {
+        if (result[symbol] === undefined) result[symbol] = {};
+      }
+    }
     return result;
   }
 
-  private async getJson(url: string): Promise<unknown> {
+  private async getJson(url: string, rateLimit?: { tripped: boolean }): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
@@ -3901,12 +3939,17 @@ export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
           service: this.name,
           keySource: this.keySource,
           userId: this.userId,
-          // 404 = no short-interest / float row for this ticker (expected for some symbols) — don't log
-          // it as a lane failure. Real auth/quota errors (401/403/429/5xx) still surface to health.
-          suppressHealthStatuses: [404]
+          // Live `9d71dda4`: a Massive 429 must fail-open, not retry-storm the
+          // rest of gather.  No built-in 429 retry (retries: 0).  404 stays a miss.
+          retries: 0,
+          suppressHealthStatuses: [404, 429]
         }
       );
       if (response.status === 404) return { results: [] };
+      if (response.status === 429) {
+        if (rateLimit) rateLimit.tripped = true;
+        return { results: [] };
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -6582,6 +6625,185 @@ export class TwelveDataRapidApiEnrichmentProvider implements MarketEnrichmentPro
     } finally {
       clearTimeout(timeout);
     }
+  }
+}
+
+// ── FilingAPI.dev (FILINGAPI) ────────────────────────────────────────────────
+// https://filingapi.dev — X-API-Key header (company/calendar); some routes also
+// accept ?api_key=. Free tier ~50 req/day → scarce wave-C only.
+
+export function parseFilingApiCompany(payload: unknown): SymbolEnrichment {
+  const row = payload as Record<string, unknown> | undefined;
+  if (!row || typeof row !== "object") return {};
+  const ticker = firstString(row, ["ticker", "symbol"]);
+  const sector = firstString(row, ["sector"]);
+  const industry = firstString(row, ["industry"]);
+  const companyName = firstString(row, ["company_name", "companyName", "name"]) ?? ticker;
+  return {
+    ...(companyName !== undefined && { companyName }),
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry })
+  };
+}
+
+export function parseFilingApiEarningsCalendar(
+  payload: unknown,
+  symbol: string,
+  now: number = Date.now()
+): Pick<SymbolEnrichment, "daysToEarnings"> {
+  const earnings = (payload as { earnings?: Array<Record<string, unknown>> } | undefined)?.earnings;
+  if (!Array.isArray(earnings) || earnings.length === 0) return {};
+  const upper = symbol.toUpperCase();
+  const future = earnings
+    .filter((e) => String(e.symbol ?? "").toUpperCase() === upper && typeof e.date === "string")
+    .map((e) => Date.parse(String(e.date)))
+    .filter((ts) => Number.isFinite(ts) && ts >= now - 12 * 3_600_000)
+    .sort((a, b) => a - b);
+  if (future.length === 0) return {};
+  const days = Math.max(0, Math.ceil((future[0] - now) / 86_400_000));
+  return { daysToEarnings: days };
+}
+
+/** Map FilingAPI insider summary → 0–100 insiderSentiment (50 = neutral). */
+export function parseFilingApiInsiderSummary(payload: unknown): Pick<SymbolEnrichment, "insiderSentiment"> {
+  const row = payload as Record<string, unknown> | undefined;
+  if (!row || typeof row !== "object") return {};
+  const sellRatio = firstNumber(row, ["sell_ratio", "sellRatio"]);
+  const signal = firstString(row, ["signal"]);
+  let score: number | undefined;
+  if (sellRatio !== undefined) {
+    score = Math.max(5, Math.min(95, Math.round(50 - (sellRatio - 0.5) * 80)));
+  } else if (signal === "net_selling") {
+    score = 30;
+  } else if (signal === "net_buying") {
+    score = 70;
+  }
+  return score !== undefined ? { insiderSentiment: score } : {};
+}
+
+export class FilingApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "filingapi";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  readonly quotaScarce = true;
+  readonly suppliesFields = ["companyName", "sector", "industry", "daysToEarnings", "insiderSentiment"] as const;
+  private readonly base = "https://filingapi.dev";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+    if (isFilingApiKeyRejected(this.apiKey)) {
+      return Object.fromEntries(normalized.map((symbol) => [symbol, {}]));
+    }
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    const credKey = `${this.keySource}:${this.userId ?? ""}`;
+    // ~50/day free tier — admit at most one symbol-bundle per reservation unit.
+    const allowed = admitProviderRequests(this.name, credKey, misses.length);
+    if (!allowed) return result;
+    const work = misses.slice(0, allowed);
+
+    for (let i = 0; i < work.length; i += CONCURRENCY) {
+      const chunk = work.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const covered = context?.coveredFields?.[symbol];
+            const needCompany =
+              !covered || !covered.has("companyName") || !covered.has("sector") || !covered.has("industry");
+            const needEarnings = !covered || !covered.has("daysToEarnings");
+            const needInsiders = !covered || !covered.has("insiderSentiment");
+            if (isFilingApiKeyRejected(this.apiKey)) {
+              result[symbol] = {};
+              return;
+            }
+            const [companyRes, earningsRes, insiderRes] = await Promise.allSettled([
+              needCompany ? this.getJson(`/v1/company/${encodeURIComponent(symbol)}`) : Promise.resolve(undefined),
+              needEarnings
+                ? this.getJson(`/v1/calendar/earnings?ticker=${encodeURIComponent(symbol)}`)
+                : Promise.resolve(undefined),
+              needInsiders
+                ? this.getJson(`/v1/insiders/${encodeURIComponent(symbol)}/summary?api_key=${encodeURIComponent(this.apiKey)}`)
+                : Promise.resolve(undefined)
+            ]);
+            const merged: SymbolEnrichment = {
+              ...(companyRes.status === "fulfilled" ? parseFilingApiCompany(companyRes.value) : {}),
+              ...(earningsRes.status === "fulfilled"
+                ? parseFilingApiEarningsCalendar(earningsRes.value, symbol, now)
+                : {}),
+              ...(insiderRes.status === "fulfilled" ? parseFilingApiInsiderSummary(insiderRes.value) : {})
+            };
+            if (Object.keys(merged).length > 0) {
+              writeEnrichmentCache(this.name, symbol, this.scope, this.userId, merged, now + 6 * 60 * 60_000);
+            }
+            result[symbol] = merged;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(path: string): Promise<unknown> {
+    if (isFilingApiKeyRejected(this.apiKey)) {
+      throw new Error("HTTP 401 skip");
+    }
+    return withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetchWithRetry(
+          `${this.base}${path}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              Accept: "application/json",
+              "X-API-Key": this.apiKey
+            }
+          },
+          {
+            service: this.name,
+            keySource: this.keySource,
+            userId: this.userId,
+            apiKey: this.apiKey,
+            retries: 0,
+            softHealthStatuses: [401, 403]
+          }
+        );
+        if (isFilingApiAuthStatus(res.status)) {
+          markFilingApiKeyRejected(this.apiKey);
+          throw new Error(`HTTP ${res.status}`);
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        clearFilingApiKeyRejected(this.apiKey);
+        return await res.json();
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
   }
 }
 

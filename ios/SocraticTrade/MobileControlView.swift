@@ -61,11 +61,13 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .home: return "Live thesis, actions, and agent controls."
         case .proposals: return "Trade proposals awaiting your judgment."
         case .markets: return "Holdings, orders, watchlist, and price alerts."
-        case .activity: return "Everything the agent did, newest first."
+        case .activity: return "Notifications, fills, and what the agent did."
         case .insights: return "Status brief and attention items."
         case .coach: return "Ask the desk — a real Coach conversation."
         case .scan: return "Ranked names with watchlist actions."
-        case .guardrails: return "Read the full policy and tighten it."
+        // Not "tighten it": this screen raises caps too, which GuardrailsView itself
+        // says ("Caps can go up or down").  Web's enumeration is the accurate line.
+        case .guardrails: return "Autonomy, spending caps, protective stops, schedule, and the trading rulebook."
         case .results: return "P&L, benchmark, and fill receipts."
         case .more: return "All screens and tab customization."
         }
@@ -136,6 +138,8 @@ struct MobileControlView: View {
     @State private var morePath: [AppTab] = []
     /// Proposal id a deep link asked for, handed to whichever ProposalsView is on screen.
     @State private var focusedProposalId: String?
+    /// Ticker a deep link asked for, handed to MarketsView (Assets).
+    @State private var focusedSymbol: String?
     /// Clears the ring above once the cue has been seen (see `apply`).
     @State private var focusExpiry: Task<Void, Never>?
 
@@ -149,6 +153,10 @@ struct MobileControlView: View {
         store.snapshot?.pendingProposals.count ?? 0
     }
 
+    private var unreadNotificationCount: Int {
+        store.snapshot?.unreadNotificationCount ?? 0
+    }
+
     /// Programmatic jumps (e.g. Home's "Review Proposals") can target a screen the
     /// owner unpinned from the bar. Rerouting those into the More stack keeps every
     /// jump landing on a real screen instead of a selection with no matching tab.
@@ -159,7 +167,7 @@ struct MobileControlView: View {
                 // Any tab change ends the deep-link ring: it has either been seen or been left
                 // behind.  `apply` sets the focus AFTER moving the selection, so a link's own
                 // jump is not the change that clears it.
-                clearFocusedProposal()
+                clearFocus()
                 if target == .more || tabPreferences.barTabs.contains(target) {
                     selectedTab = target
                 } else {
@@ -196,6 +204,7 @@ struct MobileControlView: View {
                 Tab(AppTab.activity.title, systemImage: AppTab.activity.systemImage, value: AppTab.activity) {
                     NavigationStack { destination(for: .activity) }
                 }
+                .badge(unreadNotificationCount)
             }
             if tabPreferences.isPinned(.insights) {
                 Tab(AppTab.insights.title, systemImage: AppTab.insights.systemImage, value: AppTab.insights) {
@@ -227,7 +236,8 @@ struct MobileControlView: View {
                 NavigationStack(path: $morePath) {
                     MoreView(
                         tabPreferences: tabPreferences,
-                        pendingProposalCount: pendingProposalCount
+                        pendingProposalCount: pendingProposalCount,
+                        unreadNotificationCount: unreadNotificationCount
                     )
                     .navigationDestination(for: AppTab.self) { tab in
                         destination(for: tab)
@@ -281,20 +291,23 @@ struct MobileControlView: View {
         guard let destination else { return }
         selection.wrappedValue = destination.tab
         focusedProposalId = destination.proposalId
+        focusedSymbol = destination.focusedSymbol
         pendingDeepLink = nil
         focusExpiry?.cancel()
-        guard focusedProposalId != nil else { return }
+        guard focusedProposalId != nil || focusedSymbol != nil else { return }
         focusExpiry = Task { @MainActor in
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
             focusedProposalId = nil
+            focusedSymbol = nil
         }
     }
 
-    private func clearFocusedProposal() {
+    private func clearFocus() {
         focusExpiry?.cancel()
         focusExpiry = nil
         focusedProposalId = nil
+        focusedSymbol = nil
     }
 
     @ViewBuilder
@@ -302,7 +315,7 @@ struct MobileControlView: View {
         switch tab {
         case .home: HomeView(selectedTab: selection)
         case .proposals: ProposalsView(focusedProposalId: $focusedProposalId)
-        case .markets: MarketsView(selectedTab: selection)
+        case .markets: MarketsView(selectedTab: selection, focusedSymbol: $focusedSymbol)
         case .activity: ActivityView()
         case .insights: InsightsView(selectedTab: selection)
         case .coach: CoachView()
@@ -323,6 +336,7 @@ extension Notification.Name {
 private struct MoreView: View {
     @ObservedObject var tabPreferences: TabPreferences
     let pendingProposalCount: Int
+    let unreadNotificationCount: Int
 
     var body: some View {
         List {
@@ -360,6 +374,14 @@ private struct MoreView: View {
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(AppPalette.negative, in: Capsule())
+                            }
+                            if tab == .activity && unreadNotificationCount > 0 {
+                                Text("\(unreadNotificationCount)")
+                                    .font(.appCaption2.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(AppPalette.accent, in: Capsule())
                             }
                         }
                         Text(tab.detail)

@@ -179,13 +179,11 @@ enum CoachModelCatalog {
         .init(id: "claude-haiku-4.5", label: "Claude Haiku", provider: "anthropic", detail: "fast Claude"),
         .init(id: "claude-sonnet-5", label: "Claude Sonnet", provider: "anthropic", detail: "balanced Claude"),
         .init(id: "grok-4.5", label: "Grok", provider: "xai", detail: "default Grok"),
-        .init(id: "gemini-flash-latest", label: "Gemini Flash", provider: "gemini", detail: "stable Flash"),
-        .init(id: "mock", label: "Mock (offline)", provider: "mock", detail: "keyless offline path")
+        .init(id: "gemini-flash-latest", label: "Gemini Flash", provider: "gemini", detail: "stable Flash")
     ]
 
     static func provider(for model: String) -> String {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if trimmed == "mock" { return "mock" }
         if trimmed.hasPrefix("claude") { return "anthropic" }
         if trimmed.hasPrefix("grok") { return "xai" }
         if trimmed.hasPrefix("gemini") { return "gemini" }
@@ -196,13 +194,11 @@ enum CoachModelCatalog {
     }
 
     static func firstAvailable(providers: [String: Bool]) -> Option? {
-        options.first { option in
-            option.provider == "mock" || providers[option.provider] == true
-        }
+        options.first { providers[$0.provider] == true }
     }
 
     static func isAvailable(_ option: Option, providers: [String: Bool]) -> Bool {
-        option.provider == "mock" || providers[option.provider] == true
+        providers[option.provider] == true
     }
 }
 
@@ -212,6 +208,13 @@ struct MarketScanResponse: Decodable {
     let topCandidates: [ScanCandidate]
     let asOf: String?
     let generatedAt: String?
+    let scannedSymbols: Int?
+    let returnedQuotes: Int?
+    let warnings: [String]
+
+    var hasUsableUniverse: Bool { !topCandidates.isEmpty }
+
+    var lastGoodStamp: String? { asOf ?? generatedAt }
 
     private enum CodingKeys: String, CodingKey {
         case topCandidates
@@ -219,6 +222,25 @@ struct MarketScanResponse: Decodable {
         case generatedAt
         case scannedAt
         case createdAt
+        case scannedSymbols
+        case returnedQuotes
+        case warnings
+    }
+
+    init(
+        topCandidates: [ScanCandidate],
+        asOf: String? = nil,
+        generatedAt: String? = nil,
+        scannedSymbols: Int? = nil,
+        returnedQuotes: Int? = nil,
+        warnings: [String] = []
+    ) {
+        self.topCandidates = topCandidates
+        self.asOf = asOf ?? generatedAt
+        self.generatedAt = generatedAt
+        self.scannedSymbols = scannedSymbols
+        self.returnedQuotes = returnedQuotes
+        self.warnings = warnings
     }
 
     init(from decoder: Decoder) throws {
@@ -229,6 +251,16 @@ struct MarketScanResponse: Decodable {
             ?? values.decodeIfPresent(String.self, forKey: .scannedAt)
             ?? values.decodeIfPresent(String.self, forKey: .createdAt)
         generatedAt = try values.decodeIfPresent(String.self, forKey: .generatedAt)
+        scannedSymbols = try values.decodeIfPresent(Int.self, forKey: .scannedSymbols)
+        returnedQuotes = try values.decodeIfPresent(Int.self, forKey: .returnedQuotes)
+        warnings = try values.decodeIfPresent([String].self, forKey: .warnings) ?? []
+    }
+
+    /// Same rule as `/console/scan`: a failed refresh never blanks a last-good table.
+    func keepingLastGood(from previous: MarketScanResponse?) -> MarketScanResponse {
+        if hasUsableUniverse { return self }
+        guard let previous, previous.hasUsableUniverse else { return self }
+        return previous
     }
 }
 
@@ -247,6 +279,28 @@ struct ScanCandidate: Decodable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case symbol, companyName, price, score, intradayChangePct, sector, volume, bid, ask
+    }
+
+    init(
+        symbol: String,
+        companyName: String? = nil,
+        price: Double? = nil,
+        score: Double? = nil,
+        intradayChangePct: Double? = nil,
+        sector: String? = nil,
+        volume: Double? = nil,
+        bid: Double? = nil,
+        ask: Double? = nil
+    ) {
+        self.symbol = symbol
+        self.companyName = companyName
+        self.price = price
+        self.score = score
+        self.intradayChangePct = intradayChangePct
+        self.sector = sector
+        self.volume = volume
+        self.bid = bid
+        self.ask = ask
     }
 
     init(from decoder: Decoder) throws {
@@ -282,6 +336,7 @@ struct FullPolicy: Decodable {
     let blocklist: [String]?
     let llmModel: String?
     let redTeamLlmModel: String?
+    let llmFallbackModels: [String]?
     let sellToFundBuy: String?
     let socraticOverrideMode: String?
     let stopLossPct: Double?
@@ -307,12 +362,21 @@ struct FullPolicy: Decodable {
         blocklist = try values.decodeIfPresent([String].self, forKey: .blocklist)
         llmModel = try values.decodeIfPresent(String.self, forKey: .llmModel)
         redTeamLlmModel = try values.decodeIfPresent(String.self, forKey: .redTeamLlmModel)
+        llmFallbackModels = try values.decodeIfPresent([String].self, forKey: .llmFallbackModels)
         sellToFundBuy = try values.decodeIfPresent(String.self, forKey: .sellToFundBuy)
         socraticOverrideMode = try values.decodeIfPresent(String.self, forKey: .socraticOverrideMode)
-        stopLossPct = try values.decodeIfPresent(Double.self, forKey: .stopLossPct)
-        trailingStopPct = try values.decodeIfPresent(Double.self, forKey: .trailingStopPct)
-        shortStopLossPct = try values.decodeIfPresent(Double.self, forKey: .shortStopLossPct)
+        let riskRules = try? values.nestedContainer(keyedBy: RiskRulesCodingKeys.self, forKey: .riskRules)
+        stopLossPct = try riskRules?.decodeIfPresent(Double.self, forKey: .stopLossPct)
+            ?? values.decodeIfPresent(Double.self, forKey: .stopLossPct)
+        trailingStopPct = try riskRules?.decodeIfPresent(Double.self, forKey: .trailingStopPct)
+            ?? values.decodeIfPresent(Double.self, forKey: .trailingStopPct)
+        shortStopLossPct = try riskRules?.decodeIfPresent(Double.self, forKey: .shortStopLossPct)
+            ?? values.decodeIfPresent(Double.self, forKey: .shortStopLossPct)
         taxSettings = try values.decodeIfPresent(PolicyTaxSettings.self, forKey: .taxSettings)
+    }
+
+    private enum RiskRulesCodingKeys: String, CodingKey {
+        case stopLossPct, trailingStopPct, shortStopLossPct
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -320,7 +384,8 @@ struct FullPolicy: Decodable {
         case runDuringExtendedHours, maxOrderNotional, maxOrderPctOfNav
         case maxDailyNotional, maxDailyPctOfNav, maxDailyOrders
         case requireTypedConfirmation, includedIndices, additionalSymbols, blocklist
-        case llmModel, redTeamLlmModel, sellToFundBuy, socraticOverrideMode
+        case llmModel, redTeamLlmModel, llmFallbackModels, sellToFundBuy, socraticOverrideMode
+        case riskRules
         case stopLossPct, trailingStopPct, shortStopLossPct, taxSettings
     }
 }
@@ -329,6 +394,8 @@ struct PolicyTaxSettings: Decodable {
     let taxationType: String?
     let washSaleGuard: Bool?
     let washSaleHandling: String?
+    let iraWashSaleHandling: String?
+    let washSaleMinLossUsd: Double?
     let shortTermRatePct: Double?
     let longTermRatePct: Double?
 }
@@ -337,6 +404,41 @@ struct PolicyTaxSettings: Decodable {
 
 struct SourceFeaturesPatchAck: Decodable {
     let ok: Bool?
+}
+
+struct LlmBudgetToday: Decodable {
+    let tokens: Double
+    let costUsd: Double
+}
+
+struct LlmBudgetEffective: Decodable {
+    let tokenLimit: Double?
+    let costLimitUsd: Double?
+    let tokenSource: String
+    let costSource: String
+}
+
+struct LlmBudgetResponse: Decodable {
+    let tokenBudget: Double?
+    let costBudgetUsd: Double?
+    let effective: LlmBudgetEffective
+    let today: LlmBudgetToday
+    let enforced: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case tokenBudget, costBudgetUsd, effective, today, enforced
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        tokenBudget = try values.decodeIfPresent(Double.self, forKey: .tokenBudget)
+        costBudgetUsd = try values.decodeIfPresent(Double.self, forKey: .costBudgetUsd)
+        effective = try values.decodeIfPresent(LlmBudgetEffective.self, forKey: .effective)
+            ?? LlmBudgetEffective(tokenLimit: nil, costLimitUsd: nil, tokenSource: "none", costSource: "none")
+        today = try values.decodeIfPresent(LlmBudgetToday.self, forKey: .today)
+            ?? LlmBudgetToday(tokens: 0, costUsd: 0)
+        enforced = try values.decodeIfPresent(Bool.self, forKey: .enforced) ?? false
+    }
 }
 
 struct SourceFeaturesResponse: Decodable {
@@ -416,6 +518,11 @@ enum SourceSettingValue: Decodable, Equatable {
         return false
     }
 
+    var numberValue: Double? {
+        if case .number(let value) = self { return value }
+        return nil
+    }
+
     var displayValue: String {
         switch self {
         case .bool(let value): return value ? "on" : "off"
@@ -453,6 +560,105 @@ enum SourceSettingGroupOrder {
 // MARK: - Shared display helpers
 
 enum DeskCopy {
+    /// Roth / traditional IRA — same-account wash sales have no taxable loss deduction.
+    /// Accepts wire slugs (`roth_ira`) and display words (`Roth IRA`) so a live tax card
+    /// that already says Roth never still renders the taxable wash-sale guard.
+    static func isIraTaxation(_ raw: String?) -> Bool {
+        let collapsed = raw?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ") ?? ""
+        if collapsed.isEmpty { return false }
+        if collapsed == "roth ira" || collapsed == "traditional ira" { return true }
+        return collapsed.contains("ira") && (collapsed.contains("roth") || collapsed.contains("traditional"))
+    }
+
+    /// True when any account / capability / policy tax signal is IRA.  A taxable leftover
+    /// on `taxSettings.washSaleHandling` must not win just because one field is empty.
+    static func isIraAccount(
+        accountTaxation: String?,
+        capabilityType: String?,
+        policyTaxation: String?
+    ) -> Bool {
+        [accountTaxation, capabilityType, policyTaxation].contains { isIraTaxation($0) }
+    }
+
+    /// Connected-account taxation wins, then capability account type, then policy tax settings.
+    static func resolvedTaxationType(
+        accountTaxation: String?,
+        capabilityType: String?,
+        policyTaxation: String?
+    ) -> String? {
+        let candidates = [accountTaxation, capabilityType, policyTaxation]
+        if let ira = candidates.first(where: { isIraTaxation($0) }) {
+            return ira?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        for raw in candidates {
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
+    }
+
+    /// Never show the `__rotate__` seat sentinel.  Owner: lowercase "rotate models".
+    static func modelSeatValue(_ raw: String?, fallbacks _: [String] = []) -> String {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if isRotationSentinel(trimmed) {
+            return "rotate models"
+        }
+        if trimmed.isEmpty { return "—" }
+        return trimmed.lowercased()
+    }
+
+    static func isRotationSentinel(_ raw: String?) -> Bool {
+        raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "__rotate__"
+    }
+
+    /// Same-account IRA wash sales are N/A.  Cross-account: ignored / auto / blocked.
+    static func iraWashSaleRows(handling: String?) -> (sameAccount: String, crossAccount: String) {
+        let normalized = handling?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cross: String
+        if normalized == "block" {
+            cross = "blocked"
+        } else if normalized == "auto" {
+            cross = "auto"
+        } else {
+            cross = "ignored"
+        }
+        return ("not applicable", cross)
+    }
+
+    /// Scan refresh failed.  Do not reuse the workspace "Check your connection" sentence —
+    /// SnapshotScaffold already shows that for a stale snapshot, and Retry there reloads
+    /// the snapshot, not `/api/scan`.
+    static let genericConnectionMessage = "Check your connection and try again."
+    static let scanRefreshing = "Refreshing the scan — this can take up to 45 seconds."
+    static let scanEmptyUniverse =
+        "The scan returned no ranked names.  Confirm the universe on Guardrails, then refresh."
+    static let scanEmptyFilter = "Nothing in this scan matches that filter."
+    static let equityWaitingOnBroker = "waiting on broker"
+    static let portfolioSelectAccount =
+        "Select a connected account or retry when the broker is reachable."
+    static let portfolioBrokerUnreachable =
+        "The broker did not return holdings for this account.  Pull to refresh."
+
+    static func scanRefreshFailed(from message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == genericConnectionMessage {
+            return "Couldn’t refresh the market scan.  Check your connection and try again."
+        }
+        return trimmed
+    }
+
+    static func shouldShowScanEmptyState(hasFilter: Bool, loadFailed: Bool) -> Bool {
+        hasFilter || !loadFailed
+    }
+
+    static func portfolioUnavailableMessage(hasConnectedAccount: Bool) -> String {
+        hasConnectedAccount ? portfolioBrokerUnreachable : portfolioSelectAccount
+    }
+
     /// Authority is Autopilot / Ask-First.  Run state is Running / Paused / Stopped.
     /// Never blend the two — Autopilot can be paused when the market is closed.
     static func authorityVersusRunState(
@@ -479,6 +685,73 @@ enum DeskCopy {
         return trimmed.isEmpty ? "none" : trimmed.joined(separator: ", ")
     }
 
+    /// Same labels as `INDEX_UNIVERSES` / web `INDICES`.  Storage slugs stay off the row.
+    static let indexUniverseLabels: [String: String] = [
+        "sp100": "S&P 100",
+        "sp500": "S&P 500",
+        "nasdaq100": "Nasdaq 100",
+        "nasdaqComposite": "Nasdaq Composite",
+        "dow30": "Dow 30",
+        "russell2000": "Russell 2000",
+        "nyseComposite": "NYSE Composite",
+        "ftWilshire5000": "FT Wilshire 5000"
+    ]
+
+    static func indexUniverseLabel(_ value: String) -> String? {
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        return indexUniverseLabels[key]
+    }
+
+    static func joinedIndexList(_ values: [String]?) -> String {
+        let labels = (values ?? []).compactMap(indexUniverseLabel)
+        return labels.isEmpty ? "none" : labels.joined(separator: ", ")
+    }
+
+    /// Mirror of `src/lib/guardrail-copy.ts` — keep sentences aligned.
+    static let guardrailsHeaderSuffix = "authority, caps, and adjustable preferences"
+    static let paperAccountWord = "paper"
+    static let proposalConfirmOrderTitle = "Confirm Order"
+    static let proposalApproveOrderButton = "Approve Order"
+    static let proposalTypedConfirmHint = "Typed confirmation required for this order"
+
+    /// Same destination as web readiness (`/console/guardrails`).  iOS has no Strategy tab.
+    /// "always-include symbols" tracks the row label — those names are exempt from the
+    /// universe floor, which "extra symbols" made sound like a plain append.
+    static let universeNeedsIndex =
+        "Choose at least one base index (e.g. S&P 500) or add always-include symbols so the strategy has names to scan."
+
+    static let universeRefreshAfterGuardrails =
+        "Add an index or always-include symbols on Guardrails, then pull to refresh here."
+
+    static let universeInsightDetail =
+        "Choose at least one base index (e.g. S&P 500) or add always-include symbols."
+
+    /// `sellToFundBuy` wire values are `off` / `suggest` / `propose` / `automated`.
+    /// The bare slug "propose" is indistinguishable from the unrelated propose/Ask-first
+    /// authority concept, so every value is spelled out as what it does.
+    static func sellToFundValue(_ raw: String?) -> String {
+        switch raw?.lowercased() {
+        case .none, .some(""), "off": return "off"
+        case "suggest": return "suggest only"
+        case "propose": return "propose sells first"
+        case "automated": return "sells automatically"
+        case .some(let other): return other.replacingOccurrences(of: "_", with: " ").lowercased()
+        }
+    }
+
+    /// `socraticOverrideMode` wire values are `off` / `propose` / `execute`.  The raw
+    /// enum used to print straight through.  "Decide" is never shown to users either —
+    /// Autopilot is the user-facing word for that authority mode.
+    static func socraticOverrideValue(_ raw: String?) -> String {
+        switch raw?.lowercased() {
+        case .none, .some(""), "off": return "off"
+        case "propose": return "propose only"
+        case "execute": return "execute in Autopilot"
+        case .some(let other): return other.replacingOccurrences(of: "_", with: " ").lowercased()
+        }
+    }
+
     static func yesNo(_ value: Bool?) -> String {
         guard let value else { return "—" }
         return value ? "yes" : "no"
@@ -487,5 +760,49 @@ enum DeskCopy {
     static func percentPoints(_ value: Double?) -> String {
         guard let value else { return "—" }
         return "\(value.formatted(.number.precision(.fractionLength(0...2))))%"
+    }
+
+    /// Watchlist count is never the scan universe.  "watched" stays watchlist-only.
+    static func scanCountLine(names: Int, scanned: Int?, quotes: Int?, watched: Int) -> String {
+        var parts = ["\(names) names"]
+        if let scanned {
+            parts.append("\(scanned) scanned")
+        }
+        if let quotes {
+            parts.append("\(quotes) quotes")
+        }
+        parts.append("\(watched) watched")
+        return parts.joined(separator: " · ")
+    }
+
+    static let scanUniverseNote =
+        "Ranked candidates for the current universe.  Watchlist names are not the scan universe.  Adding or removing a watchlist name does not place an order."
+
+    static func scanEmptyTitle(hasFilter: Bool) -> String {
+        hasFilter ? "No Matching Names" : "No Candidates"
+    }
+
+    static func scanEmptyMessage(scanned: Int?, quotes: Int?, hasFilter: Bool) -> String {
+        if hasFilter {
+            return "Nothing in this scan matches that filter."
+        }
+        if (scanned ?? 0) == 0 {
+            return "This universe has no symbols.  Choose a base index or add symbols on Guardrails, then refresh."
+        }
+        if (quotes ?? 0) == 0 {
+            return "The scan could not price any names.  Refresh after quotes recover."
+        }
+        return "The scan returned no ranked names.  Refresh after quotes recover."
+    }
+
+    static let scanLoadingNote = "Refreshing the scan.  This can take about 40 seconds."
+
+    /// Failed refresh stays a banner.  Last-good names stay on screen.
+    static func scanRefreshFailedBanner(reason: String, lastGoodAt: String?) -> String {
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let lastGoodAt, !lastGoodAt.isEmpty else { return trimmed }
+        let stamped = AppFormat.dateTime(lastGoodAt)
+        if stamped == "—" { return trimmed }
+        return "\(trimmed)  Showing the last good scan from \(stamped)."
     }
 }

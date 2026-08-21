@@ -63,6 +63,7 @@ import {
   type BrokerStopPlacementIntent
 } from "./db";
 import { auditDeduped } from "./audit-dedupe";
+import { hasOwnerCancelledProtectiveStop } from "./order-provenance";
 import { isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
 
 // Steady-state skip reasons fire once per tick per position (~14k identical
@@ -1342,6 +1343,14 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   for (const [sym, pos] of livePositions) {
     if (existing.has(sym)) continue;
+    if (hasOwnerCancelledProtectiveStop(userId, accountNumber, sym)) {
+      auditStopSkipped({
+        symbol: sym,
+        kind: kindForSymbol(sym),
+        note: "owner manually cancelled the app-managed protective stop — not re-placing until policy changes"
+      }, userId, policy.connectedAccountId);
+      continue;
+    }
     // While halted, place ONLY for a symbol whose oversized stop was just cancelled for right-sizing.
     // Any other open long here has no stop (a pending_cancel row keeps it in `existing`, so it was
     // already filtered out above) — placing for it would be initiating NEW protection during a halt.

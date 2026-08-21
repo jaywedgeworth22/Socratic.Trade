@@ -19,7 +19,11 @@ struct MobileSnapshot: Decodable {
     let connectedAccounts: [ConnectedAccount]
     let watchlist: [WatchlistItem]
     let alerts: [PriceAlert]
+    /// Persisted notification inbox (last 100).  Missing on older payloads.
+    let notifications: [NotificationHistoryItem]
     let recentCommands: [MobileCommand]
+    /// Last-good `/api/scan` universe.  Same seed `/console/scan` keeps when Refresh 503s.
+    let latestScan: MarketScanResponse?
 
     private enum CodingKeys: String, CodingKey {
         case currentUser
@@ -37,7 +41,9 @@ struct MobileSnapshot: Decodable {
         case connectedAccounts
         case watchlist
         case alerts
+        case notifications
         case recentCommands
+        case latestScan
     }
 
     init(from decoder: Decoder) throws {
@@ -63,7 +69,21 @@ struct MobileSnapshot: Decodable {
         connectedAccounts = try values.decodeIfPresent([ConnectedAccount].self, forKey: .connectedAccounts) ?? []
         watchlist = try values.decodeIfPresent([WatchlistItem].self, forKey: .watchlist) ?? []
         alerts = try values.decodeIfPresent([PriceAlert].self, forKey: .alerts) ?? []
+        notifications = try values.decodeIfPresent([NotificationHistoryItem].self, forKey: .notifications) ?? []
         recentCommands = try values.decodeIfPresent([MobileCommand].self, forKey: .recentCommands) ?? []
+        latestScan = try values.decodeIfPresent(MarketScanResponse.self, forKey: .latestScan)
+    }
+
+    var unreadNotificationCount: Int {
+        notifications.filter { !$0.read }.count
+    }
+
+    func inScopeNotifications(activeAccountId: String?) -> [NotificationHistoryItem] {
+        guard let activeAccountId else { return notifications }
+        return notifications.filter { item in
+            guard let accountId = item.connectedAccountId else { return true }
+            return accountId == activeAccountId
+        }
     }
 }
 
@@ -114,6 +134,10 @@ struct Readiness: Decodable {
     let selectedAccountNumber: String?
     let activeConnectedAccount: ConnectedAccount?
     let commandBacklog: CommandBacklog
+    /// Missing on older payloads: treat as already accepted so a stale cache cannot lock the desk.
+    let needsAppConsent: Bool?
+
+    var requiresAppConsent: Bool { needsAppConsent == true }
 }
 
 struct CommandBacklog: Decodable {
@@ -130,6 +154,9 @@ struct ConnectedAccount: Decodable, Identifiable, Hashable {
     let isActive: Bool?
     let isDraining: Bool?
     let capabilities: AccountCapabilities?
+    /// Connected-account tax regime (`roth_ira` / `traditional_ira` / `taxable`).  Wins over
+    /// `policy.taxSettings.taxationType` the same way the web desk resolves it.
+    let taxationType: String?
 }
 
 struct AccountCapabilities: Decodable, Hashable {
@@ -267,6 +294,14 @@ enum AccountMetrics {
         if !hasFillHistory { return nil }
         return ledger
     }
+
+    /// Win rate / avg return are `0` (not nil) from the server for an account with zero closed
+    /// lots — a real "no data yet" state, not a genuine 0%.  Gate on the closed-lot count, not
+    /// the value, so an account with exactly one break-even closed lot still shows its real 0%.
+    static func displayedRateMetric(ledger: Double?, closedLotCount: Int?) -> Double? {
+        guard let closedLotCount, closedLotCount > 0 else { return nil }
+        return ledger
+    }
 }
 
 struct EquityOrder: Decodable, Identifiable {
@@ -297,6 +332,8 @@ struct PendingProposal: Decodable, Identifiable {
     let performanceSinceProposalPct: Double?
     let proposalReferencePrice: Double?
     let proposalCurrentPrice: Double?
+    let delayedFallback: Bool?
+    let quoteProvider: String?
     let proposal: Proposal
 }
 
@@ -320,6 +357,8 @@ struct Proposal: Decodable {
     let bracketTakeProfit: Double?
     let bracketStopLoss: Double?
     let exitPlan: String?
+    let quoteDelayedFallback: Bool?
+    let quoteProvider: String?
     let scorecard: ProposalScorecardSnippet?
     let redTeamVerdict: RedTeamVerdict?
 }
@@ -444,6 +483,11 @@ struct PerformanceSummary: Decodable {
     let paperWinRate: Double?
     let liveAverageReturnPct: Double?
     let paperAverageReturnPct: Double?
+    /// Count of CLOSED lots behind liveWinRate/liveAverageReturnPct.  Zero for an account that has
+    /// never closed a lot — winRate/averageReturn both compute to 0 (not nil) server-side for an
+    /// empty lot list, so a real "no data yet" state must be read off this count, not the value.
+    let liveClosedLotCount: Int?
+    let paperClosedLotCount: Int?
     let benchmark: BenchmarkComparison?
     let fills: [FillEvent]?
 }
@@ -497,11 +541,68 @@ struct PriceAlert: Decodable, Identifiable {
     let triggeredPrice: Double?
 }
 
+/// One persisted inbox row from `/api/mobile/snapshot` `notifications`.
+/// Title and body are already ordinary words — do not show `type` raw.
+/// Older #2942 rows had `status` / `acknowledgedAt` and no `body` / `read`.
+struct NotificationHistoryItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let createdAt: String
+    let type: String
+    let title: String
+    let body: String
+    let read: Bool
+    let status: String
+    let acknowledgedAt: String?
+    let connectedAccountId: String?
+    let accountLabel: String?
+
+    var readLabel: String { read ? "read" : "unread" }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case createdAt
+        case type
+        case title
+        case body
+        case read
+        case status
+        case acknowledgedAt
+        case connectedAccountId
+        case accountLabel
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        createdAt = try values.decode(String.self, forKey: .createdAt)
+        type = try values.decode(String.self, forKey: .type)
+        title = try values.decode(String.self, forKey: .title)
+        body = try values.decodeIfPresent(String.self, forKey: .body) ?? ""
+        acknowledgedAt = try values.decodeIfPresent(String.self, forKey: .acknowledgedAt)
+        if let explicitRead = try values.decodeIfPresent(Bool.self, forKey: .read) {
+            read = explicitRead
+        } else {
+            read = acknowledgedAt != nil
+        }
+        status = try values.decodeIfPresent(String.self, forKey: .status) ?? "sent"
+        connectedAccountId = try values.decodeIfPresent(String.self, forKey: .connectedAccountId)
+        accountLabel = try values.decodeIfPresent(String.self, forKey: .accountLabel)
+    }
+}
+
+struct MobileCommandResult: Decodable {
+    let status: String?
+    let outcome: String?
+    let reasons: [String]?
+    let orderId: String?
+}
+
 struct MobileCommand: Decodable, Identifiable {
     let id: String
     let commandType: String
     let status: String
     let error: String?
+    let result: MobileCommandResult?
     let createdAt: String
     let queuedAt: String?
     let startedAt: String?

@@ -1,3 +1,5 @@
+import { centralTradingDayKey } from "./trading-day";
+
 // External deposit/withdrawal inference — PURE, and deliberately dependency-free.
 //
 // Why this is its own module rather than living in `benchmark.ts` where it started:
@@ -29,16 +31,16 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Normalize any timestamp (ms epoch | ISO datetime | YYYY-MM-DD) to a calendar date string. */
+/** Normalize any timestamp (ms epoch | ISO datetime | YYYY-MM-DD) to a Central trading-day key. */
 export function isoDate(ts: string | number | undefined): string | null {
   if (ts == null) return null;
   if (typeof ts === "number") {
     const d = new Date(ts);
-    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+    return Number.isNaN(d.getTime()) ? null : centralTradingDayKey(d);
   }
   if (/^\d{4}-\d{2}-\d{2}/.test(ts)) return ts.slice(0, 10);
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  return Number.isNaN(d.getTime()) ? null : centralTradingDayKey(d);
 }
 
 /** A flow is only "external" when it clears both floors — below that, cash drift is
@@ -161,7 +163,8 @@ export function inferExternalCashFlows(
       if (f.t <= prev.timestampMs) continue;
       if (f.t > cur.timestampMs) break;
       tradeNotionalAbs += Math.abs(f.notional);
-      tradeCash += f.side === "sell" || f.side === "cover" ? f.notional : -f.notional;
+      // Short sale credits cash (+); cover and buy debit cash (−). Sell credits (+).
+      tradeCash += f.side === "sell" || f.side === "short" ? f.notional : -f.notional;
     }
 
     // ── 1. All-cash books: any equity move is a transfer (deposit or withdrawal / reset). ──

@@ -12,11 +12,11 @@ AUDIT="${OPS_SNAPSHOT_AUDIT:-40}"
 ORDERS="${OPS_SNAPSHOT_ORDERS:-}"
 OUT="${OPS_SNAPSHOT_OUT:-}"
 
-TOKEN="${OPS_DIAGNOSTIC_TOKEN:-${ADMIN_REINDEX_TOKEN:-}}"
+TOKEN="${OPS_DIAGNOSTIC_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
   echo "error: OPS_DIAGNOSTIC_TOKEN is not set." >&2
   echo "Add it in Cursor Dashboard -> Cloud Agents -> Secrets (Runtime Secret)." >&2
-  echo "Use the same value on trading-live and restart pm2 trading." >&2
+  echo "Use the same value on production (Infisical). ADMIN_REINDEX_TOKEN is not a fallback." >&2
   exit 1
 fi
 

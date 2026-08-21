@@ -70,6 +70,7 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   "yh-finance-apidojo": { minIntervalMs: 1100, concurrency: 1 },
   "real-time-finance-data": { minIntervalMs: 500, concurrency: 1 },
   "seeking-alpha-rapidapi": { minIntervalMs: 1100, concurrency: 1 },
+  filingapi: { minIntervalMs: 400, concurrency: 1 },
   // ROIC free = 5 req/min, Individual = 300/min (https://www.roic.ai/pricing, 2026-08-06).
   // Burst pacer only (concurrency 1, short spacing). The free-safe *budget* is RATE_QUOTAS /
   // plan-tier windows (5/min default; 300/min when Connections plan = individual). Do not set
@@ -287,7 +288,12 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
   // (no daily cap on Starter); PROVIDER_QUOTA_FMP_PER_DAY opts one in (e.g. 240 for the free 250/day
   // tier) via the generic env path in resolveProviderQuota.
   fmp: [{ maxRequests: 290, windowMs: MINUTE }],
-  // FilingAPI.dev retired 2026-08-17 — no RATE_QUOTAS entry (no live HTTP).
+  // FilingAPI.dev free tier is documented as ~50 req/day (see data-providers.ts's
+  // FilingApiEnrichmentProvider doc comment); 45 leaves headroom. The provider already calls
+  // admitProviderRequests("filingapi", ...) expecting this budget to exist — with no entry here,
+  // resolveProviderQuota("filingapi") returned undefined (unlimited), so that call site's "~50/day
+  // free tier — admit at most one symbol-bundle per reservation unit" comment enforced nothing.
+  filingapi: [{ maxRequests: 45, windowMs: DAY }],
   // ROIC.ai free tier = 5 req/min (https://www.roic.ai/pricing, verified 2026-08-06).
   // Paid Individual (300/min) / Professional (unlimited) raise via Connections plan tier or
   // PROVIDER_QUOTA_ROIC_PER_MIN. Never invent a daily cap — the vendor publishes per-minute.

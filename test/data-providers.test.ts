@@ -12,6 +12,7 @@ import {
   apiKeyFingerprint,
   callsPerSymbol,
   getEnrichmentProvider,
+  isLatchingEnrichmentTransportError,
   isTransientError,
   labelFromAnalystScore,
   mockEnrichmentProvider,
@@ -135,7 +136,6 @@ describe("market enrichment provider", () => {
     expect(provider.name).not.toContain("congress.trade");
     expect(provider.name).not.toMatch(/(^|\+)fmp($|\+)/);
     expect(provider.name).not.toContain("quiverquant");
-    expect(provider.name).not.toContain("filingapi");
   });
 
   it("keeps the unofficial Webull quote bridge disabled by default", async () => {
@@ -292,8 +292,7 @@ describe("enrichment cache consent gate", () => {
 
     const userA = `cg-priv-a-${randomUUID()}`;
     const userB = `cg-priv-b-${randomUUID()}`;
-    // Explicit decline required: pool consent defaults ON (owner 2026-08-05). Without this,
-    // user-keyed writes go to pool and any default-consent reader can see them.
+    // Unset users no longer silently share.  Explicit decline keeps user-keyed writes private.
     setDataPoolConsent(userA, false);
     setDataPoolConsent(userB, false);
     // userA has their own API key; userB does NOT have an API key
@@ -3112,6 +3111,89 @@ describe("enrichment short-circuit (App A coverage hint → paid providers skip 
     expect(out.AAA.analystBySource && Object.keys(out.AAA.analystBySource).sort()).toEqual(["fmp", "yahoo-finance"]);
   });
 
+  it("does not fail the free wave when congress.trade 404s", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const cascade = new CascadingEnrichmentProvider([
+      {
+        name: "congress.trade",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          throw new Error("HTTP 404");
+        }
+      },
+      {
+        name: "yahoo-finance",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          return { AAA: { peRatio: 12 } };
+        }
+      }
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(out.AAA.peRatio).toBe(12);
+  });
+
+  it("does not latch gather when congress.trade 502s on the free-first wave", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const cascade = new CascadingEnrichmentProvider([
+      {
+        name: "congress.trade",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          throw new Error("HTTP 502");
+        }
+      },
+      {
+        name: "yahoo-finance",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          return { AAA: { peRatio: 18 } };
+        }
+      }
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(out.AAA.peRatio).toBe(18);
+  });
+
+  it("does not latch gather when congress.trade 502s on the legacy short-circuit path", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    process.env[FREE_FIRST] = "0";
+    const cascade = new CascadingEnrichmentProvider([
+      {
+        name: "congress.trade",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          throw new Error("HTTP 502");
+        }
+      },
+      {
+        name: "yahoo-finance",
+        configured: true,
+        costTier: "free",
+        async enrich() {
+          return { AAA: { peRatio: 19 } };
+        }
+      }
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(out.AAA.peRatio).toBe(19);
+  });
+
+  it("treats 502/429/timeout as latching and 404 as a miss", () => {
+    expect(isLatchingEnrichmentTransportError(new Error("HTTP 502"))).toBe(true);
+    expect(isLatchingEnrichmentTransportError(new Error("HTTP 429"))).toBe(true);
+    expect(isLatchingEnrichmentTransportError(new Error("The operation was aborted due to timeout"))).toBe(true);
+    expect(isLatchingEnrichmentTransportError(new Error("HTTP 404"))).toBe(false);
+  });
+
   it("passes NO coverage hint when the flag is OFF (default)", async () => {
     process.env[READS] = "on"; // reads on, short-circuit off
     // Free-first also injects coveredFields for paid waves — disable it here so this test
@@ -3233,6 +3315,22 @@ describe("short-interest second source (Massive) — cross-check + disagreement 
     const res = await provider.enrich(["NONE"]);
     expect(res.NONE).toEqual({});
   });
+
+  it("MassiveEnrichmentProvider stops remaining symbols after the first 429", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      return new Response("rate limited", { status: 429 });
+    });
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const symbols = Array.from({ length: 20 }, (_, i) => `M${i}`);
+    const res = await provider.enrich(symbols);
+    expect(res.M0).toEqual({});
+    expect(res.M19).toEqual({});
+    expect(calls).toBeLessThan(20);
+  });
 });
 
 describe("enrichment symbol budget covers the full scan candidate set (starvation regression)", () => {
@@ -3323,21 +3421,18 @@ describe("enrichment symbol budget covers the full scan candidate set (starvatio
 });
 
 
-describe("FMP / Quiver / FilingAPI direct access retired", () => {
-  it("never registers FMP, Quiver, or FilingAPI even when keys are present", async () => {
+describe("FMP / Quiver direct access retired (owner 2026-08-04)", () => {
+  it("never registers FMP or Quiver even when keys are present", async () => {
     process.env.FMP_API_KEY = "should-not-register";
     process.env.QUIVER_API_KEY = "should-not-register";
-    process.env.FILINGAPI = "should-not-register";
     process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED = "off"; // isolate cascade name
     const { getEnrichmentProvider } = await import("../src/lib/data-providers");
     const provider = getEnrichmentProvider();
     expect(provider.name).not.toMatch(/(^|\+)fmp($|\+)/);
     expect(provider.name).not.toContain("quiverquant");
     expect(provider.name).not.toContain("fmp-rapidapi");
-    expect(provider.name).not.toContain("filingapi");
     delete process.env.FMP_API_KEY;
     delete process.env.QUIVER_API_KEY;
-    delete process.env.FILINGAPI;
     delete process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED;
   });
 
@@ -3347,16 +3442,6 @@ describe("FMP / Quiver / FilingAPI direct access retired", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const provider = new FmpEnrichmentProvider("test-key");
     await expect(provider.enrich(["AAPL"])).resolves.toEqual({});
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("fetchWithRetry refuses filingapi.dev before opening a socket", async () => {
-    const { fetchWithRetry } = await import("../src/lib/data-providers");
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    await expect(
-      fetchWithRetry("https://filingapi.dev/v1/company/AAPL", { cache: "no-store" }, { retries: 0 })
-    ).rejects.toThrow(/retired vendor host refused/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

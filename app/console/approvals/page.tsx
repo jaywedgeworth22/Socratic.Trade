@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ListFilter, ShieldAlert } from "lucide-react";
 import type { PendingProposal } from "@/lib/types";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
@@ -26,6 +27,7 @@ import {
 } from "./triage";
 import { useToast } from "../ui/toast";
 import { destinationLabel } from "../components/nav";
+import { proposalElementId, readProposalQuery, scrollDeepLinkTarget } from "../lib/deep-link-focus";
 
 const SIDE_OPTIONS: Array<{ value: ApprovalSideFilter; label: string }> = [
   { value: "all", label: "all ideas" },
@@ -50,6 +52,15 @@ const BULK_APPROVE_MAX_REQUESTS = 20;
 
 
 export default function ApprovalsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ApprovalsPageInner />
+    </Suspense>
+  );
+}
+
+function ApprovalsPageInner() {
+  const searchParams = useSearchParams();
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [query, setQuery] = useState("");
@@ -78,6 +89,18 @@ export default function ApprovalsPage() {
     () => triagePendingProposals(pending, { query, side, reality, sort }),
     [pending, query, side, reality, sort]
   );
+  const focusedId = readProposalQuery(searchParams.get("proposal"));
+  const focusedProposal = focusedId ? pending.find((proposal) => proposal.id === focusedId) : undefined;
+  const visible = useMemo(() => {
+    if (!focusedProposal) return filtered;
+    if (filtered.some((proposal) => proposal.id === focusedProposal.id)) return filtered;
+    return [focusedProposal, ...filtered];
+  }, [filtered, focusedProposal]);
+
+  useEffect(() => {
+    if (!focusedId) return;
+    scrollDeepLinkTarget([proposalElementId(focusedId)]);
+  }, [focusedId, visible]);
   const visibleIdSet = useMemo(() => new Set(filtered.map((proposal) => proposal.id)), [filtered]);
   const summary = useMemo(() => summarizePendingProposals(filtered), [filtered]);
   const selection = useMemo(() => summarizeBulkSelection(filtered, effectiveSelectedIds), [filtered, effectiveSelectedIds]);
@@ -390,13 +413,13 @@ export default function ApprovalsPage() {
           <Card>
             <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]">
               <strong>The system is stopped.</strong> The server refuses approving or rejecting proposals while stopped —
-              start it (or switch to Close-only) from the Stopped button in the top bar first. Run once can still create
+              start it (or switch to Exit-only) from the Stopped button in the top bar first. Run once can still create
               proposals.
             </p>
           </Card>
         )}
 
-        {filtered.length === 0 ? (
+        {visible.length === 0 ? (
           <Card>
             <div className="py-8 text-center">
               {pending.length === 0 ? (
@@ -432,7 +455,7 @@ export default function ApprovalsPage() {
           </Card>
         ) : (
           <div className="flex flex-col gap-3">
-            {filtered.map((proposal) => (
+            {visible.map((proposal) => (
               <div key={proposal.id} className="flex gap-3">
                 <label className="pt-4">
                   <input
@@ -444,7 +467,7 @@ export default function ApprovalsPage() {
                   />
                 </label>
                 <div className="min-w-0 flex-1">
-                  <ApprovalCard pending={proposal} />
+                  <ApprovalCard pending={proposal} focused={proposal.id === focusedId} />
                 </div>
               </div>
             ))}

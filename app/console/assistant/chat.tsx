@@ -253,9 +253,9 @@ export function AssistantChat() {
 
   // ── Gate: does the SELECTED model's provider have a usable key? ────────────
   const modelUnselected = !model;
-  const provider = modelUnselected ? "mock" : providerForModel(model);
+  const provider = providerForModel(model || "");
   const statusLoaded = Object.keys(providerStatus).length > 0;
-  const keyMissing = provider !== "mock" && statusLoaded && providerStatus[provider] === false;
+  const keyMissing = modelUnselected || (statusLoaded && providerStatus[provider] === false);
   const customPending = model === CUSTOM_MODEL_VALUE;
 
   const send = useCallback(
@@ -429,13 +429,13 @@ export function AssistantChat() {
               title={
                 statusUnknown
                   ? "Which AI model answers. $ signs are relative cost within the provider. Key availability could NOT be checked right now, so no model is marked 'no key' — a provider without a key will fail on send."
-                  : "Which AI model answers. $ signs are relative cost within the provider. 'no key' means that provider has no key in Settings; Mock is a deterministic offline model that needs no key."
+                  : "Which AI model answers.  $ signs are relative cost within the provider.  'no key' means that provider has no key in Connections."
               }
               aria-label="Chat model"
             >
               <option value="" disabled>Choose a model…</option>
               {MODEL_GROUPS.map((g) => {
-                const noKey = g.provider !== "offline" && statusLoaded && providerStatus[g.provider] === false;
+                const noKey = statusLoaded && providerStatus[g.provider] === false;
                 return (
                   <optgroup key={g.provider} label={`${g.label}${noKey ? " — no key" : ""}`}>
                     {g.options.map((o) => (
@@ -552,14 +552,7 @@ export function AssistantChat() {
               </Tooltip>
               {m.role === "assistant" && m.model && (
                 <div className="mt-0.5 px-1 text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)]">
-                  {m.model.trim().toLowerCase() === "mock" ? (
-                    // No vendor logo for the offline mock — that would fake a provider.
-                    <Tooltip content="The deterministic offline model produced this answer — no LLM provider was called.">
-                      <span>mock</span>
-                    </Tooltip>
-                  ) : (
-                    <ModelBadge modelId={m.model} size="sm" className="font-normal" title="The model that produced this answer." />
-                  )}
+                  <ModelBadge modelId={m.model} size="sm" className="font-normal" title="The model that produced this answer." />
                 </div>
               )}
               {m.failed && (

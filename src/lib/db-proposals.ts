@@ -1,4 +1,5 @@
 // db-proposals.ts — trade proposal CRUD
+import "server-only";
 import { audit, getDb } from "./db";
 import { scopeAccount } from "./db-execution";
 import { canonicalModelId } from "./model-identity";
@@ -333,6 +334,17 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     accountNumber: r.account_number,
     executionMode: r.execution_mode ? (r.execution_mode as ExecutionMode) : undefined
   }));
+}
+
+/** Cheap COUNT-only sibling to listPendingProposals — used for per-account pending-proposal
+ *  chips (Settings > Broker connections' "Other Accounts" rows) where the caller only needs a
+ *  number, not the full proposal/decision JSON blobs, for potentially several connected
+ *  accounts on every dashboard snapshot. */
+export function countPendingProposals(accountNumber: string, userId: string = "local"): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed'")
+    .get(scopeAccount(accountNumber), userId) as { n: number };
+  return row.n;
 }
 
 export function listRecentProposals(accountNumber: string, limit: number = 100, userId: string = "local"): RecentProposal[] {

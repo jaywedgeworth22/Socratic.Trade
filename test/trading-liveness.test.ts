@@ -71,6 +71,10 @@ describe("trading-liveness", () => {
 
     const summary = liveness.getTradingLivenessSummary();
     expect(summary).toBeNull();
+    const publicAgg = liveness.toPublicTradingLiveness(summary);
+    expect(publicAgg.degraded).toBe(0);
+    expect(publicAgg.activeAccounts).toBe(0);
+    expect(typeof publicAgg.marketOpen).toBe("boolean");
   });
 
   it("reports healthy for a fresh completed run with no failures", async () => {

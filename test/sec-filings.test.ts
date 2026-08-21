@@ -114,6 +114,37 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   };
 });
 
+function isFullBodyFilingDoc(doc: { doc_id?: string }): boolean {
+  const id = String(doc.doc_id ?? "");
+  return !id.startsWith("abstract:") && !id.includes(":section:");
+}
+
+function persistOk(doc: { doc_id?: string }) {
+  const full = isFullBodyFilingDoc(doc);
+  const attempted = full ? 3 : 1;
+  return {
+    attempted,
+    indexed: attempted,
+    documentComplete: true,
+    managedCommitProof: {
+      documentComplete: true,
+      attempted,
+      indexed: attempted
+    }
+  };
+}
+
+function persistFailBody(doc: { doc_id?: string }, bodyResult: Record<string, unknown>) {
+  if (!isFullBodyFilingDoc(doc)) return persistOk(doc);
+  return bodyResult;
+}
+
+function bodyStoreCalls() {
+  return mocks.storeDocument.mock.calls.filter(([doc]) =>
+    isFullBodyFilingDoc(doc as { doc_id?: string })
+  );
+}
+
 afterEach(async () => {
   vi.clearAllMocks();
   mocks.hasIngestTextBudget.mockImplementation(() => true);
@@ -140,6 +171,8 @@ afterEach(async () => {
     db.prepare("DELETE FROM sec_filings").run();
     db.prepare("DELETE FROM sec_artifacts").run();
     db.prepare("DELETE FROM ingested_accessions").run();
+    db.prepare("DELETE FROM document_chunks_fts_index").run();
+    db.prepare("DELETE FROM document_chunks_fts").run();
     db.prepare("DELETE FROM settings WHERE key LIKE 'operation_lease:%'").run();
     db.prepare("DELETE FROM settings WHERE key LIKE 'webSource:%'").run();
   } catch (err) {
@@ -322,7 +355,7 @@ describe("ingestFiling", () => {
     const fakeHtml = "<h2>Risk Factors</h2><p>".concat("We face substantial risks. ".repeat(20)).concat("</p>");
 
     mocks.politeFetchText.mockResolvedValueOnce(fakeHtml);
-    mocks.storeDocument.mockResolvedValueOnce({ attempted: 3, indexed: 3, error: undefined, documentComplete: true });
+    mocks.storeDocument.mockImplementation(async (doc) => persistOk(doc));
 
     const { ingestFiling } = await import("../src/lib/web-sources/sec-filings");
     const result = await ingestFiling("AAPL", ref);
@@ -349,12 +382,37 @@ describe("ingestFiling", () => {
     );
   });
 
+  it("defers ingest when strategy work is in flight during FTS mirror", async () => {
+    const { insertStrategyRun, finishStrategyRun } = await import("../src/lib/db-execution");
+    const runId = randomUUID();
+    const userId = `sec-filing-strategy-${randomUUID()}`;
+    insertStrategyRun(runId, userId);
+
+    const ref = makeRef();
+    const fakeHtml = "<h2>Risk Factors</h2><p>".concat("We face substantial risks. ".repeat(20)).concat("</p>");
+    mocks.politeFetchText.mockResolvedValueOnce(fakeHtml);
+    mocks.storeDocument.mockImplementation(async (doc) => persistOk(doc));
+
+    const { ingestFiling } = await import("../src/lib/web-sources/sec-filings");
+    const result = await ingestFiling("AAPL", ref);
+
+    finishStrategyRun(runId, "failed", "test release", userId);
+
+    expect(result.skipped).toBe(true);
+    expect(result.deferredStrategy).toBe(true);
+    const { hasIngestedAccession } = await import("../src/lib/db");
+    expect(hasIngestedAccession(ref.accession, ref.docType)).toBe(false);
+    expect(mocks.storeDocument).not.toHaveBeenCalled();
+  });
+
   it("returns error and does NOT record de-dup on storeDocument failure", async () => {
     const ref = makeRef();
     const fakeHtml = "<p>".concat("Risk text. ".repeat(30)).concat("</p>");
 
     mocks.politeFetchText.mockResolvedValueOnce(fakeHtml);
-    mocks.storeDocument.mockResolvedValueOnce({ attempted: 2, indexed: 0, error: "Voyage 429" });
+    mocks.storeDocument.mockImplementation(async (doc) =>
+      persistFailBody(doc, { attempted: 2, indexed: 0, error: "Voyage 429" })
+    );
 
     const { ingestFiling } = await import("../src/lib/web-sources/sec-filings");
     const result = await ingestFiling("AAPL", ref);
@@ -370,11 +428,7 @@ describe("ingestFiling", () => {
     mocks.politeFetchText.mockResolvedValueOnce(
       "<p>".concat("Risk text with durable ownership. ".repeat(30)).concat("</p>")
     );
-    mocks.storeDocument.mockResolvedValueOnce({
-      attempted: 2,
-      indexed: 2,
-      documentComplete: true
-    });
+    mocks.storeDocument.mockImplementation(async (doc) => persistOk(doc));
     const controller = new AbortController();
     const guard = { assertOwnership: vi.fn(), signal: controller.signal };
     const { ingestFiling } = await import("../src/lib/web-sources/sec-filings");
@@ -704,8 +758,9 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     expect(result.ingested).toBe(1);
     expect(result.attempted).toBe(2); // the successful one + the pre-flight that stopped the run
     expect(result.deferredForBudget).toBe(2); // min(4, 25) - 2 processed
-    // Full filing body + extractive document-summary abstract
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
+    // One full-body write; processed abstracts/sections may also store.
+    expect(bodyStoreCalls()).toHaveLength(1);
+    expect(mocks.storeDocument).toHaveBeenCalled();
   });
 
   it("does not trust content-only dedup as occurrence completion and still advances fairly", async () => {
@@ -716,9 +771,15 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
-    mocks.storeDocument
-      .mockResolvedValueOnce({ attempted: 7, indexed: 0, skipped: true, dedupComplete: true, documentComplete: true })
-      .mockResolvedValue({ attempted: 5, indexed: 5, error: undefined, documentComplete: true });
+    let bodyWrites = 0;
+    mocks.storeDocument.mockImplementation(async (doc) => {
+      if (!isFullBodyFilingDoc(doc)) return persistOk(doc);
+      bodyWrites += 1;
+      if (bodyWrites === 1) {
+        return { attempted: 7, indexed: 0, skipped: true, dedupComplete: true, documentComplete: true };
+      }
+      return persistOk(doc);
+    });
 
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
     const result = await refreshFilingBodies(["AAPL"], Date.now(), undefined, { force: true });
@@ -727,8 +788,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     expect(result.attempted).toBe(2); // both of AAPL's pending filings processed
     expect(result.skipped).toBe(1); // the healed one
     expect(result.ingested).toBe(1); // the second one embedded normally
-    // incomplete + full body + abstract
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(3);
+    expect(bodyStoreCalls()).toHaveLength(2);
     expect(result.errors).toEqual([]);
   });
 
@@ -738,15 +798,21 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
-    mocks.storeDocument
-      .mockResolvedValueOnce({
-        attempted: 7,
-        indexed: 0,
-        skipped: true,
-        reusedCommitted: true,
-        documentComplete: true
-      })
-      .mockResolvedValueOnce({ attempted: 5, indexed: 5, documentComplete: true });
+    let bodyWrites = 0;
+    mocks.storeDocument.mockImplementation(async (doc) => {
+      if (!isFullBodyFilingDoc(doc)) return persistOk(doc);
+      bodyWrites += 1;
+      if (bodyWrites === 1) {
+        return {
+          attempted: 7,
+          indexed: 0,
+          skipped: true,
+          reusedCommitted: true,
+          documentComplete: true
+        };
+      }
+      return persistOk(doc);
+    });
 
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
     const result = await refreshFilingBodies(["AAPL"], Date.now(), undefined, { force: true });
@@ -762,7 +828,9 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValueOnce(mockSubmissions("789019", 2))
       .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
-    mocks.storeDocument.mockResolvedValue({ attempted: 5, indexed: 0, skipped: true, unconfigured: true });
+    mocks.storeDocument.mockImplementation(async (doc) =>
+      persistFailBody(doc, { attempted: 5, indexed: 0, skipped: true, unconfigured: true })
+    );
 
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
     const result = await refreshFilingBodies(["AAPL", "MSFT"], Date.now(), undefined, { force: true });
@@ -770,7 +838,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     expect(result.attempted).toBe(1);
     expect(result.ingested).toBe(0);
     expect(result.deferredForBudget).toBe(3);
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(1);
+    expect(bodyStoreCalls()).toHaveLength(1);
   });
 
   it("SEC_FILING_INGEST_TTL_HOURS shortens the ingest cadence", async () => {

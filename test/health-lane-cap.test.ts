@@ -124,6 +124,20 @@ describe("admin connections panel count formatting", () => {
   });
 });
 
+describe("getServiceHealthSummaries treats FilingAPI 401 as a soft skip", () => {
+  it("filingapi 401s are not intentionalOff and do not hard-STOP", async () => {
+    const { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } = await load();
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service: "filingapi", ok: false, errorText: "HTTP 401 Unauthorized", keySource: "env" });
+    }
+    const summary = getServiceHealthSummaries().find((s) => s.service === "filingapi" && s.keySource === "env");
+    expect(summary).toBeDefined();
+    expect(summary?.intentionalOff).toBeFalsy();
+    expect(summary?.stoppedReasonKind).not.toBe("consecutive-failures");
+    expect(summary?.stoppedReason).not.toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
+  });
+});
+
 describe("admin connections intentional OFF (retired FMP/Quiver)", () => {
   it("treats intentionalOff as muted OFF — never hard-stopped / soft-degraded", async () => {
     const {

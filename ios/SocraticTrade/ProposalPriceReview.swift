@@ -9,6 +9,8 @@ struct ProposalPriceReview: Equatable {
     let quantity: Double?
     let side: String
     let exitPlan: String?
+    let pendingDelayedFallback: Bool
+    let proposalDelayedFallback: Bool
 
     var hasTarget: Bool { target != nil && (target ?? 0) > 0 }
 
@@ -85,12 +87,22 @@ struct ProposalPriceReview: Equatable {
         return "worse by \(amount) since proposed"
     }
 
+    var showsDelayedFallback: Bool {
+        pendingDelayedFallback || proposalDelayedFallback
+    }
+
+    var delayedFallbackStamp: String { "Delayed Quote" }
+
+    var delayedFallbackNote: String {
+        "This price is delayed.  You can still approve the order."
+    }
+
     var missingTargetNote: String? {
         guard !hasTarget else { return nil }
         if let exitPlan, !exitPlan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return exitPlan
         }
-        return "No target was set.  Green and Red should debate a price target and a staged exit (partial stops / partial takes) sized to this name, the tape, and the account horizon."
+        return "No target was set."
     }
 
     static func from(_ pending: PendingProposal) -> ProposalPriceReview {
@@ -104,7 +116,9 @@ struct ProposalPriceReview: Equatable {
             stop: stop,
             quantity: proposal.quantity,
             side: proposal.side,
-            exitPlan: proposal.exitPlan
+            exitPlan: proposal.exitPlan,
+            pendingDelayedFallback: pending.delayedFallback == true,
+            proposalDelayedFallback: proposal.quoteDelayedFallback == true
         )
     }
 

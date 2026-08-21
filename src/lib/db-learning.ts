@@ -1,5 +1,6 @@
 // db-learning.ts — audit-event helpers, counterfactual learning watermarks/candidates,
 // learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
+import "server-only";
 import { getDb } from "./db";
 import { mergeHorizonRows } from "./outcome-horizons";
 import { yieldEventLoop } from "./slow-sync-guard";
@@ -1060,13 +1061,34 @@ export function hasIngestedAccession(accession: string, docType: string): boolea
 }
 
 /** Record a successfully-ingested accession so it is never re-embedded. */
-export function insertIngestedAccession(accession: string, docType: string, ticker: string, chunkCount: number): void {
+export function insertIngestedAccession(
+  accession: string,
+  docType: string,
+  ticker: string,
+  chunkCount: number,
+  extras?: { pineconeWriteClass?: string; pineconeVectorCount?: number }
+): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
       "INSERT OR IGNORE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count) VALUES (?, ?, ?, ?, ?)"
     )
     .run(accession, docType, ticker, now, chunkCount);
+  if (extras && (extras.pineconeWriteClass !== undefined || extras.pineconeVectorCount !== undefined)) {
+    const writeClass = extras.pineconeWriteClass ?? "full-body";
+    const vectorCount = extras.pineconeVectorCount ?? 0;
+    try {
+      getDb()
+        .prepare(
+          `UPDATE ingested_accessions
+           SET pinecone_write_class = ?, pinecone_vector_count = ?
+           WHERE accession = ? AND doc_type = ?`
+        )
+        .run(writeClass, vectorCount, accession, docType);
+    } catch {
+      // Columns land in migration 84; older test DBs that skipped versioned migrate stay compatible.
+    }
+  }
 
   // Preserve the original SEC filed_at/accepted_at from the scraper (if the row already
   // exists) rather than overwriting every field via insertSecFiling, which sets both
@@ -1576,6 +1598,110 @@ export function insertChunkOccurrences(occurrences: ChunkOccurrence[]): void {
   insertMany(occurrences);
 }
 
+type FtsOccurrenceIdentity = {
+  content_hash: string;
+  symbol: string;
+  source: string;
+  accession: string;
+};
+
+function lookupDocumentChunkFtsRowid(
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string
+): number | null {
+  const row = getDb()
+    .prepare(
+      `SELECT fts_rowid FROM document_chunks_fts_index
+       WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?`
+    )
+    .get(contentHash, symbol, source, accession) as { fts_rowid: number } | undefined;
+  return row?.fts_rowid ?? null;
+}
+
+/**
+ * FTS5 reuses the current max rowid after a DELETE. A bulk wipe of
+ * `document_chunks_fts` that leaves `document_chunks_fts_index` behind can
+ * therefore point at a later filing's chunk. Only delete when the live row
+ * still matches this occurrence.
+ */
+function ftsRowidStillOwnsOccurrence(
+  rowid: number,
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string
+): boolean {
+  const live = getDb()
+    .prepare(
+      `SELECT content_hash, symbol, source, accession
+       FROM document_chunks_fts
+       WHERE rowid = ?`
+    )
+    .get(rowid) as FtsOccurrenceIdentity | undefined;
+  return (
+    live != null &&
+    live.content_hash === contentHash &&
+    live.symbol === symbol &&
+    live.source === source &&
+    live.accession === accession
+  );
+}
+
+function upsertDocumentChunkFtsIndex(
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string,
+  ftsRowid: number
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO document_chunks_fts_index
+         (content_hash, symbol, source, accession, fts_rowid)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(content_hash, symbol, source, accession)
+       DO UPDATE SET fts_rowid = excluded.fts_rowid`
+    )
+    .run(contentHash, symbol, source, accession, ftsRowid);
+}
+
+function replaceDocumentChunkFtsOccurrence(
+  delByRowid: { run: (rowid: number) => unknown },
+  ins: {
+    run: (
+      contentHash: string,
+      symbol: string,
+      source: string,
+      accession: string,
+      text: string
+    ) => { lastInsertRowid: number | bigint };
+  },
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string,
+  text: string
+): void {
+  const existingRowid = lookupDocumentChunkFtsRowid(contentHash, symbol, source, accession);
+  if (existingRowid != null && ftsRowidStillOwnsOccurrence(existingRowid, contentHash, symbol, source, accession)) {
+    delByRowid.run(existingRowid);
+  }
+  const info = ins.run(contentHash, symbol, source, accession, text);
+  upsertDocumentChunkFtsIndex(contentHash, symbol, source, accession, Number(info.lastInsertRowid));
+}
+
+/** Drop FTS rows and their index keys together. A leftover index rowid can be reused. */
+export function deleteDocumentChunkFtsBySourceAccession(source: string, accession: string): void {
+  const db = getDb();
+  const dropBoth = db.transaction(() => {
+    db.prepare("DELETE FROM document_chunks_fts WHERE source = ? AND accession = ?").run(source, accession);
+    db.prepare("DELETE FROM document_chunks_fts_index WHERE source = ? AND accession = ?").run(source, accession);
+  });
+  dropBoth();
+}
+
 export function insertDocumentChunkFts(
   contentHash: string,
   symbol: string,
@@ -1585,19 +1711,22 @@ export function insertDocumentChunkFts(
 ): void {
   const db = getDb();
   // FTS5 is a virtual table — INSERT OR REPLACE does not deduplicate on content_hash.
-  // Delete the existing row for THIS occurrence identity (symbol+source+accession+hash) before
-  // inserting, so a retry/re-run stays idempotent. Deliberately NOT keyed on content_hash alone:
-  // identical boilerplate shared across filings/symbols must keep one lexical row per occurrence,
-  // because retrieval filters document_chunks_fts by symbol (a global delete would silently make
-  // the earlier symbol/accession unreachable through FTS).
-  db.prepare(`
-    DELETE FROM document_chunks_fts
-    WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?
-  `).run(contentHash, symbol, source, accession);
-  db.prepare(`
+  // Idempotency uses document_chunks_fts_index (PK on occurrence identity) so DELETE is
+  // by fts rowid (O(1)) instead of a full-corpus scan on non-indexed FTS5 columns.
+  const delByRowid = db.prepare(`DELETE FROM document_chunks_fts WHERE rowid = ?`);
+  const ins = db.prepare(`
     INSERT INTO document_chunks_fts (content_hash, symbol, source, accession, text)
     VALUES (?, ?, ?, ?, ?)
-  `).run(contentHash, symbol, source, accession, text);
+  `);
+  replaceDocumentChunkFtsOccurrence(
+    delByRowid,
+    ins,
+    contentHash,
+    symbol,
+    source,
+    accession,
+    text
+  );
 }
 
 /**
@@ -1625,6 +1754,8 @@ export function insertDocumentChunkFts(
  *  group of them. */
 const FTS_BATCH_MAX_ROWS = 40;
 const FTS_BATCH_MIN_ROWS = 1;
+/** First group is one row so a slow 10-K tokenisation cannot pin 8 rows (6–12s) before a yield. */
+const FTS_BATCH_START_ROWS = 1;
 /** Keep in lockstep with `FTS_MIRROR_SYNC_STRETCH_BUDGET_MS` in fts-mirror-bound.ts. */
 export const FTS_BATCH_STRETCH_BUDGET_MS = 250;
 
@@ -1645,21 +1776,25 @@ export async function insertDocumentChunkFtsBatch(
 ): Promise<void> {
   if (rows.length === 0) return;
   const db = getDb();
-  const del = db.prepare(`
-    DELETE FROM document_chunks_fts
-    WHERE content_hash = ? AND symbol = ? AND source = ? AND accession = ?
-  `);
+  const delByRowid = db.prepare(`DELETE FROM document_chunks_fts WHERE rowid = ?`);
   const ins = db.prepare(`
     INSERT INTO document_chunks_fts (content_hash, symbol, source, accession, text)
     VALUES (?, ?, ?, ?, ?)
   `);
   const runGroup = db.transaction((group: typeof rows) => {
     for (const row of group) {
-      del.run(row.contentHash, row.symbol, row.source, row.accession);
-      ins.run(row.contentHash, row.symbol, row.source, row.accession, row.text);
+      replaceDocumentChunkFtsOccurrence(
+        delByRowid,
+        ins,
+        row.contentHash,
+        row.symbol,
+        row.source,
+        row.accession,
+        row.text
+      );
     }
   });
-  let groupSize = 8;
+  let groupSize = FTS_BATCH_START_ROWS;
   let i = 0;
   while (i < rows.length) {
     const group = rows.slice(i, i + groupSize);
@@ -1682,7 +1817,7 @@ export function countDocumentChunkFts(input: {
 }): number {
   const row = getDb()
     .prepare(
-      `SELECT COUNT(*) AS n FROM document_chunks_fts
+      `SELECT COUNT(*) AS n FROM document_chunks_fts_index
        WHERE symbol = ? AND source = ? AND accession = ?`
     )
     .get(input.symbol, input.source, input.accession) as { n: number };

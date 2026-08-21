@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
+import { realizedPnlNetOfEstimatedTax } from "@/lib/tax-pure";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleApiError, fetchAccountPerformance, fetchLookaheadAudit, fetchSignalHealth, type LookaheadAuditResponse, type SignalHealthResponse } from "../lib/api";
 import {
@@ -91,9 +92,16 @@ function bucketFor(
   performance: PerformanceSummary | null,
   environment: "paper" | "live",
   pricesUnavailable = false
-): { realized?: number; unrealized?: number; winRate?: number; avgReturn?: number; curve: EquityCurvePoint[] } {
+): {
+  realized?: number;
+  unrealized?: number;
+  winRate?: number;
+  avgReturn?: number;
+  closedLotCount: number;
+  curve: EquityCurvePoint[];
+} {
   if (!performance) {
-    return { realized: undefined, unrealized: undefined, winRate: undefined, avgReturn: undefined, curve: [] };
+    return { realized: undefined, unrealized: undefined, winRate: undefined, avgReturn: undefined, closedLotCount: 0, curve: [] };
   }
   const bucket =
     environment === "paper"
@@ -102,6 +110,7 @@ function bucketFor(
           unrealized: performance.paperUnrealizedPnl,
           winRate: performance.paperWinRate,
           avgReturn: performance.paperAverageReturnPct,
+          closedLotCount: performance.paperClosedLotCount,
           curve: performance.paperEquityCurve
         }
       : {
@@ -109,6 +118,7 @@ function bucketFor(
           unrealized: performance.liveUnrealizedPnl,
           winRate: performance.liveWinRate,
           avgReturn: performance.liveAverageReturnPct,
+          closedLotCount: performance.liveClosedLotCount,
           curve: performance.liveEquityCurve
         };
   return pricesUnavailable ? { ...bucket, unrealized: undefined } : bucket;
@@ -123,6 +133,10 @@ export default function ResultsPage() {
 
   const perf = snapshot.performance;
   const tax = snapshot.tax;
+  const subtractFromResults = Boolean(snapshot.policy.taxSettings?.subtractFromResults);
+  const estimatedTaxLiability = tax?.estimatedTaxLiability;
+  const netRealized = (realized?: number) =>
+    realizedPnlNetOfEstimatedTax(realized, estimatedTaxLiability, subtractFromResults);
   // Real multi-account comparison: every OTHER connected account (any environment) the
   // user could pick, never a hardcoded paper/live pairing of the same account's own data.
   const otherAccounts: ConnectedAccount[] = snapshot.connectedAccounts.filter((a) => a.id !== reality.account?.id);
@@ -140,22 +154,28 @@ export default function ResultsPage() {
     <BucketCard
       title="Paper Account"
       tone="paper"
-      realized={perf?.paperRealizedPnl}
+      realized={netRealized(perf?.paperRealizedPnl)}
       unrealized={perf?.paperUnrealizedPnl}
       winRate={perf?.paperWinRate}
       avgReturn={perf?.paperAverageReturnPct}
+      closedLotCount={perf?.paperClosedLotCount ?? 0}
       curve={perf?.paperEquityCurve ?? []}
+      netOfTax={subtractFromResults}
+      unmatchedClosingFills={perf?.paperUnmatchedClosingFills ?? 0}
     />
   );
   const liveBucket = (
     <BucketCard
       title="Brokerage Account"
       tone="live"
-      realized={perf?.liveRealizedPnl}
+      realized={netRealized(perf?.liveRealizedPnl)}
       unrealized={perf?.liveUnrealizedPnl}
       winRate={perf?.liveWinRate}
       avgReturn={perf?.liveAverageReturnPct}
+      closedLotCount={perf?.liveClosedLotCount ?? 0}
       curve={perf?.liveEquityCurve ?? []}
+      netOfTax={subtractFromResults}
+      unmatchedClosingFills={perf?.liveUnmatchedClosingFills ?? 0}
     />
   );
 
@@ -234,8 +254,8 @@ export default function ResultsPage() {
               <Stat
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
-                sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
-                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others. Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would."
+                sub={`Trailing ~${perf.benchmark.points} session${perf.benchmark.points === 1 ? "" : "s"} (${perf.benchmark.startDate} → ${perf.benchmark.endDate})`}
+                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others. Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would. This window is bounded to your most recently stored equity snapshots — a rolling window, not necessarily your full account history."
               />
               <Stat
                 label={perf.benchmark.benchmarkSymbol}
@@ -944,7 +964,10 @@ function BucketCard({
   unrealized,
   winRate,
   avgReturn,
-  curve
+  closedLotCount,
+  curve,
+  netOfTax = false,
+  unmatchedClosingFills = 0
 }: {
   title: string;
   tone: "paper" | "live";
@@ -952,32 +975,60 @@ function BucketCard({
   unrealized?: number;
   winRate?: number;
   avgReturn?: number;
+  /** Number of CLOSED lots behind winRate/avgReturn. Zero closed lots must render as "no data
+   *  yet" (EM_DASH), never a fabricated "0%"/"+0.00%" — winRate/avgReturn both compute to 0 (not
+   *  undefined) for an empty lot list, so the value itself can't distinguish "no trades closed"
+   *  from "closed trades that genuinely broke even". Gate on this count, not the value. */
+  closedLotCount: number;
   curve: Array<{ timestamp: string; equity: number; source: "live" | "paper" }>;
+  netOfTax?: boolean;
+  unmatchedClosingFills?: number;
 }) {
-  const hasAny = curve.length > 0 || (realized ?? 0) !== 0 || (unrealized ?? 0) !== 0;
+  const realizedBasisNote =
+    "All-time, app-booked closed lots (this app's own FIFO lot ledger). Exits of positions this app did not open — pre-app holdings, manual trades — are not included.";
+  const unrealizedBasisNote =
+    "This app's lot ledger: average entry price of app-booked open lots × quantity, marked to the latest known price. May differ from your broker's own cost-basis figure for positions built partly outside this app.";
   return (
     <Card title={title}>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <div className="con-card-title">Realized P&amp;L</div>
+          <div
+            className="con-card-title"
+            title={netOfTax ? `${realizedBasisNote} Net of estimated tax at your configured short- and long-term rates.` : realizedBasisNote}
+          >
+            Realized P&amp;L{netOfTax ? " (net of est. tax)" : ""}
+          </div>
           <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
             {typeof realized === "number" ? <SignedText value={realized}>{fmtSignedMoney(realized)}</SignedText> : <Dash />}
           </div>
+          {unmatchedClosingFills > 0 && (
+            <p
+              className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+              title={`These exits closed positions this app never recorded an opening fill for, so there is no cost basis here to compute their gain or loss from.${SENTENCE_GAP}Their P&L is not included above.`}
+            >
+              Excludes {unmatchedClosingFills} closing {unmatchedClosingFills === 1 ? "fill" : "fills"} with no opening lot
+              on record.{SENTENCE_GAP}Pre-app or manually traded positions.
+            </p>
+          )}
         </div>
         <div>
-          <div className="con-card-title">Unrealized P&amp;L</div>
+          <div className="con-card-title" title={unrealizedBasisNote}>
+            Unrealized P&amp;L
+          </div>
           <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
             {typeof unrealized === "number" ? <SignedText value={unrealized}>{fmtSignedMoney(unrealized)}</SignedText> : <Dash />}
           </div>
         </div>
         <div>
-          <div className="con-card-title">Win rate</div>
-          <div className="con-num mt-0.5">{hasAny && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
+          <div className="con-card-title" title="Share of CLOSED lots that were profitable. Shows — until this bucket has closed at least one lot — a 0% here would otherwise be indistinguishable from “no trades closed yet”.">
+            Win rate
+          </div>
+          <div className="con-num mt-0.5">{closedLotCount > 0 && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
         </div>
         <div>
           <div className="con-card-title" title="Capital-weighted realized return across closed lots (sum of P&amp;L ÷ sum of entry notional). Not the same as account NAV change — open positions and cash are excluded. Unweighted trade averages were retired because small round-trips dominated. The SPY panel below is the account equity time-weighted return.">Avg return / closed capital</div>
           <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices. It is not adjusted for SPY or market beta.">
-            {hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
+            {closedLotCount > 0 && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
           </div>
         </div>
       </div>
@@ -1048,21 +1099,38 @@ function ScorecardCard({
 function TaxBlock() {
   const { snapshot } = useConsoleData();
   const tax = snapshot?.tax;
+  const subtractFromResults = Boolean(snapshot?.policy.taxSettings?.subtractFromResults);
   if (!tax) return null;
 
   const ira = tax.settings.taxationType === "roth_ira" || tax.settings.taxationType === "traditional_ira";
+  const shortTermDisplay = subtractFromResults
+    ? realizedPnlNetOfEstimatedTax(tax.shortTermRealized, tax.estimatedShortTermTax, true)
+    : tax.shortTermRealized;
+  const longTermDisplay = subtractFromResults
+    ? realizedPnlNetOfEstimatedTax(tax.longTermRealized, tax.estimatedLongTermTax, true)
+    : tax.longTermRealized;
 
   return (
     <div className="flex flex-col gap-4 text-[length:var(--con-fs-sm)]">
+      {subtractFromResults && !ira && (
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Realized figures below are net of estimated tax at your configured rates (same toggle as Guardrails → Tax).
+        </p>
+      )}
       {ira && (
         <p className="text-[color:var(--con-muted)]">
-          This is an IRA — no yearly taxes on trades here, so rates are zeroed. A loss realized in a <em>taxable</em>{" "}
-          account still locks rebuys of that symbol across all your accounts, including this one.
+          This is an IRA — no yearly taxes on trades here, so rates are zeroed and loss-harvest
+          candidates are not shown.{SENTENCE_GAP}A taxable-account loss can still appear as a lockout chip below.{SENTENCE_GAP}
+          Ignore (the default) does not constrain this IRA.{SENTENCE_GAP}Auto lets Green weigh it.{SENTENCE_GAP}Block
+          refuses.{SENTENCE_GAP}Minimum loss is optional (blank = every loss).
         </p>
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label={`Short-term realized ${tax.taxYear}`} value={fmtSignedMoney(tax.shortTermRealized)} />
-        <Stat label="Long-term realized" value={fmtSignedMoney(tax.longTermRealized)} />
+        <Stat
+          label={`Short-term realized ${tax.taxYear}${subtractFromResults && !ira ? " (net)" : ""}`}
+          value={fmtSignedMoney(shortTermDisplay)}
+        />
+        <Stat label={`Long-term realized${subtractFromResults && !ira ? " (net)" : ""}`} value={fmtSignedMoney(longTermDisplay)} />
         <Stat label="Disallowed wash-sale loss" value={fmtMoney(tax.disallowedWashSaleLoss)} />
         <Stat label="Estimated tax liability" value={fmtMoney(tax.estimatedTaxLiability)} sub={`ST ${fmtMoney(tax.estimatedShortTermTax)} · LT ${fmtMoney(tax.estimatedLongTermTax)}`} />
       </div>
@@ -1072,7 +1140,7 @@ function TaxBlock() {
           <div className="con-card-title mb-1">Wash-sale lockouts (all your accounts)</div>
           <div className="flex flex-wrap gap-1.5">
             {tax.lockedSymbols.map((s) => (
-              <Chip key={s} tone="warn" title="Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically.">
+              <Chip key={s} tone="warn" title={ira ? "A taxable account realized a loss in this symbol. Ignore does not constrain this IRA. Auto weighs it. Block refuses. Minimum loss is optional." : "Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically."}>
                 <SymbolButton symbol={s} className="text-inherit" /> locked
               </Chip>
             ))}

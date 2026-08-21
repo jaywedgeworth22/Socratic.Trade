@@ -122,7 +122,7 @@ class EToroBrokerGateway implements BrokerGateway {
     });
   }
 
-  async getEquityOrders(_accountNumber: string): Promise<EquityOrder[]> {
+  async getEquityOrders(_accountNumber: string, _options?: import("./types").GetEquityOrdersOptions): Promise<EquityOrder[]> {
     const port = await this.ownPortfolio();
     const orders = Array.isArray(port.orders) ? port.orders : [];
     return orders.flatMap((item) => {

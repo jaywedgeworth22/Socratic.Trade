@@ -1,5 +1,6 @@
 import { getInternalSetting, getServiceHealthSummaries, databasePath, resolveApiKeyWithSource, alertStorageWarning } from "@/lib/db";
-import { HEALTH_REASON_CONSECUTIVE_FAILURES } from "@/lib/db-health";
+import { isHardStoppedHealthSummary } from "@/lib/db-health";
+import { isIntentionalOffHealthService } from "@/lib/retired-direct-vendors";
 import { activeEmbeddingProvider } from "@/lib/vector-db";
 import type { RagEmbedRerankProvider } from "@/lib/rag-metering";
 import { getProviderTierStatus, isDataProvidersDegraded } from "@/lib/provider-tier";
@@ -16,10 +17,9 @@ import {
   scanLitestreamRuntimeLogFile
 } from "@/lib/runtime-health";
 import { getLease } from "@/lib/scheduler-lease";
-import { getTradingLivenessSummary } from "@/lib/trading-liveness";
+import { getTradingLivenessSummary, toPublicTradingLiveness } from "@/lib/trading-liveness";
 import { getOpenRouterCreditStatus } from "@/lib/openrouter-credits";
 import { authorizeOpsRequest } from "@/lib/ops-auth";
-import { isIntentionalOffHealthService } from "@/lib/retired-direct-vendors";
 import { statSync, statfsSync } from "fs";
 import { dirname } from "path";
 
@@ -35,8 +35,12 @@ function leaseOwnerWithoutPid(owner: string): string {
   return owner.replace(/^\d+:/, "");
 }
 
-// Real liveness probe (was an unconditional {ok:true}). A health check that can never fail is
-// worse than none for a system that can hold real positions — it hides outages. This probes:
+// Rich public/ops probe — NOT the Coolify/Traefik backend probe.  Docker HEALTHCHECK
+// and any Coolify HTTP health path must use GET /api/live.  A 503 here (critical
+// Pinecone/RAG/Alpaca hard-stop) or a >5s response used to mark the named container
+// running:unhealthy while Next was up; Traefik then had no healthy backend
+// (2026-08-17 7:22-7:43pm CT after #2810).  UptimeRobot may still alert on this
+// route.  This probes:
 //   - DB reachability (the getInternalSetting read throws if SQLite is unwritable/locked), and
 //   - scheduler liveness (age of the last tick heartbeat; stale ⇒ autonomy/stops aren't running).
 // Returns 503 when a critical check fails so PM2/uptime tooling can act.
@@ -58,10 +62,16 @@ function leaseOwnerWithoutPid(owner: string): string {
 // boot interlock (see the trading-liveness note below).
 //
 // Failure mode worth knowing: authorizeOpsRequest fails closed on an UNCONFIGURED secret — with
-// neither OPS_DIAGNOSTIC_TOKEN nor ADMIN_REINDEX_TOKEN set it returns false for everyone, quietly,
-// so the operator sees the public view too. That is the same condition that already makes
-// /api/ops/snapshot unusable, so it is a token-provisioning problem, not a health-route one; the
-// full lease owner is still on /api/ready (session-gated, no ops token needed) either way.
+// OPS_DIAGNOSTIC_TOKEN unset it returns false for everyone, quietly, so the operator sees the
+// public view too.  ADMIN_REINDEX_TOKEN is not a fallback.  That is the same condition that
+// already makes /api/ops/snapshot unusable, so it is a token-provisioning problem, not a
+// health-route one; the full lease owner is still on /api/ready (session-gated, no ops token
+// needed) either way.
+//
+// External paging: HTTP 200/503 is liveness only (DB + pinecone / alpaca-broker hard-stops).
+// schedulerStale, tradingLiveness.degraded, and storage.litestreamTiersDegraded are JSON flags
+// that MUST stay 200 so a Coolify restart cannot "heal" them.  Page those with keyword/JSON
+// monitors — see docs/runbooks/uptime-health-json-monitors.md.
 export async function GET(request: Request) {
   const checks: Record<string, unknown> = {};
   let ok = true;
@@ -79,15 +89,19 @@ export async function GET(request: Request) {
     checks.db = error instanceof Error ? error.message : "error";
   }
 
+  const schedulerStaleMs = 5 * 60_000;
   if (lastTick) {
     const ageMs = Date.now() - new Date(lastTick).getTime();
     checks.schedulerLastTick = lastTick;
     checks.schedulerAgeSeconds = Math.round(ageMs / 1000);
-    // The scheduler ticks every 60s; >5 min of silence is degraded (not a hard failure here —
-    // the process may legitimately be a non-scheduler instance).
-    if (ageMs > 5 * 60_000) checks.schedulerStale = true;
+    // Always emit the boolean so keyword/JSON monitors can key on `"schedulerStale":true`.
+    // Never 503s — a restart cannot write a fresher tick if the scheduler is the thing that died.
+    checks.schedulerStale = ageMs > schedulerStaleMs;
   } else {
     checks.schedulerLastTick = null;
+    checks.schedulerAgeSeconds = null;
+    // No heartbeat after the process has been up long enough to have ticked once.
+    checks.schedulerStale = release.processUptimeSeconds > schedulerStaleMs / 1000;
   }
 
   // Scheduler lease state (additive; only meaningful when SCHEDULER_SINGLE_LEADER is on).
@@ -115,8 +129,8 @@ export async function GET(request: Request) {
   // Per active-autonomy account (policy.systemState === "active"), report the age of the most
   // recent COMPLETED strategy run and a consecutive-failed-runs count. `degraded`-only — NEVER
   // 503s (see trading-liveness.ts's header comment: a 503 here would trigger a container restart,
-  // which re-halts autonomy via the boot interlock — the exact loop 6b.1 fixed). Omitted entirely
-  // when there are zero active-autonomy accounts (nothing to be live about).
+  // which re-halts autonomy via the boot interlock — the exact loop 6b.1 fixed). Always emitted
+  // (zeros when there are no active-autonomy accounts) so JSON monitors can key the field.
   //
   // PUBLIC route (no requireAdmin): same convention as the dependencies section below — expose
   // ONLY a minimal aggregate, never the per-account rows. The full summary carries userId,
@@ -126,24 +140,14 @@ export async function GET(request: Request) {
   // external uptime probe without leaking account identity.
   try {
     const liveness = getTradingLivenessSummary();
-    if (liveness) {
-      const degradedCount = liveness.accounts.filter((a) => a.degraded).length;
-      const oldestCompletedRunAgeSeconds = liveness.accounts.reduce<number | null>((oldest, a) => {
-        if (a.lastCompletedRunAgeSeconds === null) return oldest;
-        return oldest === null ? a.lastCompletedRunAgeSeconds : Math.max(oldest, a.lastCompletedRunAgeSeconds);
-      }, null);
-      checks.tradingLiveness = {
-        activeAccounts: liveness.accounts.length,
-        autopilotAccounts: liveness.accounts.filter((a) => a.strategyAuthority === "decide").length,
-        runningAskFirstAccounts: liveness.accounts.filter((a) => a.strategyAuthority !== "decide").length,
-        degraded: degradedCount,
-        oldestCompletedRunAgeSeconds,
-        marketOpen: liveness.marketOpen
-      };
-      if (liveness.degraded) checks.tradingLivenessDegraded = true;
-    }
+    const publicLiveness = toPublicTradingLiveness(liveness);
+    // Always emit so `tradingLiveness.degraded` exists for JSON-path monitors even when
+    // every account is halted.  The boolean sibling is the unique keyword substring.
+    checks.tradingLiveness = publicLiveness;
+    checks.tradingLivenessDegraded = publicLiveness.degraded > 0;
   } catch {
-    // never let trading-liveness reporting break the liveness probe
+    checks.tradingLiveness = toPublicTradingLiveness(null);
+    checks.tradingLivenessDegraded = false;
   }
 
   // Market-data tier honesty (nightly provider-tier check).  Surfaced so ops can see whether
@@ -202,24 +206,20 @@ export async function GET(request: Request) {
   try {
     const summaries = getServiceHealthSummaries();
     const dependencies: Record<string, { ok: boolean; degraded?: boolean }> = {};
-    // "rag-embed"/"rag-rerank" (renamed 2026-07-19 from the historical "voyage"/"voyage-rerank"
-    // service names — see withRagApiHealth in vector-db.ts) are now provider-generic: they ALWAYS
-    // reflect whichever embed/rerank provider (Voyage, OpenRouter, SiliconFlow) is actually active,
-    // so they can be unconditionally critical rather than only "critical while Voyage happens to be
-    // the pin" (the old logic's gap — a dead OpenRouter/bge-m3 lane never failed liveness at all).
-    // Still excluded when RAG_EMBED_PROVIDER is pinned-but-keyless (`ragEmbedProviderError` set):
-    // that misconfiguration is already surfaced there, and 503ing the container on stale rag-embed/
-    // rag-rerank rows from BEFORE the mis-pin would just restart-loop without fixing anything.
+    // Critical liveness is ONLY Pinecone + Alpaca. A hard-stopped rag-embed/rag-rerank lane used
+    // to 503 this probe (bge-m3-metering-gate, 2026-07-18), which Coolify treats as container
+    // death: restart -> boot interlock re-halts autonomy. A dead embed cannot refill itself via
+    // restart, same as drained OpenRouter credits, so those lanes DEGRADE only (ok=false +
+    // degraded=true). Retrieval already fail-opens; ingest isolates per task. Still excluded
+    // from any 503 when RAG_EMBED_PROVIDER is pinned-but-keyless (`ragEmbedProviderError` set).
     const criticalServices = new Set(["pinecone", "alpaca-broker"]);
-    if (!checks.ragEmbedProviderError) {
-      criticalServices.add("rag-embed");
-      criticalServices.add("rag-rerank");
-    }
+    const softDegradeServices = new Set(["rag-embed", "rag-rerank"]);
     // Collapse (service, keySource) lanes to one entry per service. Prefer a CONFIGURED lane
     // (env/user) over a stale keySource:"none" lane so a service that later got a working key isn't
     // pinned failed forever by an old missing-key "none" lane (no future success is logged to "none").
     const configuredService = new Set<string>();
     for (const summary of summaries) {
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       if (summary.keySource === "env" || summary.keySource === "user") configuredService.add(summary.service);
     }
     // Configured lanes that are NOT hard-stopped (env OR user). Critical liveness must not 503
@@ -228,15 +228,15 @@ export async function GET(request: Request) {
     // every Coolify deploy (healthcheck requires HTTP 200 on /api/health).
     const configuredLaneHealthy = new Set<string>();
     for (const summary of summaries) {
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       if (summary.keySource !== "env" && summary.keySource !== "user") continue;
-      const hardStopped =
-        summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
-      if (!hardStopped) configuredLaneHealthy.add(summary.service);
+      if (!isHardStoppedHealthSummary(summary)) configuredLaneHealthy.add(summary.service);
     }
     for (const summary of summaries) {
-      // Retired vendors (FilingAPI, FMP, Quiver, UW) keep historical failure rows. Public
-      // health must not list them as live ok:false — that pages UptimeRobot / Pushover.
-      if (isIntentionalOffHealthService(summary.service)) continue;
+      // Retired vendors (FMP, Quiver, UW) keep historical failure rows. Public health must
+      // not list them as live ok:false — that pages UptimeRobot / Pushover. FilingAPI is an
+      // optional live lane: missing/401 keys are soft-stamped in db-health, not retired.
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
       if (!isGlobal) continue;
       // Ignore a stale "none"/null lane once the service has a real configured lane — otherwise it
@@ -247,13 +247,14 @@ export async function GET(request: Request) {
       // Only the HARD reason (>=5 consecutive failures) fails liveness. The SOFT heuristics
       // ("active this hour but no success yet") that a single cold-start 500 can trip mark the
       // service degraded but must NOT 503.
-      const hardStopped = summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
+      const hardStopped = isHardStoppedHealthSummary(summary);
       const existing = dependencies[summary.service];
       // Prefer any healthy configured lane (including user keys not shown as "global" rows).
       const nextOk = !hardStopped || configuredLaneHealthy.has(summary.service);
       const nextDegraded =
         (summary.stoppedWorking && !hardStopped) ||
         (hardStopped && configuredLaneHealthy.has(summary.service)) ||
+        (hardStopped && softDegradeServices.has(summary.service)) ||
         undefined;
       if (existing) {
         // Merge lanes for the same service: hard-stopped only wins when no configured lane is healthy.
@@ -269,14 +270,11 @@ export async function GET(request: Request) {
       // market-data lanes (fmp/massive) degrade to Yahoo/others (the provider-tier section already
       // reports data-provider degradation), so they mark degraded but never fail liveness.
       //
-      // rag-embed/rag-rerank criticality (bge-m3-metering-gate 2026-07-18, lane rename 2026-07-19):
-      // these two lanes now gate liveness UNCONDITIONALLY (see the criticalServices comment above)
-      // because the lane itself is provider-generic — a hard-stopped rag-embed lane means whichever
-      // provider is actually active is down, which is always liveness-critical, not just when
-      // Voyage happens to be the pin. Historical "voyage"/"voyage-rerank" rows (pre-rename, or from
-      // recordMissingRagKey's still-literal-"voyage" missing-key path) are simply not in
-      // criticalServices and degrade this route rather than 503 it — consistent with treating them
-      // as legacy/informational once the real per-operation lane has taken over.
+      // rag-embed/rag-rerank (bge-m3-metering-gate 2026-07-18, lane rename 2026-07-19, soft-degrade
+      // 2026-08-18): these two lanes are provider-generic and still REPORTED (ok=false + degraded)
+      // when hard-stopped, but they never fail liveness. A 503 here restarts Docker and re-halts
+      // Green/Red via the boot interlock — a restart cannot revive a dead embed provider.
+      // Historical "voyage"/"voyage-rerank" rows stay informational, same as before.
       //
       // Env-lane hard-stop alone does NOT 503 when a user-keyed lane for the same service is
       // healthy (see configuredLaneHealthy) — otherwise bad Infisical env Alpaca keys block deploys
@@ -509,7 +507,12 @@ export async function GET(request: Request) {
       );
     }
   } catch {
-    // never let storage monitoring break the health probe
+    // never let storage monitoring break the health probe — still emit the monitor field
+    if (!checks.storage || typeof checks.storage !== "object") {
+      checks.storage = { litestreamTiersDegraded: false };
+    } else if (!("litestreamTiersDegraded" in (checks.storage as object))) {
+      (checks.storage as { litestreamTiersDegraded: boolean }).litestreamTiersDegraded = false;
+    }
   }
 
   return Response.json({ ok, checks }, { status: ok ? 200 : 503 });

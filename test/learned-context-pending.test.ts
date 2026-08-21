@@ -159,7 +159,17 @@ describe("approve — strategy-directive APPENDS an attributed prompt block (ide
 
     // Re-approving the SAME id must NOT duplicate the block (idempotent by id): a second merge of the
     // same id replaces the block in place rather than appending a new one.
-    const remerged = mergeStrategyDirectiveBlock(merged, id, "UPDATED guidance text for same id", "2026-06-21T00:00:00.000Z");
+    // `source` is REQUIRED at this sink: containment and provenance happen inside the merge, so a
+    // caller cannot write an unscanned directive into the trusted prompt by forgetting a helper.
+    // "owner-coach" is owner-authored, so the value is preserved byte-for-byte and contained is null.
+    const { prompt: remerged, contained } = mergeStrategyDirectiveBlock(
+      merged,
+      id,
+      "UPDATED guidance text for same id",
+      "2026-06-21T00:00:00.000Z",
+      "owner-coach"
+    );
+    expect(contained).toBeNull(); // owner text is never scanned or altered
     expect(countBlocks(remerged, id)).toBe(1); // still exactly one block for this id
     expect(remerged).toContain("UPDATED guidance text for same id");
     expect(remerged).not.toContain(DIRECTIVE_VALUE); // old value replaced in-place

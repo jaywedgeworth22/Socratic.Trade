@@ -18,8 +18,10 @@ import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts"
 import { storeDocument } from "../vector-db";
 import { readLocalArtifact, writeLocalArtifact } from "../web-sources/sec-filings";
 import { insertDocumentChunkFtsBatch, countDocumentChunkFts, getDb } from "../db";
+import { hasInFlightStrategyWork } from "../db-execution";
 import { serverKnobBool } from "../server-knobs";
 import { chunkDocument } from "./chunk";
+import { filingTextFromParsedSections } from "./pinecone-write-class";
 import {
   FTS_MIRROR_HEARTBEAT_MS,
   FTS_MIRROR_MAX_CHUNKS_PER_TICK,
@@ -92,6 +94,10 @@ export class SecIngestWorker {
   /** One polling pass. Public (like `processTask`) so tests can drive a single tick
    *  deterministically instead of racing the 5s interval. */
   async runTick() {
+    // Live b3b83913: 78 ftsMirrorSlice ticks (6–13s) starved gather/Green.  Do not claim
+    // more ingest / FTS work while a Manual Run once or strategy run is on this loop.
+    if (hasInFlightStrategyWork()) return;
+
     // Monthly write-unit PACE guard. This queue IS the bulk/backfill lane, so it is the one
     // producer the pace guard throttles: when the month-end projection exceeds
     // PINECONE_MONTHLY_WU_BUDGET we simply stop CLAIMING NEW tasks. Already-leased tasks are
@@ -294,7 +300,7 @@ export class SecIngestWorker {
 
       const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
       const doc = {
-        text: rawContent,
+        text: filingTextFromParsedSections(sections, rawContent),
         doc_id: vectorDocId,
         ticker: task.symbol,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
@@ -372,7 +378,7 @@ export class SecIngestWorker {
 
       const sections = timeSync("worker.parseSectionsJson", `${Math.round(sectionsJson.length / 1024)}KB`, () => JSON.parse(sectionsJson));
       const doc = {
-        text: rawContent,
+        text: filingTextFromParsedSections(sections, rawContent),
         doc_id: vectorDocId,
         ticker: task.symbol,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
@@ -455,6 +461,7 @@ export class SecIngestWorker {
         });
         let offset = startOffset;
         while (offset < ftsRows.length) {
+          if (hasInFlightStrategyWork()) break;
           const plan = planFtsMirrorSlice({
             totalChunks: ftsRows.length,
             offset,

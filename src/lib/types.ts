@@ -160,10 +160,11 @@ export interface ScoringWeights {
 /** US tax-mitigation settings (estimates only — not tax advice). */
 /**
  * Tax treatment of an account. IRAs (Roth/Traditional) are tax-sheltered: there is no annual
- * capital-gains tax, and the IRC §1091 wash-sale lockout does not apply WITHIN a single IRA
- * (a wash sale has no benefit there). A loss realized in a TAXABLE account, however, still locks
- * rebuys of that symbol across ALL of the user's accounts — including the IRAs — for 30 days,
- * because buying the replacement in the IRA permanently destroys the disallowed basis.
+ * capital-gains tax, tax-loss harvesting has no effect (losses never appear on a return), and
+ * the IRC §1091 wash-sale lockout does not apply WITHIN a single IRA (a wash sale has no benefit
+ * there). A loss realized in a TAXABLE account, however, still locks rebuys of that symbol across
+ * ALL of the user's accounts — including the IRAs — for 30 days, because buying the replacement
+ * in the IRA permanently destroys the disallowed basis.
  */
 export type TaxationType = "taxable" | "roth_ira" | "traditional_ira";
 
@@ -259,27 +260,19 @@ export interface AccountCapabilities {
  *              itself. Never silent; never a hard block by default.
  * The IRA-replacement rule (Rev. Rul. 2008-5) is governed SEPARATELY by
  * taxSettings.iraWashSaleHandling: an IRA buying a symbol locked by a taxable-account loss
- * defaults to "disregard" (see IraWashSaleHandling) for the same reason — the owner may still
- * opt an account into the stricter "block".
+ * defaults to "disregard" (see IraWashSaleHandling). The owner may choose Auto (weigh it)
+ * or the stricter Block.
  */
 export type WashSaleHandling = "block" | "ask" | "auto";
 
 /**
  * What an IRA-replacement wash sale MEANS for a BUY in an IRA (taxSettings.iraWashSaleHandling):
- *   - "block": the buy is refused outright in EVERY washSaleHandling mode — Rev. Rul.
- *     2008-5: buying the replacement inside the IRA permanently destroys the disallowed loss,
- *     with no basis adjustment ever recoverable. A stricter per-account opt-in; no longer the
- *     default.
- *   - "disregard": (DEFAULT) the buy proceeds through the normal authority flow (all other gates
- *     unchanged). Rationale (owner decision 2026-07-03): brokers do not report cross-account IRA
- *     wash sales to the IRS — the rule only bites under audit — so respecting it is the account
- *     owner's call, not a hard system stop. NEVER silent: the decision carries outcome
- *     "ira_disregarded" with the verbatim annotation "Wash Sale (Technically, but IRA purchase
- *     unreported to IRS)" plus the priced lock provenance, an audit event fires, and the note
- *     renders wherever the purchase shows. This is still an explicit audit-risk acceptance —
- *     the transparency machinery is unchanged, only the default toggle position.
+ *   - "block": refuse a replacement buy when the taxable-account loss meets the optional
+ *     washSaleMinLossUsd floor (blank = every loss). Stricter opt-in.
+ *   - "auto": proceed; Green weighs the priced forfeited deduction. Same idea as taxable Auto.
+ *   - "disregard": (DEFAULT, Ignore) the buy proceeds and Green is not told to skip.
  */
-export type IraWashSaleHandling = "block" | "disregard";
+export type IraWashSaleHandling = "block" | "auto" | "disregard";
 
 export interface TaxSettings {
   /** Tax treatment driving rates + wash-sale handling. Defaults to "taxable". */
@@ -292,10 +285,9 @@ export interface TaxSettings {
   iraWashSaleHandling?: IraWashSaleHandling;
   /**
    * Optional floor (dollars) for a realized loss to trigger the wash-sale rebuy lockout.
-   * Losses smaller than this are ignored when building the 30-day locked-symbol set, so a
-   * trivial loss doesn't freeze a symbol for a month. Default undefined = every loss locks
-   * (current behavior). This changes only THIS APP's guardrail — the IRS still applies
-   * §1091 to any size of loss; the disallowed-loss REPORTING here is unaffected.
+   * Blank = every loss is in play (taxable and IRA). Set a dollar amount to ignore smaller
+   * losses. Explicit 0 is the same as blank. The IRS still applies §1091 to any size of loss;
+   * this is only this app's guardrail.
    */
   washSaleMinLossUsd?: number;
   /** Marginal rate applied to short-term realized gains (ordinary income), e.g. 24. */
@@ -429,17 +421,15 @@ export interface TuningSettings {
    */
   minProposalScoreThreshold?: number;
   /**
-   * Hard per-user/day LLM + RAG TOKEN ceiling. When today's summed model + retrieval usage reaches
-   * this, the run skips every model/RAG spend for the rest of the day (non-LLM risk maintenance still
-   * runs). `undefined` (blank in the UI) INHERITS the operator env default
-   * `TRIGGER_LLM_DAILY_TOKEN_BUDGET`; an explicit `0` means NO LIMIT (opt out of the default); a
-   * positive value is that ceiling. Modifiable in Settings → Tuning. Enforced at the spend primitives
-   * (`withLlmGeneration`, `retrieveContextDetailed`), so it covers every spend site.
+   * Legacy per-account LLM + RAG TOKEN ceiling. Prefer `user_settings.llm_daily_budget`
+   * (Settings → Daily LLM Budget / `PATCH /api/settings/llm-budget`). When the user setting
+   * is unset, this still binds; then retired env `TRIGGER_LLM_DAILY_TOKEN_BUDGET`.
+   * `undefined` inherits the next tier; explicit `0` means NO LIMIT.
    */
   llmDailyTokenBudget?: number;
   /**
-   * Hard per-user/day LLM + RAG COST ceiling in USD (estimated). Same semantics as
-   * `llmDailyTokenBudget`: `undefined` inherits env `TRIGGER_LLM_DAILY_COST_BUDGET_USD`, `0` = no limit.
+   * Legacy per-account LLM + RAG COST ceiling in USD. Same inheritance as
+   * `llmDailyTokenBudget`; prefer the per-user Settings cap.
    */
   llmDailyCostBudgetUsd?: number;
 
@@ -957,6 +947,12 @@ export interface BrokerQuote {
   venuePriceAuthoritative?: boolean;
   /** Wall-clock ISO when we fetched this quote from the venue (staleness of the snapshot). */
   fetchedAt?: string;
+  /**
+   * True when this price is the delayed Yahoo fallback tape (live broker / Alpaca
+   * snapshot missed).  Owner 2026-08-18: stamp user-facing "Delayed Quote" on approval
+   * cards and keep trading — do not fail-closed openings.
+   */
+  delayedFallback?: boolean;
   /** True when bid/ask were synthesized from price (no real quoted spread) — e.g. a Yahoo batch quote
    *  used by the Test-mode gateway. Consumers (mergeQuoteData provenance, hasRealAsk) must not treat a
    *  synthetic spread as a real quoted one. `syntheticSpread` stays true only when BOTH sides were
@@ -1567,6 +1563,14 @@ export interface TradeProposal {
    * fall back to the conservative equality heuristic.
    */
   referencePriceProvenance?: "provided" | "limit-fallback";
+  /**
+   * True when the generation-time quote was delayed Yahoo fallback.  Owner
+   * 2026-08-18: approval cards stamp user-facing "Delayed Quote"; openings
+   * still go through.  Optional so legacy rows stay valid.
+   */
+  quoteDelayedFallback?: boolean;
+  /** Provider id for the generation-time quote (e.g. yahoo-finance-delayed). */
+  quoteProvider?: string;
   /** Limit price for the take-profit leg of a bracket order. */
   bracketTakeProfit?: number;
   /**
@@ -1975,6 +1979,8 @@ export interface MarketQuote {
   venuePriceAuthoritative?: boolean;
   /** See BrokerQuote.fetchedAt. */
   fetchedAt?: string;
+  /** See BrokerQuote.delayedFallback — carried through mergeQuoteData for approval cards. */
+  delayedFallback?: boolean;
   sentiment?: number;
   peRatio?: number;
   headlines?: string[];
@@ -2242,6 +2248,8 @@ export interface MarketQuoteSummary {
   venuePriceAuthoritative?: boolean;
   /** See BrokerQuote.fetchedAt. */
   fetchedAt?: string;
+  /** See BrokerQuote.delayedFallback. */
+  delayedFallback?: boolean;
   sentiment?: number;
   peRatio?: number;
   analystRating?: string;
@@ -2411,7 +2419,7 @@ export interface WashSaleGateAudit {
   note?: string;
   outcome:
     | "blocked" // handling "block" (a stricter opt-in, no longer the default): refused outright
-    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; iraWashSaleHandling "block", a stricter opt-in)
+    | "blocked_ira" // IRA replacement purchase — hard block (iraWashSaleHandling "block" and a material taxable loss)
     | "ira_disregarded" // IRA replacement purchase allowed by iraWashSaleHandling "disregard" (the default) — annotated + audited, never silent
     | "ask_escalated" // handling "ask": refused here, marked escalatable for the run loop
     | "auto_proceeded" // handling "auto" (the default): always proceeds — priced tax cost recorded as receipt telemetry, never a veto
@@ -2454,6 +2462,9 @@ export interface PolicyDecision {
     originalType: OrderType;
     originalLimitPrice?: number;
     referencePrice: number;
+    /** True when the backing quote is delayed Yahoo fallback (keep trading). */
+    delayedFallback?: boolean;
+    provider?: string;
   };
 }
 
@@ -2515,6 +2526,14 @@ export interface EquityOrderInput {
   trailPercent?: number;
 }
 
+/** Scoped broker order-list fetch. Default: open orders plus terminal orders inside a bounded window. */
+export interface GetEquityOrdersOptions {
+  /** ISO timestamp — include terminal orders created on or after this instant. */
+  since?: string;
+  /** Walk full broker history (status all, unbounded pagination). */
+  fullHistory?: boolean;
+}
+
 export interface BrokerGateway {
   /**
    * True when getEquityOrders returns a list that reliably includes recently-TERMINAL orders
@@ -2524,15 +2543,14 @@ export interface BrokerGateway {
    * treated as `uncertain` (keep 'placing' + the protected alert), because absence can't distinguish
    * "never placed" from "placed, filled, and already aged out of a live-only list" — and dropping a
    * possibly-real order is the money-path hazard. Undefined ⇒ conservative (treated as false).
-   * Alpaca sets this true (getEquityOrders pages status:"all"); Robinhood leaves it unset because its
-   * get_equity_orders terminal-inclusion window can't be verified without a live token.
+   * Alpaca sets this true (default getEquityOrders includes terminal orders inside the bounded window).
    */
   readonly ordersListIncludesTerminal?: boolean;
   getAccounts(): Promise<BrokerageAccount[]>;
   getPortfolio(accountNumber: string): Promise<Portfolio>;
   getEquityPositions(accountNumber: string): Promise<EquityPosition[]>;
   getOptionPositions?(accountNumber: string): Promise<OptionPosition[]>;
-  getEquityOrders(accountNumber: string): Promise<EquityOrder[]>;
+  getEquityOrders(accountNumber: string, options?: GetEquityOrdersOptions): Promise<EquityOrder[]>;
   getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>>;
   getEquityTradability(accountNumber: string, symbols: string[]): Promise<Record<string, { tradable: boolean; fractional: boolean; reason?: string }>>;
   reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder>;
@@ -2624,6 +2642,12 @@ export interface PendingProposal {
   proposalReferencePrice?: number;
   /** The current price used for the performance figure. */
   proposalCurrentPrice?: number;
+  /**
+   * True when the card's Now price (or the persisted generation quote) is
+   * delayed Yahoo fallback.  Website + iOS stamp user-facing "Delayed Quote".
+   */
+  delayedFallback?: boolean;
+  quoteProvider?: string;
 }
 
 export interface RecentProposal {
@@ -2643,6 +2667,8 @@ export interface RecentProposal {
   proposalReferencePrice?: number;
   /** The current price used for the performance figure. */
   proposalCurrentPrice?: number;
+  delayedFallback?: boolean;
+  quoteProvider?: string;
   /** Broker or network error message when status is placing_failed. */
   errorMessage?: string;
 }
@@ -2857,6 +2883,14 @@ export interface BenchmarkUnavailability {
   detail?: string;
 }
 
+export interface DayPnlHints {
+  /** Prior session close equity from the broker when available (e.g. Alpaca last_equity). */
+  priorCloseEquity?: number;
+  /** Net external flow on the current Central trading day from broker activities. */
+  todayBrokerFlow?: number;
+  cashFlowSource?: "broker" | "inferred";
+}
+
 export interface PerformanceSummary {
   liveEquityCurve: EquityCurvePoint[];
   paperEquityCurve: EquityCurvePoint[];
@@ -2866,6 +2900,8 @@ export interface PerformanceSummary {
    *  failure), so the UI can say WHY instead of a generic "not computable" — and never render
    *  a fake 0.00% comparison. Absent for the ordinary young-account insufficient-history case. */
   benchmarkUnavailable?: BenchmarkUnavailability;
+  /** Broker-authoritative Day P&L hints when Alpaca activities are available. */
+  dayPnlHints?: DayPnlHints;
   liveRealizedPnl: number;
   paperRealizedPnl: number;
   liveUnrealizedPnl: number;
@@ -2874,6 +2910,19 @@ export interface PerformanceSummary {
   paperWinRate: number;
   liveAverageReturnPct: number;
   paperAverageReturnPct: number;
+  /** Count of CLOSED lots feeding liveWinRate/liveAverageReturnPct (0 for an account that has
+   *  never closed a lot). winRate/averageReturn compute to 0 — not undefined — for an empty lot
+   *  list, so consumers MUST gate the "0%" / "+0.00%" render on this count being > 0, never on
+   *  the value itself (an account with exactly one break-even closed lot has a genuine 0%). */
+  liveClosedLotCount: number;
+  paperClosedLotCount: number;
+  /** Closing fills in the live ledger with no opening lot to close against (pre-app, manual or MCP
+   *  positions exited through the broker). Their P&L is NOT in liveRealizedPnl — there is no cost
+   *  basis in this app to compute one from — so the figure discloses the count instead of quietly
+   *  omitting them. 0 when the ledger reconciles. */
+  liveUnmatchedClosingFills: number;
+  /** Same, for the paper ledger. */
+  paperUnmatchedClosingFills: number;
   attribution: RunAttribution[];
   fills: FillEvent[];
 }

@@ -19,12 +19,18 @@
 //      to today's behavior (keyword + allowlist).
 //   5. FLAG: env LEARNED_CONTEXT_SEMANTIC_GATE (default "on"; any value !== "off" = on). When "off",
 //      skip the LLM gate entirely → exactly today's behavior plus the (safe) allowlist.
+//   6. HONESTY: when no chat credential resolves for the user, getLLM hands back MockLLM and this
+//      "on by default" second layer silently does not run at all. That is audited
+//      ("semantic_gate_mock_llm_fallback", deduped — it is a standing condition, not a per-candidate
+//      event) rather than inferred. It is a receipt, not a gate — the tier still degrades to the
+//      keyword result and ingestion is never blocked.
 //
 // The chat-origin HARD-CAP is enforced in store.ts, not here: a chat candidate the gate upgrades to
 // 'risk' is still DROPPED (never queued). This module only decides the tier; routing stays in the store.
 
 import type { ChatLLM } from "../chat/types";
-import { getLLM } from "../chat/llm";
+import { getLLM, MockLLM } from "../chat/llm";
+import { auditDeduped } from "../audit-dedupe";
 import type { LearnedContextCandidate, LearnedContextRiskTier } from "../types";
 import { classifyRiskTier } from "./classify";
 
@@ -122,6 +128,26 @@ export async function classifyWithSemanticGate(
   // 4. FAIL-SAFE: any throw / unparseable output falls back to the keyword result ('fact').
   try {
     const llm = opts.llm ?? getLLM(opts.userId);
+    // OBSERVABILITY (not a behavior change): getLLM falls back to MockLLM whenever no real chat
+    // credential resolves for this user, and a mock's prose reply parses to null → keyword 'fact'.
+    // So the second-layer classifier is not merely degraded, it is ABSENT — and, until this audit
+    // row existed, absent with no trace. Nothing here fails closed or blocks ingestion; the point
+    // is that "the safety net did not run" is now a fact you can look up rather than infer.
+    if (!opts.llm && llm instanceof MockLLM) {
+      try {
+        // Deduped: this is a STANDING condition (no key configured), not a per-candidate event, and
+        // one row per ingest is the write-amplification pattern audit-dedupe.ts exists to prevent.
+        auditDeduped(
+          "semantic_gate_mock_llm_fallback",
+          { userId: opts.userId ?? null, subject: candidate.subject ?? null, resolvedModel: llm.modelName },
+          [opts.userId ?? "local"],
+          { userId: opts.userId }
+        );
+      } catch {
+        // An audit-write failure must never take down classification. Degrade silently.
+      }
+      return keywordTier;
+    }
     const userMessage = JSON.stringify({
       subject: candidate.subject ?? "",
       value: candidate.value ?? "",

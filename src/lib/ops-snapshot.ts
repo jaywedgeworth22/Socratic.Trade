@@ -1,16 +1,22 @@
 import { autonomyAuthorityWord, autonomyStatusLabel } from "./autonomy-labels";
 import { getInternalSetting } from "./db-settings";
 import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy, getServiceHealthSummaries, databasePath } from "./db";
+import { isHardStoppedHealthSummary } from "./db-health";
+import { isIntentionalOffHealthService } from "./retired-direct-vendors";
 import { getTaskJournalSummary } from "./db-task-journal";
 import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { computeAccountTradingLiveness } from "./trading-liveness";
 import { getLastEnrichmentCoverageReport } from "./enrichment-coverage";
+import { pineconeMonthToDateWriteUnits } from "./pinecone-monthly-pace";
+import { pineconeTrialState } from "./pinecone-trial-window";
+import { pineconeWuExhaustedUntil } from "./pinecone-wu-breaker";
 import { isWorkingOrderState } from "./broker-held-orders";
 import { isLiveOrderState } from "./broker-side";
 import type { EquityOrder } from "./types";
 import { statSync, statfsSync, readdirSync } from "fs";
 import { dirname, join } from "path";
+import { summarizeRoicArchiveCoverage } from "./web-sources/roic-transcripts";
 
 function getLitestreamLastSyncAge(dbPath: string): number | null {
   const litestreamDir = `${dbPath}-litestream`;
@@ -122,10 +128,28 @@ export interface OpsUserSnapshot {
   recentAudit: OpsAuditRow[];
 }
 
+export interface OpsRoicArchiveCoverage {
+  transcriptsWithContent: number;
+  symbolsWithContent: number;
+  symbolsAtDepth: number;
+  symbolsPartial: number;
+  artifactFiles: number;
+  archiveDepth: number;
+  cursorPhase: string | null;
+  cursorRemaining: number;
+  lastCompleteAt: string | null;
+  lastAttemptAt: string | null;
+  universeSize: number;
+  universeUncovered: number;
+  thinSymbols: Array<{ symbol: string; count: number }>;
+}
+
 export interface OpsSnapshot {
   asOf: string;
   schedulerLastTick: string | null;
   schedulerAgeSeconds: number | null;
+  /** ROIC Individual local archive (SQLite + artifacts).  No vendor HTTP. */
+  roicArchive?: OpsRoicArchiveCoverage | null;
   dependencies?: Record<string, { ok: boolean; reason?: string | null; lastFailure?: string | null }>;
   storage?: Record<string, any> | null;
   /** Last CascadingEnrichmentProvider coverage summary (filled / source / missing), if any scan has run. */
@@ -140,6 +164,22 @@ export interface OpsSnapshot {
   } | null;
   /** Task brain: per-lane aggregates from the unified task_journal cron ledger (24h lookback). */
   taskJournal?: import("./db-task-journal").TaskJournalLaneSummary[];
+  /** App-recorded Pinecone write fuse + trial window.  Not Pinecone's bill. */
+  pineconeIngest?: {
+    monthToDateWriteUnits: number;
+    wuExhaustedUntil: string | null;
+    trial: {
+      active: boolean;
+      phase: string;
+      mode: string;
+      remainingUsd: number;
+      spentUsd: number;
+      remainingDays: number;
+      effectiveDailyWriteUnits: number;
+      effectiveTextsPerDay: number;
+      localMtdUntrusted: boolean;
+    };
+  };
   users: OpsUserSnapshot[];
 }
 
@@ -392,15 +432,39 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     const summaries = getServiceHealthSummaries();
     for (const summary of summaries) {
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
-      if (isGlobal) {
-        dependencies[summary.service] = {
-          ok: !summary.stoppedWorking,
-          reason: summary.stoppedReason,
-          lastFailure: summary.lastFailureError
-        };
-      }
+      if (!isGlobal) continue;
+      if (summary.intentionalOff || isIntentionalOffHealthService(summary.service)) continue;
+      dependencies[summary.service] = {
+        // Hard 5-streak only.  Soft 429 / "no success this hour" is degraded, not down.
+        ok: !isHardStoppedHealthSummary(summary),
+        reason: summary.stoppedReason,
+        lastFailure: summary.lastFailureError
+      };
     }
   } catch {}
+
+  let pineconeIngest: OpsSnapshot["pineconeIngest"];
+  try {
+    const mtd = pineconeMonthToDateWriteUnits();
+    const trial = pineconeTrialState(Date.now(), mtd);
+    pineconeIngest = {
+      monthToDateWriteUnits: mtd,
+      wuExhaustedUntil: pineconeWuExhaustedUntil(),
+      trial: {
+        active: trial.active,
+        phase: trial.phase,
+        mode: trial.mode,
+        remainingUsd: trial.remainingUsd,
+        spentUsd: trial.spentUsd,
+        remainingDays: trial.remainingDays,
+        effectiveDailyWriteUnits: trial.effectiveDailyWriteUnits,
+        effectiveTextsPerDay: trial.effectiveTextsPerDay,
+        localMtdUntrusted: trial.localMtdUntrusted
+      }
+    };
+  } catch {
+    pineconeIngest = undefined;
+  }
 
   let storage: Record<string, unknown> | null = null;
   try {
@@ -458,6 +522,13 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     enrichmentCoverage = null;
   }
 
+  let roicArchive: OpsRoicArchiveCoverage | null = null;
+  try {
+    roicArchive = summarizeRoicArchiveCoverage();
+  } catch {
+    roicArchive = null;
+  }
+
   return {
     asOf: new Date().toISOString(),
     schedulerLastTick: lastTick ?? null,
@@ -465,7 +536,9 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     dependencies,
     storage,
     enrichmentCoverage,
+    roicArchive,
     taskJournal: getTaskJournalSummary(new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString()),
+    pineconeIngest,
     users
   };
 }

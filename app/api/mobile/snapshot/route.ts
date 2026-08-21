@@ -1,5 +1,7 @@
 import { getDashboardSnapshot } from "@/lib/dashboard";
 import { listMobileCommands, mobileControlCatalog, mobileReadiness } from "@/lib/mobile-api";
+import { compactMobileMarketScan } from "@/lib/mobile-scan";
+import { buildNotificationHistory } from "@/lib/notification-history";
 import { resolveRequestUser } from "@/lib/request-user";
 import { listAlerts } from "@/lib/alerts";
 import { listWatchlist } from "@/lib/watchlist";
@@ -48,6 +50,13 @@ export async function GET(request: Request) {
     connectedAccounts: snapshot.connectedAccounts,
     watchlist: listWatchlist(user.userId),
     alerts: listAlerts(user.userId, "all"),
-    recentCommands: listMobileCommands({ userId: user.userId, limit: 30 })
+    notifications: buildNotificationHistory({
+      notifications: snapshot.notifications,
+      symbolMetaBySymbol: snapshot.symbolMetaBySymbol,
+      connectedAccounts: snapshot.connectedAccounts
+    }),
+    recentCommands: listMobileCommands({ userId: user.userId, limit: 30 }),
+    // Same last-good universe `/console/scan` paints when live Refresh 503s.
+    latestScan: compactMobileMarketScan(snapshot.latestScan)
   });
 }

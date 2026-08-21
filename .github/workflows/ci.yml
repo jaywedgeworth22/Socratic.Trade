@@ -3,7 +3,8 @@
 # green before a PR can merge; `gh pr merge <n> --squash --auto` lands the PR once it passes.
 #
 # Docs-only fast path (2026-07-04, PR #370): `classify` inspects the PR diff; when it touches
-# ONLY documentation-class paths (*.md anywhere, docs/**) the gate reports success immediately
+# ONLY documentation-class paths (*.md anywhere, docs/** except build-imported docs/benchmarks/)
+# the gate reports success immediately
 # without running the suite. Fail-closed in every ambiguous state.
 #
 # Runner policy (2026-07-29, simplified 2026-08-01): GitHub-hosted `ubuntu-latest` ONLY.
@@ -139,8 +140,14 @@ jobs:
           echo "$changed_files"
 
           non_docs="$(printf '%s\n' "$changed_files" | grep -Ev '(^|/)[^/]+\.md$|^docs/' || true)"
+          # docs/benchmarks/* is bundled at build time (app/api/llm-usage/model-stats/route.ts) — not
+          # safe to skip lint/tsc/test/build when only those JSON files change.
+          benchmarks_changed="$(printf '%s\n' "$changed_files" | grep -E '^docs/benchmarks/' || true)"
+          if [ -n "$benchmarks_changed" ]; then
+            non_docs="$(printf '%s\n%s' "$non_docs" "$benchmarks_changed" | sed '/^$/d' | sort -u)"
+          fi
           if [ -z "$non_docs" ]; then
-            echo "All changed files are documentation-class (*.md or docs/**) — docs-only fast path applies."
+            echo "All changed files are documentation-class (*.md or docs/**, excluding build-imported docs/benchmarks/) — docs-only fast path applies."
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
             echo "Non-documentation files changed — running full gate:"
@@ -284,6 +291,21 @@ jobs:
           bash -n scripts/ios-fleet-pin.sh
           bash -n scripts/ios-ship-testflight.sh
           bash scripts/test-ios-scheduled-ship-gate.sh
+      # Deploy-freshness watchdog + shared-box OCR isolation are shell, so
+      # vitest cannot cover them. Offline selftests (throwaway git + stub
+      # /api/health, fake docker ps) catch a silent-pass the same way
+      # verify-deploy-sha.selftest.sh does. No production, no Slack, no docker.
+      - name: Deploy freshness + shared-box isolation scripts (bash)
+        run: |
+          bash -n scripts/verify-deploy-sha.sh
+          bash -n scripts/verify-deploy-sha.selftest.sh
+          bash -n scripts/alert-deploy-freshness.sh
+          bash -n scripts/alert-deploy-freshness.selftest.sh
+          bash -n scripts/isolate-shared-box-batch.sh
+          bash -n scripts/isolate-shared-box-batch.selftest.sh
+          bash scripts/verify-deploy-sha.selftest.sh
+          bash scripts/alert-deploy-freshness.selftest.sh
+          bash scripts/isolate-shared-box-batch.selftest.sh
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test

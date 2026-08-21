@@ -30,6 +30,7 @@ export type SettingsDestination =
   | "settings/keys-models"
   | "settings/alert-delivery"
   | "settings/data-privacy"
+  | "settings/llm-budget"
   | "settings/presets"
   | "settings/appearance"
   | "settings/admin";
@@ -249,6 +250,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     synonyms: [
       "ira wash sale",
       "ignore wash sale",
+      "auto wash sale",
       "disregard wash sale",
       "roth rebuy",
       "roth wash sale",
@@ -262,7 +264,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "tax",
     backingField: "taxSettings.iraWashSaleHandling",
     disclosure: "advanced",
-    help: "Disregard (default) lets an IRA rebuy of a taxable-loss-locked stock proceed, annotated and audited: brokers don't report cross-account IRA wash sales to the IRS, so this is an explicit audit-risk acceptance made on your behalf by default. Block refuses the rebuy instead (a stricter opt-in) — Rev. Rul. 2008-5 permanently destroys the deduction.",
+    help: "Ignore (default) does not constrain this IRA. Auto lets Green weigh the priced forfeited deduction, then proceeds. Block refuses. Minimum loss is optional (blank = every loss).",
     anchor: "tax"
   },
   // Strategy (account scope)
@@ -333,6 +335,30 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     anchor: "delivery"
   },
   {
+    id: "settings.dataPool",
+    label: "Shared market-data pool",
+    synonyms: ["data pool", "consent", "sharing", "market data pool", "research corpus"],
+    scope: "user",
+    destination: "settings/data-privacy",
+    legacySection: "data",
+    backingField: "dataPoolConsent",
+    disclosure: "advanced",
+    help: "Required.  General market data is pooled; personal account data is not.",
+    anchor: "sharing"
+  },
+  {
+    id: "settings.legalNotice",
+    label: "Legal notice",
+    synonyms: ["terms", "privacy", "disclaimer", "not investment advice"],
+    scope: "user",
+    destination: "settings/data-privacy",
+    legacySection: "data",
+    backingField: "legalNoticeConsent",
+    disclosure: "advanced",
+    help: "Terms and privacy you accepted.  You will be asked again only if they change.",
+    anchor: "legal"
+  },
+  {
     id: "settings.scanBreadthCandidates",
     label: "Scan breadth — candidates per run",
     synonyms: ["market scan", "candidate limit", "scan breadth", "data privacy"],
@@ -343,6 +369,28 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     disclosure: "advanced",
     help: "How many candidates each scan considers. Applies to all your accounts.",
     anchor: "scan-shape"
+  },
+  {
+    id: "settings.llmDailyTokenBudget",
+    label: "Daily AI token cap",
+    synonyms: ["llm budget", "AI budget", "token budget", "daily token ceiling", "TRIGGER_LLM_DAILY_TOKEN_BUDGET"],
+    scope: "user",
+    destination: "settings/llm-budget",
+    backingField: "llm_daily_budget.tokenBudget",
+    disclosure: "essential",
+    help: "Daily token limit for model and research spend.  When set, spend pauses for the rest of the day.",
+    anchor: "llm-budget"
+  },
+  {
+    id: "settings.llmDailyCostBudget",
+    label: "Daily AI cost cap",
+    synonyms: ["llm cost cap", "AI cost cap", "daily usd budget", "cost budget", "TRIGGER_LLM_DAILY_COST_BUDGET_USD"],
+    scope: "user",
+    destination: "settings/llm-budget",
+    backingField: "llm_daily_budget.costBudgetUsd",
+    disclosure: "essential",
+    help: "Daily dollar limit for model and research spend.  When set, spend pauses for the rest of the day.",
+    anchor: "llm-budget"
   },
   {
     id: "settings.theme",
@@ -420,6 +468,8 @@ export function pathForSettingsDestination(destination: SettingsDestination): st
       return "/console/settings";
     case "settings/data-privacy":
       return "/console/settings";
+    case "settings/llm-budget":
+      return "/console/settings";
     case "settings/presets":
       return "/console/strategy";
     case "settings/appearance":
@@ -450,6 +500,8 @@ export function settingsDestinationLabel(destination: SettingsDestination): stri
       return "Settings · Delivery";
     case "settings/data-privacy":
       return "Settings · Data sources";
+    case "settings/llm-budget":
+      return "Settings · AI budget";
     case "settings/presets":
       return "Strategy · Presets";
     case "settings/appearance":

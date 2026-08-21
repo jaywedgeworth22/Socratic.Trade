@@ -16,7 +16,7 @@ struct DataSourcesSection: View {
                 Section("Data Sources") {
                     HStack {
                         ProgressView()
-                        Text("loading knobs the server already exposes")
+                        Text("Loading data sources…")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -32,11 +32,20 @@ struct DataSourcesSection: View {
                     if !rows.isEmpty {
                         Section {
                             ForEach(rows) { row in
-                                SourceSettingToggleRow(
-                                    row: row,
-                                    isBusy: pendingIDs.contains(row.id)
-                                ) { value in
-                                    Task { await patch(id: row.id, value: value) }
+                                if row.type == "number" {
+                                    SourceSettingNumberRow(
+                                        row: row,
+                                        isBusy: pendingIDs.contains(row.id)
+                                    ) { value in
+                                        Task { await patchNumber(id: row.id, value: value) }
+                                    }
+                                } else {
+                                    SourceSettingToggleRow(
+                                        row: row,
+                                        isBusy: pendingIDs.contains(row.id)
+                                    ) { value in
+                                        Task { await patch(id: row.id, value: value) }
+                                    }
                                 }
                             }
                         } header: {
@@ -47,9 +56,9 @@ struct DataSourcesSection: View {
                     }
                 }
                 Section {
-                    Toggle("Show Advanced Knobs", isOn: $showAdvanced)
+                    Toggle("Show Advanced Options", isOn: $showAdvanced)
                 } footer: {
-                    Text("Advanced knobs are operator-facing.  Secrets stay in Infisical; these only change what the desk pulls.")
+                    Text("Advanced rows stay hidden until you turn this on.  These settings only change which data your account uses.")
                 }
             }
         }
@@ -58,8 +67,8 @@ struct DataSourcesSection: View {
 
     private var visibleSettings: [SourceSettingRow] {
         let rows = response?.settings ?? []
-        let booleans = rows.filter { $0.type == "boolean" }
-        return showAdvanced ? booleans : booleans.filter { !$0.advanced }
+        let supported = rows.filter { $0.type == "boolean" || $0.type == "number" }
+        return showAdvanced ? supported : supported.filter { !$0.advanced }
     }
 
     @ViewBuilder
@@ -82,6 +91,17 @@ struct DataSourcesSection: View {
     }
 
     private func patch(id: String, value: Bool) async {
+        pendingIDs.insert(id)
+        defer { pendingIDs.remove(id) }
+        do {
+            response = try await store.patchSourceFeatures([id: value])
+            loadError = nil
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func patchNumber(id: String, value: Double) async {
         pendingIDs.insert(id)
         defer { pendingIDs.remove(id) }
         do {
@@ -128,5 +148,43 @@ private struct SourceSettingToggleRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct SourceSettingNumberRow: View {
+    let row: SourceSettingRow
+    let isBusy: Bool
+    let onChange: (Double) -> Void
+    @State private var text: String
+
+    init(row: SourceSettingRow, isBusy: Bool, onChange: @escaping (Double) -> Void) {
+        self.row = row
+        self.isBusy = isBusy
+        self.onChange = onChange
+        _text = State(initialValue: row.value.numberValue.map { String($0) } ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent(row.label) {
+                TextField("value", text: $text)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .disabled(isBusy)
+                    .onSubmit { commit() }
+            }
+            if let description = row.description, !description.isEmpty {
+                Text(description)
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func commit() {
+        guard let parsed = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        onChange(parsed)
     }
 }

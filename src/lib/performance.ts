@@ -46,6 +46,14 @@ export function returnSinceProposalPct(
 export interface ClosedLot {
   pnl: number;
   returnPct: number;
+  /**
+   * Shares closed by THIS match (a closing fill against one opening lot). A scaled-out position
+   * produces several ClosedLots against the same opening lot, so this is what tells a partial trim
+   * apart from a completed round trip — grading a lot on its first trim alone reads a stopped-out
+   * trade as a winner. Optional only so legacy/fixture lots without a size still typecheck;
+   * calculatePnl always sets it.
+   */
+  quantity?: number;
   symbol?: string;
   thesisTag?: string;
   regime?: string;
@@ -74,6 +82,43 @@ export interface ClosedLot {
   /** Model that reviewed the ENTRY (reviewedByModel stamped on the opening proposal), for the
    * per-model realized-performance rollup behind the model pickers (src/lib/model-stats.ts). */
   reviewedByModel?: string;
+}
+
+/**
+ * Collapse every exit booked against ONE opening lot into the round trip it actually was.
+ *
+ * `exits` must all share the same opening lot (same symbol + `entryAt`); `entryQuantity` is the
+ * opening fill's size. Returns `undefined` while the position is still partly open — a scaled-out
+ * position produces one ClosedLot per trim, and treating the first as the result grades a trade
+ * before it is over (two profitable trims then a stopped-out remainder reads as a win).
+ *
+ * The aggregate's `returnPct` is capital-weighted over the closed size, so a small trim and a large
+ * remainder are never averaged as equals.
+ */
+export function aggregateRoundTrip(exits: ClosedLot[], entryQuantity: number): ClosedLot | undefined {
+  if (exits.length === 0) return undefined;
+  const sized = exits.filter((lot) => typeof lot.quantity === "number" && (lot.quantity as number) > 0);
+  const closedQuantity = sized.reduce((sum, lot) => sum + (lot.quantity as number), 0);
+  const fullyClosed =
+    sized.length === exits.length && entryQuantity > 0
+      ? closedQuantity >= entryQuantity - 1e-6
+      : exits.length === 1; // legacy lots carry no size: a lone exit is the whole lot
+  if (!fullyClosed) return undefined;
+
+  const last = exits[exits.length - 1];
+  if (exits.length === 1) return last;
+
+  const pnl = exits.reduce((sum, lot) => sum + lot.pnl, 0);
+  const entryPrice = last.entryPrice;
+  const returnPct =
+    entryPrice != null && entryPrice > 0 && closedQuantity > 0
+      ? (pnl / (entryPrice * closedQuantity)) * 100
+      : closedQuantity > 0
+        ? sized.reduce((sum, lot) => sum + lot.returnPct * (lot.quantity as number), 0) / closedQuantity
+        : exits.reduce((sum, lot) => sum + lot.returnPct, 0) / exits.length;
+
+  // `last` is the exit that finished the round trip, so its exitAt/mae/mfe are the terminal ones.
+  return { ...last, pnl, returnPct, quantity: closedQuantity };
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
@@ -349,7 +394,7 @@ export function recordFillFromProposal(input: {
         // be), or `filterStopPlansByLiveBasis` discards the plan as stale on the very next run
         // (Codex review, PR #1371). No prior position (fresh open) reduces to `basePrice` unchanged.
         // Deliberately `basePrice`, NOT `price` — `price` is net of the paper execution-cost model
-        // (source: "paper" gets ~1bp of synthetic slippage deducted for learning/P&L purposes), but
+        // (source: "paper" gets the OOS 20 bps synthetic slippage deducted for learning/P&L), but
         // the BROKER's own reported `position.averageCost` reflects the raw fill, not our synthetic
         // cost deduction. Using the cost-adjusted `price` here made a paper fill's plan basis drift a
         // fraction of a cent from what the live-basis filter compares against next run, tripping its
@@ -441,12 +486,34 @@ export interface PrefetchedPnl {
   paper?: PnlResult;
 }
 
+/**
+ * A closing fill (or the tail of one) that found no opening lot in this app's ledger to close
+ * against. `fill_events` is deliberately NOT a complete record of the broker account — pre-app
+ * holdings, manual trades and MCP trades all exit through the broker without an opening row here
+ * (see netAccountingFillQuantity in db-fills.ts). Those exits realize real money that this app
+ * cannot compute a basis for, so they are BOOKED HERE instead of being dropped on the floor, and
+ * the count is surfaced next to Realized P&L rather than left as a silent gap.
+ */
+export interface UnmatchedClosingFill {
+  symbol: string;
+  side: OrderSide;
+  /** Shares that found no opening lot — the remainder after any partial FIFO match. */
+  quantity: number;
+  price: number;
+  filledAt: string;
+}
+
 export interface PnlResult {
   realized: number;
   unrealized: number;
   closedLots: ClosedLot[];
   openLots: OpenLot[];
   attribution: RunAttribution[];
+  /**
+   * Closing fills with no opening lot in this ledger. Realized P&L EXCLUDES them (there is no
+   * honest cost basis to compute one from) — they are reported so the number can say so.
+   */
+  unmatchedClosingFills: UnmatchedClosingFill[];
 }
 
 /** Resolve the fills for a single `FillSource`, preferring pre-fetched arrays when supplied. */
@@ -457,15 +524,16 @@ function fillsForSource(
   prefetched?: PrefetchedFills
 ): FillEvent[] {
   if (prefetched) {
-    if (source === "live") return prefetched.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
-    if (source === "paper") return prefetched.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
+    if (source === "live") return prefetched.liveFills ?? listFillEvents(accountNumber, "live", undefined, userId);
+    if (source === "paper") return prefetched.paperFills ?? listFillEvents(accountNumber, "paper", undefined, userId);
     // No source filter: combine both pre-fetched arrays only when BOTH are present, so the result
-    // is identical to the unfiltered SELECT for the common (well under 500 rows per source) case.
+    // is identical to the unfiltered SELECT (both are complete per-source ledgers).
     if (prefetched.liveFills && prefetched.paperFills) {
       return [...prefetched.liveFills, ...prefetched.paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
     }
   }
-  return listFillEvents(accountNumber, source, 500, userId);
+  // Unbounded: FIFO lot replay needs the COMPLETE ledger — see listFillEvents in db-fills.ts.
+  return listFillEvents(accountNumber, source, undefined, userId);
 }
 
 /** Prefer precomputed P&L for a single fill source; fall back to calculatePnl on fills. */
@@ -489,8 +557,8 @@ export function getPerformanceSummary(
   prefetched?: PrefetchedFills,
   prefetchedPnl?: PrefetchedPnl
 ): PerformanceSummary {
-  const liveFills = prefetched?.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
-  const paperFills = prefetched?.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
+  const liveFills = prefetched?.liveFills ?? listFillEvents(accountNumber, "live", undefined, userId);
+  const paperFills = prefetched?.paperFills ?? listFillEvents(accountNumber, "paper", undefined, userId);
   const allFills = [...liveFills, ...paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
   const livePnl = prefetchedPnl?.live ?? calculatePnl(liveFills, currentPrices);
   const paperPnl = prefetchedPnl?.paper ?? calculatePnl(paperFills, currentPrices);
@@ -508,6 +576,12 @@ export function getPerformanceSummary(
       cash: snapshot.cash,
       positionsValue: snapshot.positionsValue
     })),
+    // No fabricated baseline: an account with no persisted portfolio snapshots yet has no real
+    // equity curve to show. A synthetic "$100 + realized P&L" curve used to stand in here, but
+    // that $100 is not real starting capital — it got rendered as money on the chart axis and
+    // could feed deriveDayPnl a fake baseline (a real live equity read minus a fake $100+realized
+    // "yesterday" reads as almost the whole account moving in a day). "Not enough history yet" is
+    // the honest state; the chart already renders that sentence for <2 points.
     paperEquityCurve:
       paperSnapshots.length > 0
         ? paperSnapshots.map((snapshot) => ({
@@ -517,7 +591,7 @@ export function getPerformanceSummary(
             cash: snapshot.cash,
             positionsValue: snapshot.positionsValue
           }))
-        : syntheticPaperCurve(paperFills),
+        : [],
     liveRealizedPnl: livePnl.realized,
     paperRealizedPnl: paperPnl.realized,
     liveUnrealizedPnl: livePnl.unrealized,
@@ -526,6 +600,10 @@ export function getPerformanceSummary(
     paperWinRate: winRate(paperPnl.closedLots),
     liveAverageReturnPct: averageReturn(livePnl.closedLots),
     paperAverageReturnPct: averageReturn(paperPnl.closedLots),
+    liveClosedLotCount: livePnl.closedLots.length,
+    paperClosedLotCount: paperPnl.closedLots.length,
+    liveUnmatchedClosingFills: livePnl.unmatchedClosingFills.length,
+    paperUnmatchedClosingFills: paperPnl.unmatchedClosingFills.length,
     attribution: combineAttribution(livePnl.attribution, paperPnl.attribution),
     fills: allFills.slice(-100)
   };
@@ -560,6 +638,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     }>
   >();
   const closedLots: ClosedLot[] = [];
+  const unmatchedClosingFills: UnmatchedClosingFill[] = [];
   const attribution = new Map<string, RunAttribution>();
   let realized = 0;
 
@@ -596,7 +675,20 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     const symbolLots = lots.get(symbol)!;
     while (remaining > 0) {
       const idx = symbolLots.findIndex((l) => l.side === wantSide);
-      if (idx === -1) break; // no matching open lot to close against
+      if (idx === -1) {
+        // No opening lot left to close against — a pre-app, manual or MCP position exiting through
+        // the broker. This used to `break` silently, so the exit simply vanished from the books.
+        // Book it as an unmatched close instead: realized P&L still excludes it (no honest basis
+        // exists), but the count is reported so the figure can disclose what it could not see.
+        unmatchedClosingFills.push({
+          symbol,
+          side: fill.side,
+          quantity: remaining,
+          price: fill.price,
+          filledAt: fill.filledAt
+        });
+        break;
+      }
       const lot = symbolLots[idx];
       const matched = Math.min(remaining, lot.quantity);
       const pnl = fill.side === "cover"
@@ -611,6 +703,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       closedLots.push({
         pnl,
         returnPct,
+        quantity: matched,
         symbol,
         thesisTag: lot.thesisTag,
         regime: lot.regime,
@@ -664,7 +757,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     unrealized,
     closedLots,
     openLots,
-    attribution: Array.from(attribution.values()).sort((a, b) => a.runId.localeCompare(b.runId))
+    attribution: Array.from(attribution.values()).sort((a, b) => a.runId.localeCompare(b.runId)),
+    unmatchedClosingFills
   };
 }
 
@@ -1653,16 +1747,6 @@ function isAccountingFill(fill: FillEvent): boolean {
   // type narrowing to "broker/paper" | "broker/live", so it's compared as a plain string here.
   const legacyMode = fill.executionMode as string | undefined;
   return !fill.brokerOrderId && (legacyMode === undefined || legacyMode === "test/local");
-}
-
-function syntheticPaperCurve(fills: FillEvent[]) {
-  const accountingFills = fills
-    .filter(isAccountingFill)
-    .sort((a, b) => a.filledAt.localeCompare(b.filledAt));
-  return accountingFills.map((fill, index) => {
-    const realized = calculatePnl(accountingFills.slice(0, index + 1)).realized;
-    return { timestamp: fill.filledAt, equity: 100 + realized, source: "paper" as const };
-  });
 }
 
 function addAttribution(map: Map<string, RunAttribution>, fill: FillEvent, realizedPnl: number): void {

@@ -94,6 +94,8 @@ export interface ConsoleData {
   stream: ConsoleStreamHealth;
   /** Force a refetch now (used after every mutation). */
   refresh: () => Promise<void>;
+  /** Browser online state. False means show the last snapshot honestly. */
+  online: boolean;
 }
 
 const ConsoleDataContext = createContext<ConsoleData | null>(null);
@@ -115,6 +117,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   // consumed for the no-snapshot case, where it separates "still fetching" from "stopped trying".
   const [fetching, setFetching] = useState(false);
   const [stream, setStream] = useState<ConsoleStreamHealth>(UNSUPPORTED_STREAM);
+  const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const inFlight = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const queuedRefresh = useRef<number | null>(null);
@@ -264,6 +267,17 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   }, [snapshot]);
 
   useEffect(() => {
+    const sync = () => setOnline(navigator.onLine);
+    sync();
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    return () => {
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined" || typeof EventSource === "undefined") {
       setStream(UNSUPPORTED_STREAM);
       return;
@@ -336,9 +350,10 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       slowFirstLoad: state === "slow",
       error,
       stream,
-      refresh
+      refresh,
+      online
     };
-  }, [snapshot, fetchedAt, error, fetching, slowFirstLoad, stream, refresh]);
+  }, [snapshot, fetchedAt, error, fetching, slowFirstLoad, stream, refresh, online]);
 
   return <ConsoleDataContext.Provider value={value}>{children}</ConsoleDataContext.Provider>;
 }

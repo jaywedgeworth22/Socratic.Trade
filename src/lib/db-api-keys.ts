@@ -1,6 +1,7 @@
 // db-api-keys.ts — field-level encryption, user API keys, connected accounts,
 // synthetic stops, watchlist, price alerts, notify prefs, chat turns, memory,
 // and the catch-all listUsers helper.
+import "server-only";
 import crypto from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
@@ -277,7 +278,6 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   fmp: "FMP_API_KEY",
   alphavantage: "ALPHAVANTAGE_API_KEY",
   roic: "ROIC_API_KEY",
-  // Leftover env name only — FilingAPI.dev is retired (2026-08-17). Product code never calls it.
   filingapi: "FILINGAPI",
   marketstack: "MARKETSTACK_API_KEY",
   fred: "FRED_API_KEY",
@@ -399,8 +399,6 @@ export function apiKeyEnvVarForService(service: string): string | undefined {
   if (canonical === "massive" && !process.env.MASSIVE_API_KEY && process.env.MASSIVE_API_KEY_ALT) {
     return "MASSIVE_API_KEY_ALT";
   }
-  // Leftover Infisical/env names still resolve so Connections can show the retired row.
-  // Product code never registers or probes filingapi.
   if (canonical === "filingapi") {
     for (const envVar of ["FILINGAPI", "FILINGAPI_KEY", "FILING_API_KEY"] as const) {
       if ((process.env[envVar] ?? "").trim()) return envVar;
@@ -1274,6 +1272,7 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
           base_url = COALESCE(excluded.base_url, connected_accounts.base_url),
           capabilities = COALESCE(excluded.capabilities, connected_accounts.capabilities),
           is_active = excluded.is_active,
+          is_draining = 0,
           updated_at = excluded.updated_at
          WHERE connected_accounts.user_id = excluded.user_id`
       )
@@ -1323,8 +1322,13 @@ export function renameConnectedAccount(id: string, label: string, userId: string
 export function setActiveConnectedAccount(id: string, userId: string = "local"): void {
   const db = getDb();
   db.transaction(() => {
-    const exists = db.prepare("SELECT id FROM connected_accounts WHERE id = ? AND user_id = ?").get(id, userId);
-    if (!exists) throw new Error("Connected account not found.");
+    const row = db
+      .prepare("SELECT id, is_draining FROM connected_accounts WHERE id = ? AND user_id = ?")
+      .get(id, userId) as { id: string; is_draining: number } | undefined;
+    if (!row) throw new Error("Connected account not found.");
+    if (row.is_draining === 1) {
+      throw new Error("This account is disconnected and being wound down — it can no longer be made active.");
+    }
     db.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(userId);
     db.prepare("UPDATE connected_accounts SET is_active = 1 WHERE id = ? AND user_id = ?").run(id, userId);
   })();
@@ -1964,6 +1968,19 @@ export function listChatTurns(userId: string, limit: number = 100): ChatTurn[] {
     .all(userId) as RawChatTurnRow[];
   const mapped = rows.map(mapChatTurn);
   return limit > 0 && mapped.length > limit ? mapped.slice(mapped.length - limit) : mapped;
+}
+
+/**
+ * EVERY user's chat turns, most recent `limit` across the whole table, in chronological order.
+ * Unscoped by design and therefore admin-only: the sole caller is the requireAdmin-gated
+ * `/api/admin/transcript`. Ordinary per-caller reads must keep using `listChatTurns(userId, ...)`.
+ */
+export function listAllChatTurns(limit: number = 100): ChatTurn[] {
+  const n = Math.max(1, Number(limit) || 1);
+  const rows = getDb()
+    .prepare("SELECT * FROM chat_turns ORDER BY created_at DESC, rowid DESC LIMIT ?")
+    .all(n) as RawChatTurnRow[];
+  return rows.map(mapChatTurn).reverse();
 }
 
 /** Keep only the most recent `keep` turns for a user (FIFO cap); returns rows deleted. */

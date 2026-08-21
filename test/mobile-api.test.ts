@@ -209,3 +209,34 @@ describe("mobile account deletion", () => {
     expect(requestRow).toBeUndefined();
   });
 });
+
+describe("serializeMobileNotifications", () => {
+  it("strips payload and webhook URL from Activity rows", async () => {
+    const { serializeMobileNotifications } = await import("../src/lib/mobile-api");
+    const rows = serializeMobileNotifications([
+      {
+        id: "n-1",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        type: "run_failed",
+        title: "Strategy run failed",
+        status: "sent",
+        webhookUrl: "https://hooks.example/secret",
+        payload: { runId: "run-1", reason: "llm" },
+        connectedAccountId: "acct-1"
+      }
+    ]);
+    expect(rows).toEqual([
+      {
+        id: "n-1",
+        type: "run_failed",
+        title: "Strategy run failed",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        status: "sent",
+        acknowledgedAt: null,
+        connectedAccountId: "acct-1"
+      }
+    ]);
+    expect(rows[0]).not.toHaveProperty("payload");
+    expect(rows[0]).not.toHaveProperty("webhookUrl");
+  });
+});

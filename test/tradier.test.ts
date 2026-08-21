@@ -349,7 +349,7 @@ describe("Tradier adapter — envelope normalization", () => {
       { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 1, symbol: "AAPL", side: "buy", type: "market", status: "filled", create_date: "2026-07-10", class: "equity" } } } }
     ]);
     const mod1 = await import("../src/lib/tradier");
-    const one = await mod1.getTradierGateway("local").getEquityOrders(ACCT);
+    const one = await mod1.getTradierGateway("local").getEquityOrders(ACCT, { fullHistory: true });
     expect(one).toHaveLength(1);
     expect(one[0].id).toBe("1");
 
@@ -703,6 +703,91 @@ describe("Tradier adapter — getEquityOrders pagination (double-sell coverage, 
     expect(orders).toHaveLength(1);
     const orderPages = records.filter((r) => r.method === "GET" && r.url.includes(`/accounts/${ACCT}/orders`));
     expect(orderPages.length).toBeLessThanOrEqual(2); // page 1 (new) + page 2 (all dup -> stop); never 50
+  });
+
+  it("keeps pending_cancel / pending_replace GTC equity stops older than 24h on the default path", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`),
+        body: {
+          orders: {
+            order: [
+              {
+                id: 71,
+                symbol: "MSFT",
+                side: "sell",
+                type: "stop",
+                status: "pending_cancel",
+                quantity: 5,
+                create_date: "2026-07-10",
+                stop_price: 300,
+                tag: "protect-cancel",
+                class: "equity"
+              },
+              {
+                id: 72,
+                symbol: "AAPL",
+                side: "sell",
+                type: "stop",
+                status: "pending_replace",
+                quantity: 2,
+                create_date: "2026-07-10",
+                stop_price: 180,
+                tag: "protect-replace",
+                class: "equity"
+              },
+              {
+                id: 73,
+                symbol: "NVDA",
+                side: "sell",
+                type: "market",
+                status: "filled",
+                quantity: 1,
+                create_date: "2026-07-10",
+                class: "equity"
+              }
+            ]
+          }
+        }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const { isLiveOrderState } = await import("../src/lib/broker-side");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    expect(orders.map((o) => o.id).sort()).toEqual(["71", "72"]);
+    expect(orders.every((o) => isLiveOrderState(o.state))).toBe(true);
+    expect(orders.some((o) => o.id === "73")).toBe(false);
+  });
+
+  it("does NOT stop after 5 option-only pages; a page-6 equity exit is still returned", async () => {
+    await seedTradier();
+    const optionPage = (id: number) => ({
+      match: (u: string, m: string) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes(`page=${id}`),
+      body: { orders: { order: [
+        { id, symbol: "AAPL", side: "buy_to_open", type: "limit", status: "open", quantity: 1, create_date: "2026-08-19", class: "option" }
+      ] } }
+    });
+    installFetchMock([
+      optionPage(1),
+      optionPage(2),
+      optionPage(3),
+      optionPage(4),
+      optionPage(5),
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes("page=6"),
+        body: { orders: { order: [
+          { id: 66, symbol: "MSFT", side: "sell", type: "stop", status: "open", quantity: 5, create_date: "2026-07-10", stop_price: 300, tag: "protect", class: "equity" }
+        ] } }
+      },
+      { match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`), body: { orders: "null" } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    expect(orders.map((o) => o.id)).toEqual(["66"]);
+    expect(orders[0]).toMatchObject({ symbol: "MSFT", side: "sell", type: "stop_market", state: "open", stopPrice: 300 });
+    const { isLiveOrderState } = await import("../src/lib/broker-side");
+    expect(isLiveOrderState(orders[0].state)).toBe(true);
   });
 });
 

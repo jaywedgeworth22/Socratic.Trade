@@ -1,7 +1,9 @@
+import "server-only";
 import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
-import { isIntentionalOffHealthService } from "./retired-direct-vendors";
+import { intentionalOffHealthReason, isIntentionalOffHealthService } from "./retired-direct-vendors";
+import { isFilingApiAuthErrorText } from "./filingapi-auth-classify";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
@@ -177,11 +179,30 @@ export interface ServiceHealthSummary {
    *  placeholder-lane reason; a lane with no rows cannot be saturated. */
   laneLogCap?: number;
   /**
-   * Product-retired vendor lane (FMP / Quiver / UW). Admin Connections must render these as
-   * muted OFF — not red STOPPED — and exclude them from the "N stopped" header. Set by the
-   * connections-health route from `retired-direct-vendors`; not computed from the log.
+   * Product-retired vendor lane (FMP / Quiver / UW / FilingAPI). Admin Connections must
+   * render these as muted OFF — not red STOPPED — and exclude them from the "N stopped"
+   * header. Stamped by `getServiceHealthSummaries` from `retired-direct-vendors` so ops
+   * snapshot and `/api/health` see the same OFF as Connections (leftover 401 rows must
+   * not paint a retired vendor as a live outage).
    */
   intentionalOff?: boolean;
+}
+
+/**
+ * Coolify `DB_BOOTSTRAP=live` restarts page every probe that 5xxs during the first minutes
+ * (nasdaq-quote / vix / congress.trade / alpaca-broker). Those are boot, not an outage.
+ * Tests and local/dev never set `DB_BOOTSTRAP=live`, so the existing hard-streak pages stay.
+ */
+export const CONNECTION_ALERT_STARTUP_GRACE_SECONDS = 5 * 60;
+
+export function shouldSuppressConnectionAlertForStartup(
+  processUptimeSeconds: number,
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  if (env.DB_BOOTSTRAP !== "live") return false;
+  const raw = Number(env.HEALTH_ALERT_STARTUP_GRACE_SECONDS ?? CONNECTION_ALERT_STARTUP_GRACE_SECONDS);
+  const grace = Number.isFinite(raw) && raw >= 0 ? raw : CONNECTION_ALERT_STARTUP_GRACE_SECONDS;
+  return processUptimeSeconds < grace;
 }
 
 export interface HealthLogRow {
@@ -240,7 +261,9 @@ export function logApiHealth(opts: {
     // without a schema column. Do not double-prefix if the caller already used the marker or
     // if auto-classification would match the free-text shape either way.
     let errorText = opts.errorText ?? null;
-    if (!opts.ok && errorText && (opts.soft || isSoftHealthFailure(errorText))) {
+    const filingApiAuthSoft =
+      opts.service === "filingapi" && !opts.ok && isFilingApiAuthErrorText(errorText);
+    if (!opts.ok && errorText && (opts.soft || filingApiAuthSoft || isSoftHealthFailure(errorText))) {
       if (!errorText.startsWith(HEALTH_SOFT_FAILURE_PREFIX)) {
         errorText = `${HEALTH_SOFT_FAILURE_PREFIX}${errorText}`;
       }
@@ -290,7 +313,7 @@ export function logApiHealth(opts: {
       }
     })();
 
-    // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales / FilingAPI are PRODUCT-RETIRED direct
+    // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales are PRODUCT-RETIRED direct
     // lanes (see retired-direct-vendors.ts). Admin Connections already renders them as muted OFF
     // rather than red STOPPED; a residual call site that still touches one must not additionally
     // page the operator about a vendor we deliberately stopped using.
@@ -440,6 +463,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         stoppedReasonKind = "no-success-this-hour";
       }
 
+      const intentionalOff = isIntentionalOffHealthService(service);
       return {
         service,
         keySource: ks,
@@ -449,15 +473,30 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         lastFailureError: lastFailure?.error_text ?? null,
         callsLastHour,
         callsLast24h,
-        stoppedWorking,
-        stoppedReason,
-        stoppedReasonKind,
+        // Leftover 401/5xx rows after a vendor retire must not paint the lane STOPPED.
+        stoppedWorking: intentionalOff ? false : stoppedWorking,
+        stoppedReason: intentionalOff ? intentionalOffHealthReason(service) : stoppedReason,
+        stoppedReasonKind: intentionalOff ? null : stoppedReasonKind,
         laneLogCap: HEALTH_LOG_LANE_CAP,
+        intentionalOff: intentionalOff || undefined
       };
     });
   } catch {
     return [];
   }
+}
+
+/**
+ * Hard outage only: last 5 calls all failed.  Soft "no success this hour" and
+ * rate-limit rows are degraded signal, not a reason to paint the dependency down
+ * or abandon a backup lane.
+ */
+export function isHardStoppedHealthSummary(
+  summary: Pick<ServiceHealthSummary, "stoppedWorking" | "stoppedReasonKind" | "intentionalOff">
+): boolean {
+  if (summary.intentionalOff) return false;
+  if (!summary.stoppedWorking) return false;
+  return summary.stoppedReasonKind === "consecutive-failures";
 }
 
 // NOTE: `rowid DESC` tiebreaker — `ts` is ms-resolution, so rows written in the same millisecond
@@ -634,6 +673,12 @@ export async function alertConnectionFailure(
       await noteLocalDbFault({ lane: service, operation: "connection health", message: errorText, userId: targetUserId });
       return;
     }
+    // process.uptime() — do not import runtime-health here.  That module loads
+    // node:fs / node:http / node:path, and db.ts re-exports this file into client
+    // graphs (PR #2798 verify-hosted webpack UnhandledSchemeError).
+    if (shouldSuppressConnectionAlertForStartup(process.uptime())) {
+      return;
+    }
     // Cool down GLOBAL lanes (env/none) by service+source only — NOT per-user. In a multi-user outage
     // each tenant's failure hits the SAME global dependency, so a userId-scoped cooldown key would let
     // every tenant mint its own cooldown row and re-alert the admin every 6h for the one shared outage.
@@ -700,22 +745,12 @@ export async function alertConnectionFailure(
       const config = loadNotifyConfig();
 
       // Prefer Pushover when it can deliver (Resend costs money).  Email stays last resort.
-      const additionalDelivery = isPushoverDeliverable(prefs, config)
-        ? () =>
-            notify(
-              "local",
-              { title, body, kind: "provider_degraded", data: payload },
-              {
-                config,
-                prefs: {
-                  ...prefs,
-                  channels: ["pushover"],
-                  pushoverTarget: operatorPushoverUserKey(prefs),
-                  updatedAt: prefs.updatedAt
-                }
-              }
-            )
-        : fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
+      // Skip a fallback that would re-send the same payload on a channel sendNotification
+      // already has in prefs — that looked like two alerts in one minute.
+      const alreadySendingPushover = prefs.channels.includes("pushover");
+      const alreadySendingEmail = prefs.channels.includes("email") && Boolean(prefs.email.trim());
+      const additionalDelivery =
+        isPushoverDeliverable(prefs, config) && !alreadySendingPushover
           ? () =>
               notify(
                 "local",
@@ -724,13 +759,32 @@ export async function alertConnectionFailure(
                   config,
                   prefs: {
                     ...prefs,
-                    channels: ["email" as any],
-                    email: fallbackEmail,
+                    channels: ["pushover"],
+                    pushoverTarget: operatorPushoverUserKey(prefs),
                     updatedAt: prefs.updatedAt
                   }
                 }
               )
-          : undefined;
+          : fallbackEmail &&
+              config.email.resendKey &&
+              config.email.from &&
+              !alreadySendingEmail &&
+              !isPushoverDeliverable(prefs, config)
+            ? () =>
+                notify(
+                  "local",
+                  { title, body, kind: "provider_degraded", data: payload },
+                  {
+                    config,
+                    prefs: {
+                      ...prefs,
+                      channels: ["email" as any],
+                      email: fallbackEmail,
+                      updatedAt: prefs.updatedAt
+                    }
+                  }
+                )
+            : undefined;
 
       // Also send standard notification. Delivery honors the user's real enabledEvents toggle
       // (owner ruling 2026-08-12, "ALL toggles must be real" — no force-include). A legacy stored

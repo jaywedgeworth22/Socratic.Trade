@@ -10,6 +10,7 @@
 // day's starting equity in the quiet internal settings KV (no audit spam), then evaluates.
 
 import { getInternalSetting, setInternalSetting } from "./db";
+import { centralTradingDayKey } from "./trading-day";
 import type { FillSource, Portfolio, RiskRules } from "./types";
 
 export interface DrawdownBreakerInputs {
@@ -80,7 +81,7 @@ export function recordAndEvaluateDrawdownBreaker(args: {
 }): DrawdownBreakerResult & { highWaterMark: number; startOfDayEquity: number } {
   const { accountNumber, source, equity, riskRules, userId } = args;
   const now = args.now ?? new Date();
-  const day = now.toISOString().slice(0, 10);
+  const day = centralTradingDayKey(now);
 
   const prevHwm = getInternalSetting<number>(hwmKey(userId, accountNumber, source));
   const highWaterMark = Math.max(Number.isFinite(prevHwm) ? (prevHwm as number) : equity, equity);

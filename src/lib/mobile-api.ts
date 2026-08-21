@@ -5,11 +5,14 @@ import {
   audit,
   getDataPoolConsent,
   getDb,
+  getLegalNoticeConsent,
   getPolicy,
   getProposal,
   listConnectedAccounts,
+  needsAppConsent,
   setActiveConnectedAccount,
   setDataPoolConsent,
+  setLegalNoticeConsent,
   setPolicy
 } from "./db";
 import { isIndexUniverse, isValidAppSymbol } from "./index-universes";
@@ -26,6 +29,7 @@ import { addToWatchlist, removeFromWatchlist } from "./watchlist";
 import type {
   HoldingHorizon,
   IndexUniverse,
+  NotificationEvent,
   NotificationEventType,
   RiskRules,
   StrategyAuthority,
@@ -34,6 +38,12 @@ import type {
   TradingPolicy
 } from "./types";
 import { retryProposalRedTeam } from "./retry-red-team";
+import {
+  mobileCommandStatusForPlacement,
+  placementCommandErrorMessage,
+  resolvePlacementOutcome,
+  type ExecuteProposalResult
+} from "./placement-outcome";
 import { executeProposal, LiveApprovalConfirmationError, LiveApprovalConfirmation } from "./strategy-execution";
 
 export const MOBILE_COMMAND_TYPES = [
@@ -592,8 +602,14 @@ function normalizeCommandPayload(commandType: MobileCommandType, rawPayload: unk
       return expectedCurrent ? { patch, expectedCurrent } : { patch };
     }
     case "consent.set":
-      if (typeof payload.accepted !== "boolean") throw new MobileCommandValidationError("accepted must be boolean.");
-      return { accepted: payload.accepted };
+      if (payload.accepted !== true) {
+        throw new MobileCommandValidationError("Accepting the current terms and shared data pool is required.");
+      }
+      return { accepted: true };
+    default: {
+      const _exhaustive: never = commandType;
+      throw new MobileCommandValidationError(`Unsupported command: ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -844,6 +860,8 @@ function summarizeResult(result: unknown): unknown {
   return {
     ok: obj.ok,
     status: obj.status,
+    outcome: obj.outcome,
+    reasons: obj.reasons,
     runId: obj.runId,
     proposalId: obj.proposalId,
     orderId: obj.orderId,
@@ -1023,8 +1041,11 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
         payload.patch as Partial<TradingPolicy>,
         payload.expectedCurrent as Record<string, PolicyPreconditionValue> | undefined
       );
-    case "consent.set":
-      return { ok: true, consent: setDataPoolConsent(command.userId, payload.accepted === true) };
+    case "consent.set": {
+      const legal = setLegalNoticeConsent(command.userId, true);
+      const dataPool = setDataPoolConsent(command.userId, true);
+      return { ok: true, legal, consent: dataPool };
+    }
     case "notification.test":
       return {
         ok: true,
@@ -1034,6 +1055,10 @@ async function runCommand(command: MobileCommandRecord): Promise<unknown> {
           kind: "test"
         })
       };
+    default: {
+      const _exhaustive: never = command.commandType;
+      throw new Error(`Unsupported command: ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -1061,6 +1086,12 @@ function errorPayload(error: unknown): { message: string; result?: unknown } {
 export async function executeMobileCommand(command: MobileCommandRecord): Promise<PublicMobileCommand> {
   try {
     const result = await runCommand(command);
+    if (command.commandType === "proposal.approve") {
+      const placement = resolvePlacementOutcome(result as ExecuteProposalResult);
+      const commandStatus = mobileCommandStatusForPlacement(placement.outcome);
+      const error = placementCommandErrorMessage(placement);
+      return toPublicMobileCommand(finishCommand(command, commandStatus, placement, error));
+    }
     return toPublicMobileCommand(finishCommand(command, "succeeded", result));
   } catch (error) {
     const payload = errorPayload(error);
@@ -1137,10 +1168,14 @@ export async function processPendingMobileCommands(options: { limit?: number } =
   }
 }
 
-export function mobileCommandBacklog(): { queued: number; running: number } {
+/** Scoped to the requesting user (api-contract-web-ios:api-10) — this backlog gauge renders on
+ *  the iOS Home/Activity screens as if it were "your commands"; unscoped, it silently counted
+ *  every user's queued/running mobile commands, which would misattribute another user's activity
+ *  as the signed-in user's own. */
+export function mobileCommandBacklog(userId: string): { queued: number; running: number } {
   const rows = getDb()
-    .prepare("SELECT status, COUNT(*) AS n FROM mobile_commands WHERE status IN ('queued','running') GROUP BY status")
-    .all() as Array<{ status: MobileCommandStatus; n: number }>;
+    .prepare("SELECT status, COUNT(*) AS n FROM mobile_commands WHERE user_id = ? AND status IN ('queued','running') GROUP BY status")
+    .all(userId) as Array<{ status: MobileCommandStatus; n: number }>;
   return {
     queued: rows.find((row) => row.status === "queued")?.n ?? 0,
     running: rows.find((row) => row.status === "running")?.n ?? 0
@@ -1269,6 +1304,19 @@ export function markStaleRunningMobileCommands(now: number = Date.now()): number
   return count;
 }
 
+/** Public iOS Activity rows. Payload and webhook URL stay off the wire. */
+export function serializeMobileNotifications(events: NotificationEvent[]) {
+  return events.map((event) => ({
+    id: event.id,
+    type: event.type,
+    title: event.title,
+    createdAt: event.createdAt,
+    status: event.status,
+    acknowledgedAt: event.acknowledgedAt ?? null,
+    connectedAccountId: event.connectedAccountId ?? null
+  }));
+}
+
 export function mobileControlCatalog() {
   return {
     version: 2,
@@ -1303,6 +1351,8 @@ export function mobileReadiness(userId: string) {
     selectedAccountNumber: policy.accountNumber ?? null,
     activeConnectedAccount: connectedAccounts.find((account) => account.isActive) ?? null,
     dataPoolConsent: consent,
-    commandBacklog: mobileCommandBacklog()
+    legalNotice: getLegalNoticeConsent(userId),
+    needsAppConsent: needsAppConsent(userId),
+    commandBacklog: mobileCommandBacklog(userId)
   };
 }

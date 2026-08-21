@@ -191,11 +191,9 @@ const API_KEY_CATALOG = [
     label: "FilingAPI",
     category: "Market data",
     required: false,
-    unlocks: "Retired on Socratic.Trade — ROIC.ai + SEC EDGAR cover this class. Do not store a Plus key.",
-    docsUrl: "https://www.roic.ai/api",
-    retired: true,
-    retiredNote:
-      "FilingAPI.dev is retired (2026-08-17). Use ROIC.ai for fundamentals/transcripts/statements and SEC EDGAR for 10-K/10-Q bodies. Do not check out a Plus key."
+    unlocks:
+      "Optional. Sector/industry, earnings calendar proximity, and insider-sentiment summaries. Missing or 401 keys skip this lane; ROIC and SEC EDGAR cover the same class. Do not buy Plus here.",
+    docsUrl: "https://filingapi.dev"
   },
   {
     service: "marketaux",

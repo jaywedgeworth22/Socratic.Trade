@@ -1,4 +1,5 @@
 // 13F / ARK / CUSIP map persistence (migration 83).
+import "server-only";
 import { getDb } from "./db";
 
 export interface ThirteenFHoldingRow {

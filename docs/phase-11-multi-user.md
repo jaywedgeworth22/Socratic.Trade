@@ -17,7 +17,10 @@ Cloudflare Access email headers are not trusted as app identity. The primary
 operator and configured aliases still map to the legacy `local` dataset; other
 allowed users map to isolated hashed user IDs only when present in
 `ALLOWED_EMAILS`. When auth is not configured locally, development falls back to
-`local`.
+`local`.  The live desk is single-user today, but it stays multi-user-capable
+for friends/family: do not 404 `/welcome`, and do not rewrite the product as
+owner-only forever.  A second allowed email must keep an isolated `u_<hash>`
+dataset (policy, consent, legal notice, profiles).
 
 ## What already exists (foundation)
 - `user_api_keys` table + `getUserApiKey`/`listUserApiKeys`/`upsertUserApiKey`/
@@ -72,7 +75,9 @@ allowed users map to isolated hashed user IDs only when present in
   rows visible for management while failing closed for actual execution readiness
   when OAuth/auth, broker account enumeration, selected-account availability,
   broker `agenticAllowed`, or portfolio/balance reads fail. This applies to
-  Robinhood and Alpaca paths.
+  Robinhood and Alpaca paths.  A single slow or hung first `getAccounts` (common
+  after a container swap) is retried once with a 15s combined budget before that
+  fail-close; a credential / 401 throw still fails immediately.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 - Request-level user resolution now has central helpers,
@@ -80,6 +85,13 @@ allowed users map to isolated hashed user IDs only when present in
   read only middleware's trusted `x-authenticated-user-email` header. Body/query
   `userId` hints are ignored; local development falls back to `local` only when
   auth is not armed.
+- Per-user daily LLM + RAG spend caps live in `user_settings.llm_daily_budget`
+  (Settings → Daily LLM Budget / iOS Account & Settings / `GET|PATCH
+  /api/settings/llm-budget`).  They are not Infisical secrets.  When a cap is
+  set, strategy, chat, and RAG skip for the rest of the day (fail-closed if
+  today's ledger cannot be read).  Per-user RAG run-budget knobs
+  (`RAG_RUN_BUDGET_*`) are Data Sources settings.  System secrets stay in
+  Infisical (`ENCRYPTION_KEY`, `AUTH_SECRET`, broker host, `OPS_DIAGNOSTIC_TOKEN`).
 - Ops foundation is now scaffolded for hosted/multi-user readiness: Infisical CLI
   wrappers for secret injection, local Gitleaks scanning, Sentry runtime error
   capture, Langfuse LLM traces with redacted summary capture by default, npm
@@ -367,12 +379,13 @@ set of trading controls:
   watchlist, alerts, and recent commands.
 - `GET /api/mobile/events` streams command and dashboard freshness updates for
   the signed-in user.
-- `/mobile` is a phone-first PWA control surface using the same command model as
-  the native app. It has clear Start/Stop/Close-only/Run-once controls, approval
-  cards, watchlist and alert controls, command history, backend-source-of-truth
-  messaging, and a danger-zone deletion workflow.
+- `/mobile` redirects to `/console`.  The live phone surfaces are the website at
+  phone width and the native iOS app (`ios/SocraticTrade/`), both using the same
+  backend command model.
 - `ios/SocraticTrade/` provides a SwiftUI starter that uses the same endpoints
-  and keeps only the backend session on-device.
+  and keeps only the backend session on-device. User-visible copy is product
+  copy only — coordinator or owner notes (remotes, surfaces, Infisical, other
+  agents) belong in PRs and docs, not the iOS UI.
 - Account deletion routes reuse the audited M7 deletion lifecycle: prepare first,
   type the signed-in identity and required phrase, then confirm/sign out with
   provider-side guidance for optional OAuth grant revocation.

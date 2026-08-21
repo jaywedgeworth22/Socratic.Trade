@@ -3,9 +3,14 @@ import SwiftUI
 struct MarketsView: View {
     @EnvironmentObject private var store: MobileStore
     @Binding var selectedTab: AppTab
+    @Binding private var focusedSymbol: String?
 
-    init(selectedTab: Binding<AppTab> = .constant(.markets)) {
+    init(
+        selectedTab: Binding<AppTab> = .constant(.markets),
+        focusedSymbol: Binding<String?> = .constant(nil)
+    ) {
         self._selectedTab = selectedTab
+        self._focusedSymbol = focusedSymbol
     }
     @State private var ticker = ""
     @State private var presentedSheet: MarketsSheet?
@@ -13,7 +18,7 @@ struct MarketsView: View {
     @State private var presentedItem: PresentedMarketItem?
 
     var body: some View {
-        SnapshotScaffold { snapshot in
+        SnapshotScaffold(scrollTarget: focusedSymbol) { snapshot in
             ScanShortcutCard { selectedTab = .scan }
             PositionsSection(positions: snapshot.positions, presentedItem: $presentedItem)
             OrdersSection(
@@ -21,10 +26,21 @@ struct MarketsView: View {
                 // The account this snapshot was taken from, sent with every cancel as the
                 // server's stale-view guard (see OrderCancellation).
                 accountNumber: snapshot.readiness.selectedAccountNumber,
-                presentedSymbol: $presentedSymbol
+                presentedSymbol: $presentedSymbol,
+                focusedSymbol: focusedSymbol
             )
-            WatchlistSection(ticker: $ticker, items: snapshot.watchlist, presentedSymbol: $presentedSymbol)
+            WatchlistSection(
+                ticker: $ticker,
+                items: snapshot.watchlist,
+                presentedSymbol: $presentedSymbol,
+                focusedSymbol: focusedSymbol
+            )
             AlertsSection(alerts: snapshot.alerts, presentedSymbol: $presentedSymbol)
+        }
+        .onChange(of: focusedSymbol) { _, symbol in
+            if let symbol {
+                presentedSymbol = PresentedSymbol(symbol: symbol)
+            }
         }
         .navigationTitle("Assets")
         .navigationBarTitleDisplayMode(.inline)
@@ -164,6 +180,7 @@ private struct OrdersSection: View {
     let orders: [EquityOrder]
     let accountNumber: String?
     @Binding var presentedSymbol: PresentedSymbol?
+    var focusedSymbol: String? = nil
 
     var body: some View {
         VStack(spacing: 10) {
@@ -181,6 +198,14 @@ private struct OrdersSection: View {
                         accountNumber: accountNumber,
                         presentedSymbol: $presentedSymbol
                     )
+                    .id(order.symbol)
+                    .overlay {
+                        if focusedSymbol == order.symbol {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(AppPalette.accent, lineWidth: 2)
+                                .allowsHitTesting(false)
+                        }
+                    }
                 }
             }
         }
@@ -312,6 +337,7 @@ private struct WatchlistSection: View {
     @Binding var ticker: String
     let items: [WatchlistItem]
     @Binding var presentedSymbol: PresentedSymbol?
+    var focusedSymbol: String? = nil
 
     var body: some View {
         VStack(spacing: 10) {
@@ -339,7 +365,7 @@ private struct WatchlistSection: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        FlowSymbols(items: items, presentedSymbol: $presentedSymbol)
+                        FlowSymbols(items: items, presentedSymbol: $presentedSymbol, focusedSymbol: focusedSymbol)
                     }
                 }
             }
@@ -369,6 +395,7 @@ private struct WatchlistSection: View {
 private struct FlowSymbols: View {
     let items: [WatchlistItem]
     @Binding var presentedSymbol: PresentedSymbol?
+    var focusedSymbol: String? = nil
 
     var body: some View {
         // Content-sized wrap — do not use LazyVGrid(.adaptive(minimum: 92)).
@@ -377,6 +404,14 @@ private struct FlowSymbols: View {
         WrappingHStack(spacing: 8, lineSpacing: 8) {
             ForEach(items) { item in
                 WatchlistChip(item: item, presentedSymbol: $presentedSymbol)
+                    .id(item.symbol)
+                    .overlay {
+                        if focusedSymbol == item.symbol {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(AppPalette.accent, lineWidth: 2)
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

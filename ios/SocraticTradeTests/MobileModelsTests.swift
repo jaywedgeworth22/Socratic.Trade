@@ -22,6 +22,58 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.pendingProposals.first?.proposal.bracketStopLoss, 190)
         XCTAssertEqual(snapshot.pendingProposals.first?.proposal.exitPlan, "Trim a third at 220; trail the rest.")
         XCTAssertEqual(snapshot.recentCommands.first?.status, "succeeded")
+        XCTAssertNil(snapshot.latestScan)
+        XCTAssertEqual(snapshot.notifications.first?.type, "run_failed")
+        XCTAssertNil(snapshot.notifications.first?.acknowledgedAt)
+        XCTAssertEqual(snapshot.notifications.first?.title, "Strategy Run Failed")
+        XCTAssertEqual(snapshot.notifications.first?.body, "Sent")
+        XCTAssertEqual(snapshot.notifications.first?.read, false)
+        XCTAssertEqual(snapshot.unreadNotificationCount, 1)
+        XCTAssertEqual(snapshot.inScopeNotifications(activeAccountId: "account-1").count, 1)
+        XCTAssertTrue(snapshot.inScopeNotifications(activeAccountId: "other").isEmpty)
+    }
+
+    func testSnapshotDecodesCompactLatestScan() throws {
+        let json = Data(#"""
+        {
+          "readiness": {
+            "hasAccount": true,
+            "hasUniverse": true,
+            "systemState": "active",
+            "strategyAuthority": "propose",
+            "selectedAccountNumber": null,
+            "activeConnectedAccount": null,
+            "commandBacklog": {"queued": 0, "running": 0}
+          },
+          "policy": {
+            "systemState": "active",
+            "strategyAuthority": "propose"
+          },
+          "latestScan": {
+            "generatedAt": "2026-08-18T19:25:13.000Z",
+            "asOf": "2026-08-18T19:25:13.000Z",
+            "scannedSymbols": 5073,
+            "returnedQuotes": 5069,
+            "warnings": ["Some ranked names are missing P/E."],
+            "topCandidates": [
+              {"symbol":"BRK-B","companyName":"Berkshire Hathaway","price":500,"score":88},
+              {"symbol":"GOOG","price":180,"score":86}
+            ]
+          }
+        }
+        """#.utf8)
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: json)
+        XCTAssertEqual(snapshot.latestScan?.topCandidates.map(\.symbol), ["BRK-B", "GOOG"])
+        XCTAssertEqual(snapshot.latestScan?.scannedSymbols, 5073)
+        XCTAssertEqual(snapshot.latestScan?.returnedQuotes, 5069)
+        XCTAssertEqual(snapshot.latestScan?.asOf, "2026-08-18T19:25:13.000Z")
+        XCTAssertTrue(snapshot.latestScan?.hasUsableUniverse == true)
+    }
+
+    func testSnapshotDecodesWithoutNotificationsAsEmptyInbox() throws {
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        XCTAssertTrue(snapshot.notifications.isEmpty)
+        XCTAssertEqual(snapshot.unreadNotificationCount, 0)
     }
 
     func testDeletionPreviewMatchesReadOnlyServerContract() throws {
@@ -180,8 +232,21 @@ final class MobileModelsTests: XCTestCase {
     func testCloudflareOriginDownErrorsAreUserReadable() {
         let error = MobileAPIError.serverError(statusCode: 522, message: nil)
         let text = error.errorDescription ?? ""
-        XCTAssertTrue(text.contains("522"), text)
-        XCTAssertTrue(text.contains("unreachable") || text.contains("Cloudflare"), text)
+        XCTAssertTrue(text.contains("unreachable"), text)
+        XCTAssertFalse(text.lowercased().contains("cloudflare"), text)
+        XCTAssertFalse(text.contains("522"), text)
+        XCTAssertFalse(text.contains("/api/"), text)
+    }
+
+    func testMarketScanRequestOutlastsServerBudget() {
+        let client = MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!)
+        let request = client.marketScanRequest()
+
+        XCTAssertEqual(request.url?.path, "/api/scan")
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertGreaterThan(request.timeoutInterval, 20)
+        XCTAssertGreaterThanOrEqual(request.timeoutInterval, MobileAPIClient.marketScanTimeout)
+        XCTAssertEqual(MobileAPIClient.marketScanTimeout, 50)
     }
 
     func testEventsRequestUsesSSEAcceptAndLongTimeout() {
@@ -344,8 +409,93 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(logoutURL?.absoluteString, "https://socratictrade.com/logout")
     }
 
+    @MainActor
+    func testClearLocalSessionRemovesDiskSnapshot() throws {
+        // The app caches the RAW response bytes (MobileStore.saveCachedSnapshot(rawData), fed by
+        // client.snapshotData()); it never re-encodes a MobileSnapshot, which is why the model is
+        // Decodable-only.  Seed the cache the same way the app writes it.
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        let data = Data(minimalSnapshotJSON.utf8)
+        let cacheKey = "cached_mobile_snapshot_data"
+        let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: cacheKey)
+        defaults.set(Date(timeIntervalSince1970: 1_700_000_000).timeIntervalSince1970, forKey: cacheTimestampKey)
+
+        let store = MobileStore(
+            client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!),
+            previewSnapshot: snapshot
+        )
+        store.clearLocalSession()
+
+        XCTAssertNil(defaults.data(forKey: cacheKey))
+        XCTAssertEqual(defaults.double(forKey: cacheTimestampKey), 0)
+        XCTAssertFalse(store.isAuthenticated)
+        XCTAssertNil(store.snapshot)
+    }
+
+    @MainActor
+    func testInitUsesPersistedSnapshotTimestamp() throws {
+        // The app caches the RAW response bytes (MobileStore.saveCachedSnapshot(rawData), fed by
+        // client.snapshotData()); it never re-encodes a MobileSnapshot, which is why the model is
+        // Decodable-only.  Seed the cache the same way the app writes it.
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        let data = Data(minimalSnapshotJSON.utf8)
+        let cacheKey = "cached_mobile_snapshot_data"
+        let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: cacheKey)
+        defaults.set(savedAt.timeIntervalSince1970, forKey: cacheTimestampKey)
+        defer {
+            defaults.removeObject(forKey: cacheKey)
+            defaults.removeObject(forKey: cacheTimestampKey)
+        }
+
+        let store = MobileStore(client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!))
+        XCTAssertNotNil(store.snapshot)
+        XCTAssertEqual(store.lastUpdatedAt?.timeIntervalSince1970, savedAt.timeIntervalSince1970)
+    }
+
+    @MainActor
+    func testColdLaunchAfterSignOutDoesNotRestoreCachedSnapshot() throws {
+        // The app caches the RAW response bytes (MobileStore.saveCachedSnapshot(rawData), fed by
+        // client.snapshotData()); it never re-encodes a MobileSnapshot, which is why the model is
+        // Decodable-only.  Seed the cache the same way the app writes it.
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        let data = Data(minimalSnapshotJSON.utf8)
+        let cacheKey = "cached_mobile_snapshot_data"
+        let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
+        let defaults = UserDefaults.standard
+        defaults.set(data, forKey: cacheKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: cacheTimestampKey)
+
+        let store = MobileStore(
+            client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!),
+            previewSnapshot: snapshot
+        )
+        store.clearLocalSession()
+
+        let relaunched = MobileStore(client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!))
+        XCTAssertNil(relaunched.snapshot)
+        XCTAssertFalse(relaunched.isAuthenticated)
+        XCTAssertNil(relaunched.lastUpdatedAt)
+
+        defaults.removeObject(forKey: cacheKey)
+        defaults.removeObject(forKey: cacheTimestampKey)
+    }
+
     private func decodeCommand(_ json: String) -> MobileCommand {
         try! JSONDecoder().decode(MobileCommand.self, from: Data(json.utf8))
+    }
+
+    func testMobileCommandDecodesPlacementResult() throws {
+        let command = decodeCommand(
+            #"{"id":"cmd","commandType":"proposal.approve","status":"failed","error":"busy","result":{"status":"busy","outcome":"busy","reasons":["A strategy run is in progress."]},"createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}"#
+        )
+        XCTAssertEqual(command.result?.status, "busy")
+        XCTAssertEqual(command.result?.outcome, "busy")
+        XCTAssertEqual(command.result?.reasons?.first, "A strategy run is in progress.")
     }
 
     private let minimalSnapshotJSON = #"""
@@ -406,6 +556,7 @@ final class MobileModelsTests: XCTestCase {
       "connectedAccounts":[{"id":"account-1","label":"Brokerage","broker":"robinhood","environment":"live","accountNumber":"account-number","isActive":true,"capabilities":{"equityTrading":true,"shortSelling":false,"optionsTrading":true,"optionsLevel":2,"marginEnabled":true,"accountType":"brokerage"}}],
       "watchlist":[{"symbol":"MSFT","addedAt":"2026-07-20T12:00:00.000Z"}],
       "alerts":[{"id":"alert-1","symbol":"AAPL","op":">","price":200,"note":"Breakout","status":"triggered","createdAt":"2026-07-20T12:00:00.000Z","triggeredAt":"2026-07-21T15:00:00.000Z","triggeredPrice":205}],
+      "notifications":[{"id":"note-1","createdAt":"2026-07-21T17:32:00.000Z","type":"run_failed","title":"Strategy Run Failed","body":"Sent","read":false,"status":"sent","acknowledgedAt":null,"connectedAccountId":"account-1","accountLabel":"Brokerage"}],
       "recentCommands":[{"id":"command-1","commandType":"strategy.run_once","status":"succeeded","error":null,"createdAt":"2026-07-21T17:30:00.000Z","queuedAt":"2026-07-21T17:30:00.000Z","startedAt":"2026-07-21T17:30:01.000Z","finishedAt":"2026-07-21T17:31:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}]
     }
     """#

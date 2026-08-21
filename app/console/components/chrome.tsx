@@ -8,7 +8,7 @@
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
 import type { ConnectedAccount } from "@/lib/types";
@@ -35,13 +35,14 @@ import {
   startStrategy,
   stopEverything
 } from "../lib/api";
-import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
+import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact, SENTENCE_GAP } from "../lib/format";
 import { loginProviderLabel } from "../lib/labels";
 import type { ConsoleStreamHealth } from "../lib/useConsoleData";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useDirtyActionGuard, useNextUnloadBypass } from "../lib/useDirtyGuard";
 import type { ConsoleTheme } from "../lib/useConsoleTheme";
 import { useToast } from "../ui/toast";
+import { BREAKER_FIRED_NOTE } from "@/lib/guardrail-copy";
 import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
@@ -212,7 +213,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         aria-expanded={open}
         // items-start + a small chevron nudge aligns the chevron with the first
         // (account-name) line rather than floating between the two label lines.
-        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3"
+        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3 con-bar-ctl con-bar-ctl-scope"
         title="Switch which account this console shows"
       >
         <span className="min-w-0 flex-1">
@@ -300,7 +301,7 @@ export function StateChip({ snapshot }: { snapshot: DashboardSnapshot }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex shrink-0 items-center gap-2 rounded-control border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
+        className="con-bar-ctl flex shrink-0 items-center gap-2 rounded-control border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
         title={info.detail}
       >
         <Dot tone={STATE_TONE[info.tone]} pulse={info.state === "active" && info.marketOpen !== false && snapshot.policy.strategyAuthority === "decide"} />
@@ -342,7 +343,7 @@ export function RunStateButton({ snapshot }: { snapshot: DashboardSnapshot }) {
         aria-label={label}
       >
         {isStartDirection ? <Play size={15} /> : <OctagonMinus size={15} />}
-        {label}
+        <span className="con-run-state-label">{label}</span>
       </button>
       <ControlSheet snapshot={snapshot} open={open} onClose={() => setOpen(false)} emergency={!isStartDirection} />
     </>
@@ -422,7 +423,7 @@ function ControlSheet({
     };
     const closeOnlyOption = {
         id: "close_only",
-        title: "Close-only",
+        title: "Exit-only",
         body:
           "No new buys. Protective sells and the app's stop monitor keep working. This is what the automatic circuit breakers choose.",
         available: state !== "close_only",
@@ -485,7 +486,7 @@ function ControlSheet({
                   </Btn>
                 )}
                 {o.id === "close_only" && (
-                  <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void act("close_only", () => setSystemState("close_only", snapshot.policy.connectedAccountId), "Close-only", "No new buys. Protective exits keep working.")}>
+                  <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void act("close_only", () => setSystemState("close_only", snapshot.policy.connectedAccountId), "Exit-only", "No new buys. Protective exits keep working.")}>
                     {busy === "close_only" ? "Switching…" : "Confirm"}
                   </Btn>
                 )}
@@ -543,6 +544,7 @@ export function TypedConfirm({
   variant?: "danger" | "pos" | "primary";
   note?: string;
 }) {
+  const inputId = useId();
   const matches = value.trim().toUpperCase() === phrase;
   // Only a destructive confirm gets the red frame; other typed rituals use the
   // caution (warn) tint so red stays reserved for reality/STOP/destruction.
@@ -553,11 +555,12 @@ export function TypedConfirm({
   return (
     <div className={cx("mt-3 rounded-control border p-3", frameClass)}>
       {note && <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{note}</p>}
-      <label className="con-label">
+      <label className="con-label" htmlFor={inputId}>
         Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{phrase}</span>
       </label>
       <div className="flex gap-2">
         <TextInput
+          id={inputId}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete="off"
@@ -625,7 +628,7 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   // message FIRST, on the server's own string.
   if (m.includes(LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE.toLowerCase())) {
     return {
-      title: "Rotation could not check available models",
+      title: "Rotation Couldn't Check Models",
       detail: message,
       fixHref: "/console/strategy#models",
       fixLabel: "Open Strategy → Models"
@@ -659,7 +662,7 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
     return {
       title: "A circuit breaker is holding new entries",
       detail: message,
-      note: "A breaker tripping means a hard limit did its job. Review what fired before loosening anything.",
+      note: BREAKER_FIRED_NOTE,
       fixHref: "/console/guardrails",
       fixLabel: "Review Guardrails"
     };
@@ -667,7 +670,7 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   if (m.includes("halted") || m.includes("stopped")) {
     return {
       title: "The system is stopped",
-      detail: `${message} Start it (or switch to Close-only) from the run-state chip in the top bar.`,
+      detail: `${message} Start it (or switch to Exit-only) from the run-state chip in the top bar.`,
       note:
         "While stopped, nothing buys or sells — and this app's automatic stop-losses are paused too. Broker-held brackets keep resting at your broker."
     };
@@ -898,7 +901,7 @@ export function UserMenu({
         aria-expanded={open}
         aria-haspopup="menu"
         style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, maxWidth: 32, maxHeight: 32 }}
-        className="flex shrink-0 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
+        className="con-bar-ctl flex shrink-0 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
       >
         <Avatar imageUrl={user.imageUrl} size="h-full w-full" iconSize={15} />
       </button>
@@ -1001,22 +1004,32 @@ function deriveFreshnessLabel(fetchedAt: Date | null, error: string | null, stre
  *  overlays anything at document end there, so a bottom-anchored strip is
  *  invisible on mobile. This is the only mobile freshness surface; the
  *  desktop-only FreshnessStrip below no longer renders a mobile variant. */
+function OfflineBanner() {
+  return (
+    <span className="shrink-0 font-semibold text-[color:var(--con-warn)]">
+      You’re offline.{SENTENCE_GAP}Showing the last snapshot.
+    </span>
+  );
+}
+
 export function MobileFreshnessBar({
   snapshot,
   fetchedAt,
   error,
-  stream
+  stream,
+  online = true
 }: {
   snapshot: DashboardSnapshot;
   fetchedAt: Date | null;
   error: string | null;
   stream: ConsoleStreamHealth;
+  online?: boolean;
 }) {
   const spend = deriveSpend(snapshot);
   const freshnessLabel = deriveFreshnessLabel(fetchedAt, error, stream);
   // PR-E3: when healthy, collapse to one short line (Fresh · Today) instead of
   // repeating clock + label + spend + delayed chip. Unhealthy keeps the detail.
-  const healthy = !error && freshnessLabel === "fresh" && fetchedAt != null;
+  const healthy = online && !error && freshnessLabel === "fresh" && fetchedAt != null;
   return (
     <div className="flex items-center gap-3 border-t border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-4 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] lg:hidden">
       {healthy ? (
@@ -1040,6 +1053,7 @@ export function MobileFreshnessBar({
             <ShieldCheck size={12} />
             Deployed today: {fmtMoney(spend.usedNotional)}
           </span>
+          {!online && <OfflineBanner />}
           {error && (
             <span className="shrink-0 font-semibold text-[color:var(--con-warn)]" title={error}>
               delayed
@@ -1055,12 +1069,14 @@ export function FreshnessStrip({
   snapshot,
   fetchedAt,
   error,
-  stream
+  stream,
+  online = true
 }: {
   snapshot: DashboardSnapshot;
   fetchedAt: Date | null;
   error: string | null;
   stream: ConsoleStreamHealth;
+  online?: boolean;
 }) {
   const spend = deriveSpend(snapshot);
   const scanAt = snapshot.latestStrategyRun?.marketScan?.generatedAt;
@@ -1101,8 +1117,9 @@ export function FreshnessStrip({
           <ShieldCheck size={12} />
           Deployed today: {fmtMoney(spend.usedNotional)}
           {typeof spend.capNotional === "number" ? ` of ${fmtMoneyWhole(spend.capNotional)}` : ""}
-          <Meter value={spend.usedNotional} max={spend.capNotional} className="w-16" />
+          <Meter value={spend.usedNotional} max={spend.capNotional} className="w-16" label="Deployed today" />
         </span>
+        {!online && <OfflineBanner />}
         {error && (
           <span className="font-semibold text-[color:var(--con-warn)]" title={error}>
             refresh failing — showing last good data

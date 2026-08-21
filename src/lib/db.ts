@@ -3,6 +3,7 @@
 // this file re-exports them all so every existing `import ... from "./db"` (or
 // `"../lib/db"`, `"@/lib/db"`, etc.) continues to resolve without any changes.
 
+import "server-only";
 import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
@@ -3129,6 +3130,53 @@ const MIGRATIONS: Migration[] = [
           ON ark_holdings(fund, as_of);
       `);
     }
+  },
+  {
+    version: 84,
+    name: "ingested_accessions_pinecone_write_class",
+    up: (database) => {
+      const hasTable = database
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ingested_accessions'")
+        .get();
+      if (!hasTable) return;
+      const cols = database.prepare("PRAGMA table_info(ingested_accessions)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "pinecone_write_class")) {
+        database.exec(
+          "ALTER TABLE ingested_accessions ADD COLUMN pinecone_write_class TEXT NOT NULL DEFAULT 'full-body'"
+        );
+      }
+      if (!cols.some((c) => c.name === "pinecone_vector_count")) {
+        database.exec(
+          "ALTER TABLE ingested_accessions ADD COLUMN pinecone_vector_count INTEGER NOT NULL DEFAULT 0"
+        );
+      }
+    }
+  },
+  {
+    version: 85,
+    name: "document_chunks_fts_index",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS document_chunks_fts_index (
+          content_hash TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          source TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          fts_rowid INTEGER NOT NULL,
+          PRIMARY KEY (content_hash, symbol, source, accession)
+        );
+      `);
+      const ftsTable = database
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks_fts'")
+        .get();
+      if (!ftsTable) return;
+      database.exec(`
+        INSERT OR REPLACE INTO document_chunks_fts_index
+          (content_hash, symbol, source, accession, fts_rowid)
+        SELECT content_hash, symbol, source, accession, rowid
+        FROM document_chunks_fts;
+      `);
+    }
   }
 ];
 
@@ -4015,6 +4063,8 @@ function migrate(database: Database.Database): void {
       ticker TEXT NOT NULL DEFAULT '',
       indexed_at TEXT NOT NULL,
       chunk_count INTEGER NOT NULL DEFAULT 0,
+      pinecone_write_class TEXT NOT NULL DEFAULT 'full-body',
+      pinecone_vector_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (accession, doc_type)
     );
     CREATE TABLE IF NOT EXISTS document_chunks (

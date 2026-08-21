@@ -8,7 +8,8 @@
  *  and a short history of finished orders. Everything renders only what the
  *  snapshot actually has — missing data is "—", never invented. */
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { EquityOrder, EquityPosition } from "@/lib/types";
 import { deriveReality } from "../lib/derive";
 import { cx, fmtExact, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH, SENTENCE_GAP } from "../lib/format";
@@ -18,6 +19,7 @@ import { Ago, Btn, Card, Chip, Dash, Empty, SignedText, type ChipTone } from "..
 import { SymbolButton } from "../ui/symbol-drilldown";
 import { CancelOrderSheet } from "./cancel-sheet";
 import { ReplaceMarketSheet } from "./replace-market-sheet";
+import { DEEP_LINK_FOCUS_CLASS, readSymbolQuery, scrollDeepLinkTarget, symbolElementId } from "../lib/deep-link-focus";
 import {
   closingOrderPnl,
   deriveOpenOrders,
@@ -251,6 +253,15 @@ function executedText(order: EquityOrder): string | undefined {
 }
 
 export default function OrdersPage() {
+  return (
+    <Suspense fallback={null}>
+      <OrdersPageInner />
+    </Suspense>
+  );
+}
+
+function OrdersPageInner() {
+  const searchParams = useSearchParams();
   const { snapshot, refresh } = useConsoleData();
   const [replaceRow, setReplaceRow] = useState<OpenOrderRow | null>(null);
   const [cancelRow, setCancelRow] = useState<OpenOrderRow | null>(null);
@@ -267,6 +278,20 @@ export default function OrdersPage() {
     [snapshot, nowMs]
   );
   const history = useMemo(() => (snapshot ? terminalOrders(snapshot.orders ?? [], 20) : []), [snapshot]);
+  const focusedSymbol = readSymbolQuery(searchParams.get("symbol"));
+  const firstFocusedOpenId = useMemo(() => {
+    if (!focusedSymbol) return undefined;
+    return rows.find((row) => row.order.symbol.toUpperCase() === focusedSymbol)?.order.id;
+  }, [rows, focusedSymbol]);
+  const firstFocusedHistoryId = useMemo(() => {
+    if (!focusedSymbol || firstFocusedOpenId) return undefined;
+    return history.find((order) => order.symbol.toUpperCase() === focusedSymbol)?.id;
+  }, [history, focusedSymbol, firstFocusedOpenId]);
+
+  useEffect(() => {
+    if (!focusedSymbol) return;
+    scrollDeepLinkTarget([symbolElementId(focusedSymbol, "card"), symbolElementId(focusedSymbol)]);
+  }, [focusedSymbol, firstFocusedOpenId, firstFocusedHistoryId]);
 
   if (!snapshot) return null;
 
@@ -392,6 +417,7 @@ export default function OrdersPage() {
                       halted={halted}
                       noAccount={noAccount}
                       live={live}
+                      focused={row.order.id === firstFocusedOpenId}
                       onReplace={() => setReplaceRow(row)}
                       onCancel={() => setCancelRow(row)}
                     />
@@ -411,6 +437,7 @@ export default function OrdersPage() {
                   halted={halted}
                   noAccount={noAccount}
                   live={live}
+                  focused={row.order.id === firstFocusedOpenId}
                   onReplace={() => setReplaceRow(row)}
                   onCancel={() => setCancelRow(row)}
                 />
@@ -447,7 +474,11 @@ export default function OrdersPage() {
                 </thead>
                 <tbody>
                   {history.map((order) => (
-                    <tr key={order.id}>
+                    <tr
+                      key={order.id}
+                      id={order.id === firstFocusedHistoryId ? symbolElementId(order.symbol.toUpperCase()) : undefined}
+                      className={order.id === firstFocusedHistoryId ? DEEP_LINK_FOCUS_CLASS : undefined}
+                    >
                       <td>
                         <SymbolButton symbol={order.symbol} />
                       </td>
@@ -489,7 +520,11 @@ export default function OrdersPage() {
             </div>
             <div className="flex flex-col gap-2 px-2 pb-3 pt-2 lg:hidden">
               {history.map((order) => (
-                <FinishedOrderCard key={order.id} order={order} />
+                <FinishedOrderCard
+                  key={order.id}
+                  order={order}
+                  focused={order.id === firstFocusedHistoryId}
+                />
               ))}
             </div>
             <p className="px-4 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -517,16 +552,20 @@ interface OrderRowProps {
   halted: boolean;
   noAccount: boolean;
   live: boolean;
+  focused?: boolean;
   onReplace: () => void;
   onCancel: () => void;
 }
 
-function OpenOrderTr({ row, quotes, positions, fallbackPrices, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
+function OpenOrderTr({ row, quotes, positions, fallbackPrices, companyName, halted, noAccount, live, focused, onReplace, onCancel }: OrderRowProps) {
   const view = deriveOrderRowView(row, quotes, positions, fallbackPrices, halted, noAccount, live);
   const order = view.order;
 
   return (
-    <tr className={row.stale ? "bg-[color:var(--con-warn-soft)]" : undefined}>
+    <tr
+      id={focused ? symbolElementId(order.symbol.toUpperCase()) : undefined}
+      className={cx(row.stale && "bg-[color:var(--con-warn-soft)]", focused && DEEP_LINK_FOCUS_CLASS)}
+    >
       <td>
         <SymbolButton symbol={order.symbol} />
         {companyName && (
@@ -628,14 +667,16 @@ function OpenOrderTr({ row, quotes, positions, fallbackPrices, companyName, halt
  *  laid out as a card: symbol/side/status up top, the load-bearing fields
  *  (size, limit/stop, last price, age) in a small grid, actions at the
  *  bottom. Shown lg:hidden while the table above is hidden below lg. */
-function OpenOrderCard({ row, quotes, positions, fallbackPrices, companyName, halted, noAccount, live, onReplace, onCancel }: OrderRowProps) {
+function OpenOrderCard({ row, quotes, positions, fallbackPrices, companyName, halted, noAccount, live, focused, onReplace, onCancel }: OrderRowProps) {
   const view = deriveOrderRowView(row, quotes, positions, fallbackPrices, halted, noAccount, live);
   const order = view.order;
   return (
     <div
+      id={focused ? symbolElementId(order.symbol.toUpperCase(), "card") : undefined}
       className={cx(
         "con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3",
-        row.stale && "bg-[color:var(--con-warn-soft)]"
+        row.stale && "bg-[color:var(--con-warn-soft)]",
+        focused && DEEP_LINK_FOCUS_CLASS
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -747,9 +788,15 @@ function OpenOrderCard({ row, quotes, positions, fallbackPrices, companyName, ha
 
 /** Mobile counterpart to the finished-orders table row — read-only, so no
  *  actions row. */
-function FinishedOrderCard({ order }: { order: EquityOrder }) {
+function FinishedOrderCard({ order, focused }: { order: EquityOrder; focused?: boolean }) {
   return (
-    <div className="con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3">
+    <div
+      id={focused ? symbolElementId(order.symbol.toUpperCase(), "card") : undefined}
+      className={cx(
+        "con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3",
+        focused && DEEP_LINK_FOCUS_CLASS
+      )}
+    >
       <div className="flex items-center justify-between gap-2">
         <SymbolButton symbol={order.symbol} />
         <Chip tone={stateTone(order.state)} title="Final state the broker reported for this order.">

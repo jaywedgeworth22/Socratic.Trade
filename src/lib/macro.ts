@@ -442,8 +442,9 @@ async function fetchVixLane(
   const start = Date.now();
   const log = (ok: boolean, errorText?: string, soft = false) =>
     // keySource omitted -> stored as NULL, matching the breaker's (lane, null) keyless lane.
-    // Soft for expected limits (429) so vix-yahoo cannot hard-STOP and spam the admin board
-    // when Cboe is already the preferred primary (see cascade order below).
+    // Soft for 429 so vix-yahoo cannot hard-STOP.  Cboe is the preferred primary;
+    // Yahoo stays in the cascade for when Cboe dies.  A 429 is not a reason to
+    // abandon the backup, and it is not a healthy "expected" outcome.
     logApiHealth({ service: lane, ok, latencyMs: Date.now() - start, errorText, soft });
   try {
     for (let attempt = 0; attempt < VIX_LANE_429_MAX_ATTEMPTS; attempt++) {

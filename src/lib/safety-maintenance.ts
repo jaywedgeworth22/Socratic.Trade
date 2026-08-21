@@ -4,17 +4,15 @@ import { reconcilePendingFills, flagStalePlacingIntents } from "./strategy-execu
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
+import { withDeadline } from "./inflight-deadline";
 import type { TradingPolicy, BrokerGateway, ConnectedAccount } from "./types";
 
-export async function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
+export { withDeadline } from "./inflight-deadline";
 
 const BROKER_TIMEOUT_MS = 15_000;
+
+/** Scheduler / safety-maintenance broker lane ceiling (matches BROKER_TIMEOUT_MS). */
+export const SCHEDULER_BROKER_TIMEOUT_MS = BROKER_TIMEOUT_MS;
 
 export async function runSafetyMaintenance(
   userId: string,

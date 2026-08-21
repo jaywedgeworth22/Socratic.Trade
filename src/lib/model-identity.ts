@@ -28,11 +28,12 @@ export function canonicalModelId(model: string | null | undefined): string {
   if (!model) return "";
   let name = model.trim();
 
-  // Strip any vendor routing prefix (e.g. "openrouter/", "anthropic/", "x-ai/", "google/", "meta-llama/", etc.)
+  // Strip any vendor routing prefix (e.g. "openrouter/", "~anthropic/", "x-ai/", "google/", "meta-llama/", etc.)
+  name = name.replace(/^~/, "");
   if (name.includes("/")) {
     name = name.split("/").pop() || name;
   }
-  name = name.replace(/^~anthropic\//i, "").replace(/^xai\//i, "").replace(/^meta-llama\//i, "").replace(/^moonshotai\//i, "");
+  name = name.replace(/^~/, "").replace(/^xai\//i, "").replace(/^meta-llama\//i, "").replace(/^moonshotai\//i, "");
 
   const lower = name.toLowerCase();
 

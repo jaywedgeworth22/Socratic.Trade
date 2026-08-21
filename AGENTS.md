@@ -45,11 +45,14 @@ Before every commit/push to the GitHub repo, you MUST update the following:
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"
    means merged to `main`. **As of 2026-07-10, merging to `main` AUTO-DEPLOYS to production**
-   (owner-directed): Coolify auto-deploys `socratic-trade-prod` on every push to `main`, so
-   "Completed (merged)" and "Deployed to production" now collapse — there is no separate manual deploy
-   step. The old **ANNOUNCE-THEN-DEPLOY** protocol is **RETIRED**: do NOT post deploy claims or manually
-   trigger Coolify deploys. Mechanism, verification, and rollback:
-   `docs/rollouts/2026-07-10-auto-deploy-on.md`; canonical protocol detail in
+   (owner-directed), **with a weekday RTH latch as of 2026-08-18**: Coolify still receives every
+   `main` push, but weekday regular US equity hours refuse the image build unless `HOTFIX=1` or
+   `RTH_DEPLOY_OVERRIDE=1`.  Evenings/weekends still go live.  A refused build keeps the last
+   healthy container.  "Completed (merged)" and "Deployed to production" still collapse after
+   the close (or immediately on hotfix).  The old **ANNOUNCE-THEN-DEPLOY** protocol is
+   **RETIRED**: do NOT post deploy claims or manually trigger Coolify deploys.  Mechanism:
+   `docs/rollouts/2026-07-10-auto-deploy-on.md` and
+   `docs/rollouts/2026-08-18-rth-deploy-latch.md`; canonical protocol detail in
    `/Users/jay/apps/AGENT-SYNC.md`.
 3. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
 4. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
@@ -232,20 +235,51 @@ rollout note).
 dockerfile build pack, SSH deploy-key git source). The old uuid `m1os7ijf31bg3fanil152e4b` and the
 nixpacks note are STALE — the app was recreated during the Oracle migration; API calls against the
 old uuid return a bare `{"message":...}` that is easy to misread as a permissions problem.
-**AUTO-DEPLOY IS ON (owner-directed 2026-07-10): every push to `main` auto-deploys** via the
-repo's GitHub webhook to Coolify's **manual webhook endpoint**
-(`https://host.jays.services/webhooks/source/github/events/manual`) — NOT the GitHub-App
-integration; the deploy-key source uses the manual endpoint, which validates an HMAC secret that
-must equal the app's `manual_webhook_secret_github`. **Known failure mode (bit us 2026-08-01/02):
-if those secrets drift, every main push is answered `Invalid signature`, no deployment is ever
-created, and prod silently freezes while merges pile up** — GitHub's hook page still shows green
-200s, so check the DELIVERY RESPONSE BODY (`gh api .../hooks/<id>/deliveries/<id>` →
-`.response.payload`), not the status code. Repair recipe + receipts:
-`docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`. Verify any deploy landed with
-`bash scripts/verify-deploy-sha.sh` (asserts the live sha CONTAINS your commit). Merge == live;
-the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy claims or manually trigger
-deploys. Rollback to manual: disable auto deploy on the app.
-Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md`.
+**AUTO-DEPLOY IS ON (owner-directed 2026-07-10), with Coolify `watch_paths` + a weekday
+RTH latch (2026-08-18):** every push to `main` still hits Coolify via the repo webhook to
+Coolify's **manual webhook endpoint**
+(`https://host.jays.services/webhooks/source/github/events/manual`)
+— NOT the GitHub-App integration; the deploy-key source uses the manual endpoint, which
+validates an HMAC secret that must equal the app's `manual_webhook_secret_github`.
+ASC already applied `watch_paths` on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`) —
+runtime trees only (`Dockerfile`, `src/**`, `app/**`, `scripts/**`, lockfiles, …);
+omitted `docs/**`, `STATUS.md`, `PLAN.md`, `ios/`, `test/`.  **Do not re-apply or
+PATCH that list.**  Auto-deploy stays on.  Stop-old-first stays.
+`health_check_start_period` stays 60.  The Dockerfile still refuses the **image
+build** (before `npm ci`) during regular US equity hours (Mon–Fri 09:30–16:00 ET,
+or until 13:00 ET on NYSE early-close days) unless `HOTFIX=1` or
+`RTH_DEPLOY_OVERRIDE=1` (`watch_paths` does not know about market hours).  Keep
+`is_consistent_container_name_enabled` — do **not** turn on Coolify rolling /
+zero-downtime (two Litestream writers wedge L2).  **Keep stop-old-first.**  Docker
+HEALTHCHECK (and any Coolify HTTP health path) must be `GET /api/live`, not
+`/api/health`: a finished deploy that marks `running:unhealthy` while the process
+is up leaves Traefik with no healthy backend (2026-08-17 7:22–7:43pm CT after
+docs-only #2810).  Do **not** put the RTH latch in `scripts/coolify-prod-start.sh`,
+do **not** `FORCE_RESTORE`, and do **not** bounce the live box from an agent.  Evenings, weekends, and full-close holidays still auto-deploy runtime
+changes.  A weekday 21:20 UTC GitHub Action drain retries `origin/main` after the cash
+close when the pending diff is not image-noop.  **Known failure mode (bit us
+2026-08-01/02): if those secrets drift, every main push is answered `Invalid signature`, no
+deployment is ever created, and prod silently freezes while merges pile up** — GitHub's hook
+page still shows green 200s, so check the DELIVERY RESPONSE BODY
+(`gh api .../hooks/<id>/deliveries/<id>` → `.response.payload`), not the status code.  Repair
+recipe + receipts: `docs/rollouts/2026-08-02-deploy-webhook-secret-repair.md`.  Verify any
+deploy landed with `bash scripts/verify-deploy-sha.sh` (asserts the live sha CONTAINS your
+commit).  Merge == queued-for-live during weekday RTH, and live after the close (or immediately
+with `HOTFIX=1`); the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy claims
+or manually trigger deploys.  Rollback to manual: disable auto deploy on the app.
+**Silent-freeze class (2026-08-06, #2545):** Coolify SSH exec streams can die mid-build
+(exit 255) under shared-box load while GitHub webhooks stay 200 and `/api/health` stays
+green on the *old* sha.  The standing watchdog is `.github/workflows/deploy-freshness.yml`
+(`scripts/alert-deploy-freshness.sh`) — it pages when the oldest undeployed main commit
+is older than 1h.  Do not treat a green health probe as proof the pipeline is moving.
+ST/CT/UM still share the Hetzner box; `scripts/isolate-shared-box-batch.sh` dry-runs a
+`docker update` CPU cap on CT OCR/scan workers (never restarts; never touches ST).
+Default cap is **5.0 of 8 vCPUs** (as high as is reasonably advisable: above the
+2.83 unconstrained OCR peak, 3 cores left for Coolify/ST/UM).  Durable isolation is
+`cpus: '5.0'` on CT `scan-cpu-worker` (compose today is still 2.0) — this repo
+cannot set that.  Coolify has no job-level retry-on-255 we can configure from here.
+Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md` and
+`docs/rollouts/2026-08-18-rth-deploy-latch.md`.
 `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
 protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:
 `scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
@@ -288,6 +322,8 @@ because healthchecks churn it); use `journalctl -u docker.service` (durable; log
 API for ANY reason, you own starting it again — docker will not.
 
 ### Preview freshness policy (RETIRED 2026-07-08 — historical; previews no longer exist)
+
+Present-tense sentences in this subsection are July 2026 archive.  Those hostnames are gone.
 
 `trading-beta.jays.services` is the integration source of truth. Agent preview
 sites (`codex.jays.services`, `claude.jays.services`, and
@@ -338,12 +374,13 @@ must not silently drift behind beta after work lands.
     and `git push origin agent/foo:main`).
   - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
   - Emergency human override (use sparingly): `HOOKS_ALLOW_MAIN_PUSH=1 git push origin ...`
-- **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and your live
-  preview starts erroring (`ENOENT .next/...`), restart it: `pm2 restart trading-<you>`.
-- **PM2:** `pm2 restart trading-<you>` / `pm2 list` are fine; do **not** `pm2 delete`/rename
-  another agent's app or `trading`; run `pm2 save` after intentional changes. Never run a
-  build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
-  via its release steps only.
+- **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and a local
+  `npm run dev` starts erroring (`ENOENT .next/...`), restart that worktree's dev server.
+- **PM2:** leftover `pm2 restart trading-<you>` / `pm2 list` are fine on the Mac if those
+  apps still exist; do **not** `pm2 delete`/rename another agent's app or `trading`; run
+  `pm2 save` after intentional changes.  Never run a build/`next dev` *inside*
+  `~/apps/trading-live` — that Mac lane is retired rollback only.  Production is Coolify
+  at socratictrade.com.
 
 ### Cursor: peer agent lane (DeepSeek) *and* human review seat
 
@@ -353,8 +390,8 @@ called Cursor "not a 4th agent lane" — that's outdated; corrected 2026-07-06, 
 
 1. **A full peer autonomous lane**, on par with Claude Code, Codex, and Antigravity/Gemini.
    The owner runs Cursor's background/agent mode on **DeepSeek**, producing work in its own
-   worktree (`~/apps/trading-cursor`), on its own branch (`agent/cursor`), with its own
-   PM2-hosted preview (`cursor.jays.services`, port **4103**) — see the hosting table above.
+   worktree (`~/apps/trading-cursor`), on its own branch (`agent/cursor`).  Preview
+   hostnames are retired — check work with `npm run dev` locally plus the verify CI gate.
    Treat it exactly like the Claude/Codex/Antigravity/Monet rows: don't edit in it from
    another agent, land via `scripts/land.sh`, keep the Pre-Commit/Handoff Protocol current
    from it like any other lane.
@@ -374,12 +411,11 @@ called Cursor "not a 4th agent lane" — that's outdated; corrected 2026-07-06, 
   `PLAN.md` like every other tool.
 
 ### A running port is NOT a work lock
-A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not
-infer "someone is working" from an open 4000/4001/4100/4101/4102/4103/4104 (or a stray
-3000/3001/3002). Coordinate ONLY via `git status` / `git log` / the branch list and
-`STATUS.md` — never by inspecting ports. The legacy per-agent ephemeral dev lanes (Claude
-3000 / Codex 3001 via `npm run dev:codex` / Antigravity 3002) are superseded by the PM2
-worktree previews above; use them only as a one-off and treat them as disposable.
+A local `next dev` listening on a port does **not** mean another agent is mid-task. Do not
+infer "someone is working" from an open 3000/3001/3002 (or a leftover 4000/4001/4100-4104).
+Coordinate ONLY via `git status` / `git log` / the branch list and `STATUS.md` — never by
+inspecting ports.  Per-agent PM2 preview lanes and `*.jays.services` preview hostnames are
+retired; use `npm run dev` in your own worktree only.
 
 Host-local deployment details (tunnel, pm2 ecosystem) live in `~/apps/README.md` on the
 deployment machine.
@@ -716,12 +752,15 @@ with the Hetzner servers it monitored.
 **One-time owner setup (both sides must use the same token):**
 
 1. Generate: `openssl rand -hex 32`
-2. **trading-live:** set `OPS_DIAGNOSTIC_TOKEN=<token>` in Infisical / `.env.local`, `pm2 restart trading`
+2. **Production (Coolify `socratic-app`):** set `OPS_DIAGNOSTIC_TOKEN=<token>` in Infisical, then restart the Coolify app so the container picks it up.  Do not `pm2 restart trading` on the Mac — that lane is retired.
 3. **Cursor Cloud Secrets** (Dashboard -> Cloud Agents -> Secrets): add `OPS_DIAGNOSTIC_TOKEN` as a
    **Runtime Secret**, scoped to this repo. Value must match production.
 
-The script calls `GET /api/ops/snapshot` (token via `x-ops-token`). See
-`docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`. Rule: `.cursor/rules/ops-diagnostics.mdc`.
+The script calls `GET /api/ops/snapshot` (token via `x-ops-token`).
+`OPS_DIAGNOSTIC_TOKEN` is required in production — `ADMIN_REINDEX_TOKEN` is not a
+fallback.  Do not mint a second token if both envs already share one value.
+See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md` and
+`docs/runbooks/uptime-health-json-monitors.md`.  Rule: `.cursor/rules/ops-diagnostics.mdc`.
 
 ## iOS agent build loop (owner 2026-08-13)
 
@@ -771,10 +810,38 @@ Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh
 ## Two spaces between sentences (owner — ALL contexts)
 
 Two spaces after sentence terminators in **all** human-readable prose for every
-agent: web, PWA, iOS UI, **every App Store Connect field** (description,
+agent: web, iOS UI, **every App Store Connect field** (description,
 promotional text, What's New, **App Review notes**, **IAP / subscription
 review notes**, subscription localization descriptions), push/email, help,
 privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
-Store listing copy must be accurate (corpus, trial length).  Canonical:
-`/Users/jay/apps/AGENT-SYNC.md` § Two spaces and `/Users/jay/apps/FLEET-UI-COPY.md`.
+Store listing copy must be accurate (corpus, trial length).
+
+**Strengthened 2026-08-19 (owner, in-conversation):** not limited to product copy —
+covers every paragraph an agent writes anywhere, including **chat replies to the
+owner**, PR titles/bodies, commit messages, Slack posts to #agent-sync, Apple Notes,
+effort-board rows, rollout notes, review reports, and design docs.  If it's prose a
+human reads, it gets two spaces.
+
+**HOW to emit it so the owner can actually SEE it (verified 2026-08-19).**  The gap is not
+a matter of intent — it has to survive the renderer:
+
+- **Agent chat replies** (Claude Code terminal / desktop transcript): use the HTML entity
+  `&nbsp;` right after the period, then a normal space — `Sentence one.&nbsp; Sentence two.`
+  The markdown renderer expands the entity, so the double gap is visible.
+- **Files** — repo docs, commit messages, PR titles/bodies, Slack posts, Apple Notes,
+  effort-board rows, code comments: two **literal** spaces.  These are read as source or by
+  renderers that preserve them; an entity would show up as literal text.
+
+What does NOT work, all tested live: two literal spaces in chat (GitHub-flavored markdown
+collapses the run when rendering); a raw U+00A0 character in chat (normalized away in the view
+even though copy-paste shows two spaces — do not be fooled by copy-paste); app settings (none
+exist: `outputStyle` changes tone only, `--output-format` is headless `claude -p` only,
+`axScreenReader` only drops borders); patching the client (compiled binary + signed app; breaks
+code signing, wiped by auto-update — do not attempt).
+
+Process lesson: when an instruction appears not to take effect, diagnose the **rendering**
+layer between you and the reader — and ask what they see on screen — before restating a promise
+to comply.
+
+Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Two spaces and `/Users/jay/apps/FLEET-UI-COPY.md`.
 

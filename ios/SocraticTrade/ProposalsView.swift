@@ -19,7 +19,7 @@ struct ProposalsView: View {
             if snapshot.pendingProposals.isEmpty {
                 EmptyStateCard(
                     title: "No proposals waiting",
-                    message: "New owner decisions will appear here after a strategy run.",
+                    message: "New decisions will appear here after a strategy run.",
                     systemImage: "checkmark.seal"
                 )
             } else {
@@ -80,7 +80,7 @@ struct ProposalsView: View {
             SymbolInfoSheet(symbol: presented.symbol)
         }
         .alert(
-            "Confirm Live Order",
+            DeskCopy.proposalConfirmOrderTitle,
             isPresented: Binding(
                 get: { confirmingProposal != nil },
                 set: { isPresented in
@@ -92,7 +92,7 @@ struct ProposalsView: View {
             TextField(expectedConfirmation(for: proposal), text: $confirmationText)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
-            Button("Approve Live Order", role: .destructive) {
+            Button(DeskCopy.proposalApproveOrderButton, role: .destructive) {
                 approveConfirmedLiveProposal(proposal)
             }
             .disabled(!confirmationMatches(proposal))
@@ -100,7 +100,7 @@ struct ProposalsView: View {
                 resetConfirmation()
             }
         } message: { proposal in
-            Text("Type exactly “\(expectedConfirmation(for: proposal))”.  The backend revalidates the proposal and confirmation before placing anything.")
+            Text("Type exactly “\(expectedConfirmation(for: proposal))”.  This places the order through your connected account.")
         }
     }
 
@@ -206,7 +206,7 @@ private struct ProposalQueueSummary: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(snapshot.pendingProposals.count) Proposals for Review")
                         .font(.appHeadline)
-                    Text("\(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority)) · backend validation remains final")
+                    Text(AppFormat.strategyAuthorityLabel(snapshot.readiness.strategyAuthority))
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
@@ -263,11 +263,13 @@ private struct ProposalCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    StatusPill(
-                        executionModeLabel,
-                        color: executionModeColor,
-                        systemImage: executionModeSystemImage
-                    )
+                    if proposal.executionMode == "broker/paper" {
+                        StatusPill(
+                            executionModeLabel,
+                            color: AppPalette.accent.opacity(0.75),
+                            systemImage: executionModeSystemImage
+                        )
+                    }
                     if let confidence = proposal.proposal.confidenceScore {
                         StatusPill("\(Int(confidence.rounded()))% confidence", color: AppPalette.accent)
                     }
@@ -286,6 +288,17 @@ private struct ProposalCard: View {
                     DetailLine(label: "Target", value: priceReview.targetValue)
                     if let delay = priceReview.delayValue {
                         DetailLine(label: "Delay", value: delay)
+                    }
+                    if priceReview.showsDelayedFallback {
+                        StatusPill(
+                            priceReview.delayedFallbackStamp,
+                            color: AppPalette.warning,
+                            systemImage: "clock.badge.exclamationmark"
+                        )
+                        Text(priceReview.delayedFallbackNote)
+                            .font(.appCaption)
+                            .foregroundStyle(AppPalette.warning)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if let stop = priceReview.stop, stop > 0 {
                         DetailLine(label: "Stop", value: AppFormat.money(stop))
@@ -338,7 +351,7 @@ private struct ProposalCard: View {
                 Divider()
 
                 if requiresTypedConfirmation {
-                    Label("Typed confirmation required for this live order", systemImage: "keyboard.badge.ellipsis")
+                    Label(DeskCopy.proposalTypedConfirmHint, systemImage: "keyboard.badge.ellipsis")
                         .font(.appCaption)
                         .foregroundStyle(AppPalette.warning)
                 }
@@ -362,19 +375,11 @@ private struct ProposalCard: View {
     }
 
     private var executionModeLabel: String {
-        switch proposal.executionMode {
-        case "broker/live": return "Live"
-        case "broker/paper": return "Paper"
-        default: return "Unknown"
-        }
-    }
-
-    private var executionModeColor: Color {
-        proposal.executionMode == "broker/live" ? AppPalette.negative : AppPalette.accent
+        proposal.executionMode == "broker/paper" ? DeskCopy.paperAccountWord : ""
     }
 
     private var executionModeSystemImage: String {
-        proposal.executionMode == "broker/live" ? "dollarsign.circle.fill" : "questionmark.circle"
+        "doc.text"
     }
 
     private var priceReview: ProposalPriceReview {
@@ -459,7 +464,7 @@ private struct ProposalActionFeedbackBanner: View {
     private var showsSpinner: Bool {
         switch feedback {
         case .sending, .pending: return true
-        case .failed, .succeeded: return false
+        case .failed, .succeeded, .placementSettled: return false
         }
     }
 
@@ -479,6 +484,11 @@ private struct ProposalActionFeedbackBanner: View {
             return message
         case .succeeded(let action):
             return action == .approve ? "Approved — waiting for desk refresh." : "Rejected — waiting for desk refresh."
+        case .placementSettled(let action, let status, let reasons):
+            guard action == .approve else {
+                return "Rejected — waiting for desk refresh."
+            }
+            return AppFormat.placementApproveMessage(status: status, reasons: reasons)
         }
     }
 
@@ -487,6 +497,9 @@ private struct ProposalActionFeedbackBanner: View {
         case .sending, .pending: return "arrow.triangle.2.circlepath"
         case .failed: return "exclamationmark.triangle.fill"
         case .succeeded: return "checkmark.circle.fill"
+        case .placementSettled(let action, let status, _):
+            guard action == .approve else { return "checkmark.circle.fill" }
+            return AppFormat.placementApproveSystemImage(status: status)
         }
     }
 
@@ -495,6 +508,9 @@ private struct ProposalActionFeedbackBanner: View {
         case .sending, .pending: return AppPalette.accent
         case .failed: return AppPalette.negative
         case .succeeded: return AppPalette.positive
+        case .placementSettled(let action, let status, _):
+            guard action == .approve else { return AppPalette.positive }
+            return AppFormat.placementApproveColor(status: status)
         }
     }
 }

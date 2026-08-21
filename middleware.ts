@@ -35,7 +35,9 @@ import {
   type AuthenticatedIdentitySource
 } from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
+import { isAdminEmail } from "./src/lib/auth/admin-emails";
 import { getSessionIdentity } from "./src/lib/auth/session-edge";
+import { isLiveBootstrap } from "./src/lib/auth-secret-guard";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
 // The primary operator's aliases — additional addresses that map to the same primary account. Kept in sync
@@ -53,6 +55,7 @@ const ALLOWED = (process.env.ALLOWED_EMAILS || "")
 // Paths that never require a user identity.
 const PUBLIC_PREFIXES = [
   "/api/health",
+  "/api/live",
   "/api/ops",
   "/api/webhooks",
   "/api/csp-report",
@@ -93,6 +96,31 @@ function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) return true;
   if (AUTHJS_PUBLIC_PATHS.has(pathname)) return true;
   return pathname.startsWith("/api/auth/callback/") || pathname.startsWith("/api/auth/signin/");
+}
+
+/** Token-gated peer-read market routes. Handlers still call verifySecuritiesImportToken.
+ *  Keep this list explicit so /api/market/flatfile stays session-gated. */
+function isPeerMarketReadPath(pathname: string): boolean {
+  return (
+    pathname === "/api/market/spx" ||
+    pathname === "/api/market/quotes" ||
+    pathname.startsWith("/api/market/prices/") ||
+    pathname.startsWith("/api/market/intraday/")
+  );
+}
+
+/**
+ * The operator PAGE tree (`/admin`, `/admin/...`) — NOT the `/api/admin/*` routes, which each run
+ * their own `requireAdmin()` (and one of which, `/api/admin/securities/import`, deliberately uses a
+ * different bearer-token auth model that this gate must not pre-empt).
+ *
+ * Before this gate existed, every page under `app/admin/**` was reachable by ANY authenticated,
+ * allowlisted user: the pages are client components whose data probes 403 individually, so a
+ * non-admin saw the full admin chrome, nav and page structure and only the numbers were withheld.
+ * Gating the tree here covers all ten pages at one point, including `app/admin/page.tsx`.
+ */
+function isAdminPagePath(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
 }
 
 // --- Security response headers -------------------------------------------------
@@ -381,8 +409,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Source 3: Dev/local fallback — ONLY when auth is NOT configured.
-  if (!trustedEmail && !isAuthConfigured()) {
+  // Source 3: Dev/local fallback — ONLY when auth is NOT configured and this is not a live bootstrap.
+  if (!trustedEmail && !isAuthConfigured() && !isLiveBootstrap()) {
     trustedEmail = PRIMARY_EMAIL;
     identitySource = AUTHENTICATED_IDENTITY_SOURCES.localFallback;
   }
@@ -402,13 +430,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     // Allow unauthenticated requests with an x-admin-token or bearer token to reach the admin route handlers.
     // The middleware does NOT validate the token; the route handler's `requireAdmin()` or custom auth (like verifySecuritiesImportToken) will strictly validate it.
   } else if (
-    (pathname.startsWith("/api/market/prices/") || pathname === "/api/market/spx") &&
+    isPeerMarketReadPath(pathname) &&
     (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer ")
   ) {
     // Allow unauthenticated requests with a bearer token to reach the token-gated market READ handlers
-    // (congress.trade cache-aside price pulls). The middleware does NOT validate the token; the route
-    // handler's verifySecuritiesImportToken (APP_B_INGEST_TOKEN) strictly validates it. Deliberately
-    // scoped to these two paths only — /api/market/flatfile stays session-gated.
+    // (congress.trade cache-aside price pulls, plus the #2953 quotes/intraday peer routes). The
+    // middleware does NOT validate the token; the route handler's verifySecuritiesImportToken
+    // (APP_B_INGEST_TOKEN) strictly validates it. /api/market/flatfile stays session-gated.
   } else {
     // No verified identity and auth is configured (or armed) → FAIL CLOSED.
     return withSecurityHeaders(
@@ -416,6 +444,21 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
         ? new NextResponse("Unauthorized", { status: 401 })
         : NextResponse.redirect(new URL("/login", req.url))
     );
+  }
+
+  // --- Admin role gate for the operator page tree ---
+  //
+  // Same allowlist the route handlers use (`src/lib/auth/admin.ts` shares `isAdminEmail` from the
+  // edge-safe module imported above), so the pages and their data agree about who is an admin.
+  //
+  // Provenance: the route gate additionally rejects the auth-unconfigured `local-fallback` source,
+  // because it also serves token-scripted, cost-side-effecting backfills. This page gate accepts the
+  // identity middleware itself just resolved. That is not a weaker perimeter in production: a live
+  // boot cannot reach the fallback at all — `assertAuthSecretConfiguredInLiveBootstrap` refuses to
+  // start without a real identity source, and the Source 3 branch above is additionally guarded by
+  // `!isLiveBootstrap()`. It only preserves local development, where auth is unconfigured by design.
+  if (isAdminPagePath(pathname) && !isAdminEmail(trustedEmail)) {
+    return withSecurityHeaders(NextResponse.redirect(new URL("/access-denied", req.url)));
   }
 
   // Strip spoofable client-supplied identity hints, then forward the resolved identity + provenance.

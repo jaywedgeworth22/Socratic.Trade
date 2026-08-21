@@ -70,3 +70,62 @@ describe("console decisions index (#2556)", () => {
     expect(html).toContain("No decision traces yet.");
   });
 });
+
+/** per-account-visibility (pages-04): this index deliberately interleaves every connected
+ *  account's decisions with no per-row label -- misattributing a real-money BUY/SELL trace to
+ *  the wrong account was the exact risk the finding raised. Proves two connected accounts with
+ *  distinguishable decisions land under the right label, not silently merged. */
+describe("DecisionsList account labels (per-account-visibility, pages-04)", () => {
+  it("labels each row with its own account when more than one connected account is passed", () => {
+    const html = renderToStaticMarkup(
+      <SymbolDrawerProvider>
+        <DecisionsList
+          decisions={[
+            decisionCase({ id: "dec-live", symbol: "NVDA", connectedAccountId: "acct-live" }),
+            decisionCase({ id: "dec-paper", symbol: "AAPL", connectedAccountId: "acct-paper" })
+          ]}
+          accountLabelById={{ "acct-live": "Roth IRA Live", "acct-paper": "Paper Sandbox" }}
+        />
+      </SymbolDrawerProvider>
+    );
+    expect(html).toContain("Roth IRA Live");
+    expect(html).toContain("Paper Sandbox");
+  });
+
+  it("stays unlabeled with only one connected account (no clutter for the common case)", () => {
+    const html = renderToStaticMarkup(
+      <SymbolDrawerProvider>
+        <DecisionsList
+          decisions={[decisionCase({ connectedAccountId: "acct-only" })]}
+          accountLabelById={{ "acct-only": "Only Account" }}
+        />
+      </SymbolDrawerProvider>
+    );
+    expect(html).not.toContain("Only Account");
+  });
+
+  it("stays unlabeled when no account map is passed at all (existing single-account callers unaffected)", () => {
+    const html = renderToStaticMarkup(
+      <SymbolDrawerProvider>
+        <DecisionsList decisions={[decisionCase()]} />
+      </SymbolDrawerProvider>
+    );
+    expect(html).not.toContain("Unknown account");
+  });
+
+  it("labels a case with no connectedAccountId honestly as unknown, never silently as one specific account", () => {
+    const html = renderToStaticMarkup(
+      <SymbolDrawerProvider>
+        <DecisionsList
+          decisions={[
+            decisionCase({ id: "dec-untagged", connectedAccountId: undefined }),
+            decisionCase({ id: "dec-tagged", connectedAccountId: "acct-a" })
+          ]}
+          accountLabelById={{ "acct-a": "Account A", "acct-b": "Account B" }}
+        />
+      </SymbolDrawerProvider>
+    );
+    expect(html).toContain("Unknown account");
+    expect(html).toContain("Account A");
+  });
+});

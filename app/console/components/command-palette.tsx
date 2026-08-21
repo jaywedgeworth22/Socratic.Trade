@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { CornerDownLeft, Search } from "lucide-react";
 import { DESTINATIONS } from "./nav";
 import { hasBlockingFocusTrap, useFocusTrap } from "../ui/focus-trap";
+import { useOverlay } from "../ui/use-overlay";
 import { useConsoleTheme } from "../lib/useConsoleTheme";
 import { useNavDirtyGuard } from "../lib/useDirtyGuard";
 import { cx } from "../lib/format";
@@ -73,11 +74,13 @@ export function CommandPalette() {
   const dialogRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const optionIdPrefix = useId();
+  const overlayId = useId();
 
   // Focus moves to the search input (the first focusable), Tab stays inside the palette,
   // Escape closes it, and closing returns focus to wherever the user was — a jump-anywhere
   // affordance that dropped focus on document.body would cost keyboard users their place.
   useFocusTrap(dialogRef, open, { onEscape: () => setOpen(false) });
+  useOverlay(overlayId, open, () => setOpen(false));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -157,6 +160,17 @@ export function CommandPalette() {
           }
         }
       })),
+      {
+        id: "nav:notifications",
+        label: "Notifications",
+        hint: "Open later alerts — time, body, and whether you have read them.",
+        keywords: "notifications alerts inbox history unread alert center",
+        run: () => {
+          if (checkNav(undefined, "/console/activity?tab=alerts")) {
+            router.push("/console/activity?tab=alerts");
+          }
+        }
+      },
       {
         id: "action:run-once",
         label: "Run once strategy",

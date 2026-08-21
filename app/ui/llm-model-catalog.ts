@@ -117,13 +117,10 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
 export const CURATED_LLM_MODEL_IDS = CURATED_LLM_MODEL_GROUPS.flatMap((group) => group.options.map((option) => option.value));
 
 export const CHAT_MODEL_GROUPS: ModelGroup[] = [
+  ...CURATED_LLM_MODEL_GROUPS,
   {
-    provider: "offline",
-    label: "Offline",
-    options: [
-      { value: "mock", label: "Mock - deterministic, no key", tier: "" },
-      { value: "custom", label: "Custom Model ID...", tier: "" }
-    ]
-  },
-  ...CURATED_LLM_MODEL_GROUPS
+    provider: "openrouter",
+    label: "Other",
+    options: [{ value: "custom", label: "Custom Model ID...", tier: "" }]
+  }
 ];

@@ -1,10 +1,15 @@
+import { invalidateDashboardSnapshotCache } from "./dashboard-snapshot-cache";
 import { peekBrokerMutationLease } from "./account-mutation";
 import { describeCancelDustRisk, shouldAlertCancelDustRisk } from "./broker-minimum-guard";
 import { isWorkingOrderState } from "./broker-held-orders";
-import { audit, getPolicy } from "./db";
+import { audit, deleteBrokerProtectiveStop, getPolicy, listBrokerProtectiveStops } from "./db";
 import { getBrokerGateway } from "./broker";
 import { emitDashboardEvent } from "./events";
 import { normalizeSymbol } from "./money";
+import {
+  isAppManagedProtectiveStopClientOrderId,
+  recordOwnerCancelledProtectiveStop
+} from "./order-provenance";
 import { sendNotification } from "./notifications";
 import type { BrokerGateway, EquityOrder, ExecutedOrder, TradingPolicy } from "./types";
 
@@ -195,9 +200,61 @@ export async function cancelWorkingOrder(input: CancelWorkingOrderInput): Promis
   }
   // ADVISORY ONLY — the cancel always executes regardless of `dust`. Cancel is the operator's
   // emergency lever and must never be blocked or delayed by this warning.
-  const result = await gateway.cancelEquityOrder(policy.accountNumber, orderId);
+  //
+  // The pre-cancel read is advisory and may time out, throw, or miss a working GTC stop
+  // that is still cancellable by id.  The tracked broker_protective_stops row already
+  // has the symbol — use it so an owner cancel still writes the do-not-replace tombstone.
+  const managedStopRow = listBrokerProtectiveStops(policy.accountNumber, userId).find((row) => row.brokerOrderId === orderId);
+  const cancelledSymbol = lookup.order
+    ? normalizeSymbol(lookup.order.symbol)
+    : managedStopRow
+      ? normalizeSymbol(managedStopRow.symbol)
+      : undefined;
+  const managedStopClientOrderId = lookup.order?.clientOrderId;
+  const tombstoneSymbol =
+    cancelledSymbol
+    && (managedStopRow || isAppManagedProtectiveStopClientOrderId(managedStopClientOrderId))
+      ? cancelledSymbol
+      : undefined;
+
+  let result: ExecutedOrder;
+  try {
+    result = await gateway.cancelEquityOrder(policy.accountNumber, orderId);
+  } catch (err) {
+    // #2886 deadlines can throw after the broker already accepted the cancel.
+    // Persist the do-not-replace tombstone from owner intent; leave the tracked
+    // row so a still-live stop is not orphaned if the cancel did not land.
+    if (tombstoneSymbol) {
+      recordOwnerCancelledProtectiveStop(userId, policy.accountNumber, tombstoneSymbol);
+      audit(
+        "owner_cancelled_protective_stop",
+        {
+          accountNumber: policy.accountNumber,
+          orderId,
+          symbol: tombstoneSymbol,
+          source,
+          brokerStopRowId: managedStopRow?.id,
+          cancelError: err instanceof Error ? err.message : String(err)
+        },
+        userId,
+        policy.connectedAccountId
+      );
+    }
+    throw err;
+  }
+  if (tombstoneSymbol) {
+    recordOwnerCancelledProtectiveStop(userId, policy.accountNumber, tombstoneSymbol);
+    if (managedStopRow) deleteBrokerProtectiveStop(managedStopRow.id, userId);
+    audit(
+      "owner_cancelled_protective_stop",
+      { accountNumber: policy.accountNumber, orderId, symbol: tombstoneSymbol, source, brokerStopRowId: managedStopRow?.id },
+      userId,
+      policy.connectedAccountId
+    );
+  }
   audit("order_cancel", { accountNumber: policy.accountNumber, orderId, result, source }, userId);
   emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { orderId, action: "cancel" } });
+  invalidateDashboardSnapshotCache(userId, policy.accountNumber);
   if (dust && shouldAlertCancelDustRisk(userId, policy.accountNumber, dust.symbol)) {
     await sendNotification(
       {
@@ -208,6 +265,5 @@ export async function cancelWorkingOrder(input: CancelWorkingOrderInput): Promis
       { policy, userId }
     );
   }
-  const symbol = lookup.order ? normalizeSymbol(lookup.order.symbol) : undefined;
-  return { ...result, ...(dust ? { dustWarning: dust.warning } : {}), ...(symbol ? { symbol } : {}) };
+  return { ...result, ...(dust ? { dustWarning: dust.warning } : {}), ...(cancelledSymbol ? { symbol: cancelledSymbol } : {}) };
 }

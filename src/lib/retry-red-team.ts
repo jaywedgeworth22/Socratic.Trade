@@ -1,5 +1,5 @@
 import { audit } from "./db";
-import { getActiveConnectedAccount } from "./db-api-keys";
+import { listConnectedAccounts } from "./db-api-keys";
 import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice } from "./db-proposals";
 import { emitDashboardEvent } from "./events";
@@ -22,11 +22,26 @@ export async function retryProposalRedTeam(
   proposalId: string,
   userId: string = "local"
 ): Promise<{ ok: true; proposalId: string; verdict: TradeProposal["redTeamVerdict"] }> {
-  const policy = getPolicy(userId);
   const row = getProposal(proposalId, userId);
   if (!row) throw new RetryRedTeamError("Proposal not found.", 404);
   if (row.status !== "proposed") {
     throw new RetryRedTeamError(`Proposal is already ${row.status}.`, 409);
+  }
+  // Re-review the proposal against ITS OWN account, not whichever account the console currently has
+  // selected. A pending proposal belongs to the run that produced it; reading the active account's
+  // policy here meant a retry on account A's proposal was judged with account B's reviewer model,
+  // caps, venue and strategy prompt whenever B happened to be selected. Proposals are keyed by
+  // broker account number, so resolve that back to the connected account.
+  const accounts = listConnectedAccounts(userId);
+  const owning = accounts.filter((account) => account.accountNumber === row.accountNumber);
+  const policy = getPolicy(userId, owning.length === 1 ? owning[0].id : undefined);
+  if (accounts.length > 0 && policy.accountNumber !== row.accountNumber) {
+    // The proposal's account is no longer connected (or its number is ambiguous and the selected
+    // account is not one of them). Refuse rather than review it against a different account.
+    throw new RetryRedTeamError(
+      "This proposal belongs to an account that is no longer connected.  Reconnect that account to re-run its Red Team review.",
+      409
+    );
   }
   const proposal: TradeProposal = { ...row.proposal };
   if (proposal.side !== "buy" && proposal.side !== "short") {
@@ -70,7 +85,7 @@ export async function retryProposalRedTeam(
       model: result.model
     },
     userId,
-    policy.connectedAccountId ?? getActiveConnectedAccount(userId)?.id
+    policy.connectedAccountId
   );
   emitDashboardEvent({ type: "proposal", userId, at: new Date().toISOString() });
   return { ok: true, proposalId, verdict: proposal.redTeamVerdict };

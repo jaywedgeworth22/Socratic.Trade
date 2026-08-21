@@ -1,5 +1,6 @@
 import type { EnrichmentSources, EquityPosition, MarketQuote, NotificationEvent, NotificationEventType, NotificationStatus, OrderSide } from "./types";
 import type { SymbolMeta } from "./dashboard-feed";
+import { SUPPORTED_INDEX_UNIVERSES, indexUniverseLabel } from "./index-universes";
 import { formatQuantity } from "./money";
 
 export interface EnrichedPosition extends EquityPosition {
@@ -17,29 +18,26 @@ export interface NotificationDisplayItem {
   companyName?: string;
 }
 
+/** Scan source tags are `${IndexUniverse}-universe` (market.ts).  Keys are
+ *  lowercased because `normalizeSourceKey` never re-hyphenates camelCase ids.
+ *  Labels come from `indexUniverseLabel` so every slug — not just sp500 —
+ *  prints `S&P 500 Universe` / `Nasdaq Composite Universe`, never the id. */
+const INDEX_UNIVERSE_SOURCE_LABELS: Record<string, string> = Object.fromEntries(
+  SUPPORTED_INDEX_UNIVERSES.map((id) => [`${id.toLowerCase()}-universe`, `${indexUniverseLabel(id)} Universe`])
+);
+
 const SOURCE_LABELS: Record<string, string> = {
+  ...INDEX_UNIVERSE_SOURCE_LABELS,
   finnhub: "Finnhub",
   fmp: "FMP",
   "yahoo-finance": "Yahoo Finance",
   "yahoo-finance-delayed": "Yahoo Finance Delayed",
   "yahoo-finance-delayed-quotes": "Yahoo Finance Delayed Quotes",
+  "yahoo-finance-batch": "Yahoo Finance Batch",
+  "yahoo-finance-single": "Yahoo Finance Single",
   "yahoo-finance-synthetic": "Yahoo Finance Synthetic",
   "nasdaq-delayed-screener": "NASDAQ Delayed Screener",
   "nasdaq-delayed-screener-universe": "NASDAQ Delayed Screener Universe",
-  "sp500-universe": "S&P 500 Universe",
-  "sp100-universe": "S&P 100 Universe",
-  "nasdaq100-universe": "NASDAQ 100 Universe",
-  // The dynamic-universe source tags below are built in market.ts as `${universe}-universe`
-  // straight from the IndexUniverse config id — for the three camelCase compound ids
-  // (nasdaqComposite, nyseComposite, ftWilshire5000) that produces e.g. "nasdaqComposite-
-  // universe", which normalizeSourceKey only lowercases (never re-hyphenates) to
-  // "nasdaqcomposite-universe". A key with a hyphen between the words never matched, so these
-  // fell through to titleizeSource's raw-string fallback and rendered as "Nasdaqcomposite
-  // Universe" / "Nysecomposite Universe" / (unlabeled) "Ftwilshire5000 Universe". Keys here MUST
-  // match the id's own casing verbatim, not "properly" kebab-cased.
-  "nasdaqcomposite-universe": "NASDAQ Composite Universe",
-  "nysecomposite-universe": "NYSE Composite Universe",
-  "ftwilshire5000-universe": "FT Wilshire 5000 Universe",
   "alpaca-quotes": "Alpaca Quotes",
   "alpaca-snapshot": "Alpaca Snapshot",
   "alpaca-news": "Alpaca News",

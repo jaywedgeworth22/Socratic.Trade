@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectedAccount, TaxationType } from "@/lib/types";
-import { mergeAccountCapabilities } from "@/lib/venue-contract";
+import { mergeAccountCapabilities } from "@/lib/venue-contract-pure";
 import { activateAccount, ConsoleApiError } from "../lib/api";
 import { deriveStateInfo, realityForAccount } from "../lib/derive";
 import {
@@ -185,14 +185,20 @@ export function BrokerAccountsCard() {
   const renderAccountRow = (account: ConnectedAccount) => {
     const r = realityForAccount(account);
     const needsReconnect = rhNeedsReconnect(account);
-    const isCurrentLoaded = account.isActive;
-    const stateInfo = isCurrentLoaded && snapshot?.policy ? deriveStateInfo(snapshot.policy) : null;
+    // Every row — loaded or not — reads the SAME per-account projection the chrome.tsx
+    // account-switcher already trusts (snapshot.connectedAccountPolicies, built read-only in
+    // dashboard.ts via peekPolicy for every connected account). The scheduler runs each
+    // connected account independently of which one happens to be loaded in this browser tab, so
+    // a non-active account (e.g. a live Roth IRA) can genuinely be running Autopilot right now —
+    // this used to unconditionally chip every "Other Accounts" row "Inactive" regardless.
+    const policyForAccount = snapshot.connectedAccountPolicies?.[account.id];
+    const stateInfo = policyForAccount ? deriveStateInfo(policyForAccount) : null;
 
-    const pendingCount = isCurrentLoaded
-      ? (snapshot.pendingProposals ?? []).length
-      : (snapshot.pendingProposals ?? []).filter(
-          (p) => (p as { proposal?: { accountId?: string }; accountId?: string }).proposal?.accountId === account.id || (p as { accountId?: string }).accountId === account.id
-        ).length;
+    // A real per-account pending-proposal count. snapshot.pendingProposals is scoped
+    // server-side to the ACTIVE account only (dashboard.ts), so filtering it for another
+    // account's id could never find a match — connectedAccountPendingCounts is a dedicated
+    // per-account COUNT query that actually covers every connected account.
+    const pendingCount = snapshot.connectedAccountPendingCounts?.[account.id] ?? 0;
 
     const accountTypeWord = account.taxationType
       ? (TAXATION_WORD[account.taxationType] ?? account.taxationType)
@@ -274,8 +280,12 @@ export function BrokerAccountsCard() {
                   {stateInfo.label}
                 </Chip>
               ) : (
-                <Chip tone="muted">
-                  {account.isActive ? "Loaded" : "Inactive"}
+                // Reachable only when this account's id is genuinely missing from
+                // connectedAccountPolicies (an older-shaped cached snapshot, or a brand-new
+                // connection before the next refresh) -- never assert "Inactive" for a state we
+                // don't actually know, since the scheduler may be running this account right now.
+                <Chip tone="muted" title="This account's run state was not included in the last snapshot.">
+                  State unknown
                 </Chip>
               )}
               {pendingCount > 0 && (

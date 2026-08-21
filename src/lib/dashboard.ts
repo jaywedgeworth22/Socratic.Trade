@@ -14,6 +14,7 @@ import {
   listNotificationEvents,
   sweepAutoAcknowledgeNotifications,
   listPendingProposals,
+  countPendingProposals,
   listRecentProposals,
   listStrategyProfiles,
   listStrategyRuns,
@@ -31,7 +32,9 @@ import { getSymbolLatestPrices } from "./db-fundamentals";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
+import { isUnusableEmptyMarketScan } from "./scan-singleflight";
 import { normalizeSymbol } from "./money";
+import { isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
 import {
   calculatePnl,
   getPerformanceSummary,
@@ -43,8 +46,22 @@ import {
   type PrefetchedPnl
 } from "./performance";
 import { computeSpyBenchmarkDetailed, type SpyBenchmarkResult } from "./benchmark";
-import { getTaxSummary } from "./tax";
+import { brokerFlowOnDay } from "./broker-cash-flows";
+import { fetchAlpacaAccountActivities } from "./alpaca-account-insights";
+import { centralTradingDayKey } from "./trading-day";
+import { getTaxSummary, overlayAccountTaxationType } from "./tax";
 import { getBrokerGateway } from "./broker";
+import {
+  GET_ACCOUNTS_FIRST_MS,
+  GET_ACCOUNTS_RETRY_MS,
+  PORTFOLIO_BUNDLE_FIRST_MS,
+  PORTFOLIO_BUNDLE_RETRY_MS,
+  EQUITY_QUOTES_MS,
+  OPTION_POSITIONS_MS,
+  awaitWithFirstCallRetry,
+  getAccountsTimeoutMessage,
+  portfolioBundleTimeoutMessage
+} from "./inflight-deadline";
 import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
 import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
@@ -67,6 +84,11 @@ import {
   dashboardSnapshotCacheKey,
   getOrComputeDashboardSnapshot
 } from "./dashboard-snapshot-cache";
+import {
+  collectSnapshotQuoteSymbols,
+  projectMarketScanForClient,
+  projectOrdersForClientSnapshot
+} from "./dashboard-snapshot-projection";
 
 export {
   DASHBOARD_SNAPSHOT_TTL_MS,
@@ -110,8 +132,11 @@ const BLANK_MACRO_FALLBACK: MacroData = {
  * IPv6-blackhole failure mode — see docs/rollouts/2026-07-06-api-health-timeouts.md) can never block
  * the whole dashboard snapshot indefinitely. Does NOT abort the underlying promise — it keeps
  * running in the background and its eventual resolution/rejection is simply ignored once the
- * deadline has already produced a fallback. Existing `.catch(...)` fallbacks in this file still
- * handle real rejections; this only guards against a promise that never settles at all.
+ * deadline has already produced a fallback.  Live 581467e1: alpaca-broker logged ok at
+ * 6570–6600ms after `gateway.getAccounts timed out after 6000ms — serving degraded snapshot`
+ * and `Failed to fetch accounts`.  That is the race — the SDK finished after the abort.
+ * Existing `.catch(...)` fallbacks in this file still handle real rejections; this only guards
+ * against a promise that never settles at all.
  */
 function withDeadline<T>(
   promise: Promise<T>,
@@ -353,6 +378,13 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
       ];
     })
   );
+  // Real per-account pending-proposal counts, not just the active account's — the scheduler runs
+  // every connected account independently of which one is loaded, so a non-active account can
+  // genuinely have proposals waiting. A COUNT query, not listPendingProposals, to avoid parsing
+  // full proposal/decision JSON blobs for every connected account on every snapshot.
+  const connectedAccountPendingCounts = Object.fromEntries(
+    connectedAccounts.map((account) => [account.id, account.accountNumber ? countPendingProposals(account.accountNumber, userId) : 0])
+  );
   const accountLabelById = Object.fromEntries(connectedAccounts.map((account) => [account.id, account.label || account.broker]));
   // An account is an account: with none connected there is no broker to call. Skip the gateway
   // entirely rather than falling back to any local/simulated broker — the snapshot still renders,
@@ -401,15 +433,22 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     const accountsPromise = (async () => {
       if (!gateway) return [];
       try {
-        return await withDeadline(
-          gateway.getAccounts(),
-          6000,
-          () => {
-            handleAccountsReadFailure("Timed out waiting for gateway.getAccounts after 6000ms.");
-            return [];
-          },
-          "gateway.getAccounts",
-          timedOutSections
+        // Live alpaca-broker p95 is above 6s (191/500 ≥6s, max 14s) on the same
+        // in-process event loop that ftsMirrorSlice can pin for 6–12s.  First wait
+        // is 16s; a pending call starts one retry.  A credential / 401 throw still
+        // fails immediately.
+        return await awaitWithFirstCallRetry(
+          () => gateway.getAccounts(),
+          {
+            firstMs: GET_ACCOUNTS_FIRST_MS,
+            retryMs: GET_ACCOUNTS_RETRY_MS,
+            onFinalTimeout: () => {
+              handleAccountsReadFailure(getAccountsTimeoutMessage());
+              return [];
+            },
+            label: "gateway.getAccounts",
+            timedOutSections
+          }
         );
       } catch (error) {
         handleAccountsReadFailure(messageFromUnknownError(error));
@@ -460,19 +499,23 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
 
       if (targetAccountNumber && gateway) {
         try {
-          [portfolio, positions, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
-            Promise.all([
-              gateway.getPortfolio(targetAccountNumber),
-              gateway.getEquityPositions(targetAccountNumber),
-              gateway.getEquityOrders(targetAccountNumber)
-            ]),
-            8000,
-            () => {
-              handlePortfolioReadFailure(targetAccountNumber as string, "Timed out waiting for portfolio, positions, and orders after 8000ms.");
-              return [undefined, [], []];
-            },
-            "portfolio/positions/orders",
-            timedOutSections
+          [portfolio, positions, orders] = await awaitWithFirstCallRetry<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
+            () =>
+              Promise.all([
+                gateway.getPortfolio(targetAccountNumber),
+                gateway.getEquityPositions(targetAccountNumber),
+                gateway.getEquityOrders(targetAccountNumber)
+              ]),
+            {
+              firstMs: PORTFOLIO_BUNDLE_FIRST_MS,
+              retryMs: PORTFOLIO_BUNDLE_RETRY_MS,
+              onFinalTimeout: () => {
+                handlePortfolioReadFailure(targetAccountNumber as string, portfolioBundleTimeoutMessage());
+                return [undefined, [], []];
+              },
+              label: "portfolio/positions/orders",
+              timedOutSections
+            }
           );
         } catch (error) {
           handlePortfolioReadFailure(targetAccountNumber, messageFromUnknownError(error));
@@ -482,7 +525,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
           try {
             options = await withDeadline<OptionPosition[]>(
               gateway.getOptionPositions(targetAccountNumber),
-              8000,
+              OPTION_POSITIONS_MS,
               () => [],
               "gateway.getOptionPositions",
               timedOutSections
@@ -502,7 +545,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
           const quotes: Record<string, BrokerQuote> = priceSymbols.length > 0
             ? await withDeadline(
                 gateway.getEquityQuotes(targetAccountNumber, priceSymbols),
-                6000,
+                EQUITY_QUOTES_MS,
                 () => ({}),
                 "gateway.getEquityQuotes",
                 timedOutSections
@@ -641,13 +684,15 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     ? dailyExecutionStats(accountNumber, new Date(), userId)
     : { orderCount: 0, openingOrderCount: 0, notional: 0 };
 
-  // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse)
+  // Fetch live + paper fills ONCE per request (each is a whole-ledger SELECT + JSON.parse)
   // and thread the parsed arrays into every downstream consumer — performance summary, scorecards,
   // tax, and the unified feed — instead of each re-issuing its own query.
   // C2: also run FIFO P&L ONCE per fill source and thread closed/open lots into scorecards/tax
-  // so we do not re-walk up to 1000 fills 4–5× per snapshot.
-  const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", 500, userId) : [];
-  const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", 500, userId) : [];
+  // so we do not re-walk the ledger 4–5× per snapshot.
+  // Unbounded on purpose: these arrays feed FIFO lot replay, which needs the COMPLETE ledger —
+  // see listFillEvents in db-fills.ts. Any display window is taken from the tail downstream.
+  const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", undefined, userId) : [];
+  const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", undefined, userId) : [];
   const prefetchedFills: PrefetchedFills = { liveFills, paperFills };
   const prefetchedPnl: PrefetchedPnl | undefined = accountNumber
     ? {
@@ -690,8 +735,27 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     // Same-source fills let the benchmark infer deposits/withdrawals (cash delta minus trade
     // cash) so the account return line is time-weighted instead of counting transfers as P&L.
     const benchmarkFills = scorecardSource === "live" ? liveFills : paperFills;
+    const brokerActivities =
+      activeAccount?.broker === "alpaca"
+        ? await withDeadline(
+            fetchAlpacaAccountActivities(userId, {
+              activityTypes: ["CSD", "CSW", "ACATS", "JNLC", "INT", "DIV", "DIVNRA", "DIVTX", "FEE"]
+            }),
+            4000,
+            () => [],
+            "fetchAlpacaAccountActivities",
+            timedOutSections
+          )
+        : [];
+    const todayKey = centralTradingDayKey(new Date());
+    if (brokerActivities.length > 0) {
+      performance.dayPnlHints = {
+        todayBrokerFlow: brokerFlowOnDay(brokerActivities, todayKey),
+        cashFlowSource: "broker"
+      };
+    }
     const benchmarkResult = await withDeadline<SpyBenchmarkResult>(
-      computeSpyBenchmarkDetailed(tippedCurve, userId, Date.now(), benchmarkFills).catch((error) => ({
+      computeSpyBenchmarkDetailed(tippedCurve, userId, Date.now(), benchmarkFills, brokerActivities).catch((error) => ({
         comparison: null,
         unavailable: { reason: "fetch-failed" as const, detail: messageFromUnknownError(error).slice(0, 200) }
       })),
@@ -757,7 +821,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         accountNumber,
         scorecardSource,
         currentPrices,
-        { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType },
+        overlayAccountTaxationType(policy.taxSettings, activeAccount?.taxationType),
         new Date(),
         userId,
         prefetchedFills,
@@ -785,13 +849,18 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     : undefined) ?? latestAuditByKind("market_scan", userId);
   
   const standaloneScanPayload = latestScanAudit?.payload as { scan?: MarketScan } | undefined;
-  const standaloneScan = standaloneScanPayload?.scan
+  const standaloneScanRaw = standaloneScanPayload?.scan
     ? { ...standaloneScanPayload.scan, createdAt: latestScanAudit!.createdAt }
     : undefined;
+  // Abort/empty 200s (d0359642: 505 scanned, 0 quotes) must not replace last-good.
+  const standaloneScan = standaloneScanRaw && !isUnusableEmptyMarketScan(standaloneScanRaw)
+    ? standaloneScanRaw
+    : undefined;
 
-  const runScan = latestStrategyRun?.marketScan
+  const runScanRaw = latestStrategyRun?.marketScan
     ? { ...(latestStrategyRun.marketScan as MarketScan), createdAt: latestStrategyRun.createdAt }
     : undefined;
+  const runScan = runScanRaw && !isUnusableEmptyMarketScan(runScanRaw) ? runScanRaw : undefined;
 
   let newestScan = runScan;
   if (standaloneScan) {
@@ -1002,11 +1071,20 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         ? proposalCurrentPrice(item.proposal.symbol)
         : undefined;
       const pct = returnSinceProposalPct(item.proposal.referencePrice, current, item.proposal.side);
+      const scanQuote = scanQuotes?.[normalizeSymbol(item.proposal.symbol)];
+      const decision = "decision" in item ? (item as { decision?: { quoteStale?: { delayedFallback?: boolean } } }).decision : undefined;
+      const delayedFallback =
+        item.proposal.quoteDelayedFallback === true ||
+        decision?.quoteStale?.delayedFallback === true ||
+        isDelayedYahooFallbackQuote(scanQuote);
+      const quoteProvider = item.proposal.quoteProvider ?? scanQuote?.provider;
       return {
         ...item,
         ...(pct != null ? { performanceSinceProposalPct: pct } : {}),
         ...(reference != null ? { proposalReferencePrice: reference } : {}),
-        ...(current != null ? { proposalCurrentPrice: current } : {})
+        ...(current != null ? { proposalCurrentPrice: current } : {}),
+        ...(delayedFallback ? { delayedFallback: true } : {}),
+        ...(quoteProvider ? { quoteProvider } : {})
       };
     });
   const recentProposalsWithPerf = withProposalPerf(recentProposals);
@@ -1029,13 +1107,21 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     accountLabelById,
     getProposalById
   });
-  const clientAudit = audit.map((event) => ({
-    id: event.id,
-    createdAt: event.createdAt,
-    kind: event.kind,
-    payload: asRec(event.payload),
-    connectedAccountId: event.connectedAccountId
-  }));
+  const referencedQuoteSymbols = collectSnapshotQuoteSymbols({
+    positions,
+    orders,
+    pendingProposals: pendingProposalsWithPerf,
+    recentProposals: recentProposalsWithPerf,
+    scan: newestScan
+  });
+  const clientLatestScan = projectMarketScanForClient(newestScan, referencedQuoteSymbols);
+  const clientLatestStrategyRun = latestStrategyRun?.marketScan
+    ? {
+        ...latestStrategyRun,
+        marketScan: projectMarketScanForClient(latestStrategyRun.marketScan as MarketScan, referencedQuoteSymbols)
+      }
+    : latestStrategyRun;
+  const clientOrders = projectOrdersForClientSnapshot(orders);
 
   // One summary log per request — only when it's actually slow or something degraded, so normal
   // requests stay quiet. `timedOutSections` is populated by withDeadline(...) above whenever an
@@ -1066,19 +1152,19 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     accountReadiness,
     connectedAccounts,
     connectedAccountPolicies,
+    connectedAccountPendingCounts,
     portfolio: displayPortfolio,
     portfolioReadError,
     positions: displayPositions,
     options,
     symbolMetaBySymbol,
     stopPlanBySymbol,
-    orders,
+    orders: clientOrders,
     orderPriceFallbacks,
-    audit: clientAudit,
     auditFeed,
     unifiedFeed,
-    latestStrategyRun,
-    latestScan: newestScan,
+    latestStrategyRun: clientLatestStrategyRun,
+    latestScan: clientLatestScan,
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId, policy.connectedAccountId),
     pendingProposals: pendingProposalsWithPerf,

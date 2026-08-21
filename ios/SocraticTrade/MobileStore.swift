@@ -76,6 +76,7 @@ enum ProposalActionFeedback: Equatable {
     case pending(action: ProposalAction, status: String)
     case failed(action: ProposalAction, message: String)
     case succeeded(action: ProposalAction)
+    case placementSettled(action: ProposalAction, status: String, reasons: [String]?)
 
     enum ProposalAction: String, Equatable {
         case approve
@@ -84,7 +85,8 @@ enum ProposalActionFeedback: Equatable {
 
     var action: ProposalAction {
         switch self {
-        case .sending(let action), .pending(let action, _), .failed(let action, _), .succeeded(let action):
+        case .sending(let action), .pending(let action, _), .failed(let action, _), .succeeded(let action),
+             .placementSettled(let action, _, _):
             return action
         }
     }
@@ -92,13 +94,20 @@ enum ProposalActionFeedback: Equatable {
     var isInFlight: Bool {
         switch self {
         case .sending, .pending: return true
-        case .failed, .succeeded: return false
+        case .failed, .succeeded, .placementSettled: return false
         }
     }
 
     var isSettledSuccess: Bool {
-        if case .succeeded = self { return true }
-        return false
+        switch self {
+        case .succeeded:
+            return true
+        case .placementSettled(let action, let status, _):
+            guard action == .approve else { return true }
+            return status == "filled" || status == "placed" || status == "paper"
+        default:
+            return false
+        }
     }
 }
 
@@ -106,6 +115,7 @@ enum ProposalActionFeedback: Equatable {
 final class MobileStore: ObservableObject {
     @Published private(set) var snapshot: MobileSnapshot?
     @Published var error: String?
+    @Published var successMessage: String?
     @Published private(set) var isAuthenticated = false
     @Published private(set) var hasInitialized = false
     @Published private(set) var isRefreshing = false
@@ -118,6 +128,7 @@ final class MobileStore: ObservableObject {
     @Published private(set) var pendingAccountId: String?
     @Published private(set) var deletionRequest: AccountDeletionRequest?
     @Published private(set) var isDeletingAccount = false
+    @Published private(set) var isAcceptingConsent = false
     @Published private(set) var isSigningIn = false
     @Published private(set) var snapshotLoadFailed = false
     /// proposalId → queued command id so cards can follow approve/reject through recentCommands.
@@ -133,14 +144,22 @@ final class MobileStore: ObservableObject {
     private var commandAttemptTracker = CommandAttemptTracker()
 
     private static let cacheKey = "cached_mobile_snapshot_data"
+    private static let cacheTimestampKey = "cached_mobile_snapshot_saved_at"
 
     private static func loadCachedSnapshot() -> MobileSnapshot? {
         guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
         return try? JSONDecoder().decode(MobileSnapshot.self, from: data)
     }
 
+    private static func loadCachedSnapshotSavedAt() -> Date? {
+        let interval = UserDefaults.standard.double(forKey: cacheTimestampKey)
+        guard interval > 0 else { return nil }
+        return Date(timeIntervalSince1970: interval)
+    }
+
     private static func saveCachedSnapshot(_ data: Data) {
         UserDefaults.standard.set(data, forKey: cacheKey)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: cacheTimestampKey)
     }
 
     init(client: MobileAPIClient, previewSnapshot: MobileSnapshot? = nil) {
@@ -149,7 +168,13 @@ final class MobileStore: ObservableObject {
         snapshot = cached
         isAuthenticated = cached != nil
         hasInitialized = previewSnapshot != nil
-        lastUpdatedAt = cached == nil ? nil : Date()
+        if cached == nil {
+            lastUpdatedAt = nil
+        } else if previewSnapshot != nil {
+            lastUpdatedAt = Date()
+        } else {
+            lastUpdatedAt = Self.loadCachedSnapshotSavedAt()
+        }
     }
 
     var isInitialLoading: Bool {
@@ -205,16 +230,36 @@ final class MobileStore: ObservableObject {
         case "queued", "running":
             return .pending(action: action, status: command.status)
         case "failed":
+            if action == .approve, let result = command.result {
+                return approvePlacementFeedback(action: action, result: result, fallback: command.error)
+            }
             let detail = command.error?.trimmingCharacters(in: .whitespacesAndNewlines)
             let message = (detail?.isEmpty == false)
                 ? detail!
                 : "Command failed — check Activity for details."
             return .failed(action: action, message: message)
         case "succeeded":
+            if action == .approve, let result = command.result {
+                return approvePlacementFeedback(action: action, result: result, fallback: nil)
+            }
             return .succeeded(action: action)
         default:
             return nil
         }
+    }
+
+    private func approvePlacementFeedback(
+        action: ProposalActionFeedback.ProposalAction,
+        result: MobileCommandResult,
+        fallback: String?
+    ) -> ProposalActionFeedback {
+        let status = result.status ?? "error"
+        let reasons = result.reasons
+        if let fallback = fallback?.trimmingCharacters(in: .whitespacesAndNewlines), !fallback.isEmpty,
+           reasons?.isEmpty != false {
+            return .placementSettled(action: action, status: status, reasons: [fallback])
+        }
+        return .placementSettled(action: action, status: status, reasons: reasons)
     }
 
     func isSnapshotStale(at now: Date = Date()) -> Bool {
@@ -279,6 +324,7 @@ final class MobileStore: ObservableObject {
                 hasInitialized = true
             }
         }
+        let wasLoadFailed = snapshotLoadFailed
         do {
             let timeout: TimeInterval = pendingAccountId == nil ? 30 : 45
             let (loadedSnapshot, rawData) = try await client.snapshotData(timeout: timeout)
@@ -288,7 +334,9 @@ final class MobileStore: ObservableObject {
             lastUpdatedAt = Date()
             snapshotLoadFailed = false
             isAuthenticated = true
-            error = nil
+            if wasLoadFailed {
+                error = nil
+            }
             if let pendingAccountId,
                loadedSnapshot.connectedAccounts.contains(where: { $0.id == pendingAccountId && $0.isActive == true })
                 || loadedSnapshot.readiness.activeConnectedAccount?.id == pendingAccountId {
@@ -499,6 +547,43 @@ final class MobileStore: ObservableObject {
         try await client.patchSourceFeatures(settings)
     }
 
+    func fetchLlmBudget() async throws -> LlmBudgetResponse {
+        try await client.llmBudget()
+    }
+
+    func patchLlmBudget(_ body: [String: Any]) async throws -> LlmBudgetResponse {
+        try await client.patchLlmBudget(body)
+    }
+
+    var needsAppConsent: Bool {
+        snapshot?.readiness.requiresAppConsent == true
+    }
+
+    func acceptAppConsent() async {
+        guard !isAcceptingConsent else { return }
+        isAcceptingConsent = true
+        defer { isAcceptingConsent = false }
+        do {
+            try await client.acceptAppConsent()
+            error = nil
+            await load()
+        } catch {
+            applyAuthAwareError(error)
+        }
+    }
+
+    func acknowledgeNotifications(ids: [String]) async {
+        let unique = Array(Set(ids.filter { !$0.isEmpty }))
+        guard !unique.isEmpty else { return }
+        do {
+            _ = try await client.acknowledgeNotifications(ids: unique)
+            error = nil
+            await load()
+        } catch {
+            applyAuthAwareError(error)
+        }
+    }
+
     func loadAccountDeletionPreview() async {
         guard !isDeletingAccount else { return }
         isDeletingAccount = true
@@ -576,6 +661,10 @@ final class MobileStore: ObservableObject {
         error = nil
     }
 
+    func dismissSuccess() {
+        successMessage = nil
+    }
+
     /// Re-register this device's APNs token under the session that just began.
     ///
     /// Registration is otherwise only attempted at cold start, for a session that was ALREADY
@@ -607,6 +696,8 @@ final class MobileStore: ObservableObject {
         for cookie in HTTPCookieStorage.shared.cookies ?? [] where client.ownsCookie(cookie) {
             HTTPCookieStorage.shared.deleteCookie(cookie)
         }
+        UserDefaults.standard.removeObject(forKey: Self.cacheKey)
+        UserDefaults.standard.removeObject(forKey: Self.cacheTimestampKey)
         loadGeneration &+= 1
         snapshot = nil
         lastUpdatedAt = nil
@@ -621,6 +712,7 @@ final class MobileStore: ObservableObject {
         isAuthenticated = false
         hasInitialized = true
         error = nil
+        successMessage = nil
     }
 
     private func scheduleReload() {
@@ -643,6 +735,11 @@ final class MobileStore: ObservableObject {
         let resolutions = commandAttemptTracker.reconcile(commands)
         for resolution in resolutions {
             busyOperations.remove(resolution.operationID)
+            if resolution.status == "succeeded",
+               resolution.operationID.hasPrefix(PolicyTightening.commandType) {
+                successMessage = "Guardrails updated."
+                continue
+            }
             guard resolution.status == "failed" || resolution.status == "cancelled" else { continue }
             let detail = resolution.error?.trimmingCharacters(in: .whitespacesAndNewlines)
             error = detail?.isEmpty == false
@@ -669,7 +766,7 @@ final class MobileStore: ObservableObject {
     private func shouldReleaseCommandAttempt(after error: Error) -> Bool {
         guard let apiError = error as? MobileAPIError else { return false }
         switch apiError {
-        case .serverError, .unauthorized:
+        case .serverError, .unauthorized, .scanQuotesUnavailable:
             return true
         case .network, .decoding:
             return false
@@ -678,14 +775,14 @@ final class MobileStore: ObservableObject {
 
     private func unavailableMessage(for commandType: String) -> String {
         if !serverAdvertises(commandType) {
-            return "This server build does not offer \(AppFormat.commandLabel(commandType)).  Use the web console for it."
+            return "This version cannot run \(AppFormat.commandLabel(commandType)) yet."
         }
         if Self.readinessDependentCommands.contains(commandType),
            let snapshot,
            !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
             return "Connect an account and configure a symbol universe before running the agent."
         }
-        return "Refresh the latest server state before submitting this action.  Stop remains available."
+        return "Pull to refresh, then try again.  Stop remains available."
     }
 
     private static let protectiveCommands: Set<String> = [

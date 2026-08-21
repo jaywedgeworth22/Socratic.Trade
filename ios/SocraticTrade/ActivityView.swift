@@ -1,10 +1,19 @@
 import SwiftUI
 
 struct ActivityView: View {
+    @EnvironmentObject private var store: MobileStore
     @State private var presentedItem: PresentedMarketItem?
+    @State private var notificationFilter: NotificationHistoryFilter = .unread
 
     var body: some View {
         SnapshotScaffold { snapshot in
+            NotificationHistorySection(
+                snapshot: snapshot,
+                filter: $notificationFilter,
+                markRead: { ids in
+                    await store.acknowledgeNotifications(ids: ids)
+                }
+            )
             DailyActivityCard(snapshot: snapshot)
             SchedulerActivityCard(snapshot: snapshot)
             FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedItem: $presentedItem)
@@ -18,12 +27,180 @@ struct ActivityView: View {
     }
 }
 
+private enum NotificationHistoryFilter: String, CaseIterable, Identifiable {
+    case unread = "Unread"
+    case all = "All"
+
+    var id: String { rawValue }
+}
+
+private struct NotificationHistorySection: View {
+    let snapshot: MobileSnapshot
+    @Binding var filter: NotificationHistoryFilter
+    let markRead: ([String]) async -> Void
+
+    @State private var ackingIds: Set<String> = []
+
+    private var activeAccountId: String? {
+        snapshot.readiness.activeConnectedAccount?.id ?? snapshot.policy.connectedAccountId
+    }
+
+    private var scoped: [NotificationHistoryItem] {
+        snapshot.inScopeNotifications(activeAccountId: activeAccountId)
+    }
+
+    private var visible: [NotificationHistoryItem] {
+        let rows = filter == .unread ? scoped.filter { !$0.read } : scoped
+        return Array(rows.prefix(40))
+    }
+
+    private var unreadCount: Int {
+        scoped.filter { !$0.read }.count
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            SectionHeading(
+                "Notifications",
+                subtitle: "Alerts you can open later.  Refresh still shows them."
+            )
+            filterRow
+            if visible.isEmpty {
+                EmptyStateCard(
+                    title: filter == .unread ? "No Unread Notifications" : "No Notifications Yet",
+                    message: filter == .unread
+                        ? "Nothing unread for this account.  Switch to All to see earlier alerts."
+                        : "Fills, blocks, and run alerts will appear here after they are sent.",
+                    systemImage: "bell"
+                )
+            } else {
+                ForEach(visible) { item in
+                    NotificationHistoryRow(
+                        item: item,
+                        acking: ackingIds.contains(item.id),
+                        markRead: { await markOne(item) }
+                    )
+                }
+            }
+        }
+    }
+
+    private var filterRow: some View {
+        HStack(spacing: 8) {
+            ForEach(NotificationHistoryFilter.allCases) { option in
+                Button {
+                    filter = option
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(option.rawValue)
+                        if option == .unread {
+                            Text("\(unreadCount)")
+                                .font(.appCaption2.weight(.bold))
+                        }
+                    }
+                    .font(.appCaption.weight(filter == option ? .bold : .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 36)
+                    .background(
+                        filter == option ? AppPalette.accent.opacity(0.14) : Color.clear,
+                        in: Capsule()
+                    )
+                    .foregroundStyle(filter == option ? AppPalette.accent : .secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(filter == option ? .isSelected : [])
+            }
+            Spacer()
+            if unreadCount > 0 {
+                Button("Mark All Read") {
+                    Task { await markAllVisibleUnread() }
+                }
+                .font(.appCaption.weight(.semibold))
+                .disabled(!ackingIds.isEmpty)
+            }
+        }
+    }
+
+    private func markOne(_ item: NotificationHistoryItem) async {
+        guard !item.read else { return }
+        ackingIds.insert(item.id)
+        defer { ackingIds.remove(item.id) }
+        await markRead([item.id])
+    }
+
+    private func markAllVisibleUnread() async {
+        let ids = visible.filter { !$0.read }.map(\.id)
+        guard !ids.isEmpty else { return }
+        ackingIds.formUnion(ids)
+        defer { ackingIds.subtract(ids) }
+        await markRead(ids)
+    }
+}
+
+private struct NotificationHistoryRow: View {
+    let item: NotificationHistoryItem
+    let acking: Bool
+    let markRead: () async -> Void
+
+    var body: some View {
+        AppCard(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.appHeadline)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    StatusPill(
+                        item.readLabel,
+                        color: item.read ? .secondary : AppPalette.accent,
+                        systemImage: item.read ? "envelope.open" : "envelope.badge"
+                    )
+                }
+                if !item.body.isEmpty {
+                    Text(item.body)
+                        .font(.appSubheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Text(AppFormat.dateTime(item.createdAt))
+                        .font(.appFootnote)
+                        .foregroundStyle(.secondary)
+                    if let account = item.accountLabel, !account.isEmpty {
+                        Text(account)
+                            .font(.appFootnote)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    if !item.read {
+                        Button {
+                            Task { await markRead() }
+                        } label: {
+                            if acking {
+                                ProgressView()
+                            } else {
+                                Text("Mark as Read")
+                            }
+                        }
+                        .font(.appCaption.weight(.semibold))
+                        .disabled(acking)
+                        .accessibilityLabel("Mark as Read")
+                    }
+                }
+            }
+        }
+        .opacity(item.read ? 0.72 : 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.title), \(item.readLabel), \(AppFormat.dateTime(item.createdAt))")
+    }
+}
+
 private struct DailyActivityCard: View {
     let snapshot: MobileSnapshot
 
     var body: some View {
         VStack(spacing: 10) {
-            SectionHeading("Today", subtitle: "America/New_York trading-day boundary")
+            SectionHeading("Today", subtitle: "this trading day (New York)")
             LazyVGrid(columns: columns, spacing: 10) {
                 MetricTile(title: "All orders", value: "\(snapshot.dailyStats.orderCount)")
                 MetricTile(title: "Opening orders", value: "\(snapshot.dailyStats.openingOrderCount)")
@@ -33,7 +210,7 @@ private struct DailyActivityCard: View {
                     detail: dailyNotionalDetail(snapshot)
                 )
                 MetricTile(
-                    title: "Command backlog",
+                    title: "In Progress",
                     value: "\(snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running)",
                     detail: "\(snapshot.readiness.commandBacklog.queued) queued · \(snapshot.readiness.commandBacklog.running) running"
                 )
@@ -157,12 +334,12 @@ private struct CommandActivitySection: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SectionHeading("Commands", subtitle: "Audited mobile command history")
+            SectionHeading("Recent Actions", subtitle: "what you asked this app to do")
             if commands.isEmpty {
                 EmptyStateCard(
-                    title: "No mobile commands",
-                    message: "Commands submitted from this app or the mobile web surface will appear here.",
-                    systemImage: "terminal"
+                    title: "No Recent Actions",
+                    message: "Actions you take here will show up here.",
+                    systemImage: "list.bullet"
                 )
             } else {
                 ForEach(commands) { command in
@@ -199,13 +376,6 @@ private struct CommandActivityRow: View {
                         .font(.appFootnote)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(command.id.prefix(8)))
-                        // Deliberately NOT Lato: this row is column-aligned figures, and Lato
-                        // ships no monospaced face, so `.monospaced()` on it would silently
-                        // drop back to proportional and break the alignment this line exists
-                        // for.  The system mono face stays.
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
                 }
                 if let error = command.error, !error.isEmpty {
                     Label(error, systemImage: "exclamationmark.triangle")

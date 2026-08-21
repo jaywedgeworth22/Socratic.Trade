@@ -384,6 +384,29 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     expect(listFillEventsByProposalId(proposalId, userId)).toHaveLength(0);
   });
 
+  it("HTTP 409 + order PRESENT (live) → placed via reconcile, not rejected_by_broker", async () => {
+    const userId = `reco-409-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    placeEquityOrder.mockImplementation(async (input: { refId: string }) => {
+      capturedRefId = input.refId;
+      placementAttempted = true;
+      throw new Error("Alpaca order failed: HTTP 409 — client_order_id already exists");
+    });
+    getEquityOrders.mockImplementation(async () => {
+      if (!placementAttempted) return [];
+      return [brokerOrder({ clientOrderId: capturedRefId, state: "accepted" })];
+    });
+
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, listFillEventsByProposalId } = await import("../src/lib/db");
+
+    const result = await executeProposal(proposalId, userId);
+    expect(result.status).toBe("placed");
+    expect(result.orderId).toBeTruthy();
+    expect(getProposal(proposalId, userId)?.status).toBe("placed");
+    expect(listFillEventsByProposalId(proposalId, userId).length).toBe(1);
+  });
+
   it("throw + order PRESENT (declined) → rejected_by_broker, decline alert, NO fill", async () => {
     const userId = `reco-declined-${randomUUID()}`;
     const proposalId = await seedApprovedProposal(userId);

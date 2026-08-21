@@ -82,6 +82,25 @@ describe("getCongressTradeClient wrapper", () => {
     }));
   });
 
+  it("throws on 502 so gather can fail-open the rest of the batch", async () => {
+    const fetchSpy = vi.fn(async () => new Response("Bad Gateway", { status: 502 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const client = getCongressTradeClient();
+    await expect(client.getSpx()).rejects.toThrow(/HTTP 502/);
+  });
+
+  it("does not rewrite a 404 into a latching 5xx", async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ closes: [] }), { status: 404 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const client = getCongressTradeClient();
+    try {
+      await client.getSpx();
+    } catch (err) {
+      expect(err instanceof Error ? err.message : String(err)).not.toMatch(/HTTP 429|HTTP 50[0-9]/);
+    }
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
   it("logs api health and throws on non-2xx", async () => {
     const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => new Response("Internal Server Error", { status: 500 }));
     vi.stubGlobal("fetch", fetchSpy);

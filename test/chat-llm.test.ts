@@ -89,6 +89,15 @@ describe("OpenAILLM — ChatLLM contract", () => {
     expect(apiKey).toBe("sk-my-key");
   });
 
+  it("passes abortSignal as the third argument to transport", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);
+    const controller = new AbortController();
+    await llm.run({ ...baseArgs, abortSignal: controller.signal });
+
+    expect(transport.mock.calls[0][2]).toBe(controller.signal);
+  });
+
   it("includes OpenAI tools array when tool schemas are provided", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
     const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport);

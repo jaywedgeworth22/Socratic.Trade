@@ -21,7 +21,11 @@ enum AppFormat {
         "strategy.run_once": "Run Once",
         "strategy.start": "Start Agent",
         "strategy.stop": "Stop Agent",
-        "strategy.close_only": "Close Only",
+        // Deliberately Title Case and NOT the state word "Exit-only": these are COMMAND
+        // names, exactly like "Wind Down" below, whose state word is "Winding down".
+        // Do not "unify" this with RunStateWord.exitOnly — the HomeView button of the
+        // same name reads from this map, and the two forms are different parts of speech.
+        "strategy.close_only": "Exit Only",
         "strategy.liquidating": "Wind Down",
         "proposal.approve": "Approve Proposal",
         "proposal.reject": "Reject Proposal",
@@ -32,8 +36,7 @@ enum AppFormat {
         "watchlist.remove": "Remove from Watchlist",
         "alert.create": "Create Alert",
         "alert.delete": "Delete Alert",
-        // Neutral wording on purpose: the phone only tightens, but the same command type
-        // arrives from the web console in either direction, and Activity shows both.
+        // Neutral wording: the phone now edits in either direction, and Activity shows both.
         "policy.patch": "Policy Change"
     ]
 
@@ -91,11 +94,13 @@ enum AppFormat {
         return date.formatted(.relative(presentation: .named))
     }
 
-    /// Authority glossary: never show raw propose/decide — Ask-First / Autopilot (console parity).
-    /// Title-ish for chips/status next to headings; settings *values* use `strategyAuthorityValue`.
+    /// Authority glossary: never show raw propose/decide — Ask-first / Autopilot (console parity).
+    /// This renders mid-sentence and inside status pills — both VALUE contexts, so it is
+    /// sentence case, matching web `labels.ts` and its siblings "Exit-only" / "Winding down".
+    /// Settings *values* use `strategyAuthorityValue`.
     static func strategyAuthorityLabel(_ value: String?) -> String {
         switch value?.lowercased() {
-        case "propose": return "Ask-First"
+        case "propose": return "Ask-first"
         case "decide": return "Autopilot"
         case .none, .some(""): return "—"
         case .some(let raw): return raw.replacingOccurrences(of: "_", with: " ").capitalized
@@ -195,6 +200,74 @@ enum AppFormat {
             .split(separator: " ")
             .map { $0.capitalized }
             .joined(separator: " ")
+    }
+
+    /// Mirrors web `approval-card.tsx` placement toasts — same status strings, honest copy.
+    static func placementApproveMessage(status: String, reasons: [String]?) -> String {
+        let detail = reasons?
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let detail, !detail.isEmpty,
+           status == "blocked" || status == "busy" || status == "not_placed" || status == "error" {
+            return detail
+        }
+        switch status {
+        case "filled":
+            return "Order filled — waiting for desk refresh."
+        case "placed":
+            return "Order placed — waiting for desk refresh."
+        case "paper":
+            return "Paper trade filled — waiting for desk refresh."
+        case "blocked":
+            return detail ?? "Blocked at approval time."
+        case "busy":
+            return detail ?? "Approval is still busy — wait for the run to finish, then approve again."
+        case "not_placed":
+            return detail ?? "Order not placed — safe to retry."
+        default:
+            return detail ?? placementStatusLabel(status)
+        }
+    }
+
+    static func placementStatusLabel(_ status: String) -> String {
+        switch status.lowercased() {
+        case "filled": return "Filled"
+        case "placed": return "Placed"
+        case "paper": return "Paper trade"
+        case "blocked": return "Blocked"
+        case "busy": return "Busy"
+        case "not_placed": return "Not placed — safe to retry"
+        case "error": return "Placement failed"
+        case "rejected", "rejected_by_broker": return "Rejected by broker"
+        default:
+            return status
+                .replacingOccurrences(of: "_", with: " ")
+                .split(separator: " ")
+                .map { $0.capitalized }
+                .joined(separator: " ")
+        }
+    }
+
+    static func placementApproveColor(status: String) -> Color {
+        switch status {
+        case "filled", "placed", "paper":
+            return AppPalette.positive
+        case "blocked", "busy":
+            return AppPalette.warning
+        default:
+            return AppPalette.accent
+        }
+    }
+
+    static func placementApproveSystemImage(status: String) -> String {
+        switch status {
+        case "filled", "placed", "paper":
+            return "checkmark.circle.fill"
+        case "blocked", "busy":
+            return "exclamationmark.triangle.fill"
+        default:
+            return "info.circle.fill"
+        }
     }
 
     /// Central time, explicitly labeled — fleet convention for any user-facing timestamp that
@@ -555,6 +628,45 @@ struct InlineErrorBanner: View {
     }
 }
 
+/// Presents `MobileStore` operation feedback as alerts anchored to the presenting view.
+/// Snapshot refresh no longer clears these messages, so guardrail edits and queued commands
+/// can surface failures after `load()` completes.
+struct StoreTransientAlerts: ViewModifier {
+    @EnvironmentObject private var store: MobileStore
+
+    func body(content: Content) -> some View {
+        content
+            .alert(
+                "Something Went Wrong",
+                isPresented: Binding(
+                    get: { store.error != nil },
+                    set: { if !$0 { store.dismissError() } }
+                )
+            ) {
+                Button("OK") { store.dismissError() }
+            } message: {
+                Text(store.error ?? "")
+            }
+            .alert(
+                "Saved",
+                isPresented: Binding(
+                    get: { store.successMessage != nil },
+                    set: { if !$0 { store.dismissSuccess() } }
+                )
+            ) {
+                Button("OK") { store.dismissSuccess() }
+            } message: {
+                Text(store.successMessage ?? "")
+            }
+    }
+}
+
+extension View {
+    func storeTransientAlerts() -> some View {
+        modifier(StoreTransientAlerts())
+    }
+}
+
 struct SnapshotScaffold<Content: View>: View {
     @EnvironmentObject private var store: MobileStore
 
@@ -562,9 +674,17 @@ struct SnapshotScaffold<Content: View>: View {
     /// Optional `.id(_:)` value inside `content` to scroll into view — used by deep links that
     /// point at one row (a specific proposal).  Screens that never take a link pass nothing.
     private let scrollTarget: String?
+    /// Scan (and any other screen with its own Retry) must not stack a second
+    /// workspace banner that reloads the snapshot instead of this screen's data.
+    private let hidesWorkspaceError: Bool
 
-    init(scrollTarget: String? = nil, @ViewBuilder content: @escaping (MobileSnapshot) -> Content) {
+    init(
+        scrollTarget: String? = nil,
+        hidesWorkspaceError: Bool = false,
+        @ViewBuilder content: @escaping (MobileSnapshot) -> Content
+    ) {
         self.scrollTarget = scrollTarget
+        self.hidesWorkspaceError = hidesWorkspaceError
         self.content = content
     }
 
@@ -578,13 +698,6 @@ struct SnapshotScaffold<Content: View>: View {
                         LazyVStack(spacing: 14) {
                             if let snapshot = store.snapshot {
                                 SnapshotStatusBanner(snapshot: snapshot, now: context.date)
-                                if let error = store.error {
-                                    InlineErrorBanner(
-                                        message: error,
-                                        retry: refresh,
-                                        dismiss: store.dismissError
-                                    )
-                                }
                                 content(snapshot)
                             }
                         }
@@ -675,7 +788,7 @@ private struct SnapshotStatusBanner: View {
             } else {
                 Image(systemName: store.isStreamConnected ? "dot.radiowaves.left.and.right" : "arrow.triangle.2.circlepath")
                     .foregroundStyle(store.isStreamConnected ? AppPalette.positive : .secondary)
-                    .accessibilityLabel(store.isStreamConnected ? "Stream connected" : "Reconnecting")
+                    .accessibilityLabel(store.isStreamConnected ? "Live" : "Updating")
             }
             // Keep the circlepath / radio glyph; label is "Market Closed" etc. on every tab.
             Text(AppFormat.marketSessionBannerLabel(snapshot.marketSession))
@@ -727,6 +840,11 @@ struct SwipeRevealAction: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .accessibilityAction(named: Text(title)) {
+                guard isEnabled else { return }
+                perform()
+            }
+            .accessibilityHint("Swipe left to \(title.lowercased()), or use this action.")
             .offset(x: offset)
             .background(alignment: .trailing) {
                 if offset < 0 {

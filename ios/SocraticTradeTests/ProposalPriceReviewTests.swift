@@ -10,7 +10,9 @@ final class ProposalPriceReviewTests: XCTestCase {
             stop: 190,
             quantity: 7,
             side: "buy",
-            exitPlan: nil
+            exitPlan: nil,
+            pendingDelayedFallback: false,
+            proposalDelayedFallback: false
         )
         XCTAssertEqual(review.delayAdvantage ?? 0, -15.4, accuracy: 0.01)
         XCTAssertEqual(review.nameMovePct ?? 0, 1.1, accuracy: 0.01)
@@ -29,7 +31,9 @@ final class ProposalPriceReviewTests: XCTestCase {
             stop: 45,
             quantity: 2,
             side: "buy",
-            exitPlan: "A single target would not help; trail 50% after +8%."
+            exitPlan: "A single target would not help; trail 50% after +8%.",
+            pendingDelayedFallback: false,
+            proposalDelayedFallback: false
         )
         XCTAssertFalse(withPlan.hasTarget)
         XCTAssertEqual(withPlan.targetValue, "none")
@@ -42,7 +46,9 @@ final class ProposalPriceReviewTests: XCTestCase {
             stop: nil,
             quantity: 2,
             side: "buy",
-            exitPlan: nil
+            exitPlan: nil,
+            pendingDelayedFallback: false,
+            proposalDelayedFallback: false
         )
         XCTAssertTrue(blank.missingTargetNote?.contains("No target was set") == true)
     }
@@ -81,10 +87,39 @@ final class ProposalPriceReviewTests: XCTestCase {
             stop: 108,
             quantity: 4,
             side: "short",
-            exitPlan: nil
+            exitPlan: nil,
+            pendingDelayedFallback: false,
+            proposalDelayedFallback: false
         )
         XCTAssertEqual(review.delayAdvantage ?? 0, 8, accuracy: 0.01)
         XCTAssertEqual(review.delayValue?.contains("better"), true)
         XCTAssertEqual(review.remainingToTarget ?? 0, 12, accuracy: 0.01)
+    }
+
+    func testDelayedFallbackStampOnCard() throws {
+        let pending = try JSONDecoder().decode(
+            PendingProposal.self,
+            from: Data(#"""
+            {
+              "id": "p-delayed",
+              "delayedFallback": true,
+              "quoteProvider": "yahoo-finance-delayed",
+              "proposalReferencePrice": 10,
+              "proposalCurrentPrice": 10.2,
+              "proposal": {
+                "symbol": "XOM",
+                "side": "buy",
+                "type": "market",
+                "quantity": 5,
+                "timeInForce": "day",
+                "quoteDelayedFallback": true
+              }
+            }
+            """#.utf8)
+        )
+        let review = ProposalPriceReview.from(pending)
+        XCTAssertTrue(review.showsDelayedFallback)
+        XCTAssertEqual(review.delayedFallbackStamp, "Delayed Quote")
+        XCTAssertTrue(review.delayedFallbackNote.contains("You can still approve the order"))
     }
 }

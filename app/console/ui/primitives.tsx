@@ -2,9 +2,12 @@
 
 /** Console UI primitives. Own design system — no imports from app/ui/*. */
 
-import { useState, useEffect, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useState, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { cx, fmtExact, timeAgo, EM_DASH } from "../lib/format";
+import { isInteractiveTooltipTrigger } from "../lib/tooltip-trigger";
 import { AnimatePresence, motion } from "motion/react";
+
+export { isInteractiveTooltipTrigger } from "../lib/tooltip-trigger";
 
 // ── Card ─────────────────────────────────────────────────────────────────────
 
@@ -185,7 +188,18 @@ export function Dot({ tone = "muted", pulse }: { tone?: keyof typeof TONE_VAR; p
 
 // ── Meter ────────────────────────────────────────────────────────────────────
 
-export function Meter({ value, max, className }: { value: number; max?: number; className?: string }) {
+export function Meter({
+  value,
+  max,
+  className,
+  label
+}: {
+  value: number;
+  max?: number;
+  className?: string;
+  /** Accessible name for the progressbar. Required for AT; the visible caption sits beside the bar. */
+  label?: string;
+}) {
   const hasMax = typeof max === "number" && Number.isFinite(max) && max > 0;
   const rawRatio = hasMax ? Math.max(0, value / max!) : 0;
   const ratio = Math.min(1, rawRatio);
@@ -199,6 +213,7 @@ export function Meter({ value, max, className }: { value: number; max?: number; 
     <div
       className={cx("con-meter", tone, className)}
       role="progressbar"
+      aria-label={label}
       aria-valuenow={value}
       aria-valuemax={hasMax ? max : undefined}
       aria-valuetext={breached ? `${overagePct}% over` : undefined}
@@ -337,7 +352,7 @@ export function Toggle({
   disabled?: boolean;
   /** In-flight write — keeps the optimistic checked value visible and marks the switch busy. */
   busy?: boolean;
-  label?: string;
+  label: string;
 }) {
   return (
     <button
@@ -449,6 +464,7 @@ export function Tooltip({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
+  const tooltipId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -479,10 +495,19 @@ export function Tooltip({
       ? "left-0 translate-x-0"
       : "left-1/2 -translate-x-1/2";
 
+  const interactive = isInteractiveTooltipTrigger(children);
+
   return (
     <span
       ref={ref}
-      className={cx("group relative inline-flex cursor-pointer", className)}
+      className={cx(
+        "group relative inline-flex cursor-pointer",
+        !interactive &&
+          "rounded-[var(--con-radius-sm)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--con-accent)]",
+        className
+      )}
+      tabIndex={interactive ? undefined : 0}
+      aria-describedby={tooltipId}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onClick={() => setOpen((prev) => !prev)}
@@ -492,6 +517,9 @@ export function Tooltip({
       }}
     >
       {children}
+      <span id={tooltipId} className="sr-only">
+        {content}
+      </span>
       <AnimatePresence>
         {open && (
           <motion.div
@@ -500,6 +528,7 @@ export function Tooltip({
             exit={{ opacity: 0, y: 2, scale: 0.98 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
             role="tooltip"
+            aria-hidden
             className={cx(
               "pointer-events-none absolute bottom-full z-[100] mb-2 w-max max-w-xs rounded-[var(--con-radius-sm)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-2.5 py-1.5 text-center text-[length:var(--con-fs-xs)] font-medium leading-snug text-[color:var(--con-fg)] shadow-[var(--con-shadow-lg)] whitespace-pre-line",
               alignClass

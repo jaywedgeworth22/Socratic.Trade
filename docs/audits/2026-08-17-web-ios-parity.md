@@ -368,33 +368,33 @@ Do **not** add Playwright against `/mobile` except the existing redirect asserti
 
 ### P1 — do these first
 
-1. **Honor `?proposal=` on the website.**  
+1. **Honor `?proposal=` on the website.**  **Fixed 2026-08-20** (`cursor/web-ios-parity-fixes-e83a`).  
    Scroll and ring `article#proposal-${id}` on `/console/approvals`.  Same id iOS already uses.  
    Files: `approvals/page.tsx`, `approval-card.tsx`.  
-   Test: `test/console-deep-links.test.tsx` + keep APNs contract.
+   Test: `test/console-deep-links.test.ts` + keep APNs contract.
 
-2. **Honor `?symbol=` on web Orders / Watchlist and iOS Assets.**  
+2. **Honor `?symbol=` on web Orders / Watchlist and iOS Assets.**  **Fixed 2026-08-20.**  
    Filter or scroll to the row; open the ticker sheet on iOS.  
    Files: `orders/page.tsx`, `watchlist/page.tsx`, `DeepLink.swift` (pass symbol through), `MarketsView.swift`, `MobileControlView.swift`.
 
-3. **Show the notification on iOS Activity.**  
+3. **Show the notification on iOS Activity.**  **Fixed 2026-08-20.**  
    Render Alert Center rows (or a compact list) from snapshot notifications.  `run_failed` / `kill_switch` must be visible after a tap.  
-   Files: `ActivityView.swift`, possibly `app/api/mobile/snapshot/route.ts` if the field is omitted.
+   Files: `ActivityView.swift`, `app/api/mobile/snapshot/route.ts` (`notifications`, payload/webhook stripped).
 
 ### P2 — next wave
 
-4. One label: **Exit-only** (chip, sheet, iOS button, toasts).  Wire id stays `close_only`.
-5. Lessons → `CONSOLE_PAGE_WIDTH`.
-6. Watchlist mobile cards.
-7. Skip link + assertive error toasts + `TypedConfirm` `htmlFor`.
-8. More button `aria-expanded`.
-9. Scan star 44pt; swipe `accessibilityAction`.
-10. `navigator.onLine` banner on web; match iOS stale copy.
-11. Delete PWA component tree per §11 (own PR, after helper extract).
-12. Rewrite `docs/mobile-api-and-clients.md` so PWA is not a peer.
-13. Playwright mobile project + axe on login/console.
-14. iOS: collapse Close Only / Wind Down behind a “More postures” disclosure when Stop is the primary (match web sheet).
-15. Connections: “Open in Safari” authenticated handoff from Account & Settings (cookie / ASWebAuthentication), not a native broker form.
+4. One label: **Exit-only** (chip, sheet, iOS button, toasts).  Wire id stays `close_only`.  **Fixed 2026-08-20.**
+5. Lessons → `CONSOLE_PAGE_WIDTH`.  **Fixed 2026-08-20.**
+6. Watchlist mobile cards.  **Fixed 2026-08-20.**
+7. Skip link + assertive error toasts + `TypedConfirm` `htmlFor`.  **Fixed 2026-08-20.**
+8. More button `aria-expanded`.  **Fixed 2026-08-20.**
+9. Scan star 44pt; swipe `accessibilityAction`.  **Fixed 2026-08-20.**
+10. `navigator.onLine` banner on web; match iOS stale copy.  **Fixed 2026-08-20.**
+11. Delete PWA component tree per §11 (own PR, after helper extract).  **Fixed 2026-08-20** (redirect + `/api/mobile` kept; no helper extract needed).
+12. Rewrite `docs/mobile-api-and-clients.md` so PWA is not a peer.  **Fixed 2026-08-20.**
+13. Playwright mobile project + axe on login/console.  **Fixed 2026-08-20** as skip-link + landmark smoke on Desktop Chrome and iPhone 13 (390×844).  Did not add `@axe-core/playwright` so a grandfathered backlog cannot fail CI.
+14. iOS: collapse Close Only / Wind Down behind a “More postures” disclosure when Stop is the primary (match web sheet).  **Fixed 2026-08-20.**
+15. Connections: “Open in Safari” authenticated handoff from Account & Settings (cookie / ASWebAuthentication), not a native broker form.  **Fixed 2026-08-20** as a Safari `Link` to `/console/connections`.
 
 ### P3 — backlog (do not block)
 

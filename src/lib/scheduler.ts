@@ -24,7 +24,7 @@ import { runAuditPruneIfDue } from "./audit-prune";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
-import { markStaleRunningRuns } from "./db-execution";
+import { hasInFlightStrategyWork, markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
@@ -52,6 +52,7 @@ import { safeErrorMessage } from "./telemetry-sanitize";
 import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
 import { journalLane } from "./task-journal";
 import { pruneTaskJournal } from "./db-task-journal";
+import { withDeadline, SCHEDULER_BROKER_TIMEOUT_MS } from "./safety-maintenance";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 export const MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY = "scheduler:managedVectorReconcile:lastAttempt";
@@ -110,6 +111,14 @@ export async function reconcileManagedVectorRecordsIfDue(now = Date.now()): Prom
 
   const run = (async (): Promise<ManagedVectorReconcileRun | null> => {
     try {
+      // Live `9d71dda4`: thousands of Pinecone list/fetch ran in the same
+      // window as gather.  Pause whole-index inventory while a run/request is
+      // queued or running.  Do not consume the attempt marker so the next
+      // idle tick can still reconcile.  Do not flip write-class or prune.
+      if (hasInFlightStrategyWork()) {
+        return { status: "busy", result: { skipped: true } };
+      }
+
       const lastAttemptAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY);
       const lastSuccessAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY);
       if (!isManagedVectorReconcileDue(now, lastAttemptAt, lastSuccessAt)) return null;
@@ -290,6 +299,14 @@ const staleExitGuardHost = globalThis as unknown as { __staleExitInFlight?: Set<
 const staleExitInFlight: Set<string> =
   staleExitGuardHost.__staleExitInFlight ?? (staleExitGuardHost.__staleExitInFlight = new Set<string>());
 
+// Whole-tick re-entrancy guard: `tick()` awaits full multi-minute LLM strategy runs, so a slow tick
+// must not let the next 60s interval start an overlapping tick.  Overlapping ticks do NOT duplicate
+// trades — `lastRunAt` advances before a run is launched — the harm is re-running both sweep lanes
+// (~30 `journalLane` calls, roughly 60 synchronous SQLite writes each pass) and a `checkBrokerHealth`
+// network call per account, multiplying write pressure on a synchronous DB. globalThis-pinned so
+// Next.js HMR module duplication can't defeat the guard with two module instances.
+const tickGuardHost = globalThis as unknown as { __tickInFlight?: boolean };
+
 /**
  * Boot-time autonomy interlock. A persisted `systemState === "active"` must NOT silently resume
  * live/paper order placement after an unattended restart, crash-loop, or DB restore. Unless an
@@ -413,8 +430,9 @@ export function startScheduler(): void {
   console.log("[scheduler] started (tick every 60s)");
 }
 
-async function tick(): Promise<void> {
-  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill.
+async function tickInner(): Promise<void> {
+  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill,
+  // and close the matching strategy_run_requests row so Manual Run once is not left locked.
   // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
   // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
   try {
@@ -631,9 +649,10 @@ async function tick(): Promise<void> {
 
   // ROIC.ai transcripts: latest-then-deepen-then-archive (key = opt-in; ROIC_TRANSCRIPTS_DISABLED=1).
   // Prefer this over free EarningsCalls previews when the ROIC individual plan is configured.
+  // Cached earningscalls_transcripts + data/roic-artifacts never re-list or re-fetch.
   // Holdings → watchlist, last N fiscal quarters, cap ROIC_TRANSCRIPTS_MAX_PER_RUN.
   // Library helpers existed earlier without a scheduler caller — that left zero ROIC saves.
-  if (isRoicTranscriptRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
+  if (isRoicTranscriptRefreshDue() && !hasInFlightStrategyWork() && checkMonthlyLlmSpendCeiling().ok) {
     void journalLane("roic-transcript-refresh", {}, () => refreshRoicTranscriptsIfDue()).catch((err) =>
       console.error("[scheduler] roic transcript refresh error:", err instanceof Error ? err.message : err)
     );
@@ -719,7 +738,11 @@ async function tick(): Promise<void> {
     .then(({ processPendingStrategyRunRequests }) =>
       journalLane("strategy-run-drain", {}, async () => {
         const result = await processPendingStrategyRunRequests({ limit: 1 });
-        return { status: result.processed > 0 ? ("ok" as const) : ("skipped" as const), summary: `processed=${result.processed}` };
+        const working = result.processed > 0 || result.liveRunning > 0;
+        return {
+          status: working ? ("ok" as const) : ("skipped" as const),
+          summary: `processed=${result.processed} adopted=${result.adopted} live=${result.liveRunning}`
+        };
       })
     )
     .catch((err) => console.error("[scheduler] strategy-run worker error:", err));
@@ -879,26 +902,21 @@ async function tick(): Promise<void> {
           staleExitInFlight.add(key);
           const gw = brokerGateway;
           const stalePolicy = policy as TradingPolicy & { accountNumber: string }; // accountNumber checked non-null above
-          void journalLane("stale-limit-scan", { userId, connectedAccountId: accountId }, async () => {
+          const staleExitWork = journalLane("stale-limit-scan", { userId, connectedAccountId: accountId }, async () => {
             const orders = await gw.getEquityOrders(stalePolicy.accountNumber);
             await notifyStaleLimitOrders({ userId, policy, orders });
-            // Auto-cancel-replace stale EXIT limits with market orders (MU deadlock backstop). No-op
-            // when disabled; defers to the human on a live account with typed confirmation on. The
-            // in-flight guard above + the per-order cooldown inside autoRemediateStaleExitOrders keep
-            // a slow broker cancel from triggering a second market sell on the next tick.
-            // §7 slice 3: the cancel-then-place bodies run under the account's mutation lease.
-            // Bounded wait (not try-once): this lane reaches its acquisition only after a broker
-            // read, so a try-once would deterministically lose the phase race to the stop-monitor
-            // lane every tick and starve the replacement pump (adversarial-review finding).
             const outcome = await withAccountMutation(
               { userId, accountNumber: stalePolicy.accountNumber, connectedAccountId: accountId, lane: "stale-exit-replacement", waitMs: LANE_WAITS.staleExit },
               (ctx) => autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders, fence: ctx.assertOwned })
             );
             if (!outcome.acquired) return { status: "skipped" as const, summary: "account mutation lease busy" };
             return undefined;
-          })
-            .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err))
-            .finally(() => staleExitInFlight.delete(key));
+          });
+          // Guard is released by the REAL work, never by the 15s race loser: a lane still running
+          // past the deadline must not get a duplicate launched on the next tick.
+          void staleExitWork.catch(() => undefined).finally(() => staleExitInFlight.delete(key));
+          void withDeadline(staleExitWork, SCHEDULER_BROKER_TIMEOUT_MS, "stale-limit-scan broker timeout")
+            .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err));
         }
 
         const protectiveState =
@@ -912,9 +930,7 @@ async function tick(): Promise<void> {
         // reduce exposure after a breaker trips. `halted` remains the only no-order state unless protectWhileHalted is active.
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
-          void journalLane("synthetic-stop-monitor", { userId, connectedAccountId: accountId }, async () => {
-            // §7 slice 3: the whole read-decide-mutate pass holds the account mutation lease so
-            // its coverage math cannot go stale under a concurrent replacement/drain sequence.
+          const stopMonitorWork = journalLane("synthetic-stop-monitor", { userId, connectedAccountId: accountId }, async () => {
             const outcome = await withAccountMutation(
               { userId, accountNumber: policy.accountNumber, connectedAccountId: accountId, lane: "stop-monitor" },
               (ctx) => runSyntheticStopMonitor(userId, policy, true, undefined, ctx.assertOwned)
@@ -925,9 +941,12 @@ async function tick(): Promise<void> {
               status: "ok" as const,
               summary: `evaluated=${result.evaluated} triggered=${result.triggered} exited=${result.exited}`
             };
-          })
-            .catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err))
-            .finally(() => stopMonitorInFlight.delete(key));
+          });
+          // Guard is released by the REAL work, never by the 15s race loser: a lane still running
+          // past the deadline must not get a duplicate launched on the next tick.
+          void stopMonitorWork.catch(() => undefined).finally(() => stopMonitorInFlight.delete(key));
+          void withDeadline(stopMonitorWork, SCHEDULER_BROKER_TIMEOUT_MS, "runSyntheticStopMonitor timeout")
+            .catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err));
         }
 
         // Reconcile pending broker fills every tick (independent of the strategy cadence) so a broker
@@ -1080,6 +1099,23 @@ async function tick(): Promise<void> {
   } catch (err) {
     // Never let a thrown error kill the timer
     console.error("[scheduler] tick error:", err);
+  }
+}
+
+// Thin guarded wrapper: `startScheduler` fires this both immediately (`void tick()`) and on every
+// `setInterval(tick, TICK_MS)` callback, so the guard must live here rather than only around the
+// interval registration to cover both entry points.  Released in `finally` so a throw inside
+// `tickInner` can never wedge the scheduler permanently.
+async function tick(): Promise<void> {
+  if (tickGuardHost.__tickInFlight) {
+    console.warn("[scheduler] previous tick still in flight; skipping this interval");
+    return;
+  }
+  tickGuardHost.__tickInFlight = true;
+  try {
+    await tickInner();
+  } finally {
+    tickGuardHost.__tickInFlight = false;
   }
 }
 

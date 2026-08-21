@@ -1,6 +1,7 @@
 export * from "./strategy-execution";
 export * from "./strategy-risk";
 import { fetchFreshQuotesCascade } from "./quotes-cascade";
+import { isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
 import { TradingGraph, GraphContext } from "./orchestration/trading-graph";
 import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { OperationLeaseOwnershipError } from "./operation-lease";
@@ -54,12 +55,12 @@ import { derivePromptRagConsumption, type PromptRagCandidate, type PromptRagCons
 import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfrastructureFailure } from "./broker-health";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
+import { greenFailoverExhaustedSuffix, interactiveStrategyReasoningEffort, isFailoverLlmStatus, isRetryableLlmError, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { implicitGreenRotationFallbacks, isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
 import { maybeOpenRouterCreditsExhaustedHint } from "./openrouter-credits";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation } from "./llm-call";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation, toGeminiJsonSchema } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
 import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
 import {
@@ -102,7 +103,7 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat, SkippedCandidateReturn } from "./performance";
 import { buildSpyReturnToNowMap } from "./backtest";
 import type { SituationCandidate } from "./experience-memory";
-import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, hasFractionalQuantity, isIraTaxRegime } from "./policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, hasFractionalQuantity, iraWashSaleMinLossUsd, isIraTaxRegime } from "./policy";
 import { currentMarketSession } from "./market-hours";
 import { sessionPhrasingReceipt } from "./proposal-phase-guard";
 import { effectiveDailyOpeningNotionalCap, effectiveOpeningOrderNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
@@ -113,7 +114,7 @@ import { atr, atrStopPct, sma, type OHLCBar } from "./indicators";
 import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
 import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
-import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
+import { getTaxSummary, getUserWashSaleLockProvenance, overlayAccountTaxationType } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
@@ -205,8 +206,9 @@ import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
+import { isIdempotencyConflictHttpError } from "./placement-outcome";
 import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
-import { runSafetyMaintenance } from "./safety-maintenance";
+import { runSafetyMaintenance, withDeadline } from "./safety-maintenance";
 import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
 import { deriveVenueContract } from "./venue-contract";
 
@@ -217,6 +219,12 @@ import { deriveVenueContract } from "./venue-contract";
  * is for learning only (never sent to the LLM), so size affects storage, not tokens.
  */
 const MAX_SKIPPED_EVIDENCE = 25;
+
+/** Live Roth `9d71dda4` sat in gather from 00:58:57Z until sweep-failed 01:29:44Z
+ *  (`stalled_no_progress`, llm=0).  Bound scan + quote cascade so a hung
+ *  Robinhood/Yahoo/congress.trade pass cannot keep the claimed request
+ *  `running` until the 30m sweep.  Green starts after this returns. */
+export const STRATEGY_GATHER_DEADLINE_MS = 8 * 60_000;
 
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
@@ -301,7 +309,7 @@ export interface StrategyResult {
   /** completed = decision cycle ran; skipped_* = pre-decision gate; failed = hard error */
   status: StrategyRunFinishStatus;
   summary: string;
-  proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
+  proposals: Array<{ id?: string; proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string | null;
   llmSteps?: StrategyLlmStep[];
@@ -642,12 +650,20 @@ export async function runStrategyOnce(
       }
     }
 
-    const [accounts, portfolio, positions, orders] = await Promise.all([
-      gateway.getAccounts(),
-      gateway.getPortfolio(policy.accountNumber),
-      gateway.getEquityPositions(policy.accountNumber),
-      gateway.getEquityOrders(policy.accountNumber)
-    ]);
+    // Live `9d71dda4`: dashboard getAccounts/getPortfolio have a 16s+8s budget;
+    // this pre-Green snapshot did not.  An unbounded getPositions/getOrders hang
+    // leaves the claimed request `running` so drain journals skipped and Green
+    // never starts.  Bound the bundle; a timeout fails the run honestly.
+    const [accounts, portfolio, positions, orders] = await withDeadline(
+      Promise.all([
+        gateway.getAccounts(),
+        gateway.getPortfolio(policy.accountNumber),
+        gateway.getEquityPositions(policy.accountNumber),
+        gateway.getEquityOrders(policy.accountNumber)
+      ]),
+      45_000,
+      "strategy broker snapshot timeout"
+    );
     lockGuard.assertOwned();
     const selected = accounts.find((account) => account.accountNumber === policy.accountNumber);
     if (!selected) throw new Error("Selected account is not available.");
@@ -761,16 +777,25 @@ export async function runStrategyOnce(
     if (congressMultiplier === 0 && congressVerdict) {
       audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId, connectedAccountId);
     }
-    const baseMarketScan = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-      candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve,
-      universeFloor: policy.universeFloor,
-      congressMultiplier
-    });
-    const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
-    const marketScan = mergeQuoteData(
-      baseMarketScan,
-      await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber, connectedAccountId)
+    const { baseMarketScan, marketScan } = await withDeadline(
+      (async () => {
+        const scanned = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
+          candidateLimit: policy.marketScanCandidateLimit,
+          outlierReserve: policy.marketScanOutlierReserve,
+          universeFloor: policy.universeFloor,
+          congressMultiplier
+        });
+        const quoteSymbols = uniqueSymbols(scanned.topCandidates.map((quote) => quote.symbol));
+        return {
+          baseMarketScan: scanned,
+          marketScan: mergeQuoteData(
+            scanned,
+            await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber, connectedAccountId)
+          )
+        };
+      })(),
+      STRATEGY_GATHER_DEADLINE_MS,
+      "strategy gather timeout"
     );
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
@@ -798,8 +823,10 @@ export async function runStrategyOnce(
           source: learningSource
         })
       : [];
-    const runLiveFills = listFillEvents(policy.accountNumber, "live", 500, userId);
-    const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
+    // Unbounded: these prefetched arrays are replayed FIFO downstream, which needs the COMPLETE
+    // ledger — see listFillEvents in db-fills.ts.
+    const runLiveFills = listFillEvents(policy.accountNumber, "live", undefined, userId);
+    const runPaperFills = listFillEvents(policy.accountNumber, "paper", undefined, userId);
     const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     lockGuard.assertOwned();
 
@@ -3356,7 +3383,7 @@ export async function runStrategyOnce(
         };
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
           {
             type: "block",
@@ -3405,7 +3432,7 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
         if (shouldAlertBrokerMinimumOrderBlock(userId, policy.accountNumber, normalizedProposal.symbol)) {
           await sendNotification(
             {
@@ -3641,7 +3668,7 @@ export async function runStrategyOnce(
           );
           const washAsk = escalatedDecision.escalations?.find((entry) => entry.kind === "wash_sale_ask");
           const askCost = washAsk?.washSale?.estimatedTaxCostUsd;
-          results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
+          results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           await sendNotification(
             {
               type: "pending_approval",
@@ -3663,7 +3690,7 @@ export async function runStrategyOnce(
         lockGuard.assertOwned();
         insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
           {
             type: "block",
@@ -3720,7 +3747,7 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
         await sendNotification(
           {
             type: "block",
@@ -3741,7 +3768,7 @@ export async function runStrategyOnce(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -3762,7 +3789,7 @@ export async function runStrategyOnce(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`) });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`) });
         await sendNotification(
           {
             type: "pending_approval",
@@ -3796,7 +3823,7 @@ export async function runStrategyOnce(
           { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
           { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [pendingReason] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "proposed", reasons: [pendingReason] });
         await sendNotification(
           {
             type: "pending_approval",
@@ -3840,7 +3867,7 @@ export async function runStrategyOnce(
         insertRunProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: [message] });
         await sendNotification(
           { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
           { policy, userId }
@@ -3898,7 +3925,7 @@ export async function runStrategyOnce(
         );
       } catch (error) {
         const message = reportSocraticCaseWriteFailure(placingCaseInput, error);
-        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Decision evidence could not be persisted before placement: ${message}`] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [`Decision evidence could not be persisted before placement: ${message}`] });
         await sendNotification(
           {
             type: "run_failed",
@@ -3950,7 +3977,7 @@ export async function runStrategyOnce(
               userId,
               connectedAccountId
             );
-            results.push({ proposal: normalizedProposal, status: "blocked", reasons: [protectiveStateBlock] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "blocked", reasons: [protectiveStateBlock] });
             return { done: "continue" } as const;
           }
           try {
@@ -3974,9 +4001,14 @@ export async function runStrategyOnce(
 
             // P2.6: Explicitly intercept pre-flight validation throws and broker 4xx rejections.
             // A 4xx (e.g. 403 Forbidden, 400 Bad Request) means the broker definitively received and rejected it.
+            // HTTP 409 is the exception: Alpaca uses it for a reused client_order_id, which means
+            // the order already exists and must be reconciled rather than marked rejected.
             // OrderValidationError means the adapter blocked it before sending.
-            // Neither case is "uncertain", so we abort the placement loop immediately.
-            if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
+            // Neither terminal case is "uncertain", so we abort the placement loop immediately.
+            if (
+              placeError instanceof OrderValidationError ||
+              (/\bHTTP 4\d\d\b/i.test(message) && !isIdempotencyConflictHttpError(message))
+            ) {
               const status = placeError instanceof OrderValidationError ? "blocked" : "rejected_by_broker";
               const transitionDecision =
                 status === "blocked" ? { ...decision, approved: false, reasons: [...decision.reasons, message] } : decision;
@@ -3986,7 +4018,7 @@ export async function runStrategyOnce(
               } else {
                 audit("order_blocked_live_preflight", { runId, proposalId, symbol: sym, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
               }
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order ${status.replace(/_/g, " ")}`, payload: { runId, proposalId, refId, reason: message, reconcile: status } },
                 { policy, userId }
@@ -4010,7 +4042,7 @@ export async function runStrategyOnce(
               const note = "Account mutation lease lost before submission — the order was never sent to the broker. Safe to retry.";
               updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
               audit("order_not_placed_lease_lost", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [note] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [note] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order not placed — mutation lease lost (safe to retry)`, payload: { runId, proposalId, refId, error: message, reconcile: "lease_lost" } },
                 { policy, userId }
@@ -4048,7 +4080,7 @@ export async function runStrategyOnce(
               auditWashSaleProceed(decision, { runId, proposalId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
               audit("order_placement_recovered_inline", { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: normalizedProposal.side }, userId, connectedAccountId);
               resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
-              results.push({ proposal: normalizedProposal, status: recoveredStatus, reasons: [], orderId: outcome.orderId });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: recoveredStatus, reasons: [], orderId: outcome.orderId });
               await sendNotification(
                 { type: "fill", title: `${sym} live order ${outcome.state} (recovered after placement error)`, payload: { runId, proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
                 { policy, userId }
@@ -4061,7 +4093,7 @@ export async function runStrategyOnce(
               const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
               updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
               audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, connectedAccountId);
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
                 { policy, userId }
@@ -4073,7 +4105,7 @@ export async function runStrategyOnce(
               const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
               updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
               audit("order_confirmed_not_placed", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
-              results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
+              results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
               await sendNotification(
                 { type: "run_failed", title: `${sym} order was NOT placed — safe to retry`, payload: { runId, proposalId, refId, error: message, reconcile: "not_placed" } },
                 { policy, userId }
@@ -4086,7 +4118,7 @@ export async function runStrategyOnce(
             // path that still produces a perpetual-until-confirmed alert.
             updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
             audit("order_placement_uncertain", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
             await sendNotification(
               { type: "run_failed", title: `${sym} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: outcome.error, reconcile: "uncertain" } },
               { policy, userId }
@@ -4105,7 +4137,7 @@ export async function runStrategyOnce(
             const message = `Broker declined the order (state: ${execution.state}).`;
             updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
             audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message] });
             await sendNotification(
               { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
               { policy, userId }
@@ -4126,7 +4158,7 @@ export async function runStrategyOnce(
             const message = `Broker returned ${execution.state} without an order id; keeping the idempotent intent pending until refId reconciliation confirms the order.`;
             updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, message);
             audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, missingOrderId: true }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message] });
             await sendNotification(
               { type: "run_failed", title: `${normalizedProposal.symbol} order accepted without broker id — recovery pending`, payload: { runId, proposalId, refId, state: execution.state, reconcile: "uncertain" } },
               { policy, userId }
@@ -4173,7 +4205,7 @@ export async function runStrategyOnce(
             const message = `Broker confirmed order ${execution.orderId}, but its local fill receipt could not be committed: ${detail}`;
             updateProposalStatus(proposalId, "placing", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
             audit("order_placement_uncertain", { runId, proposalId, refId, orderId: execution.orderId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, receiptPersistenceFailed: true, error: detail }, userId, connectedAccountId);
-            results.push({ proposal: normalizedProposal, status: "error", reasons: [message], orderId: execution.orderId });
+            results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [message], orderId: execution.orderId });
             await sendNotification(
               { type: "run_failed", title: `${normalizedProposal.symbol} broker order confirmed — local receipt recovery pending`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state, error: detail, reconcile: "uncertain" } },
               { policy, userId }
@@ -4182,7 +4214,7 @@ export async function runStrategyOnce(
             return { done: "continue" } as const;
           }
           auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
-          results.push({ proposal: normalizedProposal, status: proposalStatus, reasons: [], orderId: execution.orderId });
+          results.push({ id: proposalId, proposal: normalizedProposal, status: proposalStatus, reasons: [], orderId: execution.orderId });
           await sendNotification(
             {
               type: "fill",
@@ -4203,7 +4235,7 @@ export async function runStrategyOnce(
       if (!mutationOutcome.acquired) {
         const busyReason = `Account mutation lease busy (${mutationOutcome.busy.activeOperation}) — proposal not placed this run; safe to retry.`;
         updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, busyReason);
-        results.push({ proposal: normalizedProposal, status: "error", reasons: [busyReason] });
+        results.push({ id: proposalId, proposal: normalizedProposal, status: "error", reasons: [busyReason] });
         continue;
       }
       if (mutationOutcome.value.done === "continue") continue;
@@ -4852,8 +4884,21 @@ async function proposeTrades(input: {
   const skippedCounterfactuals = selectBalancedCounterfactuals(
     getSkippedCandidateReturns(currentPrices, input.userId, { ...cfOptions, benchmarkReturnBySnapshotDate: cfBenchmark })
   );
+  const buyerIsIra = isIraTaxRegime(
+    input.activeAccount?.taxationType,
+    input.policy.taxSettings?.taxationType,
+    input.activeAccount?.capabilities?.accountType
+  );
   const taxSummary = input.policy.accountNumber
-    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId, input.prefetched)
+    ? getTaxSummary(
+        input.policy.accountNumber,
+        source,
+        currentPrices,
+        overlayAccountTaxationType(input.policy.taxSettings, input.activeAccount?.taxationType),
+        new Date(),
+        input.userId,
+        input.prefetched
+      )
     : null;
   // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
   // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
@@ -4861,30 +4906,36 @@ async function proposeTrades(input: {
   // stricter opt-in, no longer the default) does the context stay byte-identical (locked names
   // remain a hard no).
   const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
-  // IRA-disregard: when the buyer is an IRA whose owner is on iraWashSaleHandling "disregard"
-  // (the default), the gate PERMITS locked rebuys (annotated + audited). The prompt must know this
-  // or the model, still told "NEVER propose a locked buy", would never surface the very rebuys the
-  // setting exists to allow. IRA detection uses the SAME source-of-truth precedence as the gate
-  // (isIraTaxRegime).
-  const iraWashSaleDisregard =
-    (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard") === "disregard" &&
-    isIraTaxRegime(
-      input.activeAccount?.taxationType,
-      input.policy.taxSettings?.taxationType,
-      input.activeAccount?.capabilities?.accountType
-    );
+  // IRA Ignore: omit lock lists and costs so Green is not steered. IRA Auto: feed material
+  // (or all, if min-loss is blank) user-level locks + priced costs so Green can weigh them.
+  // IRA Block: lock symbols only. This account's own taxSummary.lockedSymbols is empty because
+  // resolveTaxSettings force-offs the per-account guard.
+  const iraWashSaleHandling = buyerIsIra
+    ? (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard")
+    : undefined;
+  const iraWashSaleDisregard = iraWashSaleHandling === "disregard";
+  const userWashSaleLocks = taxSummary ? getUserWashSaleLockProvenance(input.userId, new Date()) : new Map();
+  const iraMinLoss = iraWashSaleMinLossUsd(input.policy.taxSettings);
+  const materialIraLockedSymbols = buyerIsIra
+    ? Array.from(userWashSaleLocks.entries())
+        .filter(([, lock]) => iraMinLoss == null || (lock.lossUsd ?? 0) >= iraMinLoss)
+        .map(([sym]) => sym)
+    : [];
   const washSaleRebuyCosts = (() => {
-    if (washSaleHandling === "block" || !taxSummary) return undefined;
+    if (!taxSummary) return undefined;
+    if (buyerIsIra && iraWashSaleHandling !== "auto") return undefined;
+    if (!buyerIsIra && washSaleHandling === "block") return undefined;
     const stRate = input.policy.taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
-    const locks = getUserWashSaleLockProvenance(input.userId, new Date());
-    if (locks.size === 0) return undefined;
-    return Array.from(locks.entries()).map(([sym, lock]) => ({
-      symbol: sym,
-      lossAccount: lock.account,
-      clearsOn: lock.clearDate.toISOString().slice(0, 10),
-      disallowedLossUsd: Number(lock.lossUsd.toFixed(2)),
-      estimatedTaxCostUsd: Number(((lock.lossUsd * stRate) / 100).toFixed(2))
-    }));
+    if (userWashSaleLocks.size === 0) return undefined;
+    return Array.from(userWashSaleLocks.entries())
+      .filter(([, lock]) => !buyerIsIra || iraMinLoss == null || (lock.lossUsd ?? 0) >= iraMinLoss)
+      .map(([sym, lock]) => ({
+        symbol: sym,
+        lossAccount: lock.account,
+        clearsOn: lock.clearDate.toISOString().slice(0, 10),
+        disallowedLossUsd: Number(lock.lossUsd.toFixed(2)),
+        estimatedTaxCostUsd: Number(((lock.lossUsd * stRate) / 100).toFixed(2))
+      }));
   })();
   const taxContext = taxSummary
     ? {
@@ -4892,20 +4943,29 @@ async function proposeTrades(input: {
         shortTermRealizedYTD: taxSummary.shortTermRealized,
         longTermRealizedYTD: taxSummary.longTermRealized,
         estimatedTaxLiability: taxSummary.estimatedTaxLiability,
-        washSaleLockedSymbols: taxSummary.lockedSymbols,
-        ...(washSaleHandling !== "block" ? { washSaleHandling } : {}),
+        ...(iraWashSaleDisregard
+          ? {}
+          : {
+              washSaleLockedSymbols: buyerIsIra ? materialIraLockedSymbols : taxSummary.lockedSymbols
+            }),
+        ...(!buyerIsIra && washSaleHandling !== "block" ? { washSaleHandling } : {}),
         ...(iraWashSaleDisregard ? { iraWashSaleDisregard: true } : {}),
-        ...(washSaleRebuyCosts ? { washSaleRebuyCosts } : {}),
-        positionsNearLongTerm: taxSummary.openLots
-          .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
-          .map((lot) => ({
-            symbol: lot.symbol,
-            daysToLongTerm: lot.daysToLongTerm,
-            ...(lot.earlyExitTaxPremium != null && lot.earlyExitTaxPremium > 0
-              ? { earlyExitTaxPremium: Math.round(lot.earlyExitTaxPremium) }
-              : {})
-          })),
-        harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
+        ...(iraWashSaleHandling && iraWashSaleHandling !== "disregard" ? { iraWashSaleHandling } : {}),
+        ...(washSaleRebuyCosts && washSaleRebuyCosts.length > 0 ? { washSaleRebuyCosts } : {}),
+        ...(buyerIsIra
+          ? {}
+          : {
+              positionsNearLongTerm: taxSummary.openLots
+                .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
+                .map((lot) => ({
+                  symbol: lot.symbol,
+                  daysToLongTerm: lot.daysToLongTerm,
+                  ...(lot.earlyExitTaxPremium != null && lot.earlyExitTaxPremium > 0
+                    ? { earlyExitTaxPremium: Math.round(lot.earlyExitTaxPremium) }
+                    : {})
+                })),
+              harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
+            })
       }
     : null;
   const executionMode = llmExecutionMode(executionState) ?? "no-account";
@@ -4931,6 +4991,8 @@ async function proposeTrades(input: {
     hasTaxContext: taxContext != null,
     washSaleHandling,
     iraWashSaleDisregard,
+    ...(iraWashSaleHandling ? { iraWashSaleHandling } : {}),
+    isIraAccount: buyerIsIra,
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
     stopLossPct: input.policy.riskRules.stopLossPct ?? 8,
@@ -5931,6 +5993,9 @@ async function proposeTrades(input: {
   // look like Green never left the first pick.
   let lastBullAttemptProvider = provider;
   let lastBullAttemptModel = model;
+  // Stored Green calls actually issued this run.  The exhausted-chain sentence
+  // may only cite this count — planned-but-uncalled seats are a silent lie.
+  let bullAttemptsStarted = 0;
 
   const bullStepBase = {
     step: "bull" as const,
@@ -5995,6 +6060,7 @@ async function proposeTrades(input: {
           lastBullAttemptProvider = attempt.provider;
           lastBullAttemptModel = attempt.model;
           try {
+            bullAttemptsStarted += 1;
             const bullSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort);
             // Reasoning-class-aware SOFT wall-clock: a thinking-enabled model gets the widened bound.
             // The request is NOT severed at the wall — if it's slow the tick moves on, but the eventual
@@ -6027,7 +6093,7 @@ async function proposeTrades(input: {
                 userId: input.userId,
                 connectedAccountId: input.policy.connectedAccountId
               });
-              if (!isLast && isRetryableLlmStatus(response.status)) {
+              if (!isLast && isFailoverLlmStatus(response.status)) {
                 lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
                 audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
@@ -6094,8 +6160,22 @@ async function proposeTrades(input: {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
               try {
-                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-                return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: unknown[] };
+                let proposals: TradeProposal[] = (parsed.proposals ?? []) as TradeProposal[];
+                if (bullAttemptUsesJsonObjectTransport(attempt.provider, attempt.model, attempt.transport, schema)) {
+                  const { kept, dropped } = filterRepairedProposals(
+                    parsed.proposals ?? [],
+                    allowedSides,
+                    proposalSymbols.length > 0 ? proposalSymbols : undefined,
+                    venue.orderTypes
+                  );
+                  if (dropped > 0) {
+                    console.warn(`[Bull] json_object response carried ${dropped} incomplete proposal(s); keeping ${kept.length}.`);
+                    audit("strategy_bull_json_object_incomplete_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
+                  }
+                  proposals = kept;
+                }
+                return { text, proposals, truncated, wireOutputCap, finishReason };
               } catch {
                 // AMBIGUITY GUARD before repair (Codex P1, round 9), mirroring the Red Team's:
                 // a malformed reply carrying MORE THAN ONE `proposals` payload (e.g. a
@@ -6164,9 +6244,7 @@ async function proposeTrades(input: {
     );
   } catch (error) {
     let reason = humanizeLlmTransportError(error, { provider: lastBullAttemptProvider, model: lastBullAttemptModel, stepLabel: "Green Team proposal", timeoutMs: strategyLlmTimeoutMs(lastBullAttemptModel, input.policy.llmReasoningEffort) });
-    if (plannedBullAttempts.length > 1) {
-      reason = `${reason}  Failover chain exhausted (${plannedBullAttempts.length} Green Team endpoints).`;
-    }
+    reason = `${reason}${greenFailoverExhaustedSuffix(bullAttemptsStarted)}`;
     const failedStep: StrategyLlmStep = { ...bullStepBase, status: "failed", reason };
     recordStep(failedStep);
     throw new StrategyLlmStepFailure(reason, llmSteps, error);
@@ -6627,8 +6705,28 @@ export const BULL_PROPOSAL_REQUIRED_KEYS = [
   "autonomyOverride",
   "bracketStopLoss",
   "bracketTakeProfit",
+  "exitPlan",
   "stopPlan"
 ] as const;
+
+/**
+ * True when the Bull LLM attempt uses bare `json_object` (no provider-side schema enforcement).
+ * Mirrors llm-call's openAiChatResponseFormat / openAiResponsesTextFormat routing so the happy-path
+ * parse can run the same completeness gate as the jsonrepair fallback.
+ */
+export function bullAttemptUsesJsonObjectTransport(
+  provider: string,
+  model: string,
+  transport: string,
+  proposalSchema: Record<string, unknown>
+): boolean {
+  if (transport === "anthropic-messages") return false;
+  const isDeepSeek = provider === "deepseek" || /^deepseek\//i.test(model);
+  if (isDeepSeek) return true;
+  const isGemini = provider === "gemini" || /^google\//i.test(model);
+  if (isGemini) return toGeminiJsonSchema(proposalSchema).unsupported;
+  return false;
+}
 
 /**
  * Completeness gate for proposals recovered via jsonrepair (Codex P1, PR #1696): repair proves
@@ -6742,6 +6840,7 @@ export function filterRepairedProposals(
       // schema is nullable here); anything else must be a finite number.
       (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
         .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
+      (record.exitPlan === null || typeof record.exitPlan === "string") &&
       // Schema range for conviction (Codex P1, round 5): the contract bounds confidenceScore to
       // 1-100; sanitize would CLAMP a repaired 999 to maximum conviction instead of rejecting it.
       (record.confidenceScore as number) >= 1 && (record.confidenceScore as number) <= 100 &&
@@ -6913,12 +7012,22 @@ export function enrichOpeningProposal(
 ): TradeProposal {
   if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
   const sym = normalizeSymbol(proposal.symbol);
-  const marketPrice = marketScan.quotesBySymbol[sym]?.price;
+  const scanQuote = marketScan.quotesBySymbol[sym];
+  const marketPrice = scanQuote?.price;
   const refPrice = proposal.referencePrice ?? marketPrice ?? proposal.limitPrice ?? proposal.stopPrice;
   if (refPrice == null || !(refPrice > 0)) return proposal;
   const entryPrice = proposal.limitPrice ?? proposal.stopPrice ?? refPrice;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   let next: TradeProposal = { ...proposal, referencePrice: refPrice };
+  if (isDelayedYahooFallbackQuote(scanQuote) || proposal.quoteDelayedFallback) {
+    next = {
+      ...next,
+      quoteDelayedFallback: true,
+      ...(scanQuote?.provider || proposal.quoteProvider
+        ? { quoteProvider: scanQuote?.provider ?? proposal.quoteProvider }
+        : {})
+    };
+  }
   // Repair-ladder receipt appender: every deterministic correction/fallback below that already
   // discloses itself in free rationale text ALSO records a kind-prefixed, machine-queryable
   // dataAdjustments entry — and the silent edits (wrong-side leg discards, the ATR>beta>flat stop

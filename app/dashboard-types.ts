@@ -46,7 +46,7 @@ export interface StrategyDecision {
     | "skipped_market_closed"
     | "skipped_broker_unhealthy";
   summary: string;
-  proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
+  proposals: Array<{ id?: string; proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string;
 }
@@ -75,6 +75,11 @@ export interface DashboardSnapshot {
     string,
     Pick<TradingPolicy, "systemState" | "strategyAuthority"> & Partial<Pick<TradingPolicy, "runDuringExtendedHours">>
   >;
+  /** Real pending-proposal count per connected account (not just the active one) — the
+   *  scheduler runs every connected account independently of which is loaded, so a
+   *  non-active account can genuinely have proposals waiting. Keyed by ConnectedAccount.id,
+   *  same as connectedAccountPolicies. */
+  connectedAccountPendingCounts?: Record<string, number>;
   portfolio?: Portfolio;
   portfolioReadError?: string;
   positions: EquityPosition[];
@@ -96,7 +101,8 @@ export interface DashboardSnapshot {
    *  entry carries its own as_of so the UI always age-tags it. Optional: older payloads
    *  and empty stores simply omit it ("—" remains the last resort). */
   orderPriceFallbacks?: Record<string, { price: number; asOf: string; source?: string }>;
-  audit: AuditEvent[];
+  /** Raw audit rows are server-only feed input; console clients use auditFeed/unifiedFeed. */
+  audit?: AuditEvent[];
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;

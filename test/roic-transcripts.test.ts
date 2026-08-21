@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shouldDeferBackgroundRagForStrategy, shouldSkipWholeIndexInventory } from "../src/lib/db-execution";
 import {
   parseRoicEarningsCallList,
   parseRoicTranscriptResponse,
@@ -204,6 +205,71 @@ describe("roic-transcripts", () => {
     expect(roicDepthForPhase("archive")).toBe(20);
     if (prev === undefined) delete process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL;
     else process.env.ROIC_TRANSCRIPTS_QUARTERS_PER_SYMBOL = prev;
+  });
+
+  it("defers ROIC / FTS background work while a strategy run is in flight", () => {
+    expect(shouldDeferBackgroundRagForStrategy({ strategyWorkInFlight: true })).toBe(true);
+    expect(shouldDeferBackgroundRagForStrategy({ strategyWorkInFlight: false })).toBe(false);
+    expect(shouldDeferBackgroundRagForStrategy({ strategyWorkInFlight: true, force: true })).toBe(false);
+  });
+
+  it("plans skip-covered for cached latest and full local depth without a list", async () => {
+    const { planRoicSymbolWork } = await import("../src/lib/web-sources/roic-transcripts");
+    expect(
+      planRoicSymbolWork({
+        phase: "latest",
+        depth: 20,
+        localPeriods: [{ year: 2026, quarter: 2 }],
+        cachedIndex: null
+      })
+    ).toEqual({ action: "skip-covered", coveredCount: 1, reason: "latest-cached" });
+    expect(
+      planRoicSymbolWork({
+        phase: "archive",
+        depth: 20,
+        localPeriods: Array.from({ length: 20 }, (_, i) => ({
+          year: 2021 + Math.floor(i / 4),
+          quarter: (i % 4) + 1
+        })),
+        cachedIndex: null
+      }).action
+    ).toBe("skip-covered");
+    expect(
+      planRoicSymbolWork({
+        phase: "archive",
+        depth: 20,
+        localPeriods: [{ year: 2026, quarter: 2 }],
+        cachedIndex: [
+          { year: 2026, quarter: 2 },
+          { year: 2026, quarter: 1 }
+        ]
+      })
+    ).toEqual({
+      action: "fetch-gaps",
+      needsList: false,
+      periods: [{ year: 2026, quarter: 1 }]
+    });
+    expect(
+      planRoicSymbolWork({
+        phase: "archive",
+        depth: 20,
+        localPeriods: [{ year: 2026, quarter: 2 }],
+        cachedIndex: null
+      })
+    ).toEqual({ action: "fetch-gaps", needsList: true, periods: [] });
+  });
+
+  it("skips whole-index Pinecone inventory during gather but allows account deletion", () => {
+    expect(shouldSkipWholeIndexInventory({ strategyWorkInFlight: true })).toBe(true);
+    expect(shouldSkipWholeIndexInventory({ strategyWorkInFlight: false })).toBe(false);
+    expect(shouldSkipWholeIndexInventory({
+      strategyWorkInFlight: true,
+      accountDeletionRequestId: "del-1"
+    })).toBe(false);
+    expect(shouldSkipWholeIndexInventory({
+      strategyWorkInFlight: true,
+      allowDuringStrategyWork: true
+    })).toBe(false);
   });
 
   it("writes full-body only for the newest high-interest call", async () => {

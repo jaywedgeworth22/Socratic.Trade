@@ -39,6 +39,14 @@ import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { activeEmbeddingProvider } from "../vector-db";
 import { resolveSourceNumber } from "../source-settings";
 import { rankHighInterestSymbols } from "../rag/demand-first-symbols";
+import { chunkDocument } from "../rag/chunk";
+import { persistLocalComplete } from "../rag/persist-local-complete";
+import { mirrorFtsChunksBounded } from "../rag/mirror-fts-bounded";
+import {
+  pineconeWriteClass,
+  writesFullBodyToPinecone
+} from "../rag/pinecone-write-class";
+import { storeSignalSectionDocuments } from "../rag/processed-corpus-write";
 import { loadCikMap } from "./sec8k";
 import { parseFilingHtml } from "./sec-parser";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
@@ -138,6 +146,8 @@ export interface IngestResult {
    *  unconfigured) — every later filing in this run would meet the same fate, so bulk
    *  loops should stop instead of fetching/chunking documents that cannot embed. */
   budgetExhausted?: boolean;
+  /** FTS mirror paused because a strategy run is in flight — accession stays un-ledgered. */
+  deferredStrategy?: boolean;
 }
 
 export interface RefreshFilingBodiesResult {
@@ -601,6 +611,7 @@ export async function ingestFiling(
   assertSecFilingLease(leaseGuard);
   const { storeDocument } = await import("../vector-db");
   assertSecFilingLease(leaseGuard);
+  const writeClass = pineconeWriteClass();
   const document = {
       text,
       sections,
@@ -613,6 +624,84 @@ export async function ingestFiling(
       source: "sec-edgar",
       url: filingRef.url
     };
+  const localChunks = chunkDocument(document, {});
+  const localComplete = await persistLocalComplete({
+    ticker,
+    accession: filingRef.accession,
+    docType: filingRef.docType,
+    chunks: localChunks,
+    pineconeWriteClass: writeClass,
+    recordLedger: writeClass !== "full-body"
+  });
+  if (!localComplete.ftsMirrorComplete) {
+    return {
+      skipped: true,
+      chunks: 0,
+      ...(localComplete.abortedByStrategy ? { deferredStrategy: true } : {})
+    };
+  }
+  assertSecFilingLease(leaseGuard);
+  try {
+    const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
+      "../rag/document-summarizer"
+    );
+    const sourceType = filingRef.docType === "10-Q" ? "10q-delta" : "10k-delta";
+    const formHint = filingRef.docType === "10-Q" ? "10-Q" : "10-K";
+    await generateAndStoreDocumentAbstract({
+      ticker,
+      accessionOrEventId: filingRef.accession,
+      sourceType,
+      headline: `${ticker} ${filingRef.docType} highlights (${filingRef.filedAt})`,
+      chunks: tradeHighlightChunksFromText(text, {
+        maxChunks: 8,
+        formHint,
+        sections: sections.map((s) => ({
+          itemCode: s.itemCode,
+          itemTitle: s.itemTitle,
+          text: s.text
+        }))
+      }),
+      publishedAt: filingRef.filedAt,
+      acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt
+    });
+  } catch (err) {
+    console.warn(
+      `[sec-filings] abstract failed for ${filingRef.accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+  assertSecFilingLease(leaseGuard);
+  const signal = await storeSignalSectionDocuments({
+    ticker,
+    accession: filingRef.accession,
+    form: filingRef.docType,
+    title: document.title,
+    publishedAt: filingRef.filedAt,
+    acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt,
+    source: "sec-edgar",
+    url: filingRef.url,
+    chunks: localChunks,
+    userId,
+    ...(leaseGuard ? { leaseGuard } : {})
+  }, storeDocument);
+  assertSecFilingLease(leaseGuard);
+  if (!writesFullBodyToPinecone()) {
+    insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, localChunks.length, {
+      pineconeWriteClass: writeClass,
+      pineconeVectorCount: signal.indexed
+    });
+    audit("sec_filing_ingest", {
+      ticker,
+      accession: filingRef.accession,
+      docType: filingRef.docType,
+      filedAt: filingRef.filedAt,
+      chunks: localChunks.length,
+      attempted: localChunks.length,
+      pinecone_write_class: writeClass,
+      pinecone_vector_count: signal.indexed
+    });
+    return { skipped: false, chunks: signal.indexed };
+  }
   const result = await storeDocument(document, userId, {
     parserRevision: "sec-edgar-filing-v2",
     ...(leaseGuard ? { leaseGuard } : {})
@@ -654,77 +743,42 @@ export async function ingestFiling(
   }
 
   try {
-    const { chunkDocument } = await import("../rag/chunk");
-    const { insertDocumentChunkFts } = await import("../db");
-    // Chunk BEFORE entering the commit-proof transaction: chunkDocument is multi-second
-    // synchronous CPU on a big filing, and running it inside `runWithActiveVectorCommitProof`
-    // (which wraps its callback in ONE SQLite write transaction) held the write lock for the
-    // whole chunking pass — queueing every other writer (including request-path telemetry)
-    // behind it for the duration (2026-08-10 event-loop/lock stall incident).
-    const ftsChunks = chunkDocument(document, {});
-    runWithActiveVectorCommitProof(result.managedCommitProof, () => timeSync(
-      "filingFtsMirror",
-      `${document.doc_id} ${ftsChunks.length} chunks`,
-      () => {
-      // Mirror the committed chunks into the local FTS table so hybrid/lexical retrieval covers the
-      // PRODUCTION filing-body path. Must run inside the transaction so FTS failures rollback
-      // and allow the filing ingestion to be retried on subsequent ticks.
-      // Use the same managed document key storeDocument writes on chunk_occurrences.accession
-      // (doc_id). Bare SEC accessions in FTS cannot join to composite occurrence keys.
-      const managedAccession = document.doc_id;
-      for (const chunk of ftsChunks) {
-        insertDocumentChunkFts(
-          chunk.content_hash,
-          chunk.ticker[0] ?? ticker,
-          "sec-edgar",
-          managedAccession,
-          chunk.text
-        );
-      }
-      insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted);
+    const managedAccession = document.doc_id;
+    const ftsRows = localChunks.map((chunk) => ({
+      contentHash: chunk.content_hash,
+      symbol: chunk.ticker[0] ?? ticker,
+      source: "sec-edgar" as const,
+      accession: managedAccession,
+      text: chunk.text
+    }));
+    const mirror = await mirrorFtsChunksBounded(ftsRows, {
+      resumeKey: { symbol: ticker, source: "sec-edgar", accession: managedAccession }
+    });
+    if (!mirror.complete) {
+      return {
+        skipped: true,
+        chunks: result.indexed,
+        ...(mirror.abortedByStrategy ? { deferredStrategy: true } : {})
+      };
+    }
+    runWithActiveVectorCommitProof(result.managedCommitProof, () => {
+      insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted, {
+        pineconeWriteClass: writeClass,
+        pineconeVectorCount: result.attempted + signal.indexed
+      });
       audit("sec_filing_ingest", {
         ticker,
         accession: filingRef.accession,
         docType: filingRef.docType,
         filedAt: filingRef.filedAt,
         chunks: result.attempted,
-        attempted: result.attempted
+        attempted: result.attempted,
+        pinecone_write_class: writeClass,
+        pinecone_vector_count: result.attempted + signal.indexed
       });
-    }));
-  } catch (err) {
-    return { skipped: true, chunks: result.indexed, error: err instanceof Error ? err.message : "document-commit-proof-lost" };
-  }
-
-  // Compact document-summary for LLM trade use (full 10-K/10-Q body stays in the corpus).
-  // Extractive highlights only — no extra LLM spend on the ingest path.
-  try {
-    const { generateAndStoreDocumentAbstract, tradeHighlightChunksFromText } = await import(
-      "../rag/document-summarizer"
-    );
-    const sourceType = filingRef.docType === "10-Q" ? "10q-delta" : "10k-delta";
-    const formHint = filingRef.docType === "10-Q" ? "10-Q" : "10-K";
-    await generateAndStoreDocumentAbstract({
-      ticker,
-      accessionOrEventId: filingRef.accession,
-      sourceType,
-      headline: `${ticker} ${filingRef.docType} highlights (${filingRef.filedAt})`,
-      chunks: tradeHighlightChunksFromText(text, {
-        maxChunks: 8,
-        formHint,
-        sections: sections.map((s) => ({
-          itemCode: s.itemCode,
-          itemTitle: s.itemTitle,
-          text: s.text
-        }))
-      }),
-      publishedAt: filingRef.filedAt,
-      acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt
     });
   } catch (err) {
-    console.warn(
-      `[sec-filings] abstract failed for ${filingRef.accession}:`,
-      err instanceof Error ? err.message : String(err)
-    );
+    return { skipped: true, chunks: result.indexed, error: err instanceof Error ? err.message : "document-commit-proof-lost" };
   }
 
   return { skipped: false, chunks: result.attempted };

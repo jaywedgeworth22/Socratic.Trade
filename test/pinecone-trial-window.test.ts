@@ -53,7 +53,18 @@ describe("pinecone trial window", () => {
     expect(state.effectiveDailyWriteUnits).toBe(200_000);
   });
 
+  it("defaults the implied trial calendar to 2026-08-27 (7 days from 2026-08-19)", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { pineconeTrialEndsAtMs, pineconeTrialRemainingDays, PINECONE_CURRENT_TRIAL_ENDS_AT } =
+      await load();
+    expect(PINECONE_CURRENT_TRIAL_ENDS_AT).toBe("2026-08-27T00:00:00.000Z");
+    const now = Date.UTC(2026, 7, 20, 2, 59, 0); // 2026-08-19 21:59 CT
+    expect(pineconeTrialEndsAtMs(now)).toBe(Date.parse("2026-08-27T00:00:00.000Z"));
+    expect(pineconeTrialRemainingDays(now)).toBe(7);
+  });
+
   it("paces remaining trial dollars across remaining days instead of a flat 2.5M fuse", async () => {
+    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     const { assessPineconeTrialWindow } = await load();
     // $62 of write-units already delivered (~15.5M WU at $4/M) with 14 days left.
@@ -109,6 +120,7 @@ describe("pinecone trial window", () => {
   });
 
   it("paces the last ~$45 so the trial finishes instead of dumping the reserve in one day", async () => {
+    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     const { assessPineconeTrialWindow } = await load();
     const spentWu = Math.round(((300 - 45) / 4) * 1_000_000);
@@ -157,6 +169,28 @@ describe("pinecone trial window", () => {
     });
     expect(state.mode).toBe("configured");
     expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
+  });
+
+  it("does not collapse the daily fuse to a remainder smaller than one document when local MTD says the trial is spent", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+    const { assessPineconeTrialWindow, PINECONE_MIN_USABLE_DAILY_WU, PINECONE_MIN_USABLE_TEXTS_PER_DAY } = await load();
+    // Local counter implying ~$300 spent (75M WU at $4/M) produced the live card
+    // "used 0 of 15 estimated WUs, attempted 28, skipped 1".
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: 75_000_000,
+      configuredDailyWriteUnits: 2_500_000,
+      configuredTextsPerDay: 1,
+      configuredMonthlyWriteUnits: 2_000_000
+    });
+    expect(state.active).toBe(true);
+    expect(state.mode).toBe("trial");
+    expect(state.localMtdUntrusted).toBe(true);
+    expect(state.phase).toBe("full-steam");
+    expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
+    expect(state.effectiveDailyWriteUnits).toBeGreaterThan(PINECONE_MIN_USABLE_DAILY_WU);
+    expect(state.effectiveTextsPerDay).toBe(PINECONE_MIN_USABLE_TEXTS_PER_DAY);
+    expect(state.effectiveMonthlyWriteUnits).toBe(0);
   });
 
   it("advises the free-tier rollback once", async () => {

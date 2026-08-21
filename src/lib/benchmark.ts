@@ -20,6 +20,8 @@
 //
 // excessReturnPct = accountTWR − spyTWR (percentage points).
 
+import { resolveExternalCashFlows } from "./broker-cash-flows";
+import type { AlpacaAccountActivity } from "./alpaca-account-insights";
 import { fetchDailyOHLC } from "./history";
 // The external-cash-flow math lives in its own dependency-free module: the console's client
 // components need it, and reaching it through this file dragged history.ts + the db barrel into
@@ -323,15 +325,18 @@ export async function computeSpyBenchmarkDetailed(
   equityCurve: EquityCurvePoint[],
   userId?: string,
   now: number = Date.now(),
-  fills?: FillEvent[]
+  fills?: FillEvent[],
+  brokerActivities?: AlpacaAccountActivity[]
 ): Promise<SpyBenchmarkResult> {
   if (!equityCurve || equityCurve.length < 2) {
     return { comparison: null, unavailable: { reason: "insufficient-history" } };
   }
-  // Refuse synthetic paper curves (`syntheticPaperCurve` uses equity = 100 + realized with no cash
-  // fields). IMPORTANT: do not let a single live tip (which has cash) "upgrade" a synthetic
-  // history into a real TWR — that made $100-base fill curves + $100k tip read as +tens of %
-  // "account return" on paper/sandbox accounts. Require ≥2 real snapshot points.
+  // Defense in depth against fabricated-equity curves (getPerformanceSummary no longer builds one
+  // when there are no persisted portfolio snapshots, but this filter stays as a second guard for
+  // any caller that hands in a hand-built curve without cash/positionsValue). IMPORTANT: do not
+  // let a single live tip (which has cash) "upgrade" a curve with no real snapshots into a real
+  // TWR — that made $100-base fill curves + $100k tip read as +tens of % "account return" on
+  // paper/sandbox accounts. Require ≥2 real snapshot points.
   const realCurve = equityCurve.filter(
     (p) => typeof p.cash === "number" || typeof p.positionsValue === "number"
   );
@@ -370,9 +375,10 @@ export async function computeSpyBenchmarkDetailed(
     if (stale) return { comparison: null, unavailable: stale };
   }
 
-  const flows = inferExternalCashFlows(equityCurve, fills ?? []);
+  const { flows, source } = resolveExternalCashFlows({ equityCurve, fills, brokerActivities });
   const comparison = normalizeAgainstBenchmark(equityCurve, closes, "SPY", flows.size > 0 ? flows : undefined);
   if (!comparison) return { comparison: null, unavailable: { reason: "insufficient-overlap" } };
+  if (source === "broker" && flows.size > 0) comparison.cashFlowAdjusted = true;
   return { comparison };
 }
 
@@ -381,7 +387,8 @@ export async function computeSpyBenchmark(
   equityCurve: EquityCurvePoint[],
   userId?: string,
   now: number = Date.now(),
-  fills?: FillEvent[]
+  fills?: FillEvent[],
+  brokerActivities?: AlpacaAccountActivity[]
 ): Promise<BenchmarkComparison | null> {
-  return (await computeSpyBenchmarkDetailed(equityCurve, userId, now, fills)).comparison;
+  return (await computeSpyBenchmarkDetailed(equityCurve, userId, now, fills, brokerActivities)).comparison;
 }

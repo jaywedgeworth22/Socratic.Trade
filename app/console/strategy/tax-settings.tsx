@@ -160,7 +160,7 @@ export function TaxSettingsCard() {
             <div className="mt-3 max-w-md">
               <Field
                 label="Taxable-loss rebuy inside this IRA"
-                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore/disregard is the default for IRA accounts and lets the buy proceed with the audit note; Block is the stricter optional setting."
+                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore (default) does not constrain this IRA. Auto lets Green weigh it, then proceeds. Block refuses. Minimum loss in Tax rules below is optional (blank = every loss)."
                 htmlFor="ira-wash-sale"
               >
                 <Select
@@ -175,7 +175,8 @@ export function TaxSettingsCard() {
                     commit("iraWashSaleHandling", next, prev);
                   }}
                 >
-                  <option value="disregard">Ignore / disregard and annotate (default)</option>
+                  <option value="disregard">Ignore (default)</option>
+                  <option value="auto">Auto — weigh it, then proceed</option>
                   <option value="block">Block cross-account IRA replacement buys</option>
                 </Select>
               </Field>

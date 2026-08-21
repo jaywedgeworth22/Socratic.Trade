@@ -31,7 +31,7 @@ export type { OHLCBar };
 import { normalizeSymbol, toAlpacaSymbol } from "./money";
 import { audit, fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, upsertImportedPrices, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
-import { expiresAtRespectingMarketClose } from "./market-hours";
+import { expiresAtRespectingMarketClose, latestCompletedTradingSessionEtKey } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
@@ -109,21 +109,17 @@ async function fetchYahooChartJson<T>(url: string): Promise<T> {
 }
 
 /**
- * Evaluates whether a series of daily OHLC bars is fresh (latest bar is within maxStalenessDays).
- * Defaults to 3 calendar days to allow for weekends without false stale flags.
+ * Evaluates whether a series of daily OHLC bars is fresh: the latest bar must include the most
+ * recently completed US equity trading session (session-counted, not calendar days).
  */
-export function isBarSeriesFresh(bars: OHLCBar[] | null, maxStalenessDays: number = 3, now: number = Date.now()): boolean {
+export function isBarSeriesFresh(bars: OHLCBar[] | null, now: number = Date.now()): boolean {
   if (!bars || bars.length < 2) return false;
   const lastBar = bars[bars.length - 1];
   if (!lastBar || lastBar.time == null) return false;
-  const t = lastBar.time;
-  const lastMs = typeof t === "number"
-    ? (t > 1e10 ? t : t * 1000)
-    : new Date(t).getTime();
-  if (!Number.isFinite(lastMs)) return false;
-  const ageMs = now - lastMs;
-  const maxAgeMs = maxStalenessDays * 24 * 60 * 60_000;
-  return ageMs <= maxAgeMs;
+  const lastBarDay = toBusinessDay(lastBar.time);
+  if (!lastBarDay) return false;
+  const latestExpected = latestCompletedTradingSessionEtKey(now);
+  return lastBarDay >= latestExpected;
 }
 
 /**
@@ -238,7 +234,7 @@ export async function fetchDailyOHLC(
 
   // 1. Evaluate local SQLite history cache
   const localBars = await fetchHistoryCacheEod(symbol);
-  if (localBars && localBars.length >= 2 && isBarSeriesFresh(localBars, 3, now)) {
+  if (localBars && localBars.length >= 2 && isBarSeriesFresh(localBars, now)) {
     const stampedLocal = stampOhlcBarProvenance(localBars, "history-cache-eod", new Date(now).toISOString());
     cache.set(sharedCacheKey, { expiresAt: expiresAtRespectingMarketClose(new Date(now), historyTtlMs()), bars: stampedLocal });
     emitHistoryDemandFilled(symbol, now);
@@ -559,7 +555,7 @@ interface TradierHistoryResponse {
  * the owner's local connection).  We do not fall back to leftover env paper keys —
  * those would silently spend the operator credential on every tenant history miss.
  */
-function resolveAlpacaHistoryCredential(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
+export function resolveAlpacaHistoryCredential(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
   const scoped = userId ? getConnectedAccountByBroker("alpaca", userId) ?? getConnectedAccountByBroker("alpaca-mcp", userId) : undefined;
   const acct = scoped ?? getConnectedAccountByBroker("alpaca", "local") ?? getConnectedAccountByBroker("alpaca-mcp", "local");
   return {
