@@ -7,6 +7,23 @@ Option 3 of the Perplexity-ritual ask: ST now builds those weekly screens from i
 **Risk:** first Swift compile is CI-only.  Momentum is empty until grouped-daily or per-symbol OHLC lands.
 
 PR #3009 (`cursor/weekly-market-screens-2b0c`).  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+## 2026-08-21 MONET - P0: deploys have been failing for ~5 hours, prod serving stale code
+
+Every deployment from 2026-08-21T05:07Z onward failed on a top-level await in
+scripts/assert-rth-deploy-latch.ts, so the day's merged fixes -- including money-path changes --
+never reached production.  The running container kept serving healthy, so nothing external showed
+a problem; it was found only by reading Coolify diagnostics while chasing something else.
+
+package.json declares "type": "module", but the Dockerfile runs the latch at line 53 and copies
+package.json at line 54 -- deliberately, so a docs-only no-op fails in seconds rather than after a
+30-minute npm ci.  tsx therefore sees no package.json, falls back to CJS, and a top-level await is
+fatal there.  It runs fine locally and fails only in the image, which is why it shipped.
+
+Fixed by moving the await into an async main() with a catch that exits 1, so a crash can never
+silently allow a build.  A regression test now parses the Dockerfile and transpiles every
+build-time script that runs before package.json exists.
+
+VERIFY AFTER MERGE: the next deployment must succeed and the live sha must advance past 313603752.
 
 ## 2026-08-21 CURSOR — three-column LLM catalog (display / OpenRouter / native)
 
