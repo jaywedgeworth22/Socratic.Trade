@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
+
+New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.
+
 ## 2026-08-20 MONET - iOS/web parity resolved case by case, not synced one way
 
 Owner instruction was explicit that neither platform is assumed superior, and the audit bore that out: of 21 divergences, 9 adopt web, 6 KEEP BOTH, 4 adopt iOS, and 2 needed a third wording because both sides were wrong.  A blanket sync would have been wrong on 12 of 21.
@@ -9,6 +13,17 @@ Web turned out to be the drifted side on Title Case -- the fleet copy doc names 
 Two of my own instructions were wrong and the implementer pushed back rather than complying: unhyphenated "Exit Only" is a consistent COMMAND name (parallel to "Wind Down"), not an orphan spelling, because the app deliberately runs Title Case commands alongside sentence-case state words -- and it then found the identical casing defect the audit had missed.  It also caught that renaming only the read-only Guardrails rows would have left the EDIT controls on the same screen calling one field by a different name.
 
 Known limit: every screen changed sits behind the OAuth login wall, so there is no visual proof of the changed screens -- only BUILD SUCCEEDED, 190 passing iOS tests, and a clean launch.
+## 2026-08-20 MONET - timed-out work is now cancelled, and slow lanes stop spawning duplicates
+
+`withDeadline` was a bare Promise.race: on timeout the caller proceeded while the underlying broker call kept running with its socket open for the life of the process.  That is the leading candidate for why an aged process degrades (fresh serves /api/health in 0.61s, a 5h-old one took 55s).  It now aborts on the timeout branch only.
+
+More serious: both scheduler in-flight guards released on the RACED promise rather than the real work, so any broker lane slower than the 15s deadline got a duplicate launched on top of it every 60s tick, forever -- on the stale-exit lane that means duplicate remediation attempts against LIVE ORDERS.
+
+Order placement, cancel and replace are deliberately NOT abortable, enforced structurally by never passing a signal on those paths -- an aborted placement may still have reached the broker.
+
+Honest scope: this removes a leaked-work accumulator and a duplicate-launch path.  It is NOT proven to be what stopped runs completing; that still needs one production query (see #2967).
+
+One premise from the investigation did not hold and was deliberately not implemented: the Alpaca gateway has no fetch to thread a signal into, and the obvious axios-interceptor workaround attaches to a different module instance than the bundled SDK uses.  Filed as #2970 rather than shipping something that silently does nothing in production.
 
 ## 2026-08-20 MONET - `realized-pnl-ledger` up for review
 
@@ -735,6 +750,15 @@ Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-ou
 ## 2026-08-17 CURSOR — Architecture & backend audit (docs-only)
 
 Read-only audit of framework, API, queues, persistence, caching, concurrency, recovery, and durability against `main` `4980322b`.  No product fixes.  Report: `docs/audits/2026-08-17-architecture-backend.md`.  PR #2807, branch `cursor/architecture-backend-audit-6186`.  Headline: no active P0 in code; new gap is stale `strategy_run_requests` (F3); Litestream L2/L3 wedge remains owner-ops (F1, already tracked).  Rollout: `docs/rollouts/2026-08-17-architecture-backend-audit.md`.
+## 2026-08-17 CURSOR — Security / reliability audit (report-only)
+
+Read-only audit of auth, secrets, tenant isolation, supply chain, PII, Litestream/DR,
+deploy, alerting, fail-open/closed, spend, and SLOs.  Live health 200 on sha `4980322b`;
+Litestream replicating; restore still unproven on B2.  No code changes.
+
+Branch `cursor/security-reliability-audit-d8f6`, PR #2806.  Report:
+`docs/audits/2026-08-17-security-reliability.md`.  Rollout:
+`docs/rollouts/2026-08-17-security-reliability-audit.md`.
 ## 2026-08-17 CURSOR — Brokers + data-cascade reliability audit (report-only)
 
 Read-only audit at `main` `4980322b`.  No broker mutations.  Report:

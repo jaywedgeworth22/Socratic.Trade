@@ -286,7 +286,16 @@ class AlpacaBrokerGateway implements BrokerGateway {
   // is still wrapped so a health-logging failure can never affect the real broker call.
   // The Alpaca SDK ships no types, so this.alpaca.* calls are already `any`; a constrained
   // generic here would collapse those returns to `unknown` at every call site.
-  private async trackHealth(fn: () => Promise<any>, opts?: { deadlineMs?: number; retryTransient?: boolean }): Promise<any> {
+  //
+  // `signal` is supplied ONLY by idempotent read paths (getAccount / getPositions /
+  // getOrders / getLatestQuotes), which route through awaitWithFirstCallRetry.  It fires when
+  // that wrapper has stopped waiting on this attempt — the loser of the first/retry race, or
+  // both attempts once the combined budget expires.  Order placement, cancel, and replace
+  // deliberately pass no signal, so they can never be abandoned mid-flight (see #2960/#2962).
+  private async trackHealth(
+    fn: () => Promise<any>,
+    opts?: { deadlineMs?: number; retryTransient?: boolean; signal?: AbortSignal }
+  ): Promise<any> {
     const start = Date.now();
     // Reads may retry a dead keep-alive socket. createOrder must not: if Alpaca
     // accepted the first POST and the response socket died, a retry with the
@@ -301,12 +310,20 @@ class AlpacaBrokerGateway implements BrokerGateway {
         : call;
     };
     for (let attempt = 0; attempt < attempts; attempt++) {
+      // The abort can also land during the backoff sleep below — re-check so a cancelled
+      // read never opens a second connection.
+      if (attempt > 0 && opts?.signal?.aborted) throw lastErr;
       try {
         const result = await runOnce();
         logApiHealth({ service: "alpaca-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
         return result;
       } catch (err) {
         lastErr = err;
+        // This attempt was abandoned by our own deadline, not by Alpaca.  Do not spend a
+        // fresh connection on work nobody is waiting for, and do not write a broker-failure
+        // health row: that row feeds the consecutive-failure streak that auto-halts autonomy,
+        // so a slow-but-healthy broker would look like an outage.
+        if (opts?.signal?.aborted) throw err;
         // Alpaca's keep-alive pool reuses a socket the origin already closed
         // (UND_ERR_SOCKET / "other side closed").  One retry on a fresh
         // connection recovers the quote/account read; the first miss is not
@@ -336,7 +353,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
   private async readAccount(): Promise<any> {
     const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
     return awaitWithFirstCallRetry(
-      () => this.trackHealth(() => this.alpaca.getAccount()),
+      ({ signal }) => this.trackHealth(() => this.alpaca.getAccount(), { signal }),
       {
         firstMs,
         retryMs,
@@ -543,7 +560,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     return this.callMcp<any>("get_positions", {}, async () => {
       const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
       const positions = await awaitWithFirstCallRetry(
-        () => this.trackHealth(() => this.alpaca.getPositions()),
+        ({ signal }) => this.trackHealth(() => this.alpaca.getPositions(), { signal }),
         {
           firstMs,
           retryMs,
@@ -606,13 +623,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
     for (let guard = 0; guard < 50; guard++) {
       const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
       const page = (await awaitWithFirstCallRetry(
-        () => this.trackHealth(() => this.alpaca.getOrders({
+        ({ signal }) => this.trackHealth(() => this.alpaca.getOrders({
           status: params.status,
           limit: PAGE,
           direction: "desc",
           ...(params.after ? { after: params.after } : {}),
           ...(until ? { until } : {})
-        } as Parameters<typeof this.alpaca.getOrders>[0])),
+        } as Parameters<typeof this.alpaca.getOrders>[0]), { signal }),
         {
           firstMs,
           retryMs,
@@ -661,9 +678,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
     try {
       const { firstMs, retryMs } = alpacaAccountReadBudgetMs();
       const response = await awaitWithFirstCallRetry(
-        () => this.trackHealth(
+        ({ signal }) => this.trackHealth(
           () => this.alpaca.getLatestQuotes(normalizedSymbols.map(toAlpacaSymbol)),
-          { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS }
+          { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS, signal }
         ),
         {
           firstMs: EQUITY_QUOTES_MS,
