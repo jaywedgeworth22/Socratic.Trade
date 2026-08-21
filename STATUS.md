@@ -1,5 +1,23 @@
 # Current Status
 
+## 2026-08-21 MONET - P0: deploys have been failing for ~5 hours, prod serving stale code
+
+Every deployment from 2026-08-21T05:07Z onward failed on a top-level await in
+scripts/assert-rth-deploy-latch.ts, so the day's merged fixes -- including money-path changes --
+never reached production.  The running container kept serving healthy, so nothing external showed
+a problem; it was found only by reading Coolify diagnostics while chasing something else.
+
+package.json declares "type": "module", but the Dockerfile runs the latch at line 53 and copies
+package.json at line 54 -- deliberately, so a docs-only no-op fails in seconds rather than after a
+30-minute npm ci.  tsx therefore sees no package.json, falls back to CJS, and a top-level await is
+fatal there.  It runs fine locally and fails only in the image, which is why it shipped.
+
+Fixed by moving the await into an async main() with a catch that exits 1, so a crash can never
+silently allow a build.  A regression test now parses the Dockerfile and transpiles every
+build-time script that runs before package.json exists.
+
+VERIFY AFTER MERGE: the next deployment must succeed and the live sha must advance past 313603752.
+
 ## 2026-08-21 CURSOR — three-column LLM catalog (display / OpenRouter / native)
 
 Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settings, pickers, logs, and iOS Coach store **display slugs**.  Live OpenRouter calls send column 2 via `normalizeOpenRouterModelId` / `openRouterSlugFor`.  Direct-provider stubs use `nativeSlugFor` so a future native path cannot send an OpenRouter vendor path.  Older persisted ids (`gpt-5.4-mini`, `claude-sonnet-5`, `grok-4.5`, `deepseek-v4-flash`, `gemini-3.5-flash-lite`, …) alias onto the new display slugs.  Models not on the owner list are no longer advertised.  Congress.Trade has no cheap parallel catalog in a Cursor CT lane — follow-up only.
