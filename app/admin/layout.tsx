@@ -11,6 +11,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Activity,
+  BarChart3,
   Brain,
   Database,
   DatabaseBackup,
@@ -83,6 +84,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Operations",
     desc: "Server-level pause and kill switches: workers, streams, budgets — flipped at runtime, no redeploy.",
     icon: SlidersHorizontal
+  },
+  {
+    href: "/admin/backtest-ic",
+    label: "Factor Backtest",
+    desc: "Read-only information-coefficient backtest of scan factor weights against forward returns.",
+    icon: BarChart3
   },
   {
     href: "/admin/server",

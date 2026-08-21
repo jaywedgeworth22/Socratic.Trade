@@ -794,6 +794,17 @@ Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.
 
 Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
+## 2026-08-17 CURSOR — P3 curl-only diagnostics get UI entry (#2563)
+
+Four existing routes were curl-only: tuning-dry-run, learning-ledger, backtest-ic, `/api/audit`.
+This branch adds console/admin paths and does not change server behavior.
+
+- Strategy: Weight Tuning Preview (`GET /api/admin/tuning-dry-run`)
+- Lessons: Learning Ledger (`GET/POST /api/admin/learning-ledger`)
+- Admin: Factor Backtest (`GET /api/admin/backtest-ic`)
+- Activity: Audit tab (`GET /api/audit`)
+
+Branch `cursor/p3-curl-only-ui-2563-814a`.  PR #2793.  Rollout: `docs/rollouts/2026-08-17-curl-only-ui-entry.md`.
 ## 2026-08-17 CURSOR — Console a11y batch (#2561)
 
 P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.
