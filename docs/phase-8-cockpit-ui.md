@@ -22,7 +22,7 @@
 > phone tab bar.  Admin Portal is a first-class tab gated on `currentUser.isAdmin`,
 > with a native rail of the eleven website admin pages and a fenced WKWebView that
 > intercepts "Back to Console" instead of loading `/console` inside the app.
-> The Assets price-alert composer is removed.  Rollout:
+> The Assets price-alert composer is removed.  PR #3028.  Rollout:
 > `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
 >
 > 2026-06-28: The SSR first-paint dashboard shell now uses a thin boot strip
