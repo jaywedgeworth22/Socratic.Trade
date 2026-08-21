@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-08-20 CLAUDE - login screen: hero wordmark, one set of provider buttons, fuller legal copy
+
+Owner screenshot review of the iOS sign-in screen.  Four changes, mirrored on the website login where the surface is shared: a new first value bullet ("Configure strategic framework and guardrails"), the candlestick wordmark scaled from a 24pt top-bar glyph to a headline that fills the content column, all three provider buttons rendered at identical width/height/radius, and the owner's expanded disclaimer (account at SocraticTrade.com, Terms/Privacy linked below, AI output not guaranteed though the framework is user-defined, educational/experimental/informational use only).
+
+The Apple button was narrower than the other two for a concrete reason worth recording: `ASAuthorizationAppleIDButton` hard-caps its width at 375pt, and the login content column was 400pt.  Fix is to narrow the column to 352, not to stretch the Apple host -- a prior comment in `LoginView.swift` already warned that stretching it past the cap trips unsatisfiable autoresizing constraints.
+
+Label-size parity inside the Apple button is NOT achievable without replacing it with a custom control, which would put Sign in with Apple branding compliance on us at App Review.  Google/GitHub labels went 15 -> 17pt medium to close most of the gap; the remaining difference is Apple's own.
+
+Verified with a simulator screenshot, not just a green build.  Copy and layout only -- no auth, session, or order path touched.  Rollout: `docs/rollouts/2026-08-20-login-hero-and-legal-copy.md`.
+
 ## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
 
 New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.

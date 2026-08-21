@@ -8,6 +8,7 @@
 
 import { isAppleWebAuthConfigured } from "../../src/lib/auth/apple-web";
 import { signIn } from "../../src/lib/auth/auth";
+import { SENTENCE_GAP } from "../console/lib/format";
 import { HeaderLogo } from "../console/ui/header-logo";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ const anyProviderConfigured = googleConfigured || githubConfigured || appleConfi
 
 /** Value props — keep in sync with iOS LoginView feature bullets. */
 const LOGIN_VALUE_BULLETS = [
+  "Configure strategic framework and guardrails",
   "Review and approve proposals",
   "Track positions, orders, and performance",
   "Control the backend agent without moving credentials onto the device"
@@ -30,7 +32,7 @@ export default function LoginPage() {
     <main className="grid min-h-screen place-items-center bg-bg px-6 text-center">
       <div className="w-full max-w-md space-y-6">
         <div className="flex justify-center mb-2 px-4 overflow-hidden">
-          <HeaderLogo height={20} />
+          <HeaderLogo height={30} />
         </div>
 
         <ul className="mx-auto max-w-sm space-y-2.5 rounded-md border border-line bg-surface px-4 py-3.5 text-left">
@@ -119,17 +121,23 @@ export default function LoginPage() {
           </div>
         )}
 
-        <p className="text-xs text-muted leading-relaxed">
-          By signing in you agree to the{" "}
-          <a href="/terms-and-conditions" className="underline underline-offset-2 hover:text-fg">
-            Terms
-          </a>{" "}
-          and{" "}
-          <a href="/privacy-policy" className="underline underline-offset-2 hover:text-fg">
-            Privacy Policy
-          </a>
-          .  Not investment advice.  You set authority.
-        </p>
+        <div className="space-y-2">
+          <p className="text-xs text-muted leading-relaxed">
+            By signing in, you agree to the Terms and Privacy Policy linked below.
+            {SENTENCE_GAP}AI generated proposals, behaviors, and actions are not guaranteed
+            though strategic framework is customizable and defined by each user.
+            {SENTENCE_GAP}Site and app do not provide financial or investment advice and were
+            made for educational, experimental, and/or informational use only.
+          </p>
+          <p className="flex justify-center gap-4 text-xs">
+            <a href="/terms-and-conditions" className="underline underline-offset-2 hover:text-fg">
+              Terms
+            </a>
+            <a href="/privacy-policy" className="underline underline-offset-2 hover:text-fg">
+              Privacy
+            </a>
+          </p>
+        </div>
       </div>
     </main>
   );
