@@ -6,7 +6,7 @@ Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settin
 
 **Risk:** some owner wire slugs (untilded `*-latest`, `google/gemini-flash-latest`, period-form `mistralai/mistral-medium-3.5`) may 404 on OpenRouter today.  Owner said do not keep sending the dated ids the table replaced.
 
-Branch `agent/cursor/llm-model-slugs`, worktree `~/apps/trading-cursor`.  Rollout: `docs/rollouts/2026-08-21-llm-model-slugs.md`.
+MERGED to `main` as #3003 squash `36f0a3c8` at 09:56 UTC (auto-deploy).  Rollout: `docs/rollouts/2026-08-21-llm-model-slugs.md`.
 ## 2026-08-21 CLAUDE - adaptive tab bar MERGED; the unfinished half is written down
 
 PR #2987 merged to `main` as `9298c29` at 06:56 UTC.  Owner ask delivered in full: more than
