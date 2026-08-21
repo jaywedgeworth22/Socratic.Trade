@@ -234,7 +234,8 @@ describe("GET /api/market/spx", () => {
     // The peer-serving default must skip the App A read-back tier: serving App A's own
     // request through a tier that calls App A back is a guaranteed-wasted echo hop.
     expect(mockFetchDailyOHLC).toHaveBeenCalledWith("SPY", expect.any(Number), undefined, {
-      skipAppATier: true
+      skipAppATier: true,
+      usageLabel: "congress-read",
     });
     expect(await res.json()).toEqual({
       closes: [

@@ -111,6 +111,7 @@ beforeEach(() => {
     "DELETE FROM provider_usage_outbox; DELETE FROM provider_dispatch_attempts;"
   );
   getDb().prepare("DELETE FROM settings WHERE key LIKE 'usage_monitor_replay:%'").run();
+  getDb().prepare("DELETE FROM settings WHERE key LIKE 'usage_monitor_callvolume:%'").run();
   const now = new Date().toISOString();
   const insertCutover = getDb()
     .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?)");
@@ -161,6 +162,7 @@ describe("usage monitor durable replay", () => {
       llm: { sent: 1, complete: true, failed: false },
       rag: { sent: 1, complete: true, failed: false },
       provider: { sent: 0, complete: true, failed: false },
+      callVolume: { sent: 0, complete: true, failed: false },
     });
     const events = captured.flatMap((request) => request.body.events);
     expect(events).toHaveLength(2);
@@ -234,6 +236,7 @@ describe("usage monitor durable replay", () => {
       llm: { sent: 0, complete: true, failed: false },
       rag: { sent: 0, complete: true, failed: false },
       provider: { sent: 0, complete: true, failed: false },
+      callVolume: { sent: 0, complete: true, failed: false },
     });
     expect(captured).toHaveLength(0);
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)?.id)
@@ -766,5 +769,34 @@ describe("usage monitor durable replay", () => {
 
     expect(result.llm).toEqual({ sent: 0, complete: false, failed: true });
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
+  });
+
+  it("replays persisted call-volume windows after an in-memory crash", async () => {
+    push.recordProviderCall("massive", {
+      ok: true,
+      service: "market-data",
+      label: "congress-read",
+    });
+    push.__setUsageMonitorFetch((async () => new Response("unavailable", { status: 503 })) as unknown as typeof fetch);
+    await push.flushUsageMonitor();
+    push.__resetUsageMonitorState();
+
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+    const first = await replay.runUsageMonitorReplay();
+    expect(first.callVolume).toEqual({ sent: 1, complete: true, failed: false });
+    const vol = captured.flatMap((request) => request.body.events).find((event) => event.provider === "massive");
+    expect(vol).toMatchObject({
+      project: "socratic-trade",
+      provider: "massive",
+      service: "market-data",
+      requests: 1,
+    });
+    expect((vol?.metadata as Record<string, unknown> | undefined)?.label).toBe("congress-read");
+
+    captured.length = 0;
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.callVolume).toEqual({ sent: 0, complete: true, failed: false });
+    expect(captured.flatMap((request) => request.body.events).some((event) => event.provider === "massive")).toBe(false);
   });
 });
