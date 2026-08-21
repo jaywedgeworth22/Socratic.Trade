@@ -42,11 +42,11 @@ the branch (05:22:30 and 06:21:48), and `verify` was green.
 
 ### A. Run the tests and take the screenshots  *(screenshots still need a Mac)*
 
-**Status 2026-08-21 evening (CURSOR):** the XCTest half moves onto the Mac runner via item C
-(`xcodebuild test` in `.github/workflows/ios-build.yml`).  Watch that step on
-`cursor/ios-ci-unhang-ac14` for TEST SUCCEEDED -- those 45 cases have still never run as of
-this writing.  Screenshots (iPad Air 11" portrait/landscape, borrowed-slot behaviour, Mac
-window drag) still need a human on a Mac; CI cannot see the bar.
+**Status 2026-08-21 evening (CURSOR, PR #3023):** XCTest half **done** on the Mac runner.
+Run 32529663287 concluded `success` in ~2 minutes: `Using simulator: iPhone 17 Pro`,
+`** TEST SUCCEEDED **`, 232 tests / 0 failures, including all 30 `TabPreferencesTests`.
+Screenshots (iPad Air 11" portrait/landscape, borrowed-slot behaviour, Mac window drag)
+still need a human on a Mac; CI cannot see the bar.
 
 ```bash
 xcodebuild test -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
@@ -89,13 +89,13 @@ waits on that pipe rather than on the process.  **Raising `timeout-minutes` does
 would just hang longer.
 
 Proposed patch to `.github/workflows/ios-build.yml` -- give the daemon a file to inherit instead
-of the runner's pipe -- **applied 2026-08-21 evening on `cursor/ios-ci-unhang-ac14`**.  Warm
-builds later the same day already concluded `success` in ~40s without the patch (the cancelled
+of the runner's pipe -- **applied and verified on PR #3023**.  Mac job run 32529663287
+concluded `success` in ~2 minutes (21:41:21Z -> 21:43:10Z), not `cancelled`.  Warm builds
+later the same day already concluded `success` in ~40s without the patch (the cancelled
 cluster was 04:16-06:56 UTC, including #2794 and #2987).  The redirect is still the right
-hardening: a cold build that prints BUILD SUCCEEDED must not hang the pipe.  The same PR adds
-the `xcodebuild test` lane (item A's execution half).  Did **not** make `ios-build` a required
-check -- wait until that PR's job concludes `success`, then the owner can flip the
-`main-protection` ruleset (board `830c892f`).
+hardening: a cold build that prints BUILD SUCCEEDED must not hang the pipe.  The same PR
+added the `xcodebuild test` lane (item A's execution half -- 232/0 including 30
+TabPreferencesTests).  `ios-build` can now be made a required check (board `830c892f`).
 
 ```yaml
       - name: Build SocraticTrade (generic iOS device, unsigned)
@@ -182,10 +182,9 @@ Changing any of them should change a test in `TabPreferencesTests` or `WrappingH
 
 ## 5. Verification State
 
-- `main` `9298c29` carries the tab-bar change.  `verify` green.
-- Item C hang: later 2026-08-21 `ios-build` runs on `main` conclude `success` in ~40s (warm
-  cache).  The 04:16-06:56 UTC cluster on #2794/#2987 was `cancelled`.  File-redirect + test
-  lane are on `cursor/ios-ci-unhang-ac14` -- watch that PR's job for a `success` conclusion.
+- `main` `9298c29` carries the tab-bar change.  `verify` green on that merge.
+- Item C hang: PR #3023 Mac job run 32529663287 concluded `success` in ~2 minutes
+  (file-redirect + test lane).  232 XCTests / 0 failures, iPhone 17 Pro.
 - Item D closed on `main` by #3012.  Item A screenshots, item B rename, item E auto-fill
   decision, item F knobs: still open.
 
@@ -194,5 +193,5 @@ Changing any of them should change a test in `TabPreferencesTests` or `WrappingH
 - Item B still needs a Mac with XcodeGen.  Do not hand-edit `project.pbxproj`.
 - Item A screenshots still need a Mac + simulator (iPad Air 11" both orientations, borrowed
   slot, Mac window drag).  A cloud Linux session cannot do them.
-- Making `ios-build` a required check is owner/ruleset work.  Do not flip it until the
-  unhang PR's job actually concludes `success`.
+- Making `ios-build` a required check is owner/ruleset work.  PR #3023's Mac job concluded
+  `success`, so the hang is no longer a reason to wait.
