@@ -42,17 +42,27 @@ Did not add `strategyRuns` to the mobile snapshot.  Filling `scheduler.lastRunAt
 ## Verification State
 
 ```
+npm run lint
+# exit 0 (errors only; grandfathered warnings remain)
+
 npx tsc --noEmit
 # clean after defaulting runCadenceMinutes for cadenceLaneDecision
 
 npx vitest run test/scheduler-presentation.test.ts test/market-hours.test.ts test/mobile-scan.test.ts
 # 3 files / 47 tests passed
 
-npm run lint
-# exit 0 (errors only; grandfathered warnings remain)
+npx vitest run test/scheduler-cadence.test.ts test/sentry-inert.test.ts
+# 2 files / 12 tests passed
+
+npm test
+# 17 failed / 653 passed / 1 skipped files (29 failed / 7439 passed)
+# Failures are Yahoo/SEC/Voyage/notify/vector-db files this change did not touch
+
+npm run build
+# Next.js 16.3.1 webpack build succeeded
 ```
 
-Full `npm test` on this cloud VM is still walking the suite and is failing unrelated network/provider tests (Yahoo/SEC/Voyage/Massive timeouts).  Those files were not touched.  `npm run build` is queued after that walk.  Swift compile is CI `ios-build.yml` — this VM has no `xcodebuild`.
+Swift compile is CI `ios-build.yml` — this VM has no `xcodebuild`.
 
 ## Next Steps & Blockers
 
