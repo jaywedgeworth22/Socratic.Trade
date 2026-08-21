@@ -58,7 +58,7 @@ import { applyBrokerOrderPlacementPause, checkBrokerHealth, isOrderPlacementInfr
 import { greenFailoverExhaustedSuffix, interactiveStrategyReasoningEffort, isFailoverLlmStatus, isRetryableLlmError, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { implicitGreenRotationFallbacks, isModelRotationSentinel, resolveModelRotationForRun } from "./model-rotation";
+import { implicitGreenRotationFallbacks, isModelRotationSentinel, recordOpenRouterModelNotFound, resolveModelRotationForRun } from "./model-rotation";
 import { maybeOpenRouterCreditsExhaustedHint } from "./openrouter-credits";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation, toGeminiJsonSchema } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
@@ -151,6 +151,7 @@ import { auditBoundedStrategyRunResult } from "./audit-bounded-run";
 import { clearStopPlans, clearTakeProfitTrimBands, filterFullStopPlansByLiveBasis, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, persistedOrFallbackStopPct, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
+import { recordLlmCallOutcome } from "./llm-late-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
@@ -164,7 +165,7 @@ import {
   type PromptTextSource,
   type UntrustedPromptField
 } from "./prompt-safety";
-import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
+import { debateProposal, projectRedTeamReviewContext, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
 import {
   captureProposalSizingSnapshot,
   proposalForFinalSizeRedReview,
@@ -201,7 +202,7 @@ import {
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
 import type { ApprovedEscalation, DecisionStep, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, HumanReviewReasonCode, HumanReviewReasonReceipt, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, ProposalScorecard, ProposalScorecardChecklistItem, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
-import type { PositionStopPlan } from "./db-api-keys";
+import type { LlmKeySource, PositionStopPlan } from "./db-api-keys";
 import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
@@ -5988,6 +5989,12 @@ async function proposeTrades(input: {
   let bullServedTransport = transport;
   let bullServedKeySource = llmKeySource;
   let bullFailoverNote: string | undefined;
+  // Structured twin of `bullFailoverNote`, stamped onto every proposal this run produces so the
+  // approval card and iOS can say WHICH model was intended and why it did not serve.  The note
+  // above is prose for the run record; this is the receipt the proposal carries forever.
+  let bullServedByFallback: TradeProposal["greenServedByFallback"];
+  // Why the most recent attempt handed off.  Read only when a fallback ends up serving.
+  let bullLastFailoverReason: string | undefined;
   // The exhausted-chain error must name the LAST attempt (not the configured primary).  Aug 6
   // run_failed alerts named a single model even when failover had been tried, which made it
   // look like Green never left the first pick.
@@ -6074,7 +6081,20 @@ async function proposeTrades(input: {
               },
               {
                 softTimeoutMs: bullSoftTimeoutMs,
-                onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bull", provider: attempt.provider, model: attempt.model, softTimeoutMs: bullSoftTimeoutMs, connectedAccountId: input.policy.connectedAccountId })
+                onOutcome: (o) =>
+                  recordLlmOutcome(o, {
+                    runId: input.runId,
+                    userId: input.userId,
+                    step: "bull",
+                    provider: attempt.provider,
+                    model: attempt.model,
+                    softTimeoutMs: bullSoftTimeoutMs,
+                    connectedAccountId: input.policy.connectedAccountId,
+                    // Key attribution mirrors the fast-path recordLlmUsage below, so a late reply
+                    // lands on the same key/account ledger line the run would have used.
+                    keySource: attempt.keySource,
+                    keyRef: attempt.keyRef
+                  })
               }
             );
 
@@ -6093,8 +6113,13 @@ async function proposeTrades(input: {
                 userId: input.userId,
                 connectedAccountId: input.policy.connectedAccountId
               });
+              // An OpenRouter 404 is the ONE signal that a wire slug is genuinely unservable right
+              // now.  It cools that slug for a bounded window instead of being frozen into a
+              // hardcoded "dead models" list that no live catalog could ever overrule.
+              if (attempt.provider === "openrouter" && response.status === 404) recordOpenRouterModelNotFound(attempt.model);
               if (!isLast && isFailoverLlmStatus(response.status)) {
                 lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
+                bullLastFailoverReason = `HTTP ${response.status}`;
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
                 audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
                 continue;
@@ -6111,6 +6136,7 @@ async function proposeTrades(input: {
               // (Red Team already continues on malformed HTTP-200 content — issue #2577).
               if (!isLast) {
                 lastError = new Error("Malformed response returned from LLM API.");
+                bullLastFailoverReason = "malformed response";
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} returned a malformed HTTP-200 body; failing over to ${next.model}/${next.provider}.`);
                 audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "malformed_response", toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
                 continue;
@@ -6129,6 +6155,16 @@ async function proposeTrades(input: {
               bullServedTransport = attempt.transport;
               bullServedKeySource = attempt.keySource;
               bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${plannedBullAttempts.length}).`;
+              // `model` here is the model the run INTENDED to use — under rotation that is this
+              // run's rotation pick (runPolicy already carries the concrete pick, never the
+              // sentinel), so the receipt names the pick rather than the literal "__rotate__".
+              bullServedByFallback = {
+                fromModel: model,
+                fromProvider: provider,
+                ...(bullLastFailoverReason ? { reason: bullLastFailoverReason } : {}),
+                attempt: i + 1,
+                attempts: plannedBullAttempts.length
+              };
             }
             const text = extractLlmText(payload);
             const truncated = detectLlmTruncation(payload);
@@ -6232,6 +6268,7 @@ async function proposeTrades(input: {
             // Transient transport error / timeout → fail over to the next model when one remains.
             if (!isLast && isRetryableLlmError(err)) {
               lastError = err;
+              bullLastFailoverReason = "transport error or timeout";
               console.warn(`[Bull] ${attempt.model}/${attempt.provider} errored (${(err as { message?: string })?.message ?? String(err)}); failing over to ${next.model}/${next.provider}.`);
               audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "transport_or_timeout", toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
               continue;
@@ -6283,6 +6320,9 @@ async function proposeTrades(input: {
     // (not necessarily policy.llmModel). Preserve that namespace so approval-time primary and
     // fallback comparisons remain exact; telemetry above is canonicalized independently.
     proposedByModel: bullServedProposalModel,
+    // Only present when the intended model did NOT serve — its absence is what lets the card say
+    // "this run's rotation pick" truthfully.
+    ...(bullServedByFallback ? { greenServedByFallback: bullServedByFallback } : {}),
     // APP-AUTHORED receipts only: overwrite unconditionally at this parse boundary so a
     // model-emitted `dataAdjustments` field can never masquerade as a deterministic receipt.
     dataAdjustments: ((): string[] | undefined => {
@@ -6378,9 +6418,13 @@ async function proposeTrades(input: {
     typeof candidate.sym === "string" && proposedSymbols.has(normalizeSymbol(candidate.sym))
   );
   const adversaryContext: RedTeamReviewContext = {
-    // Spread the complete Green evidence object rather than reconstructing a lossy subset. The
-    // content-addressed parity hash lets audits prove both stages received the same evidence.
-    ...userContent,
+    // Project onto the DOCUMENTED reviewer contract instead of spreading the whole Green payload.
+    // The old `...userContent` shipped the full evidence budget, every scan candidate, the RAG
+    // pack, learned context and the reflection summary to a reviewer that judges ONE finalized
+    // proposal — re-sent per opening, multiplied by the openings in a run.  Evidence parity is
+    // preserved by `evidenceManifest`, whose `greenRedParityHash` is the actual proof both stages
+    // judged the same pack; the bodies were never what made that provable.
+    ...projectRedTeamReviewContext(userContent as unknown as Record<string, unknown>),
     candidatesUnderReview
   };
 
@@ -6634,48 +6678,28 @@ function clampConfidence(score: number | undefined): number | undefined {
 }
 
 /**
- * Record the outcome of a strategy Green/Bear LLM call for observability. Fires for EVERY call (fast
- * or late): an `llm_call_latency` audit captures the real duration so the timeout can be tuned from
- * data instead of a guess. When the call was slow (the tick already moved on) or errored, it ALSO
- * captures the eventual reply we paid for — text snippet + token usage — in an `llm_late_response`
- * audit, rather than discarding it.
+ * Record the outcome of a strategy Green/Bear LLM call for observability AND for money. Fires for
+ * EVERY call (fast or late): an `llm_call_latency` audit captures the real duration so the timeout
+ * can be tuned from data instead of a guess. When the call was slow (the tick already moved on),
+ * the eventual reply we paid for is captured in an `llm_late_response` audit AND metered into
+ * `llm_usage` under the "strategy-late" context — see src/lib/llm-late-usage.ts for why an
+ * unmetered late reply was the most expensive blind spot in the ledger.
  */
 function recordLlmOutcome(
   outcome: LlmCallOutcome,
-  ctx: { runId?: string; userId: string; step: "bull" | "bear"; provider: string; model: string; softTimeoutMs: number; connectedAccountId?: string }
+  ctx: {
+    runId?: string;
+    userId: string;
+    step: "bull" | "bear";
+    provider: string;
+    model: string;
+    softTimeoutMs: number;
+    connectedAccountId?: string;
+    keySource: Exclude<LlmKeySource, "none">;
+    keyRef?: string;
+  }
 ): void {
-  audit(
-    "llm_call_latency",
-    { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, softTimeoutMs: ctx.softTimeoutMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error },
-    ctx.userId,
-    ctx.connectedAccountId
-  );
-  // Only the LATE path reads the body: there the tick bailed at the soft timeout and never touched the
-  // response, so we alone can drain it. A FAST response (success, or a non-ok like a 429 that fails
-  // over) is read by the normal flow — recording must NOT also read it or the two race on the body.
-  if (!outcome.late) return;
-  void (async () => {
-    try {
-      let textSnippet: string | undefined;
-      let usage: unknown;
-      if (outcome.response) {
-        const payload = await outcome.response.json().catch(() => undefined);
-        if (payload) {
-          const text = extractLlmText(payload);
-          textSnippet = typeof text === "string" && text ? text.slice(0, 4000) : undefined;
-          usage = extractLlmUsage(payload);
-        }
-      }
-      audit(
-        "llm_late_response",
-        { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error, textSnippet, usage },
-        ctx.userId,
-        ctx.connectedAccountId
-      );
-    } catch (err) {
-      audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId, ctx.connectedAccountId);
-    }
-  })();
+  void recordLlmCallOutcome(outcome, { ...ctx, usageContext: "strategy-late" });
 }
 
 // filterStopPlansByLiveBasis lives in db-api-keys.ts (alongside getStopPlans/PositionStopPlan) so

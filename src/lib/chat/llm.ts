@@ -11,6 +11,10 @@ import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
 import { applyOpenRouterClassifierEnrichment, applyOpenRouterProviderRouting } from "../llm-call";
 import { llmFetch, LLM_TIMEOUT_MS, reasoningCapabilityForModel, withLlmRequestBounds } from "../llm-request";
+// Reuse the SAME model-family + OpenRouter-wire-id helpers the strategy engine's
+// resolveLlmEndpoint uses (llm-provider.ts), so the Coach's provider precedence and model-id
+// normalization can never drift from the engine's.  See llmForModel / chatProviderForModel below.
+import { llmModelFamily, normalizeOpenRouterModelId } from "../llm-provider";
 import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
@@ -664,24 +668,20 @@ export class OpenAILLM implements ChatLLM {
 /**
  * Provider is derived from the model name (no separate provider flag): claude-* → Anthropic
  * (its own Messages tool loop); grok-* → xAI; gemini-* → Gemini; mistral/ministral/codestral/…
- * → Mistral; everything else (gpt-*, o-series) → OpenAI. The latter four are all OpenAI-compatible
- * and share the OpenAILLM chat/completions tool loop, differing only by base URL + key.
+ * → Mistral; llama-* → Meta; kimi/moonshot-* → Moonshot; everything else (gpt-*, o-series) →
+ * OpenAI. All but Anthropic are OpenAI-compatible and share the OpenAILLM chat/completions tool
+ * loop, differing only by base URL + key.
+ *
+ * Family detection DELEGATES to `llmModelFamily` (llm-provider.ts) — the exact same helper
+ * `resolveLlmEndpoint` uses for the strategy engine — so this can never drift back out of sync
+ * with it. It previously re-derived its own anchored-regex prefix list here, which had no
+ * llama → meta case: a llama model silently fell through to the openai default and a Coach call
+ * for it hit the OpenAI API with a Meta model id (review finding llm-12).
  */
 export function chatProviderForModel(model: string): ChatProvider {
   const trimmed = model?.trim() ?? "";
   if (/^openrouter\//i.test(trimmed)) return "openrouter";
-
-  let name = trimmed;
-  if (name.includes("/")) {
-    name = name.split("/").pop() || name;
-  }
-  if (/^claude/i.test(name)) return "anthropic";
-  if (/^grok/i.test(name)) return "xai";
-  if (/^gemini/i.test(name)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(name)) return "mistral";
-  if (/^deepseek/i.test(name)) return "deepseek";
-  if (/(kimi|moonshot)/i.test(name)) return "moonshot";
-  return "openai";
+  return llmModelFamily(trimmed);
 }
 
 /** OpenAI-compatible providers (everyone except Anthropic, which has its own Messages loop). */
@@ -721,11 +721,16 @@ function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenA
 }
 
 /**
- * Build the chat LLM for an explicitly-chosen model, routed to its provider across all five
- * supported providers. The provider's key resolves per-user-first with the operator env key as a
- * flag-gated failover (resolveLlmCredential); usage is attributed to `userId` and the resolved
- * provider. Returns MockLLM for an empty/`"mock"` model or when the model's provider has no usable
- * key — so the assistant degrades to the deterministic offline path rather than erroring.
+ * Build the chat LLM for an explicitly-chosen model, routed with the SAME precedence
+ * `resolveLlmEndpoint` uses for the strategy engine (llm-provider.ts): an OpenRouter key, when
+ * present, serves EVERY model — universal routing, not a per-model native-provider lookup — so an
+ * owner who has only connected OpenRouter is never told "no key" for a Coach model that already
+ * works fine in the strategy engine (review finding llm-12). Only when no OpenRouter key resolves
+ * does the model fall back to its own native-provider key (openai/anthropic/xai/gemini/mistral/
+ * deepseek/meta/moonshot), exactly as before this fix. Usage is attributed to `userId` and the
+ * resolved provider either way. Returns MockLLM for an empty/`"mock"` model or when neither an
+ * OpenRouter key nor the model's native-provider key resolves — so the assistant degrades to the
+ * deterministic offline path rather than erroring.
  */
 export function llmForModel(
   model: string,
@@ -734,13 +739,34 @@ export function llmForModel(
 ): ChatLLM {
   const trimmed = model?.trim();
   if (!trimmed || trimmed.toLowerCase() === "mock") return new MockLLM();
+
+  // 1. Primary path: an OpenRouter key (user or operator failover) serves ANY model. The wire
+  //    model id is normalized with the exact helper the engine uses (normalizeOpenRouterModelId)
+  //    so an availability probe and the actual call can never disagree about a model's id.
+  const openRouterCred = resolveLlmCredential("openrouter", userId);
+  if (openRouterCred.key) {
+    const usage: LlmUsageOpts = {
+      userId,
+      keySource: openRouterCred.source === "operator" ? "operator" : "user",
+      keyRef: openRouterCred.keyRef,
+      context: "chat"
+    };
+    const modelForApi = normalizeOpenRouterModelId(trimmed);
+    const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl("openrouter"), "openrouter");
+    return new OpenAILLM(openRouterCred.key, modelForApi, transport, usage, "openrouter", opts.reasoningEffort);
+  }
+
+  // 2. Native-provider fallback (unchanged): no OpenRouter key resolved, so try the model's own
+  //    family key directly.
   const provider = chatProviderForModel(trimmed);
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
-  // Strip the `openrouter/` prefix before passing the model ID to the API; OpenRouter
-  // expects the bare model name (e.g. "openai/gpt-4o"), and the strategy path already
-  // normalises this (resolveLlmEndpoint in llm-provider.ts — see that file's model strip).
+  // Strip the `openrouter/` prefix before passing the model ID to the API; OpenRouter expects the
+  // bare model name. (Reached only for an explicit "openrouter/"-prefixed model when step 1 above
+  // already found no OpenRouter key, so `key` here is always falsy for provider === "openrouter"
+  // and this ternary's true branch is unreachable in practice — kept so a future caller that
+  // supplies its own resolved key for this provider still gets the right model id.)
   const modelForApi = provider === "openrouter" ? trimmed.replace(/^openrouter\//i, "") : trimmed;
   if (provider === "anthropic") {
     return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);

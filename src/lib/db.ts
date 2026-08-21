@@ -3177,6 +3177,28 @@ const MIGRATIONS: Migration[] = [
         FROM document_chunks_fts;
       `);
     }
+  },
+  {
+    // Cost provenance on the LLM ledger.  `cost_usd` used to be exclusively a price-table
+    // ESTIMATE; OpenRouter reports its own billed amount on every response (`usage.cost`), and
+    // recordLlmUsage now prefers it.  Without this column a billed figure and an estimate are
+    // indistinguishable in the table, so /console/usage cannot honestly label either.  Existing
+    // rows stay NULL and are read as estimates — which is exactly what they were.
+    version: 86,
+    name: "llm_usage_cost_source",
+    up: (database) => {
+      // Table-existence guard first.  `PRAGMA table_info` on a MISSING table returns an empty
+      // list rather than erroring, so without this the "column absent" branch is taken and the
+      // ALTER dies with "no such table" — which is exactly how this migration broke
+      // test/persistence-hardening.test.ts, where migrations are exercised against a database
+      // that has not been through the baseline schema.  Matches the guard on migration 84.
+      const hasTable = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_usage'").get();
+      if (!hasTable) return;
+      const cols = database.prepare("PRAGMA table_info(llm_usage)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "cost_source")) {
+        database.exec("ALTER TABLE llm_usage ADD COLUMN cost_source TEXT");
+      }
+    }
   }
 ];
 

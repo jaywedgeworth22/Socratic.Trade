@@ -166,14 +166,23 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     expect(MODEL_ROTATION_POOL).toContain("kimi-latest");
   });
 
-  it("fail-open after /models/user timeout still drops known-dead OpenRouter slugs", async () => {
-    const { applyRotationAvailabilityFailOpen, MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
+  // CHANGED (review finding llm-10, 2026-08-20): fail-open used to drop a hardcoded
+  // `DEAD_OPENROUTER_ROTATION_MODELS` list (kimi-latest, claude-fable-5) UNCONDITIONALLY —
+  // even though OpenRouter's live catalog serves both today, so nothing could ever re-admit
+  // them.  Fail-open now drops ONLY slugs with an ACTIVELY RECORDED 404 cooldown (see
+  // test/model-rotation-live-catalog.test.ts for full cooldown-lifecycle coverage); with no
+  // cooldown recorded, fail-open must keep the pool unchanged.
+  it("fail-open after /models/user timeout keeps every model when nothing has actually 404'd", async () => {
+    const { applyRotationAvailabilityFailOpen, clearOpenRouterModelCooldowns, MODEL_ROTATION_POOL } = await import(
+      "../src/lib/model-rotation"
+    );
+    clearOpenRouterModelCooldowns();
     const safe = applyRotationAvailabilityFailOpen(MODEL_ROTATION_POOL);
-    expect(safe).not.toContain("kimi-latest");
-    expect(safe).not.toContain("claude-fable-5");
+    expect(safe).toContain("kimi-latest");
+    expect(safe).toContain("claude-fable-5");
     expect(safe).toContain("gpt-5.4-mini");
     expect(safe).toContain("gemini-flash-latest");
-    expect(safe.length).toBe(MODEL_ROTATION_POOL.length - 2);
+    expect(safe.length).toBe(MODEL_ROTATION_POOL.length);
   });
 
   it("keeps the pool when /models/user lists versioned ids but omits *-latest aliases", async () => {
@@ -211,14 +220,20 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     expect(result.pool).not.toContain("claude-fable-5");
   });
 
-  it("fail-opens to the credential pool minus dead slugs when the allowlist matches nothing", async () => {
-    const { applyRotationUserModelAllowlist, MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
+  // CHANGED (review finding llm-10): the fail-open floor here used to always subtract the
+  // hardcoded dead-slug list.  It now subtracts only slugs actually cooling down, so with no
+  // cooldown recorded it fails open to the FULL credential pool.
+  it("fail-opens to the full credential pool when the live allowlist matches nothing and nothing is cooling down", async () => {
+    const { applyRotationUserModelAllowlist, clearOpenRouterModelCooldowns, MODEL_ROTATION_POOL } = await import(
+      "../src/lib/model-rotation"
+    );
+    clearOpenRouterModelCooldowns();
     const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, new Set(["acme/not-a-catalog-model"]));
     expect(result.emptiedByAllowlist).toBe(true);
-    expect(result.pool.length).toBeGreaterThan(0);
+    expect(result.pool.length).toBe(MODEL_ROTATION_POOL.length);
     expect(result.pool).toContain("gpt-5.6-terra");
-    expect(result.pool).not.toContain("kimi-latest");
-    expect(result.pool).not.toContain("claude-fable-5");
+    expect(result.pool).toContain("kimi-latest");
+    expect(result.pool).toContain("claude-fable-5");
   });
 });
 
