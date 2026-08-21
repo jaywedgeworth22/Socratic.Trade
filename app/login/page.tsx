@@ -21,7 +21,7 @@ const anyProviderConfigured = googleConfigured || githubConfigured || appleConfi
 
 /** Value props — keep in sync with iOS LoginView feature bullets. */
 const LOGIN_VALUE_BULLETS = [
-  "Configure strategic framework and guardrails",
+  "Configure framework and guardrails",
   "Review and approve proposals",
   "Track positions, orders, and performance",
   "Control the backend agent without moving credentials onto the device"
