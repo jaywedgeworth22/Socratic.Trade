@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-08-21 CURSOR — adaptive-tabs follow-ups: unhang ios-build + run XCTests
+
+Nobody had claimed `docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`.  Remote Control cannot start this work: Cursor wants a private worker and this repo has none (failed agent `bc-c04cab0c`).  Hosted Linux can do the CI slice.
+
+Item C: `ios-build.yml` now redirects `xcodebuild` onto a file so `SWBBuildService` cannot hold the Actions pipe after BUILD SUCCEEDED, and adds `xcodebuild test` on the same Mac job.  Item D is already on `main` (#3012 put `PrivacyInfo.xcprivacy` in Copy Bundle Resources); a vitest now locks that line.  Screenshots, the `WrappingHStackTests.swift` rename, and the auto-fill veto still need a Mac or the owner.
+
+PR on `cursor/ios-ci-unhang-ac14`.  Do not make `ios-build` required until that job concludes `success`.  Rollout: `docs/rollouts/2026-08-21-ios-ci-unhang.md`.
+
 ## 2026-08-21 CURSOR — Scan card tap + honest iOS last/next run
 
 Owner: whole scan card opens company info; iOS company name darker than industry; Roth IRA Home said "not scheduled" for Last Run and Next Run on Autopilot.  Last run now comes from `strategy_runs` (never cadence copy).  Next run is filled for an active account even after restart / cash close.
