@@ -99,7 +99,7 @@ export default function LoginPage() {
                 </form>
                 {!googleConfigured && !githubConfigured && (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    Apple is your only sign-in method. Apple only sends your email on first
+                    Apple is your only sign-in method.  Apple only sends your email on first
                     authorization — if your session expires, you will need to add Google or
                     GitHub as a fallback to sign back in.
                   </p>
