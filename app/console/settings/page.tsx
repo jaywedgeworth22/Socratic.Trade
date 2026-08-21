@@ -21,6 +21,7 @@ import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPE_LABELS } from "@/lib/dashboard-ui";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
+import { resolveSourceFeatureNumberCommit } from "../lib/number-commit";
 import { loginProviderLabel } from "../lib/labels";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useAutoSave } from "../lib/useAutoSave";
@@ -705,6 +706,12 @@ function YouCard() {
 
 const GROUP_ORDER = ["fmp", "sec", "web_sources", "transcripts", "rag", "enrichment"] as const;
 
+/** Decides what a "Data sources" number row's blur should persist, given the
+ *  raw text just typed and the row's last committed value. Returns null when
+ *  nothing should be written to the server: blank/unparseable text reverts to
+ *  the last committed value instead of silently saving a fallback (these rows
+ *  used to PATCH the row's default straight to the server on the very next
+ *  keystroke after clearing the field), and an unchanged value is a no-op. */
 function DataSourcesCard() {
   const toast = useToast();
   const [rows, setRows] = useState<SourceFeatureRow[] | null>(null);
@@ -713,6 +720,10 @@ function DataSourcesCard() {
   const [busy, setBusy] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<import("../lib/useAutoSave").AutoSaveStatus>("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Raw in-progress text for number rows, keyed by row id — commit-on-blur (see
+  // commitNumberRow below), matching every other numeric field in the console
+  // instead of PATCHing the server on every keystroke.
+  const [numberDrafts, setNumberDrafts] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -763,6 +774,24 @@ function DataSourcesCard() {
     } finally {
       setBusy(null);
     }
+  };
+
+  // Commits a number row's typed text on blur. Blank or unparseable text
+  // reverts to the row's last committed value instead of silently persisting
+  // a fallback (an emptied field used to write the row's default straight to
+  // the server on the very next keystroke).
+  const commitNumberRow = async (row: SourceFeatureRow) => {
+    const raw = numberDrafts[row.id];
+    setNumberDrafts((d) => {
+      if (!(row.id in d)) return d;
+      const copy = { ...d };
+      delete copy[row.id];
+      return copy;
+    });
+    if (raw === undefined) return;
+    const next = resolveSourceFeatureNumberCommit(raw, Number(row.value));
+    if (next === null) return;
+    await saveOne(row.id, next);
   };
 
   return (
@@ -866,16 +895,13 @@ function DataSourcesCard() {
                       ) : row.type === "number" ? (
                         <RawNumInput
                           className="w-24"
-                          value={String(row.value)}
-                          emptyValue={Number(row.defaultValue) || 0}
+                          value={numberDrafts[row.id] ?? String(row.value)}
+                          emptyValue={Number(row.value) || 0}
                           min={row.min}
                           max={row.max}
                           disabled={busy === row.id}
-                          onValueChange={(n) => {
-                            // Debounce-ish: only persist when value actually changes (avoids
-                            // intermediate keystrokes that equal the previous commit after parse).
-                            if (Number.isFinite(n) && n !== Number(row.value)) void saveOne(row.id, n);
-                          }}
+                          onValueChange={(_n, raw) => setNumberDrafts((d) => ({ ...d, [row.id]: raw }))}
+                          onBlur={() => void commitNumberRow(row)}
                           aria-label={row.label}
                         />
                       ) : null}

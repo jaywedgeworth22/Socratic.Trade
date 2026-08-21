@@ -6,7 +6,7 @@ import { MARKET_REGIME_LABELS, type MarketRegime } from "@/lib/market-regime";
 import { selectActiveOverlays, type OverlayRegimeTag, type StrategyOverlay } from "@/lib/overlay-router";
 import { OVERLAY_STARTER_TEMPLATES } from "@/lib/overlay-templates";
 import { savePolicy } from "../lib/api";
-import { Btn, Card, Empty, Field, Select, TextArea, TextInput } from "../ui/primitives";
+import { Btn, Card, Empty, Field, RawNumInput, Select, TextArea, TextInput } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
 
 interface OverlayRow extends StrategyOverlay {
@@ -14,6 +14,22 @@ interface OverlayRow extends StrategyOverlay {
 }
 
 const REGIME_OPTIONS: OverlayRegimeTag[] = ["any", "crisis", "risk-off", "cautious-inverted", "neutral", "risk-on", "unknown"];
+
+/** Decides what the Overlays "Max Active" field's blur should persist, given
+ *  the raw text just typed and the last saved value. Returns null when
+ *  nothing should be written to the server: blank/unparseable text reverts to
+ *  the last saved value instead of silently saving a fallback (this field
+ *  used to PATCH "2" straight to the server on the very next keystroke after
+ *  clearing it), and an unchanged value is a no-op. Valid input floors at 1 —
+ *  selectActiveOverlays needs at least one active overlay slot to mean
+ *  anything, matching the floor the buggy per-keystroke handler also applied. */
+export function resolveMaxActiveCommit(raw: string, committed: number): number | null {
+  const parsed = Number(raw);
+  if (raw.trim() === "" || !Number.isFinite(parsed)) return null;
+  const next = Math.max(1, parsed);
+  if (next === committed) return null;
+  return next;
+}
 
 export function OverlaysPanel({
   policy,
@@ -26,6 +42,10 @@ export function OverlaysPanel({
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [previewRegime, setPreviewRegime] = useState<MarketRegime>("neutral");
+  // Raw in-progress text for the Max Active field — commit-on-blur (see
+  // commitMaxActive below), matching every other numeric field in the console
+  // instead of PATCHing the server on every keystroke.
+  const [maxActiveDraft, setMaxActiveDraft] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     name: "",
     instructions: "",
@@ -67,6 +87,19 @@ export function OverlaysPanel({
       setStatus("error");
       setError(err instanceof Error ? err.message : "Could not save.");
     }
+  }
+
+  // Commits the Max Active field's typed text on blur. Blank or unparseable
+  // text reverts to the last saved value instead of silently persisting a
+  // fallback (an emptied field used to write "2" straight to the server on
+  // the very next keystroke).
+  async function commitMaxActive() {
+    const raw = maxActiveDraft;
+    setMaxActiveDraft(null);
+    if (raw === null) return;
+    const next = resolveMaxActiveCommit(raw, maxActive);
+    if (next === null) return;
+    await patchTuning({ maxActiveOverlays: next });
   }
 
   async function createOverlay() {
@@ -168,15 +201,14 @@ export function OverlaysPanel({
             Enable overlays
           </label>
           <Field label="Max Active" htmlFor="overlay-max">
-            <TextInput
+            <RawNumInput
               id="overlay-max"
-              type="number"
               min={1}
               max={6}
-              value={String(maxActive)}
-              onChange={(event) =>
-                void patchTuning({ maxActiveOverlays: Math.max(1, Number(event.target.value) || 2) })
-              }
+              value={maxActiveDraft ?? String(maxActive)}
+              emptyValue={maxActive}
+              onValueChange={(_parsed, raw) => setMaxActiveDraft(raw)}
+              onBlur={() => void commitMaxActive()}
             />
           </Field>
           <Btn type="button" onClick={() => void seedStarters()}>

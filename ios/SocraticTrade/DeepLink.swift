@@ -129,3 +129,29 @@ enum DeepLink {
         return upper
     }
 }
+
+/// Website pages the phone cannot edit (broker connect, strategy universe).
+///
+/// These paths are intentionally absent from `DeepLink.destination(for:)` and from the AASA
+/// file (`app/.well-known/apple-app-site-association/route.ts`).  Claiming them would swallow
+/// the tap back into the app and land nowhere.  `openURL` therefore opens Safari.
+enum ConsoleHandoff {
+    static let connections = URL(string: "https://socratictrade.com/console/connections")!
+    static let strategy = URL(string: "https://socratictrade.com/console/strategy")!
+
+    /// True when this URL is a Safari-only console page, not an in-app universal link.
+    static func isSafariOnly(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https" else { return false }
+        guard url.host?.lowercased() == DeepLink.universalLinkHost else { return false }
+        let segments = url.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map { $0.lowercased() }
+        guard segments.count == 2, segments[0] == "console" else { return false }
+        switch segments[1] {
+        case "connections", "strategy":
+            return true
+        default:
+            return false
+        }
+    }
+}
