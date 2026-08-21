@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { nextTabId } from "../app/console/lib/tabs";
 
-const IDS = ["all", "runs", "fills", "alerts"] as const;
+const IDS = ["all", "runs", "fills", "alerts", "audit"] as const;
 
 describe("console tablist keyboard movement", () => {
   it("moves and wraps in both directions", () => {
     expect(nextTabId(IDS, "all", "ArrowRight")).toBe("runs");
-    expect(nextTabId(IDS, "alerts", "ArrowRight")).toBe("all");
+    expect(nextTabId(IDS, "audit", "ArrowRight")).toBe("all");
     expect(nextTabId(IDS, "runs", "ArrowLeft")).toBe("all");
-    expect(nextTabId(IDS, "all", "ArrowLeft")).toBe("alerts");
+    expect(nextTabId(IDS, "all", "ArrowLeft")).toBe("audit");
   });
 
   it("jumps to the ends with Home/End", () => {
     expect(nextTabId(IDS, "fills", "Home")).toBe("all");
-    expect(nextTabId(IDS, "runs", "End")).toBe("alerts");
+    expect(nextTabId(IDS, "runs", "End")).toBe("audit");
   });
 
   it("returns null for keys the tabs pattern does not own", () => {

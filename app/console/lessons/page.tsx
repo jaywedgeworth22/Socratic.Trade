@@ -1,5 +1,6 @@
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { LearnedContextInbox, LearnedFactsArchive } from "./learned-context";
+import { LearningLedgerPanel } from "./learning-ledger";
 
 export default function LessonsPage() {
   return (
@@ -11,6 +12,9 @@ export default function LessonsPage() {
       <div className="flex flex-col gap-8">
         <LearnedContextInbox />
         <LearnedFactsArchive />
+        <div id="learning-ledger" className="scroll-mt-28">
+          <LearningLedgerPanel />
+        </div>
       </div>
     </div>
   );

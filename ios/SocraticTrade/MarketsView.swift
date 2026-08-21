@@ -490,7 +490,7 @@ private struct AlertsSection: View {
             if alerts.isEmpty {
                 EmptyStateCard(
                     title: "No Price Alerts",
-                    message: "Set above or below thresholds to keep watch without opening the app",
+                    message: "Set above or below thresholds.  Fired alerts show here.  Turn on Alerts in Account & Settings to be notified without opening the app.",
                     systemImage: "bell"
                 )
             } else {

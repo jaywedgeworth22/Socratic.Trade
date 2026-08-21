@@ -98,6 +98,13 @@ Fix: persist the tombstone on cancel throw when the order is a tracked / app-man
 ## 2026-08-20 CURSOR-BUGBOT — Alpaca MCP getEquityOrders hid just-filled orders
 
 #2886 scoped REST `getEquityOrders` to open + 24h closed, but the MCP success path still called `get_orders` with `status:"open"`.  `ordersListIncludesTerminal` stayed true, so `reconcilePlacementError` / `flagStalePlacingIntents` treat a missing refId as never-placed.  A market fill that leaves `open` before the place deadline returns is then safe-to-retry — a second submit.  REST-only Alpaca is fine.  MCP now requests `status:"all"` (bounded 500).  Rollout: `docs/rollouts/2026-08-20-alpaca-mcp-orders-include-terminal.md`.
+## 2026-08-20 MONET - console numeric fields commit on blur, and stop writing a fallback
+
+Two console numeric fields PATCHed on every keystroke and wrote a fallback value when cleared.  On a real-money app those are risk/strategy knobs, so the silent wrong write was the harm.  Fixed to local draft + commit on blur; blank or unparseable now commits nothing and reverts to the last saved value.  No confirmation ceremony added -- guardrail values stay the owner's adjustable preferences.
+
+Test strength is stated honestly rather than overclaimed: the commit decision is tested behaviorally through exported pure functions, but the blur wiring is asserted against source text, because the repo has no DOM test tooling and adding a harness is its own decision.
+
+Third site with the identical bug (`app/admin/operations/operations-client.tsx:208`) filed as #2958 and NOT fixed -- peer PRs hold that area.
 
 ## 2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday 401 at the edge
 
@@ -776,6 +783,28 @@ Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-ou
 ## 2026-08-17 CURSOR — Architecture & backend audit (docs-only)
 
 Read-only audit of framework, API, queues, persistence, caching, concurrency, recovery, and durability against `main` `4980322b`.  No product fixes.  Report: `docs/audits/2026-08-17-architecture-backend.md`.  PR #2807, branch `cursor/architecture-backend-audit-6186`.  Headline: no active P0 in code; new gap is stale `strategy_run_requests` (F3); Litestream L2/L3 wedge remains owner-ops (F1, already tracked).  Rollout: `docs/rollouts/2026-08-17-architecture-backend-audit.md`.
+## 2026-08-20 CURSOR — RAG P0 follow-ups (parsed-text SEC, chat asOf, production eval)
+
+Implemented the audit P0s on `cursor/rag-learning-recall-audit-f94a` / PR #2803.  `buildSecDocument` is the one SEC writer (no raw HTML).  `getCikForTicker` uses ticker→CIK and refuses the sentinel.  Chat `searchKnowledge` always passes `asOf`.  Eval harness + contract test score `retrieveContextDetailed`.
+
+Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-20-rag-p0-followups.md`.
+
+Local gate: lint 0 errors, `tsc --noEmit` clean, touched-file vitest green, `npm run build` exit 0.  Full `npm test` in this Cloud VM had 37 unrelated env failures (Yahoo/SEC 404, Voyage-vs-SiliconFlow, notify/host-metrics).  Next: wait for `verify` on #2803.  P1 leftovers stay open (transcript FTS, 8-K feed dual-class, memory decay/lifecycle, learning vector retry).  Do not enable `SEC_INGEST_WORKER_ENABLED` until a staging ingest proves `buildSecDocument` text is tag-free.
+
+## 2026-08-17 CURSOR — RAG / learning / recall audit (report-only)
+
+Read-only audit of ingest, SEC/ROIC/transcripts/news, chunk/embed, retrieval, grounding, PIT, lineage, learning ledger, memory, evals, and failure recovery.  Highest gaps: worker embeds raw HTML; transcripts have no FTS backstop; golden harness scores a different retriever than Green/Red; memory decay/lifecycle unwired; chat/desk omit `asOf` so prod `VECTOR_ASOF_STRICT` is a no-op there.
+
+Branch `cursor/rag-learning-recall-audit-f94a`.  PR #2803.  Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-17-rag-learning-recall-audit.md`.
+## 2026-08-17 CURSOR — Security / reliability audit (report-only)
+
+Read-only audit of auth, secrets, tenant isolation, supply chain, PII, Litestream/DR,
+deploy, alerting, fail-open/closed, spend, and SLOs.  Live health 200 on sha `4980322b`;
+Litestream replicating; restore still unproven on B2.  No code changes.
+
+Branch `cursor/security-reliability-audit-d8f6`, PR #2806.  Report:
+`docs/audits/2026-08-17-security-reliability.md`.  Rollout:
+`docs/rollouts/2026-08-17-security-reliability-audit.md`.
 ## 2026-08-17 CURSOR — Brokers + data-cascade reliability audit (report-only)
 
 Read-only audit at `main` `4980322b`.  No broker mutations.  Report:
@@ -818,6 +847,28 @@ Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.
 
 Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
+## 2026-08-17 CURSOR — iOS release-readiness leftovers (#2560)
+
+Close-only / Wind Down and APNs client+server already landed on main.  Remaining
+in-repo gaps: `PrivacyInfo.xcprivacy`, Safari handoffs from Home/Settings to
+`/console/connections` and `/console/strategy` (not AASA-claimed), honest
+price-alert copy, and a pin that `ITSAppUsesNonExemptEncryption=false` matches
+`project.yml`.  Do not invent APNS_* credentials — owner adds the Apple .p8 set
+in Infisical when ready.
+
+Branch `cursor/ios-release-readiness-2560-b532`.  Rollout:
+`docs/rollouts/2026-08-17-ios-release-readiness.md`.
+## 2026-08-17 CURSOR — P3 curl-only diagnostics get UI entry (#2563)
+
+Four existing routes were curl-only: tuning-dry-run, learning-ledger, backtest-ic, `/api/audit`.
+This branch adds console/admin paths and does not change server behavior.
+
+- Strategy: Weight Tuning Preview (`GET /api/admin/tuning-dry-run`)
+- Lessons: Learning Ledger (`GET/POST /api/admin/learning-ledger`)
+- Admin: Factor Backtest (`GET /api/admin/backtest-ic`)
+- Activity: Audit tab (`GET /api/audit`)
+
+Branch `cursor/p3-curl-only-ui-2563-814a`.  PR #2793.  Rollout: `docs/rollouts/2026-08-17-curl-only-ui-entry.md`.
 ## 2026-08-17 CURSOR — Console a11y batch (#2561)
 
 P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.
