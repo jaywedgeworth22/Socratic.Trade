@@ -6,7 +6,7 @@ Board: umbrella item `682e7e3467cd4def97a13ee67335cbb1` (claimed by DEEPSEEK).  
 
 ## 0. Method
 
-- Four parallel review tracks, each grounded on the clean lane `~/apps/trading-deepseek` at `origin/main` HEAD `41a7a438d` (2026-08-20): desktop web (console), mobile web (phone viewports), iOS native app (Swift), backend/API/ops/docs.
+- Four parallel review tracks were launched (desktop web, mobile web, iOS Swift, backend/ops), each grounded on the clean lane `~/apps/trading-deepseek` at `origin/main` HEAD `41a7a438d` (2026-08-20).  **All four stalled on model calls and were interrupted after ~85 minutes with no reports**; the outline below therefore rests on the first-hand live/code measurements in this document, cross-checked against the 2026-08-18 expert review and the open Kimi board findings.  Re-running the deep-dive tracks is a listed follow-up (P3) rather than a blocker.
 - Live production measurements: HTTP headers, robots.txt, meta tags, Lighthouse (desktop + mobile) against `https://socratictrade.com/login`, `/api/health` sha vs `origin/main`.
 - Cross-checked against the shared board (`board list --app socratic-trade --status open`) so no finding duplicates an open item; state-changes on open items are recorded here and on the board as comments.
 
@@ -63,4 +63,10 @@ Priorities: P0 = correctness/money-path/blocking; P1 = significant; P2 = polish/
 
 ## 3. New findings (filed on the board)
 
-<!-- populated from the four review tracks -->
+- `da8a93bf` (P2) — Console renders bare Next.js 404 pages; `/console/proposals` label/route mismatch.
+- `34b8fbe7` (P2) — CSP is report-only with unsafe-inline/unsafe-eval on the live site.
+- `436a9b98` (P2) — Production is 8 commits behind main; live login page ships the 1 MB pre-crop icon (mobile LCP 8.3 s).
+
+State comments added on the board: `830c892f` (ruleset needs ios-build as a required check), `89249c60` + `3b343933` (both confirmed fixed on main; systemic parts remain), `620ef423` (sign-in drops deep-link destination; `redirectTo: "/"` hardcoded in all three OAuth server actions).
+
+Follow-up: re-run the four deep-dive tracks (desktop console internals, phone-viewport details, iOS screen-by-screen, backend/API/ops) with narrowed scopes to extend this outline with file:line depth.
