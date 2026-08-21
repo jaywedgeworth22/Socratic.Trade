@@ -118,7 +118,7 @@ export function OperationsClient() {
           <h1 className="text-xl font-bold tracking-tight">Operations</h1>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             {gap(
-              "Server-level pause and kill switches, flipped at runtime.  An override set here wins over the Infisical/env value until you reset it — no redeploy needed."
+              "Server-level pause and kill switches, flipped at runtime.  An override set here wins over the Infisical/env value until you reset it — no redeploy needed."
             )}
           </p>
         </div>

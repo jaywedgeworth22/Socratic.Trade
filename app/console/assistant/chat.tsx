@@ -263,7 +263,7 @@ export function AssistantChat() {
       const text = (override ?? input).trim();
       if (!text || sending || clearing || keyMissing) return;
       if (modelUnselected) {
-        toast.push("warn", "Choose a model", "Coach has no hidden model default. Pick the model you want to answer.");
+        toast.push("warn", "Choose a model", "Coach has no hidden model default.  Pick the model you want to answer.");
         return;
       }
       if (customPending) {
@@ -354,7 +354,7 @@ export function AssistantChat() {
       toast.push(
         "info",
         "Conversation cleared",
-        "Your whole assistant transcript was deleted — it is one conversation shared across all your accounts. Staged proposals are untouched."
+        "Your whole assistant transcript was deleted — it is one conversation shared across all your accounts.  Staged proposals are untouched."
       );
     } catch {
       toast.push("neg", "Could not clear", "The transcript is unchanged — try again.");
@@ -413,7 +413,7 @@ export function AssistantChat() {
                 placeholder="model id, e.g. gpt-5.6-terra"
                 className="con-mono"
                 style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
-                title="Type any model id your provider serves. It is routed by name: claude-* to Anthropic, grok-* to xAI, gemini-* to Gemini, mistral-* to Mistral, deepseek-* to DeepSeek, anything else to OpenAI."
+                title="Type any model id your provider serves.  It is routed by name: claude-* to Anthropic, grok-* to xAI, gemini-* to Gemini, mistral-* to Mistral, deepseek-* to DeepSeek, anything else to OpenAI."
                 onChange={(e) => pickModel(e.target.value.trim() || CUSTOM_MODEL_VALUE)}
               />
             </div>
@@ -428,8 +428,8 @@ export function AssistantChat() {
               style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
               title={
                 statusUnknown
-                  ? "Which AI model answers. $ signs are relative cost within the provider. Key availability could NOT be checked right now, so no model is marked 'no key' — a provider without a key will fail on send."
-                  : "Which AI model answers.  $ signs are relative cost within the provider.  'no key' means that provider has no key in Connections."
+                  ? "Which AI model answers. $ signs are relative cost within the provider.  Key availability could NOT be checked right now, so no model is marked 'no key' — a provider without a key will fail on send."
+                  : "Which AI model answers.  $ signs are relative cost within the provider.  'no key' means that provider has no key in Connections."
               }
               aria-label="Chat model"
             >
@@ -454,7 +454,7 @@ export function AssistantChat() {
             content={
               sending
                 ? "Wait for the current reply to finish — clearing mid-reply could orphan it in the saved history."
-                : "Deletes your ENTIRE saved assistant conversation — one transcript shared across all your accounts, not just the one selected. Staged proposals, orders, and positions are untouched. Click twice to confirm."
+                : "Deletes your ENTIRE saved assistant conversation — one transcript shared across all your accounts, not just the one selected.  Staged proposals, orders, and positions are untouched.  Click twice to confirm."
             }>
             <button
               type="button"
@@ -613,7 +613,7 @@ export function AssistantChat() {
             disabled={keyMissing}
             className="con-textarea flex-1 leading-normal"
             style={{ resize: "none", minHeight: "2.25rem", maxHeight: "9rem" }}
-            title="Your message to the assistant. Enter sends; Shift+Enter adds a line break."
+            title="Your message to the assistant.  Enter sends; Shift+Enter adds a line break."
             aria-label="Message the assistant"
           />
           <Tooltip
@@ -638,7 +638,7 @@ export function AssistantChat() {
             <button
               type="button"
               className="con-btn h-9 shrink-0"
-              title="Cancel this turn.  In-flight work is kept as a partial reply."
+              title="Cancel this turn.  In-flight work is kept as a partial reply."
               onClick={() => {
                 void fetch("/api/chat/cancel", {
                   method: "POST",
@@ -653,9 +653,9 @@ export function AssistantChat() {
         </div>
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)]">
           <Tooltip
-            content="The assistant reads real quotes and your real account data. When it can't know something, it says so instead of inventing a number.">
+            content="The assistant reads real quotes and your real account data.  When it can't know something, it says so instead of inventing a number.">
             <span>
-              Answers use live data and your account. Orders come back as drafts — nothing places without your approval.
+              Answers use live data and your account.  Orders come back as drafts — nothing places without your approval.
             </span>
           </Tooltip>
           <span className="hidden sm:inline">Enter to send · Shift+Enter for a line break</span>

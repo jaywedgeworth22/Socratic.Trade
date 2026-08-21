@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { Card } from "../ui/primitives";
+import { fmtExact } from "../lib/format";
 import { LEGAL_NOTICE_SENTENCE, LEGAL_PRIVACY_PATH, LEGAL_TERMS_PATH } from "@/lib/legal-notice";
 
 interface LegalState {
@@ -37,8 +38,8 @@ export function LegalCard() {
 
   const acceptedLabel =
     legal?.accepted && legal.acceptedAt
-      ? `Accepted on ${new Date(legal.acceptedAt).toLocaleString()}.`
-      : "Not yet accepted.  You will be asked once the next time you open the app.";
+      ? `Accepted on ${fmtExact(legal.acceptedAt)}.`
+      : "Not yet accepted.  You will be asked once the next time you open the app.";
 
   return (
     <Card title="Legal">
@@ -50,7 +51,7 @@ export function LegalCard() {
       </p>
       {loadFailed && (
         <p className="mb-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
-          Legal acceptance could not be loaded.  Reload to retry.
+          Legal acceptance could not be loaded.  Reload to retry.
         </p>
       )}
       <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
@@ -61,7 +62,7 @@ export function LegalCard() {
         <a href={LEGAL_PRIVACY_PATH} className="underline underline-offset-2">
           Privacy
         </a>
-        .  You can delete your account under Danger below.  Each signed-in account stays private
+        .  You can delete your account under Danger below.  Each signed-in account stays private
         to that person.
       </p>
     </Card>

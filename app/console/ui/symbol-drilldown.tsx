@@ -390,7 +390,7 @@ export function SymbolDrilldownSheet({
           {typeof view?.score === "number" && (
             <Chip
               tone="accent"
-              title="Composite 0–100 score from the last market scan — the policy-weighted total of the factor breakdown below. Higher = the screener ranked it more attractive."
+              title="Composite 0–100 score from the last market scan — the policy-weighted total of the factor breakdown below.  Higher = the screener ranked it more attractive."
             >
               Score {Math.round(view.score)}
             </Chip>
@@ -399,7 +399,7 @@ export function SymbolDrilldownSheet({
             <Chip
               tone="warn"
               title={withProvenance(
-                "Trading days until the next scheduled earnings report. Prices can gap sharply on the report — entries this close to earnings carry extra risk.",
+                "Trading days until the next scheduled earnings report.  Prices can gap sharply on the report — entries this close to earnings carry extra risk.",
                 view,
                 "daysToEarnings"
               )}
@@ -496,7 +496,7 @@ export function SymbolDrilldownSheet({
             {/* Explicit {" "} after the symbol: the literal space here was dropped at runtime
                 (observed "LRCXwasn't" in prod) — same idiom as the second occurrence below. */}
             {normalized}
-            {" wasn't in the last market scan, so fundamentals, factor scores, and signals aren't available yet. The chart and your account data above are still real. Run a scan that includes "}
+            {" wasn't in the last market scan, so fundamentals, factor scores, and signals aren't available yet.  The chart and your account data above are still real.  Run a scan that includes "}
             {normalized}
             {" to fill this in."}
           </p>
@@ -505,7 +505,7 @@ export function SymbolDrilldownSheet({
         {view?.asOf && (
           <p
             className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-            title="When this symbol's quote data was captured. The chart above refreshes independently from free daily history."
+            title="When this symbol's quote data was captured.  The chart above refreshes independently from free daily history."
           >
             Quote data from {usingOverride ? "the scan currently on screen" : scanView ? "the last market scan" : "a live on-demand fetch"} (
             {new Date(view.asOf).toLocaleString(undefined, { timeZone: "America/Chicago" })}).

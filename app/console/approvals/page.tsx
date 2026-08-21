@@ -398,7 +398,7 @@ function ApprovalsPageInner() {
                       ? "The system is stopped, so rejection actions are refused."
                       : rejectArmedEffective
                         ? "Click again to reject — rejects each selected proposal through the existing server path."
-                        : "Rejects each selected proposal through the existing server path. Click once to arm, then again to confirm."
+                        : "Rejects each selected proposal through the existing server path.  Click once to arm, then again to confirm."
                   }
                 >
                   {bulkBusy === "reject" ? "rejecting..." : rejectArmedEffective ? `reject ${selection.rejectCount}? confirm` : `reject selected (${selection.rejectCount})`}
@@ -486,7 +486,7 @@ function ApprovalsPageInner() {
             <div className="flex items-start gap-2 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
               <ShieldAlert size={15} className="mt-0.5 shrink-0 text-[color:var(--con-warn)]" />
               <p>
-                Bulk approve now supports LIVE proposals with one batch typed phrase. Each selected order still goes
+                Bulk approve now supports LIVE proposals with one batch typed phrase.  Each selected order still goes
                 through the existing per-proposal server approval path and can block independently.
               </p>
             </div>
@@ -562,7 +562,7 @@ function BulkLiveApproveSheet({
           {paperCount > 0 ? ` · plus ${paperCount} paper proposal${paperCount === 1 ? "" : "s"}` : ""}
         </p>
         <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-          The server re-checks each proposal separately at approval time. If one row blocks or expires, the other rows keep
+          The server re-checks each proposal separately at approval time.  If one row blocks or expires, the other rows keep
           their own result.
         </p>
       </div>
@@ -600,7 +600,7 @@ function BulkLiveApproveSheet({
         className="con-mono"
       />
       <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        This is one batch confirmation. The app still submits every proposal through the existing approval endpoint.
+        This is one batch confirmation.  The app still submits every proposal through the existing approval endpoint.
       </p>
 
       <div className="mt-4 flex justify-end gap-2">

@@ -7,6 +7,25 @@ Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settin
 **Risk:** some owner wire slugs (untilded `*-latest`, `google/gemini-flash-latest`, period-form `mistralai/mistral-medium-3.5`) may 404 on OpenRouter today.  Owner said do not keep sending the dated ids the table replaced.
 
 Branch `agent/cursor/llm-model-slugs`, worktree `~/apps/trading-cursor`.  Rollout: `docs/rollouts/2026-08-21-llm-model-slugs.md`.
+## 2026-08-21 CLAUDE - adaptive tab bar MERGED; the unfinished half is written down
+
+PR #2987 merged to `main` as `9298c29` at 06:56 UTC.  Owner ask delivered in full: more than
+four tabs on iPad and wide Mac windows, fall back to the defaults when too narrow, Home
+required, the slot before More swapped out by whatever is opened from the More list, plus the
+iPad Air 11" layout pass carried into Mac Catalyst.
+
+No deploy fires - `ios/**` and `docs/**` are both outside Coolify `watch_paths`, and the iOS
+app only changes when the TestFlight ship script runs.
+
+**Three things the merge does NOT prove, and I would rather they be loud than tidy:** the 45
+XCTests are compiled but have never been executed (nothing in this repo runs `xcodebuild
+test`); there is no screenshot of the new iPad layout; and `xcodebuild (unsigned)` hangs on
+every iOS PR (PR #2794 has the identical `cancelled` outcome), which is a runner-side
+`SWBBuildService` pipe hang that raising the timeout would not fix.
+
+Handoff with all six open items, each claimable on its own:
+`docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`.  Items A, B and D need a Mac -
+a cloud session cannot do them, those containers are Linux and hit the same wall.
 
 ## 2026-08-21 CLAUDE - the tab bar now knows how wide the window is
 
@@ -93,6 +112,13 @@ Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `Performa
 #2853 adopted a `strategy_run_requests` row when the in-process heartbeat was older than 90s.  An event-loop freeze (SQLite `busy_timeout` 60s; measured >120s back-to-back) stops the 15s beat without killing `runStrategyOnce`.  Drain then `releaseStrategyLock` and starts a second gather/place on the same run id.  The still-running worker can already have passed `assertOwned` before `placeEquityOrder`, so the adopted run double-places.
 
 Fix: treat a map entry on this process as live, regardless of beat age.  Only a missing entry (process restart) is an orphan.  Rollout: `docs/rollouts/2026-08-20-drain-adopt-live-heartbeat.md`.
+## 2026-08-20 MONET - the two-space sentence rule now renders on the web
+
+The defect was not missing gaps in source.  Two literal ASCII spaces typed into JSX collapse to ONE at render, so the source looked compliant and the screen was not -- which is exactly how this stayed broken while looking fixed.
+
+Measured 698 real violations across 73 files (the review estimated ~600) and fixed 652.  The 46 remaining are entirely inside files held by peer PRs #2795 / #2793 / #2828.  `scripts/copy-rules-lint.mjs` ships with the fix and asserts on RENDERED output via a renderCollapse() implementation of the CSS whitespace rule, so this cannot silently regress.
+
+Worth knowing for anyone doing mass regex edits on TSX: building the fixer produced three bugs in the fixer, and only running the app's test suite caught them.  Two altered executable code, one corrupted numbered headings on the public legal pages.  Do not trust a non-AST regex pass on source without running the tests.
 ## 2026-08-20 MONET - LLM cost is now the provider's number, not our price table
 
 The review told us to add `usage:{include:true}` to every OpenRouter request.  That parameter is deprecated and inert -- usage is always returned now -- so it was deliberately NOT added; adding it would also risk the endpoint-filtering 404 class, since `require_parameters:true` filters on advertised request fields.  The real defect was read-side: `usage.cost` was arriving on every response and being thrown away.

@@ -28,12 +28,12 @@ const MODE_OPTIONS = [
   {
     value: "annotate",
     label: "Annotate — record verdicts, change nothing",
-    title: "Verdicts land in the activity log plus a daily notification. No learned fact or pending item is touched."
+    title: "Verdicts land in the activity log plus a daily notification.  No learned fact or pending item is touched."
   },
   {
     value: "decide",
     label: "Decide — apply verdicts automatically",
-    title: "Rejected facts are removed, expired facts stop informing runs, and pending items are approved or rejected per the verdict. Every application is audited."
+    title: "Rejected facts are removed, expired facts stop informing runs, and pending items are approved or rejected per the verdict.  Every application is audited."
   }
 ] as const;
 
@@ -115,7 +115,7 @@ export function LearningReviewCard() {
       <div className="flex flex-col gap-3">
         <div
           className="con-row flex items-center justify-between gap-4 rounded-control px-1.5 py-1.5"
-          title="Enable the learning review. Off = nothing runs and nothing is spent."
+          title="Enable the learning review.  Off = nothing runs and nothing is spent."
         >
           <div>
             <div className="text-[length:var(--con-fs-sm)] font-semibold">Enable learning review</div>
@@ -192,7 +192,7 @@ export function LearningReviewCard() {
               id="learning-review-mode"
               value={mode}
               disabled={busy}
-              title="Annotate records verdicts without changing anything. Decide applies them — removals, expiries, and pending approvals/rejections — each one audited."
+              title="Annotate records verdicts without changing anything.  Decide applies them — removals, expiries, and pending approvals/rejections — each one audited."
               onChange={(e) =>
                 void save(
                   { learningReviewMode: e.target.value },
@@ -209,14 +209,14 @@ export function LearningReviewCard() {
           </Field>
           <Field
             label="Learning-review model"
-            hint="A frontier model is the point. Defaults to claude-fable-5."
+            hint="A frontier model is the point.  Defaults to claude-fable-5."
             htmlFor="learning-review-model"
           >
             <Select
               id="learning-review-model"
               value={model}
               disabled={busy}
-              title="The model that runs the learning review. Needs a resolvable key for its provider (Connections → API keys)."
+              title="The model that runs the learning review.  Needs a resolvable key for its provider (Connections → API keys)."
               onChange={(e) => {
                 const nextModel = e.target.value;
                 void save(

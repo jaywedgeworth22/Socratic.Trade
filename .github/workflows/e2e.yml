@@ -32,7 +32,7 @@ jobs:
     outputs:
       docs-only: ${{ steps.check.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.event_name == 'pull_request'
         with:
           # Classify only needs the two endpoint trees. Full-history fetches can
@@ -137,7 +137,7 @@ jobs:
       - name: Docs-only short-circuit
         if: needs.classify.outputs.docs-only == 'true'
         run: echo "docs-only diff — smoke skipped by path filter"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: needs.classify.outputs.docs-only != 'true'
       - uses: actions/setup-node@v4
         if: needs.classify.outputs.docs-only != 'true'
@@ -152,25 +152,25 @@ jobs:
         run: rm -rf ./* ./.git || true
       - name: Refresh checkout before package operations
         if: needs.classify.outputs.docs-only != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Assert package.json present
         if: needs.classify.outputs.docs-only != 'true'
         run: |
           set -euo pipefail
           if [ ! -f package.json ]; then
-            echo "::error::package.json missing after refresh checkout — refusing to run npm install on an empty workspace."
+            echo "::error::package.json missing after refresh checkout — refusing to run npm ci on an empty workspace."
             ls -la
             exit 1
           fi
       - name: Install dependencies
         if: needs.classify.outputs.docs-only != 'true'
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit
       # Cache the Playwright browser download (chromium, ~130MB) keyed on the lockfile
       # (which pins the playwright version). On a hit, the install step below skips the
       # multi-minute download and only re-applies system deps.
       - name: Cache Playwright browsers
         if: needs.classify.outputs.docs-only != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
@@ -186,7 +186,7 @@ jobs:
       # `npm run build` reuses prior compilation output instead of a cold build.
       - name: Restore Next.js build cache
         if: needs.classify.outputs.docs-only != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}

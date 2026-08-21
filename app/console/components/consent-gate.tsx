@@ -72,7 +72,7 @@ export function ConsentGate() {
       if (!legalRes.ok || !poolRes.ok) throw new Error("Consent could not be saved.");
       setState("done");
     } catch {
-      setError("Your acceptance could not be saved.  The console stays locked until this is resolved — try again.");
+      setError("Your acceptance could not be saved.  The console stays locked until this is resolved — try again.");
     } finally {
       setSubmitting(false);
     }

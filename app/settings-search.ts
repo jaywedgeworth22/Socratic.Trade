@@ -100,7 +100,7 @@ const GUARDRAILS_ESSENTIAL_DEFS: SettingsFieldDef[] = [
     legacySection: "operate",
     backingField: "strategyAuthority",
     disclosure: "essential",
-    help: "Propose = you approve each trade. Decide = the AI trades within these limits.",
+    help: "Propose = you approve each trade.  Decide = the AI trades within these limits.",
     anchor: "autonomy"
   },
   {
@@ -229,7 +229,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "tax",
     backingField: "taxSettings.washSaleGuard",
     disclosure: "advanced",
-    help: "For taxable accounts, blocks rebuying a stock within 30 days of selling it at a loss. IRA replacement buys use their own account setting.",
+    help: "For taxable accounts, blocks rebuying a stock within 30 days of selling it at a loss.  IRA replacement buys use their own account setting.",
     anchor: "tax"
   },
   {
@@ -241,7 +241,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "tax",
     backingField: "taxSettings.washSaleHandling",
     disclosure: "advanced",
-    help: "Let the rebuy proceed with the forfeited tax cost priced into the rationale/receipt (auto — default), route it to you for approval at that price (ask), or block a wash-sale rebuy outright (a stricter opt-in). IRA rebuys are governed by the separate IRA wash-sale setting.",
+    help: "Let the rebuy proceed with the forfeited tax cost priced into the rationale/receipt (auto — default), route it to you for approval at that price (ask), or block a wash-sale rebuy outright (a stricter opt-in).  IRA rebuys are governed by the separate IRA wash-sale setting.",
     anchor: "tax"
   },
   {
@@ -264,7 +264,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "tax",
     backingField: "taxSettings.iraWashSaleHandling",
     disclosure: "advanced",
-    help: "Ignore (default) does not constrain this IRA. Auto lets Green weigh the priced forfeited deduction, then proceeds. Block refuses. Minimum loss is optional (blank = every loss).",
+    help: "Ignore (default) does not constrain this IRA.  Auto lets Green weigh the priced forfeited deduction, then proceeds.  Block refuses.  Minimum loss is optional (blank = every loss).",
     anchor: "tax"
   },
   // Strategy (account scope)
@@ -343,7 +343,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "data",
     backingField: "dataPoolConsent",
     disclosure: "advanced",
-    help: "Required.  General market data is pooled; personal account data is not.",
+    help: "Required.  General market data is pooled; personal account data is not.",
     anchor: "sharing"
   },
   {
@@ -355,7 +355,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "data",
     backingField: "legalNoticeConsent",
     disclosure: "advanced",
-    help: "Terms and privacy you accepted.  You will be asked again only if they change.",
+    help: "Terms and privacy you accepted.  You will be asked again only if they change.",
     anchor: "legal"
   },
   {
@@ -367,7 +367,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "data",
     backingField: "marketScanCandidateLimit",
     disclosure: "advanced",
-    help: "How many candidates each scan considers. Applies to all your accounts.",
+    help: "How many candidates each scan considers.  Applies to all your accounts.",
     anchor: "scan-shape"
   },
   {
@@ -378,7 +378,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     destination: "settings/llm-budget",
     backingField: "llm_daily_budget.tokenBudget",
     disclosure: "essential",
-    help: "Daily token limit for model and research spend.  When set, spend pauses for the rest of the day.",
+    help: "Daily token limit for model and research spend.  When set, spend pauses for the rest of the day.",
     anchor: "llm-budget"
   },
   {
@@ -389,7 +389,7 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     destination: "settings/llm-budget",
     backingField: "llm_daily_budget.costBudgetUsd",
     disclosure: "essential",
-    help: "Daily dollar limit for model and research spend.  When set, spend pauses for the rest of the day.",
+    help: "Daily dollar limit for model and research spend.  When set, spend pauses for the rest of the day.",
     anchor: "llm-budget"
   },
   {
@@ -535,16 +535,16 @@ export const SETTINGS_GLOSSARY: GlossaryEntry[] = [
   { oldName: "Strategy (Settings section)", newHome: "Strategy (destination)", whatChanged: "The read-only mirror is gone; Strategy is one editable home on the top nav." },
   { oldName: "Strategy Studio", newHome: "Strategy (destination)", whatChanged: "The pop-up editor folded inline into the Strategy destination." },
   { oldName: "Operate", newHome: "Guardrails → Execution / Autonomy (+ Strategy → Signals)", whatChanged: "The vague “Operate” section was dissolved: order types/hours/cadence → Guardrails; universe/scan → Strategy." },
-  { oldName: "Safety", newHome: "Guardrails → Risk", whatChanged: "Renamed. Stops, take-profit, and trailing live here; the five most-used surface as Essentials." },
+  { oldName: "Safety", newHome: "Guardrails → Risk", whatChanged: "Renamed.  Stops, take-profit, and trailing live here; the five most-used surface as Essentials." },
   { oldName: "Tuning", newHome: "Results → Tuning (+ Guardrails → Learning params)", whatChanged: "The AI's proposed changes are reviewed in Results; the learning knobs live in Guardrails." },
   { oldName: "Tax (tab / section)", newHome: "Results → Tax (+ Guardrails → Tax rules)", whatChanged: "Split by intent: realized tax outcomes vs the decision-time tax rules." },
-  { oldName: "Review (destination)", newHome: "Results", whatChanged: "Renamed. “Review” is now a verb for approving and tuning, not a place." },
+  { oldName: "Review (destination)", newHome: "Results", whatChanged: "Renamed.  “Review” is now a verb for approving and tuning, not a place." },
   { oldName: "Notifications (feed tab)", newHome: "Results → Alert history", whatChanged: "The alerts log moved under Results." },
-  { oldName: "Notifications (Settings section)", newHome: "Settings → Alert delivery", whatChanged: "Renamed. This is delivery rules only (channels/routing)." },
+  { oldName: "Notifications (Settings section)", newHome: "Settings → Alert delivery", whatChanged: "Renamed.  This is delivery rules only (channels/routing)." },
   { oldName: "Notifications (the dropdown)", newHome: "🔔 Alerts", whatChanged: "The live stream is now called Alerts." },
-  { oldName: "Display", newHome: "Settings → Appearance", whatChanged: "Renamed. Theme, fonts, and ticker-logo display live here." },
-  { oldName: "Data", newHome: "Settings → Data & Privacy", whatChanged: "Renamed. Houses web-source toggles and the two scan-breadth knobs (all accounts)." },
-  { oldName: "Halt & Flatten", newHome: "STOP (+ a separate Flatten)", whatChanged: "STOP halts new activity in one click and never sells. Selling is a separate, deliberate action." },
+  { oldName: "Display", newHome: "Settings → Appearance", whatChanged: "Renamed.  Theme, fonts, and ticker-logo display live here." },
+  { oldName: "Data", newHome: "Settings → Data & Privacy", whatChanged: "Renamed.  Houses web-source toggles and the two scan-breadth knobs (all accounts)." },
+  { oldName: "Halt & Flatten", newHome: "STOP (+ a separate Flatten)", whatChanged: "STOP halts new activity in one click and never sells.  Selling is a separate, deliberate action." },
   { oldName: "Connections", newHome: "Settings → Connections (+ Keys & Models)", whatChanged: "Keys split into their own section; broker links stay in Connections." },
   { oldName: "/admin/* (four pages)", newHome: "Settings → Admin", whatChanged: "The four admin pages consolidated into one role-gated section." },
   { oldName: "/strategy (public page)", newHome: "/how-it-works", whatChanged: "The marketing explainer was renamed; linked from the editor footer and Help." }

@@ -7,7 +7,7 @@ import { landingPageEnabled } from "@/lib/landing-page";
 export const metadata: Metadata = {
   title: "Decision framework",
   description:
-    "How Socratic Trade forms a thesis, weighs evidence and memory, handles dissent, acts under delegated authority, and learns from outcomes. Not investment advice.",
+    "How Socratic Trade forms a thesis, weighs evidence and memory, handles dissent, acts under delegated authority, and learns from outcomes.  Not investment advice.",
   alternates: { canonical: "/how-it-works" },
   openGraph: {
     type: "website",
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     url: "/how-it-works",
     title: "Socratic Trade decision framework",
     description:
-      "How Socratic Trade forms a thesis, weighs evidence and memory, handles dissent, acts under delegated authority, and learns from outcomes. Not investment advice."
+      "How Socratic Trade forms a thesis, weighs evidence and memory, handles dissent, acts under delegated authority, and learns from outcomes.  Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
@@ -40,7 +40,7 @@ const CORE_LOOP: Array<{ title: string; body: string }> = [
   },
   {
     title: "Decide",
-    body: "Choose buy, sell, hold, wait, resize, exit, or reject. The decision records the authority source, policy checks, and exposure impact."
+    body: "Choose buy, sell, hold, wait, resize, exit, or reject.  The decision records the authority source, policy checks, and exposure impact."
   },
   {
     title: "Act",
@@ -155,7 +155,7 @@ export default function HowItWorksPage() {
         <section className="space-y-5">
           <h2 className="text-xl font-semibold text-fg">Decision case file</h2>
           <p className="text-sm leading-relaxed text-muted">
-            Each action or non-action should read like an audit case, not a mystery score. The
+            Each action or non-action should read like an audit case, not a mystery score.  The
             case-file frame keeps the agent accountable when it buys, sells, waits, rejects, sizes
             down, or chooses to press a rebound thesis during stress.
           </p>
@@ -192,8 +192,8 @@ export default function HowItWorksPage() {
         <section className="space-y-5">
           <h2 className="text-xl font-semibold text-fg">Learning loop</h2>
           <p className="text-sm leading-relaxed text-muted">
-            Learning is not a vague claim that the bot gets smarter. It is a visible trail from
-            thesis to action to outcome to proposed framework change. Wins, losses, missed trades,
+            Learning is not a vague claim that the bot gets smarter.  It is a visible trail from
+            thesis to action to outcome to proposed framework change.  Wins, losses, missed trades,
             blocked trades, and false positives all become reviewable evidence.
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -211,11 +211,11 @@ export default function HowItWorksPage() {
             <h2 className="text-base font-semibold text-fg">Important disclosures</h2>
             <p className="text-sm leading-relaxed text-muted">
               Socratic Trade is software for market research, autonomous reasoning, and trade
-              execution when connected to accounts you configure. It is not investment advice, a
+              execution when connected to accounts you configure.  It is not investment advice, a
               broker-dealer, or a registered investment adviser.
             </p>
             <p className="text-sm leading-relaxed text-muted">
-              Trading and investing involve substantial risk of loss. Simulated, hypothetical, or
+              Trading and investing involve substantial risk of loss.  Simulated, hypothetical, or
               historical performance has inherent limitations and does not guarantee future results.
               Nothing here is a recommendation to buy or sell any security.
             </p>

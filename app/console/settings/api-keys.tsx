@@ -30,19 +30,19 @@ const getSourceCopy = (source: ApiKeyEntry["source"], credName: string) => {
     case "user":
       return {
         chip: `your ${credName}`,
-        title: `You stored a ${credName} for this service. It always wins over any server-level credential.`,
+        title: `You stored a ${credName} for this service.  It always wins over any server-level credential.`,
         tone: "pos" as const
       };
     case "env":
       return {
         chip: `server ${credName}`,
-        title: `No ${credName} of your own — the server operator's credential is serving this for you. Add your own to take over.`,
+        title: `No ${credName} of your own — the server operator's credential is serving this for you.  Add your own to take over.`,
         tone: "accent" as const
       };
     case "none":
       return {
         chip: "not set",
-        title: `No ${credName} resolves for this service. The features it unlocks stay unavailable until one is added.`,
+        title: `No ${credName} resolves for this service.  The features it unlocks stay unavailable until one is added.`,
         tone: "muted" as const
       };
   }
@@ -121,7 +121,7 @@ export function ApiKeysCard() {
   return (
     <Card title="API keys" action={<SaveStatus status={saveStatus} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Provider keys, stored per user on the server. Keys are write-only: once saved the full value is never displayed
+        Provider keys, stored per user on the server.  Keys are write-only: once saved the full value is never displayed
         again — only whether one is set, where it came from, and the first and last few characters of the key that
         actually resolves. <strong className="font-semibold text-[color:var(--con-muted)]">Required for strategy runs:</strong>{" "}
         an LLM key (OpenRouter is the production path) so Green/Red team models can propose and debate.{" "}
@@ -134,7 +134,7 @@ export function ApiKeysCard() {
         EarningsCalls, RapidAPI, Apify, Logo.dev, FRED, …), set the{" "}
         <strong className="font-semibold text-[color:var(--con-muted)]">plan tier</strong> dropdown to the plan you
         actually pay for — rate limits and transcript depth follow that choice (free-safe until you declare a paid
-        plan). LLM keys do not use plan tiers.
+        plan).  LLM keys do not use plan tiers.
       </p>
 
       {loadError && (
@@ -189,7 +189,7 @@ export function ApiKeysCard() {
                         {entry.preview && (
                           <code
                             className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5 font-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                            title={`The ${credName} that actually resolves for you, with the middle elided. First and last characters only — enough to tell this ${credName} apart from another one for the same provider, never enough to use.`}
+                            title={`The ${credName} that actually resolves for you, with the middle elided.  First and last characters only — enough to tell this ${credName} apart from another one for the same provider, never enough to use.`}
                           >
                             {entry.preview}
                           </code>
@@ -205,7 +205,7 @@ export function ApiKeysCard() {
                         {showTier && (
                           <label
                             className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
-                            title="Vendor plan for this key. Free-tier quotas apply when env knobs are unset."
+                            title="Vendor plan for this key.  Free-tier quotas apply when env knobs are unset."
                           >
                             <span className="whitespace-nowrap">Plan</span>
                             <Select
@@ -257,7 +257,7 @@ export function ApiKeysCard() {
                             }}
                             title={
                               entry.source === "user"
-                                ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
+                                ? `Replace your stored ${credName} with a new value.  The old one is overwritten server-side.`
                                 : `Store your own ${credName} for this service.`
                             }
                           >
@@ -273,7 +273,7 @@ export function ApiKeysCard() {
                               setConfirmingDelete(isConfirmingDelete ? null : entry.service);
                               setEditing(null);
                             }}
-                            title={`Delete your stored ${credName} from the server. Falls back to the server ${credName} if one exists.`}
+                            title={`Delete your stored ${credName} from the server.  Falls back to the server ${credName} if one exists.`}
                           >
                             Remove
                           </Btn>
@@ -315,7 +315,7 @@ export function ApiKeysCard() {
                             await saveApiKey(entry.service, value, label, planTier);
                             await load();
                             setEditing(null);
-                            toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side. It won't be shown again.");
+                            toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side.  It won't be shown again.");
                           } catch (error) {
                             toast.push("neg", `Could not save ${credName}`, error instanceof ConsoleApiError ? error.message : String(error));
                           } finally {
@@ -369,7 +369,7 @@ function KeyEditor({
               spellCheck={false}
               placeholder={`paste the ${credName} — sent once, never shown again`}
               onChange={(e) => setValue(e.target.value)}
-              title="The secret value from the provider. Stored server-side; this field is the only place it ever appears."
+              title="The secret value from the provider.  Stored server-side; this field is the only place it ever appears."
             />
           </Field>
           <Field label="Label (optional)" htmlFor={`key-label-${entry.service}`}>
