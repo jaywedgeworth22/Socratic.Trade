@@ -20,8 +20,7 @@ struct InsightsView: View {
             InsightsActionCard(snapshot: snapshot, selectedTab: $selectedTab)
             InsightsAuthorityCard()
         }
-        .navigationTitle("Insights")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Insights")
     }
 
     private func insights(for snapshot: MobileSnapshot) -> [StatusInsight] {

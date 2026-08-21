@@ -25,8 +25,7 @@ struct GuardrailsView: View {
             }
             tightenCard
         }
-        .navigationTitle("Guardrails")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Guardrails")
         .task { await loadFullPolicy() }
     }
 

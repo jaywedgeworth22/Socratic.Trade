@@ -27,8 +27,7 @@ struct HomeView: View {
             ScheduleOverviewCard(snapshot: snapshot)
             HomeAttentionCard(snapshot: snapshot, selectedTab: $selectedTab)
         }
-        .navigationTitle("Home")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Home")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
@@ -512,7 +511,7 @@ private struct PortfolioOverviewCard: View {
         VStack(spacing: 10) {
             SectionHeading("Portfolio")
             if let portfolio = snapshot.portfolio {
-                LazyVGrid(columns: columns, spacing: 10) {
+                AppMetricGrid(itemCount: 4) {
                     MetricTile(title: "Equity", value: AppFormat.money(portfolio.totalMarketValue))
                     MetricTile(title: "Buying Power", value: AppFormat.money(portfolio.buyingPower))
                     MetricTile(title: "Cash", value: AppFormat.money(portfolio.cash))
@@ -536,9 +535,6 @@ private struct PortfolioOverviewCard: View {
         }
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.flexible()), GridItem(.flexible())]
-    }
 }
 
 private struct DeskShortcutsCard: View {
@@ -548,7 +544,7 @@ private struct DeskShortcutsCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading("Desk")
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                AppMetricGrid(itemCount: 4) {
                     shortcut("Coach", systemImage: "bubble.left.and.bubble.right.fill", tab: .coach)
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)
                     shortcut("Guardrails", systemImage: "shield.checkered", tab: .guardrails)
@@ -619,7 +615,7 @@ private struct PerformanceOverviewCard: View {
                     .font(.appCaption.weight(.semibold))
             }
             if let performance = snapshot.performance {
-                LazyVGrid(columns: columns, spacing: 10) {
+                AppMetricGrid(itemCount: 4) {
                     MetricTile(
                         title: "Realized P&L",
                         value: AppFormat.money(realized),
@@ -681,9 +677,6 @@ private struct PerformanceOverviewCard: View {
         }
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.flexible()), GridItem(.flexible())]
-    }
 
     private func pnlColor(_ value: Double?) -> Color {
         guard let value else { return AppPalette.accent }

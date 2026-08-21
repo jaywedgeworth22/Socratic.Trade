@@ -19,8 +19,7 @@ struct ActivityView: View {
             FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedItem: $presentedItem)
             CommandActivitySection(commands: snapshot.recentCommands)
         }
-        .navigationTitle("Activity")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Activity")
         .sheet(item: $presentedItem) { item in
             SymbolInfoSheet(item: item)
         }
@@ -201,7 +200,7 @@ private struct DailyActivityCard: View {
     var body: some View {
         VStack(spacing: 10) {
             SectionHeading("Today", subtitle: "this trading day (New York)")
-            LazyVGrid(columns: columns, spacing: 10) {
+            AppMetricGrid(itemCount: 4) {
                 MetricTile(title: "All orders", value: "\(snapshot.dailyStats.orderCount)")
                 MetricTile(title: "Opening orders", value: "\(snapshot.dailyStats.openingOrderCount)")
                 MetricTile(
@@ -218,9 +217,6 @@ private struct DailyActivityCard: View {
         }
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.flexible()), GridItem(.flexible())]
-    }
 
     private func dailyNotionalDetail(_ snapshot: MobileSnapshot) -> String? {
         guard let cap = snapshot.policy.maxDailyNotional else { return nil }

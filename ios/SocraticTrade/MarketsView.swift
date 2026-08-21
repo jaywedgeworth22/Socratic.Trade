@@ -42,8 +42,7 @@ struct MarketsView: View {
                 presentedSymbol = PresentedSymbol(symbol: symbol)
             }
         }
-        .navigationTitle("Assets")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Assets")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 // Always open the composer; Create is gated inside. Disabling the toolbar

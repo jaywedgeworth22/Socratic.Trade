@@ -14,7 +14,7 @@ struct ProposalsView: View {
     }
 
     var body: some View {
-        SnapshotScaffold(scrollTarget: focusedProposalId) { snapshot in
+        SnapshotScaffold(scrollTarget: focusedProposalId, column: .wide) { snapshot in
             ProposalQueueSummary(snapshot: snapshot)
             if snapshot.pendingProposals.isEmpty {
                 EmptyStateCard(
@@ -23,7 +23,7 @@ struct ProposalsView: View {
                     systemImage: "checkmark.seal"
                 )
             } else {
-                ForEach(snapshot.pendingProposals) { proposal in
+                AppCardGrid(data: snapshot.pendingProposals, minimum: 380, spacing: 14) { proposal in
                     let feedback = store.proposalActionFeedback(proposalId: proposal.id)
                     ProposalCard(
                         proposal: proposal,
@@ -65,8 +65,7 @@ struct ProposalsView: View {
                 }
             }
         }
-        .navigationTitle("Proposals")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Proposals")
         // The only place the app asks for notification permission on its own.  This screen is
         // "things are waiting for your judgment" — the exact subject of a push — so the prompt
         // arrives with context, from a signed-in owner who has already seen the app.  It never
@@ -370,6 +369,8 @@ private struct ProposalCard: View {
                         approveButton
                     }
                 }
+                .appMeasure(AppLayout.actionRow)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }

@@ -13,8 +13,7 @@ struct ResultsView: View {
             taxNote(snapshot)
             receipts(snapshot)
         }
-        .navigationTitle("Results")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Results")
         .sheet(item: $presentedSymbol) { presented in
             SymbolInfoSheet(symbol: presented.symbol)
         }
@@ -75,7 +74,7 @@ struct ResultsView: View {
     }
 
     private func metrics(_ snapshot: MobileSnapshot) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+        AppMetricGrid(itemCount: 4) {
             MetricTile(
                 title: "Realized P&L",
                 value: AppFormat.money(realized(snapshot)),

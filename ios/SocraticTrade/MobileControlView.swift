@@ -554,8 +554,7 @@ private struct MoreView: View {
                 Text(footerText)
             }
         }
-        .navigationTitle("More")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("More")
     }
 
     /// Says what the bar can actually do RIGHT NOW — the ceiling moves with the window,

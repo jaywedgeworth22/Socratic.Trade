@@ -17,8 +17,7 @@ struct ScanView: View {
             filterField
             content
         }
-        .navigationTitle("Scan")
-        .navigationBarTitleDisplayMode(.inline)
+        .appScreenTitle("Scan")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
