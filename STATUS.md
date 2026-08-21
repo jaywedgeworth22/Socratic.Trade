@@ -4,7 +4,7 @@
 
 Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now five Title Case tabs in this order: Alerts Center, Notifications, Strategy Runs, Order Fills, Audit Log.  Default Alerts Center.  Former All unified feed is Audit Log.  Failed runs show wrapping English.  APNs is auto-included when the user has a live device.  Admins get system alerts.  Alpaca session close is no longer stamped Delayed Quote.  Push `?tab=` is additive so another agent's deep-link pairing is not smashed.
 
-PR #3031 on `cursor/activity-layout-redesign-085b`.  Do not HOTFIX during RTH.  iOS first compile is CI.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
+PR #3031 on `cursor/activity-layout-redesign-085b`, rematched onto `origin/main` `ffb4ea1b` (#3030 login family + #2990 DeepSeek handoff).  GitHub `DIRTY` was a phantom (`git merge-tree --write-tree` exit 0).  Cloud-proxy pushes never fired `pull_request`, so `verify` and `ios-build` are `workflow_dispatch` on this SHA.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
 
 # Current Status
 ## 2026-08-21 GROK — website login provider family (leftover after #3008)

@@ -103,6 +103,8 @@ Swift: not compiled here.  First compile is CI `ios-build`.
 
 ## 5. Next Steps & Blockers
 
+- Rematched onto `origin/main` `ffb4ea1b` (PR #3030 login family + PR #2990 DeepSeek handoff).  GitHub reported `DIRTY`; `git merge-tree --write-tree origin/main origin/cursor/activity-layout-redesign-085b` exited 0 (phantom).  Overlap was `STATUS.md` + `docs/EFFORT-LOG.md` (`merge=union`).
+- Cloud-proxy pushes generated no `pull_request` event, so the first two SHAs never got `verify` or `ios-build`.  Dispatch both on the rematch SHA.
 - `ios-build` must go green on the Mac runner (ActivityView rewrite + new models + contract URL query strings).
 - TestFlight after merge if the owner wants the iOS Activity rail on devices.  Website half ships with the after-close auto-deploy (or HOTFIX).
 - Other agent's notification deep-link pairing can keep adding destinations; catch-all remains Notifications.
