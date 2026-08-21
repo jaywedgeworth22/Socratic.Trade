@@ -750,6 +750,19 @@ Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-ou
 ## 2026-08-17 CURSOR — Architecture & backend audit (docs-only)
 
 Read-only audit of framework, API, queues, persistence, caching, concurrency, recovery, and durability against `main` `4980322b`.  No product fixes.  Report: `docs/audits/2026-08-17-architecture-backend.md`.  PR #2807, branch `cursor/architecture-backend-audit-6186`.  Headline: no active P0 in code; new gap is stale `strategy_run_requests` (F3); Litestream L2/L3 wedge remains owner-ops (F1, already tracked).  Rollout: `docs/rollouts/2026-08-17-architecture-backend-audit.md`.
+## 2026-08-20 CURSOR — RAG P0 follow-ups (parsed-text SEC, chat asOf, production eval)
+
+Implemented the audit P0s on `cursor/rag-learning-recall-audit-f94a` / PR #2803.  `buildSecDocument` is the one SEC writer (no raw HTML).  `getCikForTicker` uses ticker→CIK and refuses the sentinel.  Chat `searchKnowledge` always passes `asOf`.  Eval harness + contract test score `retrieveContextDetailed`.
+
+Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-20-rag-p0-followups.md`.
+
+Local gate: lint 0 errors, `tsc --noEmit` clean, touched-file vitest green, `npm run build` exit 0.  Full `npm test` in this Cloud VM had 37 unrelated env failures (Yahoo/SEC 404, Voyage-vs-SiliconFlow, notify/host-metrics).  Next: wait for `verify` on #2803.  P1 leftovers stay open (transcript FTS, 8-K feed dual-class, memory decay/lifecycle, learning vector retry).  Do not enable `SEC_INGEST_WORKER_ENABLED` until a staging ingest proves `buildSecDocument` text is tag-free.
+
+## 2026-08-17 CURSOR — RAG / learning / recall audit (report-only)
+
+Read-only audit of ingest, SEC/ROIC/transcripts/news, chunk/embed, retrieval, grounding, PIT, lineage, learning ledger, memory, evals, and failure recovery.  Highest gaps: worker embeds raw HTML; transcripts have no FTS backstop; golden harness scores a different retriever than Green/Red; memory decay/lifecycle unwired; chat/desk omit `asOf` so prod `VECTOR_ASOF_STRICT` is a no-op there.
+
+Branch `cursor/rag-learning-recall-audit-f94a`.  PR #2803.  Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-17-rag-learning-recall-audit.md`.
 ## 2026-08-17 CURSOR — Security / reliability audit (report-only)
 
 Read-only audit of auth, secrets, tenant isolation, supply chain, PII, Litestream/DR,

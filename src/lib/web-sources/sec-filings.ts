@@ -10,7 +10,7 @@
 //    only for held/watchlist/technical names (rankHighInterestSymbols).
 //  • De-dup: ingested_accessions (accession + doc_type) is the sole gate — never re-embed.
 //  • All corpus writes use userId='local' (cleanMetadata → scope:'shared', app-funded).
-//  • CIK map: reused from sec8k.ts loadCikMap (named export).
+//  • CIK map: ticker→CIK via sec8k.ts loadTickerCikMap (dual-class safe). Unknown CIK skips ingest.
 //  • Gate: paid-tier cap applies whenever the active embedding provider is openrouter/siliconflow
 //    (their rate limits are per-request, not the Voyage free-tier trickle this gate was written
 //    for) OR the legacy VECTOR_EMBED_BATCH_DELAY_MS ≤ 5000 signal is set for a paid Voyage key.
@@ -47,8 +47,10 @@ import {
   writesFullBodyToPinecone
 } from "../rag/pinecone-write-class";
 import { storeSignalSectionDocuments } from "../rag/processed-corpus-write";
-import { loadCikMap } from "./sec8k";
+import { loadTickerCikMap } from "./sec8k";
 import { parseFilingHtml } from "./sec-parser";
+import { buildSecDocument } from "../rag/sec-document";
+import { normalizeSymbol } from "../money";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
 import * as fs from "fs";
 import * as path from "path";
@@ -82,20 +84,18 @@ export async function writeLocalArtifact(cik: string, accession: string, sequenc
   }
 }
 
-async function getCikForTicker(ticker: string): Promise<string> {
+/** Ticker → 10-digit CIK.  Returns null when unknown — never the sentinel 0000000000. */
+export async function getCikForTicker(ticker: string): Promise<string | null> {
   try {
-    const cikMap = await loadCikMap(Date.now());
-    if (cikMap && typeof cikMap === "object") {
-      for (const [cik, tick] of Object.entries(cikMap)) {
-        if (tick && tick.toUpperCase() === ticker.toUpperCase()) {
-          return cik;
-        }
-      }
+    const cikMap = await loadTickerCikMap(Date.now());
+    const raw = cikMap[normalizeSymbol(ticker)];
+    if (typeof raw === "string" && /^\d+$/.test(raw) && Number(raw) > 0) {
+      return raw.padStart(10, "0");
     }
   } catch (err) {
     console.warn(`[sec-filings] getCikForTicker failed for ${ticker}:`, err);
   }
-  return "0000000000";
+  return null;
 }
 
 const SEC_BASE = "https://www.sec.gov";
@@ -559,6 +559,9 @@ export async function ingestFiling(
 
   let html: string | null = null;
   const cik = await getCikForTicker(ticker);
+  if (!cik) {
+    return { skipped: false, chunks: 0, error: `unknown CIK for ${ticker}` };
+  }
   try {
     assertSecFilingLease(leaseGuard);
     html = await readLocalArtifact(cik, filingRef.accession, 1, filingRef.primaryDoc || "main.html");
@@ -573,6 +576,10 @@ export async function ingestFiling(
     assertSecFilingLease(leaseGuard);
     const error = err instanceof Error ? err.message : String(err);
     return { skipped: false, chunks: 0, error: `fetch failed: ${error}` };
+  }
+
+  if (!html) {
+    return { skipped: false, chunks: 0, error: "fetch failed: empty body" };
   }
 
   // Pass the form type so Item-title canonicalization is form-aware (the 10-K
@@ -612,18 +619,18 @@ export async function ingestFiling(
   const { storeDocument } = await import("../vector-db");
   assertSecFilingLease(leaseGuard);
   const writeClass = pineconeWriteClass();
-  const document = {
-      text,
-      sections,
-      doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
-      ticker,
-      title: `${ticker} ${filingRef.docType} (${filingRef.filedAt})`,
-      doc_type: filingRef.docType.toLowerCase(),
-      published_at: filingRef.filedAt,
-      acceptance_datetime: filingRef.acceptanceDateTime,
-      source: "sec-edgar",
-      url: filingRef.url
-    };
+  const document = buildSecDocument({
+    rawContent: html,
+    sections,
+    documentName: filingRef.primaryDoc || "main.html",
+    ticker,
+    docId: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
+    title: `${ticker} ${filingRef.docType} (${filingRef.filedAt})`,
+    docType: filingRef.docType.toLowerCase(),
+    publishedAt: filingRef.filedAt,
+    ...(filingRef.acceptanceDateTime ? { acceptanceDateTime: filingRef.acceptanceDateTime } : {}),
+    url: filingRef.url
+  });
   const localChunks = chunkDocument(document, {});
   const localComplete = await persistLocalComplete({
     ticker,
@@ -652,10 +659,10 @@ export async function ingestFiling(
       accessionOrEventId: filingRef.accession,
       sourceType,
       headline: `${ticker} ${filingRef.docType} highlights (${filingRef.filedAt})`,
-      chunks: tradeHighlightChunksFromText(text, {
+      chunks: tradeHighlightChunksFromText(document.text, {
         maxChunks: 8,
         formHint,
-        sections: sections.map((s) => ({
+        sections: (document.sections ?? sections).map((s) => ({
           itemCode: s.itemCode,
           itemTitle: s.itemTitle,
           text: s.text
@@ -743,7 +750,7 @@ export async function ingestFiling(
   }
 
   try {
-    const managedAccession = document.doc_id;
+    const managedAccession = document.doc_id ?? `${ticker}:${filingRef.accession}:${filingRef.docType}`;
     const ftsRows = localChunks.map((chunk) => ({
       contentHash: chunk.content_hash,
       symbol: chunk.ticker[0] ?? ticker,
@@ -902,21 +909,15 @@ async function refreshFilingBodiesUnlocked(
         ? DEFAULT_MAX_FILINGS_PER_RUN
         : maxFilingsPerRunFromEnv();
 
-  let cikMap: Record<string, string>;
+  let tickerToCik: Record<string, string>;
   try {
     throwIfOperationLeaseCancelled(operationLeaseSignal);
-    cikMap = await loadCikMap(now);
+    tickerToCik = await loadTickerCikMap(now);
   } catch (err) {
     throwIfOperationLeaseCancelled(operationLeaseSignal);
     const msg = err instanceof Error ? err.message : String(err);
-    result.errors.push(`loadCikMap failed: ${msg}`);
+    result.errors.push(`loadTickerCikMap failed: ${msg}`);
     return result;
-  }
-
-  // Build a reverse map: ticker → CIK
-  const tickerToCik: Record<string, string> = {};
-  for (const [cik, ticker] of Object.entries(cikMap)) {
-    tickerToCik[ticker] = cik;
   }
 
   // Collect (ticker, FilingRef) pairs that need ingesting.
@@ -976,7 +977,7 @@ async function refreshFilingBodiesUnlocked(
       result.errors.push(`ingestFundamentalsCard(${symbol}) threw: ${msg}`);
     }
 
-    const cik = tickerToCik[symbol];
+    const cik = tickerToCik[normalizeSymbol(symbol)] ?? tickerToCik[symbol];
     if (!cik) continue;
 
     try {
