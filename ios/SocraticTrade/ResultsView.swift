@@ -8,6 +8,7 @@ struct ResultsView: View {
     var body: some View {
         SnapshotScaffold { snapshot in
             headline(snapshot)
+                .cardSpansAllColumns()
             metrics(snapshot)
             benchmark(snapshot)
             taxNote(snapshot)
@@ -75,7 +76,7 @@ struct ResultsView: View {
     }
 
     private func metrics(_ snapshot: MobileSnapshot) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+        AppMetricGrid {
             MetricTile(
                 title: "Realized P&L",
                 value: AppFormat.money(realized(snapshot)),

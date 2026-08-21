@@ -14,7 +14,9 @@ struct ScanView: View {
     var body: some View {
         SnapshotScaffold(hidesWorkspaceError: true) { snapshot in
             header(snapshot: snapshot)
+                .cardSpansAllColumns()
             filterField
+                .cardSpansAllColumns()
             content
         }
         .navigationTitle("Scan")

@@ -669,6 +669,7 @@ extension View {
 
 struct SnapshotScaffold<Content: View>: View {
     @EnvironmentObject private var store: MobileStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     let content: (MobileSnapshot) -> Content
     /// Optional `.id(_:)` value inside `content` to scroll into view — used by deep links that
@@ -677,6 +678,11 @@ struct SnapshotScaffold<Content: View>: View {
     /// Scan (and any other screen with its own Retry) must not stack a second
     /// workspace banner that reloads the snapshot instead of this screen's data.
     private let hidesWorkspaceError: Bool
+
+    /// Live width of the scroll area, so the card flow can pick its column count.  Starts at
+    /// zero, which resolves to one column — the phone layout — until the first measurement
+    /// lands, so nothing ever flashes a wide layout on a narrow screen.
+    @State private var scrollWidth: CGFloat = 0
 
     init(
         scrollTarget: String? = nil,
@@ -688,6 +694,16 @@ struct SnapshotScaffold<Content: View>: View {
         self.content = content
     }
 
+    /// Width the cards themselves get: the scroll area, clamped so a 27-inch Mac window keeps
+    /// margins instead of 2000pt-wide cards, less the horizontal padding.
+    private var cardAreaWidth: CGFloat {
+        max(0, min(scrollWidth, ContentColumns.maximumContentWidth) - ContentColumns.horizontalPadding * 2)
+    }
+
+    private var columns: Int {
+        ContentColumns.count(width: cardAreaWidth, isRegularWidth: horizontalSizeClass == .regular)
+    }
+
     var body: some View {
         ZStack {
             AppPalette.background.ignoresSafeArea()
@@ -695,18 +711,21 @@ struct SnapshotScaffold<Content: View>: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     TimelineView(.periodic(from: .now, by: 30)) { context in
-                        LazyVStack(spacing: 14) {
-                            if let snapshot = store.snapshot {
-                                SnapshotStatusBanner(snapshot: snapshot, now: context.date)
-                                content(snapshot)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        cards(now: context.date)
+                            .padding(.horizontal, ContentColumns.horizontalPadding)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: ContentColumns.maximumContentWidth)
+                            // Second frame centres the clamped column in a wide window.
+                            .frame(maxWidth: .infinity)
                     }
                 }
                 .refreshable {
                     await store.load()
+                }
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { width in
+                    scrollWidth = width
                 }
                 .onAppear { scroll(with: proxy) }
                 .onChange(of: scrollTarget) { _, _ in scroll(with: proxy) }
@@ -716,6 +735,29 @@ struct SnapshotScaffold<Content: View>: View {
 
             if store.snapshot == nil {
                 InitialSnapshotState()
+            }
+        }
+    }
+
+    /// One column keeps the exact phone layout — a `LazyVStack`, unchanged, so nothing about
+    /// iPhone rendering or its laziness moves.  Two or three columns switch to the card flow,
+    /// which only an iPad or a wide Mac window ever reaches.
+    @ViewBuilder
+    private func cards(now: Date) -> some View {
+        if columns > 1 {
+            CardColumns(columns: columns) {
+                if let snapshot = store.snapshot {
+                    SnapshotStatusBanner(snapshot: snapshot, now: now)
+                        .cardSpansAllColumns()
+                    content(snapshot)
+                }
+            }
+        } else {
+            LazyVStack(spacing: 14) {
+                if let snapshot = store.snapshot {
+                    SnapshotStatusBanner(snapshot: snapshot, now: now)
+                    content(snapshot)
+                }
             }
         }
     }
@@ -1007,6 +1049,226 @@ enum WrappingHStackLayout {
             size: CGSize(width: maxX, height: y + lineHeight),
             origins: origins
         )
+    }
+}
+
+/// Breakpoints for the dashboard card flow.
+///
+/// Widths here are the CARD AREA — the scroll width already clamped and stripped of its
+/// horizontal padding — not the window.  Kept as plain numbers so XCTest can pin the
+/// iPad Air 11" cases (820pt portrait, 1180pt landscape) without hosting SwiftUI.
+enum ContentColumns {
+    /// Padding `SnapshotScaffold` puts on each side of the card area.
+    static let horizontalPadding: CGFloat = 16
+    /// Cards stop widening here.  Past it a Mac window gets margins rather than 1400pt-wide
+    /// lines of text nobody can track back to the next row.
+    static let maximumContentWidth: CGFloat = 1360
+    /// Below this a second column makes both halves narrower than a phone card.
+    static let twoColumnMinimum: CGFloat = 680
+    /// At and above this a third column still leaves every card wider than an iPhone's.
+    static let threeColumnMinimum: CGFloat = 1100
+    /// Widest a single column of prose or chat may get before lines stop being trackable.
+    /// Used by screens that are one conversation rather than a wall of cards.
+    static let readableWidth: CGFloat = 760
+    /// Widest a full-bleed primary action should be drawn.  A 1300pt-wide button is not a
+    /// bigger target, it is a banner nobody reads as a button.
+    static let maximumActionWidth: CGFloat = 520
+
+    /// - Parameter isRegularWidth: compact width — every iPhone, an iPad in Slide Over — always
+    ///   gets one column, whatever the measurement says.
+    static func count(width: CGFloat, isRegularWidth: Bool) -> Int {
+        guard isRegularWidth, width.isFinite, width > 0 else { return 1 }
+        if width >= threeColumnMinimum { return 3 }
+        if width >= twoColumnMinimum { return 2 }
+        return 1
+    }
+}
+
+private struct CardSpanKey: LayoutValueKey {
+    static let defaultValue: Bool = false
+}
+
+extension View {
+    /// Marks a card that must span every column of the dashboard flow.  Reserved for the few
+    /// things that read as a header rather than as one card among many — the freshness banner
+    /// and the Home hero.  A no-op in the one-column phone layout.
+    func cardSpansAllColumns(_ spans: Bool = true) -> some View {
+        layoutValue(key: CardSpanKey.self, value: spans)
+    }
+}
+
+/// Card flow for the dashboard scaffold: cards drop into the shortest column so one long card
+/// cannot leave a column empty, and anything marked `.cardSpansAllColumns()` takes the full
+/// width and starts a fresh row.  Only ever instantiated with two or three columns — the phone
+/// keeps its `LazyVStack` — but it degrades to a plain stack at one column anyway.
+///
+/// Layout math is in `CardColumnsLayout` so XCTest can cover balancing, spans, and total height
+/// without hosting SwiftUI — the same split `WrappingHStack` uses.
+struct CardColumns: Layout {
+    var columns: Int
+    var spacing: CGFloat = 14
+    var columnSpacing: CGFloat = 14
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        return layout(subviews: subviews, containerWidth: width).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = layout(subviews: subviews, containerWidth: bounds.width)
+        for index in subviews.indices {
+            let frame = result.frames[index]
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                proposal: ProposedViewSize(width: frame.width, height: frame.height)
+            )
+        }
+    }
+
+    private func layout(subviews: Subviews, containerWidth: CGFloat) -> CardColumnsLayout.Result {
+        let spans = subviews.map { $0[CardSpanKey.self] }
+        let columnWidth = CardColumnsLayout.columnWidth(
+            containerWidth: containerWidth,
+            columns: columns,
+            columnSpacing: columnSpacing
+        )
+        var heights: [CGFloat] = []
+        heights.reserveCapacity(subviews.count)
+        for index in subviews.indices {
+            let full = columns <= 1 || spans[index]
+            let proposed = ProposedViewSize(width: full ? containerWidth : columnWidth, height: nil)
+            heights.append(subviews[index].sizeThatFits(proposed).height)
+        }
+        return CardColumnsLayout.place(
+            heights: heights,
+            spans: spans,
+            containerWidth: containerWidth,
+            columns: columns,
+            spacing: spacing,
+            columnSpacing: columnSpacing
+        )
+    }
+}
+
+enum CardColumnsLayout {
+    struct Result: Equatable {
+        var size: CGSize
+        var frames: [CGRect]
+    }
+
+    static func columnWidth(containerWidth: CGFloat, columns: Int, columnSpacing: CGFloat) -> CGFloat {
+        let count = max(1, columns)
+        guard count > 1 else { return max(0, containerWidth) }
+        let gutters = CGFloat(count - 1) * columnSpacing
+        return max(0, (containerWidth - gutters) / CGFloat(count))
+    }
+
+    static func place(
+        heights: [CGFloat],
+        spans: [Bool],
+        containerWidth: CGFloat,
+        columns: Int,
+        spacing: CGFloat,
+        columnSpacing: CGFloat
+    ) -> Result {
+        precondition(heights.count == spans.count)
+        guard !heights.isEmpty else {
+            return Result(size: .zero, frames: [])
+        }
+
+        let count = max(1, columns)
+        let width = columnWidth(containerWidth: containerWidth, columns: count, columnSpacing: columnSpacing)
+        var bottoms = [CGFloat](repeating: 0, count: count)
+        var frames: [CGRect] = []
+        frames.reserveCapacity(heights.count)
+
+        for index in heights.indices {
+            let height = heights[index]
+            if count == 1 || spans[index] {
+                // A spanning card clears every column, then resets them all to its own bottom.
+                let y = bottoms.max() ?? 0
+                frames.append(CGRect(x: 0, y: y, width: max(0, containerWidth), height: height))
+                let next = y + height + spacing
+                for column in bottoms.indices {
+                    bottoms[column] = next
+                }
+            } else {
+                // Shortest column wins; a near-tie keeps reading order by staying left.
+                var target = 0
+                for column in 1..<count where bottoms[column] + 0.5 < bottoms[target] {
+                    target = column
+                }
+                let y = bottoms[target]
+                frames.append(CGRect(
+                    x: CGFloat(target) * (width + columnSpacing),
+                    y: y,
+                    width: width,
+                    height: height
+                ))
+                bottoms[target] = y + height + spacing
+            }
+        }
+
+        // Every bottom carries a trailing gap that is not part of the content.
+        let total = max(0, (bottoms.max() ?? 0) - spacing)
+        return Result(size: CGSize(width: max(0, containerWidth), height: total), frames: frames)
+    }
+}
+
+/// Metric-tile grid that widens with the card it sits in rather than with the screen.  A phone
+/// card and a two-column iPad card both hold two tiles; a full-width card on a wide Mac window
+/// holds four.  Measuring its own width (not the window's) is the point: the same card is
+/// narrow in a column and wide when it spans.
+struct AppMetricGrid<Content: View>: View {
+    /// Narrowest a tile may get before the grid drops a column.
+    var minimumTileWidth: CGFloat = 178
+    var spacing: CGFloat = 10
+    private let content: Content
+
+    init(
+        minimumTileWidth: CGFloat = 178,
+        spacing: CGFloat = 10,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.minimumTileWidth = minimumTileWidth
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    @State private var width: CGFloat = 0
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: spacing) {
+            content
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { measured in
+            width = measured
+        }
+    }
+
+    private var columns: [GridItem] {
+        // `GridItem(.flexible())` with no explicit spacing, exactly as every one of these grids
+        // was written before — so a phone renders the identical two-up tile row it did.
+        Array(repeating: GridItem(.flexible()), count: AppMetricGridColumns.count(
+            width: width,
+            minimumTileWidth: minimumTileWidth,
+            spacing: spacing
+        ))
+    }
+}
+
+enum AppMetricGridColumns {
+    /// Two is both the floor and the pre-measurement answer, so a phone renders exactly what it
+    /// rendered before this grid existed and never reflows after the first layout pass.
+    static let minimum = 2
+    static let maximum = 4
+
+    static func count(width: CGFloat, minimumTileWidth: CGFloat, spacing: CGFloat) -> Int {
+        guard width.isFinite, width > 0, minimumTileWidth > 0 else { return minimum }
+        let fits = Int(((width + spacing) / (minimumTileWidth + spacing)).rounded(.down))
+        return min(maximum, max(minimum, fits))
     }
 }
 
