@@ -83,7 +83,7 @@ Code and collectors are ready. Flip in Infisical/env when desired; watch receipt
 | EarningsCalls.dev | key / plan; `EARNINGSCALLS_DISABLED` | Self-activates when entitled |
 | RapidAPI enrichment tier | `RAPIDAPI_KEY` unset → dormant | After free Yahoo |
 | Massive short interest | `MASSIVE_API_KEY` + enable flag | Inert without key |
-| Quiver enrichment | `QUIVER_API_KEY` | Never registered without key |
+| Quiver enrichment | retired | Owner 2026-08-04: ST must not call Quiver.  Key will not register.  Congressional disclosures come from congress.trade. |
 | Webull unofficial | `WEBULL_UNOFFICIAL_ENABLED=off` | Unofficial path |
 | Congress share outbound | `CONGRESS_SHARE_ENABLED` **on** (2026-08-13) | Live — token + flag. Fundamentals stay off. |
 | Alpaca price event streams | `STREAMS_ALPACA_PRICE_EVENTS_ENABLED` | Streaming |
