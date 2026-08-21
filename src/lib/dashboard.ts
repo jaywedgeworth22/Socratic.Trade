@@ -74,6 +74,7 @@ import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
+import { weeklyMarketDigestForScan } from "./weekly-market-digest";
 import { fetchMacroHistory } from "./macro-history";
 import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, EquityPosition, OptionPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
@@ -1165,6 +1166,14 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
     unifiedFeed,
     latestStrategyRun: clientLatestStrategyRun,
     latestScan: clientLatestScan,
+    weeklyMarketDigest: weeklyMarketDigestForScan(
+      userId,
+      newestScan &&
+        ((newestScan.quotesBySymbol && Object.keys(newestScan.quotesBySymbol).length > 0) ||
+          (Array.isArray(newestScan.topCandidates) && newestScan.topCandidates.length > 0))
+        ? (newestScan as MarketScan)
+        : undefined
+    ),
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId, policy.connectedAccountId),
     pendingProposals: pendingProposalsWithPerf,

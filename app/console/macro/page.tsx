@@ -29,6 +29,7 @@ import {
 } from "./indicators";
 import { TrendsCard } from "./trends";
 import { destinationLabel } from "../components/nav";
+import { WeeklyDigestCard } from "../components/weekly-digest-card";
 
 export default function MacroPage() {
   const { snapshot, error } = useConsoleData();
@@ -98,6 +99,7 @@ function BoardView({
   return (
     <>
       <RegimeCard board={board} sourcing={sourcing} regimeScorecard={snapshot.regimeScorecard} />
+      <WeeklyDigestCard />
       {!sourcing.fred && <UnsourcedNotice vixLive={sourcing.vix} treasuryLive={sourcing.treasury} blsLive={sourcing.bls} />}
       <TrendsCard history={board.history} />
       {sections.map((s) => (

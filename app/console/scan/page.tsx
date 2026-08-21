@@ -29,6 +29,7 @@ import { ScanTable } from "./scan-table";
 import { SmartMoneySection } from "./smart-money";
 import { asFullMarketScan, newestScan, useLiveScan } from "./use-live-scan";
 import { destinationLabel } from "../components/nav";
+import { WeeklyDigestCard } from "../components/weekly-digest-card";
 
 type Tab = "scan" | "smart";
 
@@ -358,6 +359,7 @@ function MarketScanTab({
           )}
         </div>
       )}
+      <WeeklyDigestCard />
       {scan.warnings.length > 0 && (
         <p
           className="cursor-default rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
