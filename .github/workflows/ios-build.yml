@@ -1,6 +1,8 @@
 name: iOS build (Mac runner)
 
-# Compile-check the iOS app on the self-hosted Mac runner (mac-xcode26-socratic).
+# Compile-check and run XCTests for the iOS app on the self-hosted Mac runner
+# (mac-xcode26-socratic).  xcodebuild output is redirected to a file so
+# SWBBuildService cannot hold the Actions step pipe open after the process exits.
 #
 # XCODE BUILDS ONLY (owner directive, 2026-08-12): this is the sole workflow
 # that may target the mac-runner labels; everything else stays on hosted/Linux
@@ -43,7 +45,11 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, ARM64, xcode26]
-    timeout-minutes: 30
+    # Cold builds have printed BUILD SUCCEEDED in ~21m, then hung until timeout because
+    # SWBBuildService inherited the step pipe.  Warm builds on this runner finish in
+    # under a minute.  40m covers a cold build plus the new test step; the file
+    # redirect below is what actually lets the step exit.
+    timeout-minutes: 40
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
@@ -70,9 +76,66 @@ jobs:
 
       - name: Build SocraticTrade (generic iOS device, unsigned)
         run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/xcodebuild-build.log"
+          # SWBBuildService outlives xcodebuild and inherits its stdout.  Left on the
+          # runner's own pipe it holds the step open until timeout-minutes kills it,
+          # even on a build that already printed BUILD SUCCEEDED.  A file breaks that
+          # inheritance.  See docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md
+          # item C and docs/rollouts/2026-08-21-ios-ci-unhang.md.
+          set +e
           xcodebuild build \
             -project 'ios/Socratic Trade.xcodeproj' \
             -scheme SocraticTrade \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            > "$log" 2>&1 < /dev/null
+          status=$?
+          set -e
+          tail -300 "$log"
+          exit $status
+
+      - name: Test SocraticTrade (iOS Simulator, unsigned)
+        run: |
+          set -o pipefail
+          # Prefer iPhone 17 Pro (AGENTS.md).  Fall back to any available iPhone so a
+          # missing named device cannot skip the lane.  Do not share a human-booted
+          # simulator when a dedicated match exists — pick by name from `available`.
+          iphone=$(
+            xcrun simctl list devices available \
+              | awk -F '[()]' '/iPhone / {
+                  name=$1
+                  gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+                  print name
+                }' \
+              | awk '
+                  $0 == "iPhone 17 Pro" { p17 = $0 }
+                  $0 == "iPhone 16 Pro" { p16 = $0 }
+                  $0 ~ /^iPhone / { if (first == "") first = $0 }
+                  END {
+                    if (p17 != "") print p17
+                    else if (p16 != "") print p16
+                    else print first
+                  }
+                '
+          )
+          if [ -z "$iphone" ]; then
+            echo "::error::No available iPhone simulator on this runner."
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using simulator: $iphone"
+          log="$RUNNER_TEMP/xcodebuild-test.log"
+          set +e
+          xcodebuild test \
+            -project 'ios/Socratic Trade.xcodeproj' \
+            -scheme SocraticTrade \
+            -destination "platform=iOS Simulator,name=$iphone" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            > "$log" 2>&1 < /dev/null
+          status=$?
+          set -e
+          tail -300 "$log"
+          exit $status

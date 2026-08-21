@@ -40,7 +40,13 @@ the branch (05:22:30 and 06:21:48), and `verify` was green.
 
 ## 3. Open items
 
-### A. Run the tests and take the screenshots  *(needs a Mac; ~20 min)*
+### A. Run the tests and take the screenshots  *(screenshots still need a Mac)*
+
+**Status 2026-08-21 evening (CURSOR):** the XCTest half moves onto the Mac runner via item C
+(`xcodebuild test` in `.github/workflows/ios-build.yml`).  Watch that step on
+`cursor/ios-ci-unhang-ac14` for TEST SUCCEEDED -- those 45 cases have still never run as of
+this writing.  Screenshots (iPad Air 11" portrait/landscape, borrowed-slot behaviour, Mac
+window drag) still need a human on a Mac; CI cannot see the bar.
 
 ```bash
 xcodebuild test -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
@@ -82,8 +88,14 @@ waits on that pipe rather than on the process.  **Raising `timeout-minutes` does
 (attempt 2 built in 21 minutes with nine minutes of headroom and was cancelled anyway); the job
 would just hang longer.
 
-Proposed patch to `.github/workflows/ios-build.yml` — give the daemon a file to inherit instead
-of the runner's pipe:
+Proposed patch to `.github/workflows/ios-build.yml` -- give the daemon a file to inherit instead
+of the runner's pipe -- **applied 2026-08-21 evening on `cursor/ios-ci-unhang-ac14`**.  Warm
+builds later the same day already concluded `success` in ~40s without the patch (the cancelled
+cluster was 04:16-06:56 UTC, including #2794 and #2987).  The redirect is still the right
+hardening: a cold build that prints BUILD SUCCEEDED must not hang the pipe.  The same PR adds
+the `xcodebuild test` lane (item A's execution half).  Did **not** make `ios-build` a required
+check -- wait until that PR's job concludes `success`, then the owner can flip the
+`main-protection` ruleset (board `830c892f`).
 
 ```yaml
       - name: Build SocraticTrade (generic iOS device, unsigned)
@@ -107,18 +119,17 @@ of the runner's pipe:
           exit $status
 ```
 
-Verify by watching one PR's job actually reach a `success` conclusion rather than `cancelled`.
-Two owner calls travel with it: make `ios-build` a **required** check in the `main-protection`
-ruleset (today a broken iOS build cannot block a merge — same point as board finding
-`830c892f`), and add an `xcodebuild test` lane so item A stops being manual forever.
+### D. `PrivacyInfo.xcprivacy` is declared but not in the bundle  *(CLOSED on main)*
 
-### D. `PrivacyInfo.xcprivacy` is declared but not in the bundle  *(needs a Mac)*
+**Status 2026-08-21 evening:** CLOSED on `main` by #3012 (`c614391c`).  The checked-in
+`project.pbxproj` now has `PrivacyInfo.xcprivacy in Resources`.  The ship script still does
+not run `xcodegen`, but it no longer has to -- the next TestFlight of current main will copy
+the manifest.  A vitest in `test/ios-privacy-manifest.test.ts` now asserts that pbxproj line
+so a later generate cannot drop it silently.
 
-Pre-existing, found while merging `main` in.  `ios/project.yml` declares it as a resource
-(added by PR #2794), but the checked-in `project.pbxproj` contains **zero** references to it,
-and `scripts/ios-ship-testflight.sh` does not run `xcodegen`.  So the shipped TestFlight binary
-does not contain the privacy manifest despite the PR that added it.  Fix is the same
-`xcodegen generate` as item B — do them together.
+Original finding, kept for the paper trail: `ios/project.yml` declared it as a resource
+(added by PR #2794) while the pbxproj had zero references, so TestFlight binaries from that
+window did not contain the privacy manifest.
 
 ### E. One design decision the owner may want to veto  *(no code needed to decide)*
 
@@ -171,11 +182,17 @@ Changing any of them should change a test in `TabPreferencesTests` or `WrappingH
 
 ## 5. Verification State
 
-- `main` `9298c29` carries the change.  `verify` green; `xcodebuild (unsigned)` `cancelled` per
-  item C, which is not this change's failure.
-- Nothing in item A has been run.
+- `main` `9298c29` carries the tab-bar change.  `verify` green.
+- Item C hang: later 2026-08-21 `ios-build` runs on `main` conclude `success` in ~40s (warm
+  cache).  The 04:16-06:56 UTC cluster on #2794/#2987 was `cancelled`.  File-redirect + test
+  lane are on `cursor/ios-ci-unhang-ac14` -- watch that PR's job for a `success` conclusion.
+- Item D closed on `main` by #3012.  Item A screenshots, item B rename, item E auto-fill
+  decision, item F knobs: still open.
 
 ## 6. Blockers
 
-- Items A, B and D need a Mac with Xcode 26 and a simulator.  A Claude Code Remote cloud session
-  cannot do them — those containers are Linux and hit the identical wall.
+- Item B still needs a Mac with XcodeGen.  Do not hand-edit `project.pbxproj`.
+- Item A screenshots still need a Mac + simulator (iPad Air 11" both orientations, borrowed
+  slot, Mac window drag).  A cloud Linux session cannot do them.
+- Making `ios-build` a required check is owner/ruleset work.  Do not flip it until the
+  unhang PR's job actually concludes `success`.

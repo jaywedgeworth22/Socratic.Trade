@@ -8,6 +8,10 @@ const privacyManifest = readFileSync(
 );
 const projectYml = readFileSync(resolve(process.cwd(), "ios/project.yml"), "utf8");
 const infoPlist = readFileSync(resolve(process.cwd(), "ios/SocraticTrade/Info.plist"), "utf8");
+const pbxproj = readFileSync(
+  resolve(process.cwd(), "ios/Socratic Trade.xcodeproj/project.pbxproj"),
+  "utf8"
+);
 
 describe("iOS release-readiness plist + privacy manifest", () => {
   it("declares export compliance so TestFlight does not sit on Missing Compliance", () => {
@@ -27,5 +31,12 @@ describe("iOS release-readiness plist + privacy manifest", () => {
     expect(privacyManifest).not.toMatch(/<key>NSPrivacyTracking<\/key>\s*<true\/>/);
     expect(projectYml).toContain("SocraticTrade/PrivacyInfo.xcprivacy");
     expect(projectYml).toMatch(/buildPhase:\s*resources/);
+  });
+
+  it("keeps PrivacyInfo.xcprivacy in the checked-in pbxproj Copy Bundle Resources", () => {
+    // The ship script does not run xcodegen.  A project.yml-only resource never
+    // reaches TestFlight.  #3012 put the file into the checked-in pbxproj; keep it.
+    expect(pbxproj).toContain("PrivacyInfo.xcprivacy in Resources");
+    expect(pbxproj).toMatch(/PBXFileReference;.*path = PrivacyInfo\.xcprivacy;/);
   });
 });
