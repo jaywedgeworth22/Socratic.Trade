@@ -1,5 +1,25 @@
 # Current Status
 
+## 2026-08-21 CLAUDE - adaptive tab bar MERGED; the unfinished half is written down
+
+PR #2987 merged to `main` as `9298c29` at 06:56 UTC.  Owner ask delivered in full: more than
+four tabs on iPad and wide Mac windows, fall back to the defaults when too narrow, Home
+required, the slot before More swapped out by whatever is opened from the More list, plus the
+iPad Air 11" layout pass carried into Mac Catalyst.
+
+No deploy fires - `ios/**` and `docs/**` are both outside Coolify `watch_paths`, and the iOS
+app only changes when the TestFlight ship script runs.
+
+**Three things the merge does NOT prove, and I would rather they be loud than tidy:** the 45
+XCTests are compiled but have never been executed (nothing in this repo runs `xcodebuild
+test`); there is no screenshot of the new iPad layout; and `xcodebuild (unsigned)` hangs on
+every iOS PR (PR #2794 has the identical `cancelled` outcome), which is a runner-side
+`SWBBuildService` pipe hang that raising the timeout would not fix.
+
+Handoff with all six open items, each claimable on its own:
+`docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`.  Items A, B and D need a Mac -
+a cloud session cannot do them, those containers are Linux and hit the same wall.
+
 ## 2026-08-21 CLAUDE - the tab bar now knows how wide the window is
 
 Owner ask: more than four tabs on iPad and on a wide Mac window, Home required, and the slot
