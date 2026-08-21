@@ -561,7 +561,7 @@ function RiskUtilizationCard({ risk }: { risk: ReturnType<typeof deriveRiskUtili
                 {row.pct !== undefined ? ` · ${fmtPct(row.pct, 1)}` : ""}
               </span>
             </div>
-            <Meter value={row.pct !== undefined ? row.pct : 0} max={100} />
+            <Meter value={row.pct !== undefined ? row.pct : 0} max={100} label={row.label} />
           </div>
         ))}
       </div>

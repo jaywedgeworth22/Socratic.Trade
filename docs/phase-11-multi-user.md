@@ -1,5 +1,10 @@
 # Phase 11 - Multi-user & API-key management (plan)
 
+**Isolation audit (2026-08-17):** session `userId` is the only identity source; proposal/order
+SQL is `user_id`-scoped; Pinecone private namespaces are `private:<sha256(userId)>`.  Residual
+cross-tenant surfaces are intentional (shared operator RAG) or token-gated (ops snapshot).
+Evidence: `docs/audits/2026-08-17-security-reliability.md` §5.3.
+
 ## CI pin-check reliability (2026-07-22)
 
 The shared-package pin workflow runs on every pull request so the status cannot disappear for

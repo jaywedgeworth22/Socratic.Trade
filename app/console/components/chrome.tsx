@@ -1117,7 +1117,7 @@ export function FreshnessStrip({
           <ShieldCheck size={12} />
           Deployed today: {fmtMoney(spend.usedNotional)}
           {typeof spend.capNotional === "number" ? ` of ${fmtMoneyWhole(spend.capNotional)}` : ""}
-          <Meter value={spend.usedNotional} max={spend.capNotional} className="w-16" />
+          <Meter value={spend.usedNotional} max={spend.capNotional} className="w-16" label="Deployed today" />
         </span>
         {!online && <OfflineBanner />}
         {error && (
