@@ -231,9 +231,22 @@ struct LoginView: View {
     /// right edge (the final line excepted, which justification leaves alone).
     ///
     /// Two spaces between sentences, per the fleet copy rule.
-    private static let legalNotice = """
-        The app stores only your session.  Broker and provider keys stay with your account         at SocraticTrade.com.  By signing in, you agree to the Terms and Privacy Policy         linked below.  AI generated proposals, behaviors, and actions are not guaranteed         though strategic framework is customizable and defined by each user.  Site and app         do not provide financial or investment advice and were made for educational,         experimental, and/or informational use only.
-        """
+    /// Written as explicit concatenation, NOT a `"""` literal with `\` continuations.
+    /// The continuation form shipped this string with NINE-space runs baked into it — the
+    /// stripped indentation of each continued line survived — and justification then
+    /// stretched those runs into visible rivers mid-sentence ("your account _________ at
+    /// SocraticTrade.com").  With `+` there is no indentation to strip and no way for the
+    /// source layout to leak into the rendered text.
+    ///
+    /// Two spaces between sentences, per the fleet copy rule.
+    private static let legalNotice =
+        "The app stores only your session.  "
+        + "Broker and provider keys stay with your account at SocraticTrade.com.  "
+        + "By signing in, you agree to the Terms and Privacy Policy linked below.  "
+        + "AI generated proposals, behaviors, and actions are not guaranteed though "
+        + "strategic framework is customizable and defined by each user.  "
+        + "Site and app do not provide financial or investment advice and were made for "
+        + "educational, experimental, and/or informational use only."
 
     private var privacyNote: some View {
         VStack(spacing: 10) {
