@@ -80,6 +80,7 @@ Cascade mechanics (implementation): free-first waves + `quotaScarce` + `supplies
 | `marketstack` | key | Free ~100/mo | History failover | Scarce — last resort |
 | `tradier` | connected broker | Sandbox vs live | History | Prefer over marketstack when connected |
 | `filingapi` | optional key | Paid if present | Profile/calendar/insider | `quotaScarce`; missing/401 skips (ROIC + EDGAR cover) |
+| `filingapi` | — | **Retired on `main` 2026-08-17 (#2787)** | Do not call on this HEAD | ROIC.ai + SEC EDGAR cover this class. No Plus checkout. Open #2792 (owner reversal) keeps the lane and soft-skips missing/401 keys. Audit: `docs/audits/2026-08-17-brokers-data-cascade.md`. |
 | `fintechstudios` | key | Paid | News/events | Niche |
 | `marketaux` | key | Free 100/day | News sentiment | Scarce |
 | `wisesheets` / `simfin` | key | Free tiers | SEC-derived fund. second opinion | Behind Yahoo/SEC quality gate |

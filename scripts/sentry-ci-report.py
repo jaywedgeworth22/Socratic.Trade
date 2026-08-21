@@ -70,6 +70,7 @@ CRON_SCHEDULES = {
     "Shared package pin check": "0 13 * * 1",
     "iOS TestFlight ship (Mac runner)": "*/30 * * * *",
     "Deploy freshness": "13,33,53 * * * *",
+    "RTH Deploy Latch": "20 21 * * 1-5",
 }
 
 

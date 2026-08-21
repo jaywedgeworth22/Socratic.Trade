@@ -59,7 +59,7 @@ struct AgentControlPlan: Equatable {
             )
         case "close_only":
             return AgentControlPlan(
-                statusTitle: "Exit-Only",
+                statusTitle: "Exit-only",
                 statusDetail: "No new buys.  Protective exits keep working.  Resume Agent restores scheduled runs.",
                 primary: .resume,
                 showStart: true,
@@ -72,7 +72,8 @@ struct AgentControlPlan: Equatable {
             )
         case "liquidating":
             return AgentControlPlan(
-                statusTitle: "Winding Down",
+                // State word, not the "Wind Down" command name — `RunStateWord.windingDown`.
+                statusTitle: "Winding down",
                 statusDetail: "Only sell orders until the account is in cash.  This sells things.",
                 primary: .stop,
                 showStart: true,
