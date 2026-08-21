@@ -42,6 +42,7 @@ struct SocraticTradeApp: App {
                 // Default face for any Text that doesn't name a style of its own. The
                 // .app* twins in AppTypography.swift cover the ones that do.
                 .environment(\.font, .appBody)
+                .appUpdatePrompt()
         }
     }
 }
