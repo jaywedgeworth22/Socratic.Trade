@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 100;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -41,6 +41,7 @@
 		96788F467DDE0AEBD26DBE2E /* AppComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38386F538E5ECC5191294B9A /* AppComponents.swift */; };
 		97E7970C650099475A424225 /* MobileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46F9B58AE392D9B952212857 /* MobileModels.swift */; };
 		9A2713B013C93FDA2F9ECCE9 /* Lato-Black.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6B078CF6C158BBF3E54734FC /* Lato-Black.ttf */; };
+		A08ECA51E20EFDE9EEA75142 /* AppUpdatePrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3724E63D5409F8827C215758 /* AppUpdatePrompt.swift */; };
 		A0B35AC0FE7982512B0E4796 /* ProposalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */; };
 		A4213D46A2C04A5211D908CA /* PolicyTightening.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E30F86884C90A0B81A3377F /* PolicyTightening.swift */; };
 		AADECAD991DC4AEB91852D42 /* Lato-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C5DB2224CAACE329BCE50890 /* Lato-Italic.ttf */; };
@@ -53,6 +54,7 @@
 		C4C5A007566AD8E6187289D7 /* AdminPortalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C59D290B3E70A1F9606F659 /* AdminPortalView.swift */; };
 		C4C927EE875067C7AA54170A /* CoachView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3677A7585B7699DCBD76615E /* CoachView.swift */; };
 		C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */; };
+		CD52ABAB004A7F1000A42C01 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B87EE76D3EA92990D1CA96B9 /* PrivacyInfo.xcprivacy */; };
 		CF7E04F6E303A90DA3947D4A /* MobileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B407C6306CC293CF54036A1 /* MobileStore.swift */; };
 		DC9652BB88B557D5B7CED5FE /* ProposalPriceReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EA161FF394BB007D143D5DB /* ProposalPriceReviewTests.swift */; };
 		DDE2520C7046DA020D8DB9C0 /* AgentControlPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 005E737FB143D683852FE490 /* AgentControlPlanTests.swift */; };
@@ -86,6 +88,7 @@
 		245D98F7C0F747E857CB7226 /* PolicyTighteningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolicyTighteningTests.swift; sourceTree = "<group>"; };
 		31CAA55DF67299F539BE8ECC /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		3677A7585B7699DCBD76615E /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachView.swift; sourceTree = "<group>"; };
+		3724E63D5409F8827C215758 /* AppUpdatePrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdatePrompt.swift; sourceTree = "<group>"; };
 		37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSupport.swift; sourceTree = "<group>"; };
 		38386F538E5ECC5191294B9A /* AppComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppComponents.swift; sourceTree = "<group>"; };
 		3F73B7DC3AC7076311C24456 /* PushNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotifications.swift; sourceTree = "<group>"; };
@@ -115,6 +118,7 @@
 		A1CC6784F07066C7C065671F /* AgentControlPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentControlPlan.swift; sourceTree = "<group>"; };
 		A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolInfoSheet.swift; sourceTree = "<group>"; };
 		AA6AA7A53A726CB69203EDD4 /* DeepLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkTests.swift; sourceTree = "<group>"; };
+		B87EE76D3EA92990D1CA96B9 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		C0675693E793B52F16CA3C08 /* CoachMarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachMarkdownTests.swift; sourceTree = "<group>"; };
 		C4EC1C98F388A1CA9E6334EB /* ControlCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlCatalogTests.swift; sourceTree = "<group>"; };
 		C5557CAA4F581AB7FB8F8234 /* OrderCancelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCancelTests.swift; sourceTree = "<group>"; };
@@ -149,6 +153,7 @@
 				A1CC6784F07066C7C065671F /* AgentControlPlan.swift */,
 				38386F538E5ECC5191294B9A /* AppComponents.swift */,
 				FC9F509664B51F30B581932B /* AppTypography.swift */,
+				3724E63D5409F8827C215758 /* AppUpdatePrompt.swift */,
 				64D21DA3DA51118F65691FBE /* Assets.xcassets */,
 				D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */,
 				4EC2A15B7990BAD6A58CF90F /* CoachMarkdown.swift */,
@@ -168,6 +173,7 @@
 				F465E5B4A0E3C941A01A8640 /* OrderCancel.swift */,
 				9E30F86884C90A0B81A3377F /* PolicyTightening.swift */,
 				37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */,
+				B87EE76D3EA92990D1CA96B9 /* PrivacyInfo.xcprivacy */,
 				5106B1DF419D29BCC1717594 /* ProposalPriceReview.swift */,
 				EC1C49575DCB6DA8E8D65CD7 /* ProposalsView.swift */,
 				3F73B7DC3AC7076311C24456 /* PushNotifications.swift */,
@@ -300,7 +306,7 @@
 			);
 			mainGroup = 008B71438D3CFDB4D27347DF;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 100;
+			preferredProjectObjectVersion = 77;
 			productRefGroup = 20E63D98EDABA6D29C136796 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -330,6 +336,7 @@
 				33303D981912E771B2711FDE /* Lato-Bold.ttf in Resources */,
 				AADECAD991DC4AEB91852D42 /* Lato-Italic.ttf in Resources */,
 				3D5C036934C466C235DAB70A /* Lato-Regular.ttf in Resources */,
+				CD52ABAB004A7F1000A42C01 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -368,6 +375,7 @@
 				6F472653B6E7B573907DEB0E /* AgentControlPlan.swift in Sources */,
 				96788F467DDE0AEBD26DBE2E /* AppComponents.swift in Sources */,
 				E775D82245F3524DC339DCC4 /* AppTypography.swift in Sources */,
+				A08ECA51E20EFDE9EEA75142 /* AppUpdatePrompt.swift in Sources */,
 				C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */,
 				24BC1C267A8A15E430484C5F /* CoachMarkdown.swift in Sources */,
 				C4C927EE875067C7AA54170A /* CoachView.swift in Sources */,
