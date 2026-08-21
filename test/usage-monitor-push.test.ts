@@ -184,6 +184,22 @@ describe("usage-monitor-push", () => {
     expect((vol!.metadata as Record<string, unknown>).failures).toBe(1);
   });
 
+  it("keeps congress-read call-volume on its own lane and ACKs the persisted window", async () => {
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(makeFetchStub(captured));
+    push.recordProviderCall("massive", { ok: true, service: "market-data" });
+    push.recordProviderCall("massive", { ok: true, service: "market-data", label: "congress-read" });
+    await push.flushUsageMonitor();
+
+    const massive = captured[0]!.body.events.filter((event) => event.provider === "massive");
+    expect(massive).toHaveLength(2);
+    const peer = massive.find((event) => (event.metadata as Record<string, unknown>).label === "congress-read");
+    const own = massive.find((event) => (event.metadata as Record<string, unknown>).label == null);
+    expect(peer?.requests).toBe(1);
+    expect(own?.requests).toBe(1);
+    expect(push.loadPersistedCallVolumeWindows()).toEqual([]);
+  });
+
   it("tags Pinecone RAG volume as credits and scopes call-volume by key lane", async () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));

@@ -86,7 +86,7 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 /**
  * Apply one pushed event. Never throws. Returns what was written. Unknown/empty event types and the
  * informational ref/price/spx events are acknowledged (ok:true) so App A's webhook gets a 2xx and
- * does not retry — App B consumes ref/price/spx lazily via the read client (congress-trade-client).
+ * does not retry — App B consumes ref/price/spx lazily via the read client (`src/lib/api-clients/congress.ts`).
  */
 export function applyCongressEvent(event: CongressEvent | null | undefined): ApplyResult {
   try {
