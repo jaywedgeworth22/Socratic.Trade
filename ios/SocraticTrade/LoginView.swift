@@ -241,7 +241,7 @@ struct LoginView: View {
     /// Two spaces between sentences, per the fleet copy rule.
     private static let legalNotice =
         "The app stores only your session.  "
-        + "Broker and provider keys stay with your account at SocraticTrade.com.  "
+        + "Broker/provider keys stay with your account at SocraticTrade.com.  "
         + "By signing in, you agree to the Terms and Privacy Policy linked below.  "
         + "AI generated proposals, behaviors, and actions are not guaranteed though "
         + "strategic framework is customizable and defined by each user.  "
