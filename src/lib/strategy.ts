@@ -5802,7 +5802,7 @@ async function proposeTrades(input: {
   const recordStep = (step: StrategyLlmStep, options: { includeInResult?: boolean } = {}) => {
     let provider = step.provider;
     if (provider === "openrouter" && step.model && step.model.includes("/")) {
-      const raw = step.model.split("/")[0];
+      const raw = step.model.replace(/^~/, "").split("/")[0];
       if (raw === "google") provider = "gemini";
       else if (raw === "mistralai") provider = "mistral";
       else provider = raw;

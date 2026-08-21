@@ -46,7 +46,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "gpt-mini-latest",
-    openRouterSlug: "openai/gpt-mini-latest",
+    openRouterSlug: "~openai/gpt-mini-latest",
     nativeSlug: "gpt-5.4-mini",
     provider: "openai",
     label: "gpt-mini-latest (5.4) — proven low-cost OpenAI",
@@ -102,7 +102,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "claude-haiku-latest",
-    openRouterSlug: "anthropic/claude-haiku-latest",
+    openRouterSlug: "~anthropic/claude-haiku-latest",
     nativeSlug: "claude-haiku-4.5",
     provider: "anthropic",
     label: "claude-haiku-latest (4.5) — fast low-cost Claude",
@@ -118,7 +118,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "claude-sonnet-latest",
-    openRouterSlug: "anthropic/claude-sonnet-latest",
+    openRouterSlug: "~anthropic/claude-sonnet-latest",
     nativeSlug: "claude-sonnet-5",
     provider: "anthropic",
     label: "claude-sonnet-latest (5) — balanced Claude analysis",
@@ -135,7 +135,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "claude-opus-latest",
-    openRouterSlug: "anthropic/claude-opus-latest",
+    openRouterSlug: "~anthropic/claude-opus-latest",
     nativeSlug: "claude-opus-5",
     provider: "anthropic",
     label: "claude-opus-latest (5) — premium Claude reasoning",
@@ -151,7 +151,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "claude-fable-latest",
-    openRouterSlug: "anthropic/claude-fable-latest",
+    openRouterSlug: "~anthropic/claude-fable-latest",
     nativeSlug: "claude-fable-5",
     provider: "anthropic",
     label: "claude-fable-latest (5) — most capable Claude",
@@ -169,7 +169,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "grok-latest",
-    openRouterSlug: "x-ai/grok-latest",
+    openRouterSlug: "~x-ai/grok-latest",
     nativeSlug: "grok-4.5",
     provider: "xai",
     label: "grok-latest (4.5) — default Grok analysis",
@@ -193,7 +193,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "gemini-flash-latest",
-    openRouterSlug: "google/gemini-flash-latest",
+    openRouterSlug: "~google/gemini-flash-latest",
     nativeSlug: "gemini-flash-latest",
     provider: "gemini",
     label: "gemini-flash-latest — current flagship Flash",
@@ -212,7 +212,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "gemini-pro-latest",
-    openRouterSlug: "google/gemini-pro-latest",
+    openRouterSlug: "~google/gemini-pro-latest",
     nativeSlug: "gemini-pro-latest",
     provider: "gemini",
     label: "gemini-pro-latest — deepest Gemini reasoning",
@@ -266,7 +266,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "kimi-latest",
-    openRouterSlug: "moonshotai/kimi-latest",
+    openRouterSlug: "~moonshotai/kimi-latest",
     nativeSlug: "kimi-latest",
     provider: "moonshot",
     label: "kimi-latest (k3) — Kimi frontier model",
@@ -353,6 +353,10 @@ export function openRouterSlugFor(model: string | null | undefined): string {
   const batch = /:batch$/i.test(trimmed);
   const entry = catalogEntryFor(trimmed);
   if (entry) {
+    // The Flash-latest alias has no :batch sibling. Pin offline/eval to 3.7 batch.
+    if (batch && entry.displaySlug === "gemini-flash-latest") {
+      return "google/gemini-3.7-flash:batch";
+    }
     return batch && !entry.openRouterSlug.endsWith(":batch") ? `${entry.openRouterSlug}:batch` : entry.openRouterSlug;
   }
   return "";
