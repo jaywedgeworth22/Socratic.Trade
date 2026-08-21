@@ -48,7 +48,9 @@ export default function LoginPage() {
         </ul>
 
         {anyProviderConfigured ? (
-          <div className="flex flex-col gap-3">
+          /* One family: Google's Light/Dark chrome, brand only in the mark.
+             Matches iOS LoginView.providerButton.  Teal Google was a Google Don't. */
+          <div className="mx-auto flex w-full max-w-sm flex-col gap-3">
             {googleConfigured && (
               <form
                 action={async () => {
@@ -56,11 +58,10 @@ export default function LoginPage() {
                   await signIn("google", { redirectTo: "/" });
                 }}
               >
-                <button
-                  type="submit"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg shadow-sm transition-opacity hover:opacity-90"
-                >
-                  <GoogleIcon />
+                <button type="submit" className="login-provider-btn">
+                  <span className="login-provider-mark">
+                    <GoogleIcon />
+                  </span>
                   Sign in with Google
                 </button>
               </form>
@@ -72,11 +73,10 @@ export default function LoginPage() {
                   await signIn("github", { redirectTo: "/" });
                 }}
               >
-                <button
-                  type="submit"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-surface px-5 py-2.5 text-sm font-medium text-fg shadow-sm transition-opacity hover:opacity-80"
-                >
-                  <GitHubIcon />
+                <button type="submit" className="login-provider-btn">
+                  <span className="login-provider-mark login-provider-mark--github">
+                    <GitHubIcon />
+                  </span>
                   Sign in with GitHub
                 </button>
               </form>
@@ -89,11 +89,10 @@ export default function LoginPage() {
                     await signIn("apple", { redirectTo: "/" });
                   }}
                 >
-                  <button
-                    type="submit"
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-fg px-5 py-2.5 text-sm font-medium text-bg shadow-sm transition-opacity hover:opacity-80"
-                  >
-                    <AppleIcon />
+                  <button type="submit" className="login-provider-btn login-provider-btn--apple">
+                    <span className="login-provider-mark">
+                      <AppleIcon />
+                    </span>
                     Sign in with Apple
                   </button>
                 </form>
@@ -145,7 +144,7 @@ export default function LoginPage() {
 
 function GoogleIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+    <svg width="20" height="20" viewBox="0 0 18 18" aria-hidden="true">
       <path
         d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z"
         fill="#4285F4"
@@ -167,16 +166,23 @@ function GoogleIcon() {
 }
 
 function GitHubIcon() {
+  // Official Invertocat from brand.github.com/GitHub_Logos.zip (same asset
+  // iOS ships as GitHubMark.imageset).  currentColor so it is black on the
+  // light button and white on the dark one — GitHub's only mark constraint.
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12Z" />
+    <svg width="18" height="18" viewBox="0 0 98 96" aria-hidden="true" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.342-5.867-16.342-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-2.15.334-2.15.334-2.15 4.934.326 7.523 5.052 7.523 5.052 4.367 8.455 11.374 6.002 14.119 4.525.448-3.584 1.697-6.002 3.112-7.412-10.814-1.155-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.555-.08 11.856-.08 13.437 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"
+      />
     </svg>
   );
 }
 
 function AppleIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
       <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
     </svg>
   );
