@@ -9,6 +9,7 @@ struct LoginView: View {
 
     /// Keep in sync with `LOGIN_VALUE_BULLETS` in `app/login/page.tsx`.
     private static let valueBullets = [
+        "Configure framework and guardrails",
         "Review and approve proposals",
         "Track positions, orders, and performance",
         "Run, pause, and approve from your phone"
@@ -20,17 +21,30 @@ struct LoginView: View {
             loginBackground
                 .ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 24) {
-                    brand
-                    valueCard
-                    signIn
-                    privacyNote
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(spacing: 24) {
+                        brand
+                        valueCard
+                        signIn
+                        privacyNote
+                    }
+                    // 352 (not 400): ASAuthorizationAppleIDButton hard-caps its width at
+                    // 375pt, so a wider column left Sign in with Apple visibly narrower than
+                    // the Google/GitHub buttons.  Keep the column under that cap and all three
+                    // render at identical width.
+                    .frame(maxWidth: Self.contentWidth)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 48)
+                    // minHeight + .center is what vertically centres the column on anything
+                    // taller than it needs — an iPad Air or a tall Mac Catalyst window, where
+                    // a top-pinned 352pt column otherwise sits marooned against the top edge.
+                    // It still scrolls normally once the content is taller than the screen
+                    // (large Dynamic Type on a small phone), because minHeight only ever
+                    // grows the frame.
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
                 }
-                .frame(maxWidth: 400)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 48)
-                .frame(maxWidth: .infinity)
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
     }
@@ -46,11 +60,15 @@ struct LoginView: View {
     }
 
     private var brand: some View {
-        // Web: HeaderLogo height={20}; slightly taller on phone for legibility.
-        CandleWordmarkView(height: 24)
+        // Login treats the wordmark as the page headline, so it scales to the content
+        // column rather than sitting at top-bar size (the console top bar still uses
+        // the fixed-height form).  Owner 2026-08-20: 20% smaller than the full-bleed
+        // hero it replaced — at full column width it crowded the value card and read as
+        // a splash screen rather than a headline.
+        CandleWordmarkView(fillsWidth: true)
+            .frame(maxWidth: Self.brandWidth)
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 8)
-            .padding(.bottom, 4)
+            .padding(.vertical, 8)
     }
 
     private var valueCard: some View {
@@ -127,17 +145,19 @@ struct LoginView: View {
                 onCompletion: complete
             )
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 48)
+            .frame(height: Self.buttonHeight)
             // Apple's ASAuthorizationAppleIDButton hard-caps width at 375pt. Stretching the
             // UIKit host wider (e.g. 392pt after horizontal padding) trips unsatisfiable
-            // NSAutoresizingMaskLayoutConstraints in the console. Do not follow this with
-            // another maxWidth:.infinity — that re-expands the UIKit host and revives the conflict.
-            .frame(maxWidth: 375)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            // NSAutoresizingMaskLayoutConstraints in the console. The content column is now
+            // 352pt, safely under the cap, so this frame fills rather than clamps. Do not
+            // follow it with another maxWidth:.infinity — that re-expands the UIKit host and
+            // revives the conflict.
+            .frame(maxWidth: Self.contentWidth)
+            .clipShape(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous))
             .disabled(store.isSigningIn)
             .overlay {
                 if store.isSigningIn {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                         .fill(Color.black.opacity(0.35))
                     ProgressView()
                         .tint(.white)
@@ -145,6 +165,17 @@ struct LoginView: View {
             }
         }
     }
+
+    /// Shared sign-in button metrics — every provider button renders at the same
+    /// width, height, and corner radius; only the branding inside differs.
+    private static let contentWidth: CGFloat = 352
+    /// Owner 2026-08-20: the login wordmark at 80% of the content column.
+    private static let brandWidth: CGFloat = (352 - 16) * 0.8
+    /// How far the lock glyph hangs left of the content column, into its gutter.
+    private static let lockOutdent: CGFloat = 12
+    private static let lockGap: CGFloat = 6
+    private static let buttonHeight: CGFloat = 50
+    private static let buttonRadius: CGFloat = 10
 
     private enum WebAuthStyle {
         case accent
@@ -162,20 +193,20 @@ struct LoginView: View {
         } label: {
             HStack(spacing: 8) {
                 icon()
-                    .frame(width: 18, height: 18)
+                    .frame(width: 20, height: 20)
                 Text(title)
-                    .font(.appSubheadline.weight(.medium))
+                    .font(.appBody.weight(.medium))
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 48)
+            .frame(height: Self.buttonHeight)
             .foregroundStyle(style == .accent ? Color.white : Color.primary)
             .background {
                 switch style {
                 case .accent:
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                         .fill(AppPalette.accent)
                 case .outline:
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                         .fill(Color(uiColor: UIColor { traits in
                             if traits.userInterfaceStyle == .dark {
                                 return UIColor(red: 22 / 255, green: 22 / 255, blue: 22 / 255, alpha: 0.78)
@@ -183,7 +214,7 @@ struct LoginView: View {
                             return UIColor(white: 1, alpha: 0.65)
                         }))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                                 .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.1), lineWidth: 1)
                         }
                 }
@@ -193,20 +224,48 @@ struct LoginView: View {
         .accessibilityHint("Opens the secure Socratic Trade sign-in page")
     }
 
-    private var privacyNote: some View {
-        VStack(spacing: 8) {
-            Label(
-                "The app stores only your Socratic Trade session.  Broker and provider keys stay with your account.",
-                systemImage: "lock.fill"
-            )
-            .font(.appCaption)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
+    /// One paragraph, not three.  It used to be a centred `Label` plus a centred `Text`,
+    /// which produced two ragged blocks with a gap between them and a pennant-shaped last
+    /// line on each — five different right edges inside 350pt.  Owner 2026-08-20: one
+    /// justified block sitting to the right of the lock, every line landing on the same
+    /// right edge (the final line excepted, which justification leaves alone).
+    ///
+    /// Two spaces between sentences, per the fleet copy rule.
+    /// Written as explicit concatenation, NOT a `"""` literal with `\` continuations.
+    /// The continuation form shipped this string with NINE-space runs baked into it — the
+    /// stripped indentation of each continued line survived — and justification then
+    /// stretched those runs into visible rivers mid-sentence ("your account _________ at
+    /// SocraticTrade.com").  With `+` there is no indentation to strip and no way for the
+    /// source layout to leak into the rendered text.
+    ///
+    /// Two spaces between sentences, per the fleet copy rule.
+    private static let legalNotice =
+        "The app stores only your session.  "
+        + "Broker and provider keys stay with your account at SocraticTrade.com.  "
+        + "By signing in, you agree to the Terms and Privacy Policy linked below.  "
+        + "AI generated proposals, behaviors, and actions are not guaranteed though "
+        + "strategic framework is customizable and defined by each user.  "
+        + "Site and app do not provide financial or investment advice and were made for "
+        + "educational, experimental, and/or informational use only."
 
-            Text("By signing in you agree to the Terms and Privacy Policy.  Not investment advice.  You set authority.")
-                .font(.appCaption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+    private var privacyNote: some View {
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: Self.lockGap) {
+                Image(systemName: "lock.fill")
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                    // Optical, not layout: drops the glyph onto the first line's x-height
+                    // instead of its ascender line.
+                    .padding(.top, 1.5)
+                    .accessibilityHidden(true)
+
+                JustifiedText(Self.legalNotice)
+            }
+            // The lock hangs into the column's 24pt gutter rather than eating paragraph
+            // width — owner: "the lock can move left to give more space".  The paragraph
+            // itself keeps essentially the whole content column, which is what makes the
+            // justified right edge land under the buttons above it.
+            .padding(.leading, -Self.lockOutdent)
 
             HStack(spacing: 16) {
                 Link("Terms", destination: URL(string: "https://socratictrade.com/terms-and-conditions")!)
