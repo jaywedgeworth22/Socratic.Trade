@@ -33,6 +33,7 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 60_000,
     globalSetup: "./test/global-setup.ts",
+    setupFiles: ["./test/setup-peer-lane-cleanup.ts"],
     // Force isTradingDay()'s no-argument "today" check true so strategy/scheduler tests don't flake
     // on real market holidays/weekends (see isTradingDay in src/lib/market-calendar.ts). The override
     // there is additionally gated on process.env.VITEST, so a stray copy of this flag in a dev/prod

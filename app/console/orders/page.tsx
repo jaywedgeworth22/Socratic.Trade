@@ -357,7 +357,7 @@ function OrdersPageInner() {
         </div>
       )}
 
-      <Card title={`Open orders (${rows.length})`} padded={false}>
+      <Card title={`Open Orders (${rows.length})`} padded={false}>
         {rows.length === 0 ? (
           <Empty>
             {noAccount
@@ -447,7 +447,7 @@ function OrdersPageInner() {
         )}
       </Card>
 
-      <Card title="Recent finished orders" padded={false}>
+      <Card title="Recent Finished Orders" padded={false}>
         {history.length === 0 ? (
           <Empty>
             {noAccount

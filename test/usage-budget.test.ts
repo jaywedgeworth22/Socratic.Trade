@@ -180,9 +180,18 @@ describe("usage-budget: evaluateBudgetForRun", () => {
 });
 
 describe("usage-budget: getBudgetStatusCached", () => {
-  afterEach(() => {
+  const priorReadToken = process.env.USAGE_READ_TOKEN;
+  beforeEach(() => {
+    delete process.env.USAGE_READ_TOKEN;
+  });
+  afterEach(async () => {
     delete process.env.USAGE_MONITOR_BASE_URL;
     delete process.env.USAGE_INGEST_TOKEN;
+    if (priorReadToken === undefined) delete process.env.USAGE_READ_TOKEN;
+    else process.env.USAGE_READ_TOKEN = priorReadToken;
+    budget.resetUsageBudgetCacheForTests();
+    const { resetPeerLaneBackoffForTests } = await import("../src/lib/peer-lane-backoff");
+    resetPeerLaneBackoffForTests();
   });
 
   it("fetches + parses the monitor response with bearer auth", async () => {
@@ -244,6 +253,22 @@ describe("usage-budget: getBudgetStatusCached", () => {
     expect(s?.providers[0]?.projectedEomUsd).toBeNull();
     expect(s?.providers[0]?.projectedRunoutDate).toBeNull();
     expect(s?.providers[0]?.spendCoverage).toBeNull();
+  });
+
+  it("does not stall a run on a slow UM — serves stale cache / fail-open (#2550)", async () => {
+    process.env.USAGE_MONITOR_BASE_URL = BASE;
+    process.env.USAGE_INGEST_TOKEN = TOKEN;
+    const { recordPeerLaneSample, PEER_LANE_USAGE_MONITOR } = await import("../src/lib/peer-lane-backoff");
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 6900);
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 7100);
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify(status([{ name: "openai", status: "ok" }])), { status: 200 });
+    }) as unknown as typeof fetch;
+    const s = await budget.getBudgetStatusCached({ fetchImpl });
+    expect(s).toBeNull();
+    expect(calls).toBe(0);
   });
 });
 

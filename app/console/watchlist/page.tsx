@@ -348,7 +348,7 @@ function WatchlistPageInner() {
       </Card>
 
       {/* ── Price alerts ── */}
-      <Card title="Price alerts">
+      <Card title="Price Alerts">
         <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
           Armed alerts are checked against live quotes about once a minute while the app&apos;s server is running. A
           trigger fires once, then the alert moves to &ldquo;triggered&rdquo; — it never re-arms by itself. Delivery
