@@ -16,12 +16,14 @@
 		18483B89B5039BD1C62B723D /* PushNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F73B7DC3AC7076311C24456 /* PushNotifications.swift */; };
 		1F37FE2BA14490285C0A0156 /* RunStateDerivationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF789FDEB98C62C5D8A12A7F /* RunStateDerivationTests.swift */; };
 		20459811A20F559A78FC18B3 /* SocraticTradeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F94CABB7BE5CB871622BADD /* SocraticTradeApp.swift */; };
+		24BC1C267A8A15E430484C5F /* CoachMarkdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EC2A15B7990BAD6A58CF90F /* CoachMarkdown.swift */; };
 		25C68C0432E8A4913913AE9F /* GuardrailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03611D1B48875FFFC841E481 /* GuardrailsView.swift */; };
 		27D79C4CCEC77B61D399EE85 /* SymbolInfoSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */; };
 		2C1779425589D75D5DC80748 /* DeskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0F3D1878E50D6658B4EA3A /* DeskModels.swift */; };
 		33303D981912E771B2711FDE /* Lato-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 042C3DAFDC413C79CE5526F9 /* Lato-Bold.ttf */; };
 		3648AC8A513158C9BD6D2031 /* DataSourcesSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BB7CC629CAE02EBB9308DC5 /* DataSourcesSettings.swift */; };
 		3D5C036934C466C235DAB70A /* Lato-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 552372DC3315B434227861EE /* Lato-Regular.ttf */; };
+		3F6D25500B614E3C6F0140E0 /* CoachMarkdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0675693E793B52F16CA3C08 /* CoachMarkdownTests.swift */; };
 		4298F7ACB07D50EE61F0ECB9 /* MobileControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD3EFCF82E664100A11FC33 /* MobileControlView.swift */; };
 		51FE4A579117BE3605C107D9 /* PreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C2568FFF3FB30F96619E8E /* PreviewSupport.swift */; };
 		5601AC0021A8D0D6F3C5E27F /* MobileAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89D3AB0C26BB7394334E998E /* MobileAPIClient.swift */; };
@@ -89,6 +91,7 @@
 		3F73B7DC3AC7076311C24456 /* PushNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotifications.swift; sourceTree = "<group>"; };
 		40B15024373F200D860968ED /* AppTypographyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTypographyTests.swift; sourceTree = "<group>"; };
 		46F9B58AE392D9B952212857 /* MobileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileModels.swift; sourceTree = "<group>"; };
+		4EC2A15B7990BAD6A58CF90F /* CoachMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachMarkdown.swift; sourceTree = "<group>"; };
 		505CFD83F8A4DB57C8C6B26B /* UserFacingCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserFacingCopyTests.swift; sourceTree = "<group>"; };
 		50946B1368FEFB6B6B20116D /* SocraticTradeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SocraticTradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5106B1DF419D29BCC1717594 /* ProposalPriceReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProposalPriceReview.swift; sourceTree = "<group>"; };
@@ -112,6 +115,7 @@
 		A1CC6784F07066C7C065671F /* AgentControlPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentControlPlan.swift; sourceTree = "<group>"; };
 		A3125CC92E339D3923013056 /* SymbolInfoSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolInfoSheet.swift; sourceTree = "<group>"; };
 		AA6AA7A53A726CB69203EDD4 /* DeepLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkTests.swift; sourceTree = "<group>"; };
+		C0675693E793B52F16CA3C08 /* CoachMarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachMarkdownTests.swift; sourceTree = "<group>"; };
 		C4EC1C98F388A1CA9E6334EB /* ControlCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlCatalogTests.swift; sourceTree = "<group>"; };
 		C5557CAA4F581AB7FB8F8234 /* OrderCancelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCancelTests.swift; sourceTree = "<group>"; };
 		C5DB2224CAACE329BCE50890 /* Lato-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Lato-Italic.ttf"; sourceTree = "<group>"; };
@@ -147,6 +151,7 @@
 				FC9F509664B51F30B581932B /* AppTypography.swift */,
 				64D21DA3DA51118F65691FBE /* Assets.xcassets */,
 				D112E8C717D899B0AFF0B6E5 /* CandleWordmarkView.swift */,
+				4EC2A15B7990BAD6A58CF90F /* CoachMarkdown.swift */,
 				3677A7585B7699DCBD76615E /* CoachView.swift */,
 				6BB7CC629CAE02EBB9308DC5 /* DataSourcesSettings.swift */,
 				31CAA55DF67299F539BE8ECC /* DeepLink.swift */,
@@ -190,6 +195,7 @@
 				1104431D2656738961FF9E2E /* AccountMetricsTests.swift */,
 				005E737FB143D683852FE490 /* AgentControlPlanTests.swift */,
 				40B15024373F200D860968ED /* AppTypographyTests.swift */,
+				C0675693E793B52F16CA3C08 /* CoachMarkdownTests.swift */,
 				C4EC1C98F388A1CA9E6334EB /* ControlCatalogTests.swift */,
 				AA6AA7A53A726CB69203EDD4 /* DeepLinkTests.swift */,
 				1A1EC10518F9629B12DBFA3D /* DeskModelsTests.swift */,
@@ -337,6 +343,7 @@
 				85DC43A7311763C033D46DC8 /* AccountMetricsTests.swift in Sources */,
 				DDE2520C7046DA020D8DB9C0 /* AgentControlPlanTests.swift in Sources */,
 				8FC9AE92C498E935EB550AAF /* AppTypographyTests.swift in Sources */,
+				3F6D25500B614E3C6F0140E0 /* CoachMarkdownTests.swift in Sources */,
 				07819F3774A506ECF52D5F38 /* ControlCatalogTests.swift in Sources */,
 				BF68D663A3173029BEEC52D8 /* DeepLinkTests.swift in Sources */,
 				8299FA4E767A17105773101F /* DeskModelsTests.swift in Sources */,
@@ -362,6 +369,7 @@
 				96788F467DDE0AEBD26DBE2E /* AppComponents.swift in Sources */,
 				E775D82245F3524DC339DCC4 /* AppTypography.swift in Sources */,
 				C67CC3242AE041DFAE3A419E /* CandleWordmarkView.swift in Sources */,
+				24BC1C267A8A15E430484C5F /* CoachMarkdown.swift in Sources */,
 				C4C927EE875067C7AA54170A /* CoachView.swift in Sources */,
 				3648AC8A513158C9BD6D2031 /* DataSourcesSettings.swift in Sources */,
 				B4F889FDC384BEA36BB16F23 /* DeepLink.swift in Sources */,

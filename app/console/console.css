@@ -37,17 +37,20 @@
      is the canonical value the whole app's brand accent derives from. */
   --con-accent: var(--brand-accent);
   --con-accent-contrast: #ffffff;
-  --con-pos: #157f4e;
+  /* Light tonal text is validated on the matching *-soft fill (chips are
+     11px/600), not on the plain surface — #2561. One step darker than the
+     2026-07 tokens so each tone clears WCAG AA (4.5:1) on its soft wash. */
+  --con-pos: #0f5c38;
   --con-pos-contrast: #ffffff;
-  --con-neg: #d1332e;
+  --con-neg: #b02b27;
   --con-neg-contrast: #ffffff;
-  --con-warn: #9a6209;
+  --con-warn: #734907;
   --con-warn-contrast: #ffffff;
-  --con-info: #0891b2;
+  --con-info: #056478;
   --con-info-contrast: #ffffff;
 
   /* Money-reality tones (reinforcement only — the word is load-bearing) */
-  --con-none: #64748b;
+  --con-none: #536073;
   --con-paper: #4f46e5;
   --con-live: #d1332e;
 
@@ -159,7 +162,8 @@
 
   --con-fg: #f0f0f0;
   --con-muted: #b0b0b0;
-  --con-faint: #969696;
+  /* One step above the 4.5:1 line on surface-3 (#2561). Keep both dark blocks identical. */
+  --con-faint: #a3a3a3;
 
   --con-accent: var(--brand-accent-dark);
   --con-accent-contrast: #04130d;
@@ -197,7 +201,8 @@
 
     --con-fg: #f0f0f0;
     --con-muted: #b0b0b0;
-    --con-faint: #969696;
+    /* One step above the 4.5:1 line on surface-3 (#2561). Keep both dark blocks identical. */
+    --con-faint: #a3a3a3;
 
     --con-accent: var(--brand-accent-dark);
     --con-accent-contrast: #04130d;

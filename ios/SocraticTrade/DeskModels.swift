@@ -716,14 +716,41 @@ enum DeskCopy {
     static let proposalTypedConfirmHint = "Typed confirmation required for this order"
 
     /// Same destination as web readiness (`/console/guardrails`).  iOS has no Strategy tab.
+    /// "always-include symbols" tracks the row label — those names are exempt from the
+    /// universe floor, which "extra symbols" made sound like a plain append.
     static let universeNeedsIndex =
-        "Choose at least one base index (e.g. S&P 500) or add extra symbols so the strategy has names to scan."
+        "Choose at least one base index (e.g. S&P 500) or add always-include symbols so the strategy has names to scan."
 
     static let universeRefreshAfterGuardrails =
-        "Add an index or extra symbols on Guardrails, then pull to refresh here."
+        "Add an index or always-include symbols on Guardrails, then pull to refresh here."
 
     static let universeInsightDetail =
-        "Choose at least one base index (e.g. S&P 500) or add extra symbols."
+        "Choose at least one base index (e.g. S&P 500) or add always-include symbols."
+
+    /// `sellToFundBuy` wire values are `off` / `suggest` / `propose` / `automated`.
+    /// The bare slug "propose" is indistinguishable from the unrelated propose/Ask-first
+    /// authority concept, so every value is spelled out as what it does.
+    static func sellToFundValue(_ raw: String?) -> String {
+        switch raw?.lowercased() {
+        case .none, .some(""), "off": return "off"
+        case "suggest": return "suggest only"
+        case "propose": return "propose sells first"
+        case "automated": return "sells automatically"
+        case .some(let other): return other.replacingOccurrences(of: "_", with: " ").lowercased()
+        }
+    }
+
+    /// `socraticOverrideMode` wire values are `off` / `propose` / `execute`.  The raw
+    /// enum used to print straight through.  "Decide" is never shown to users either —
+    /// Autopilot is the user-facing word for that authority mode.
+    static func socraticOverrideValue(_ raw: String?) -> String {
+        switch raw?.lowercased() {
+        case .none, .some(""), "off": return "off"
+        case "propose": return "propose only"
+        case "execute": return "execute in Autopilot"
+        case .some(let other): return other.replacingOccurrences(of: "_", with: " ").lowercased()
+        }
+    }
 
     static func yesNo(_ value: Bool?) -> String {
         guard let value else { return "—" }

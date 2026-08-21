@@ -841,7 +841,7 @@ export function ServerMetricsClient() {
                   <span className="text-[color:var(--con-muted)]">CPU Utilization</span>
                   <span className="con-num">{currentCpu === undefined ? "Unavailable" : `${currentCpu}%`}</span>
                 </div>
-                {currentCpu !== undefined ? <Meter value={currentCpu} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
+                {currentCpu !== undefined ? <Meter value={currentCpu} max={100} label="CPU Utilization" /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
                 {/* The server divides every Hetzner CPU sample by the core count. That transform
                     is unverified (see route.ts), and a silently 8x-low meter would stay green
                     through a saturation incident, so the scaling is named rather than implied. */}
@@ -858,7 +858,7 @@ export function ServerMetricsClient() {
                   <span className="text-[color:var(--con-muted)]">RAM Utilization</span>
                   <span className="con-num">{memPct === undefined ? "not measured" : `${memPct}%`}</span>
                 </div>
-                {memPct !== undefined ? <Meter value={memPct} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
+                {memPct !== undefined ? <Meter value={memPct} max={100} label="RAM Utilization" /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
               </div>
 
               {/* Disk Bar */}
@@ -867,7 +867,7 @@ export function ServerMetricsClient() {
                   <span className="text-[color:var(--con-muted)]">Disk Utilization</span>
                   <span className="con-num">{diskUsedPct === undefined ? "not measured" : `${diskUsedPct}%`}</span>
                 </div>
-                {diskUsedPct !== undefined ? <Meter value={diskUsedPct} max={100} /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
+                {diskUsedPct !== undefined ? <Meter value={diskUsedPct} max={100} label="Disk Utilization" /> : <div className="h-2 w-full rounded-full bg-[color:var(--con-line)] opacity-50" />}
               </div>
             </div>
 

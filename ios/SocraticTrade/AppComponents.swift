@@ -21,6 +21,10 @@ enum AppFormat {
         "strategy.run_once": "Run Once",
         "strategy.start": "Start Agent",
         "strategy.stop": "Stop Agent",
+        // Deliberately Title Case and NOT the state word "Exit-only": these are COMMAND
+        // names, exactly like "Wind Down" below, whose state word is "Winding down".
+        // Do not "unify" this with RunStateWord.exitOnly — the HomeView button of the
+        // same name reads from this map, and the two forms are different parts of speech.
         "strategy.close_only": "Exit Only",
         "strategy.liquidating": "Wind Down",
         "proposal.approve": "Approve Proposal",
@@ -90,11 +94,13 @@ enum AppFormat {
         return date.formatted(.relative(presentation: .named))
     }
 
-    /// Authority glossary: never show raw propose/decide — Ask-First / Autopilot (console parity).
-    /// Title-ish for chips/status next to headings; settings *values* use `strategyAuthorityValue`.
+    /// Authority glossary: never show raw propose/decide — Ask-first / Autopilot (console parity).
+    /// This renders mid-sentence and inside status pills — both VALUE contexts, so it is
+    /// sentence case, matching web `labels.ts` and its siblings "Exit-only" / "Winding down".
+    /// Settings *values* use `strategyAuthorityValue`.
     static func strategyAuthorityLabel(_ value: String?) -> String {
         switch value?.lowercased() {
-        case "propose": return "Ask-First"
+        case "propose": return "Ask-first"
         case "decide": return "Autopilot"
         case .none, .some(""): return "—"
         case .some(let raw): return raw.replacingOccurrences(of: "_", with: " ").capitalized
