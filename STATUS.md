@@ -419,6 +419,19 @@ Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  PR #2796.  Rollout:
 ## 2026-08-20 CURSOR — Web / iOS parity P1+P2 fixes (`cursor/web-ios-parity-fixes-e83a`)
 
 Implements the 2026-08-17 audit gaps the owner asked to fix.  Website honors `?proposal=` / `?symbol=`.  iOS Assets honors `?symbol=` and Activity lists snapshot alerts (`run_failed` / `kill_switch` visible).  Exit-only copy, Lessons width, Watchlist cards, skip link, assertive error toasts, TypedConfirm `htmlFor`, More `aria-expanded`, 44pt scan star, swipe VO action, offline banner, PWA UI tree deleted (redirect + `/api/mobile` kept), Playwright iPhone-13 project + landmark smoke.  iOS More Postures when Stop is primary; Connections Safari handoff.  Next: verify gate + review.  Rollout: `docs/rollouts/2026-08-20-web-ios-parity-fixes.md`.
+## 2026-08-20 CURSOR — Cross-app coordination follow-ups (ST slice)
+
+Audit #2802 follow-ups.  ST pin-check now understands vendor-era CT + the UM
+triangle and fails closed when CT is unreadable or reintroduces the npm dep
+(still not a required merge check).  Call-volume windows persist to settings
+on drain and replay after a crash.  Peer-serving OHLC misses tag
+`congress-read`.  Infisical merge-order + congress/Quiver docs refreshed.
+Peer PRs: Congress.Trade #2064, Usage-Monitor #1245, FLEET #44, CTS #278,
+DealDex #93 (pointer only).
+Did not mint a Massive key.  Did not collapse STATUS/PLAN.
+
+Branch `cursor/cross-app-coordination-followups-1212`.  ST PR **#2941**.
+Rollout: `docs/rollouts/2026-08-20-cross-app-coordination-followups.md`.
 
 ## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
 

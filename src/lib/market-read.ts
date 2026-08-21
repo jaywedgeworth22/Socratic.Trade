@@ -30,7 +30,7 @@ export type DailyOHLCFetcher = (symbol: string) => Promise<OHLCBar[] | null>;
  *  needs topping up, so the echo can only return the stale closes App A already holds (one
  *  guaranteed-wasted HTTP hop per cache miss, App A's route is read-only so the loop is 1-hop). */
 const peerServingFetcher: DailyOHLCFetcher = (symbol) =>
-  fetchDailyOHLC(symbol, Date.now(), undefined, { skipAppATier: true });
+  fetchDailyOHLC(symbol, Date.now(), undefined, { skipAppATier: true, usageLabel: "congress-read" });
 
 /** Resolved inclusive YYYY-MM-DD bounds for a market read (defaults already applied). */
 export interface MarketRange {

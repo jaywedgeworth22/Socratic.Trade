@@ -54,9 +54,10 @@ The data App A wants comes from App B's **other** sources:
 | `prices[].closes`, `currentPrice` | `fetchDailyOHLC()` (`src/lib/history.ts`) — Massive → Tradier → Marketstack → Yahoo → Stooq cascade. |
 | `spx` | `fetchDailyOHLC("^GSPC")`. |
 
-App A only needs the **data**, not FMP-sourced data, so forwarding App B's
-Yahoo/Massive/Tradier-sourced closes still conserves App A's FMP quota. The
-trigger therefore shifts from "after each FMP call" to **(a)** an after-scan refs
+App A only needs the **data**, not a particular vendor.  Forwarding App B's
+Yahoo/Massive/Tradier-sourced closes keeps CT on the peer price path and off a
+second Massive hop (ST retired direct FMP/Quiver/UW on 2026-08-04).  The trigger
+therefore shifts from "after each paid-vendor call" to **(a)** an after-scan refs
 hook and **(b)** a nightly daily-close/SPX batch.
 
 ## What gets sent, and when
