@@ -28,7 +28,7 @@ import {
   Shield,
   X
 } from "lucide-react";
-import { nextSheetFocusTarget } from "../ui/sheet";
+import { useFocusTrap } from "../ui/focus-trap";
 import { cx } from "../lib/format";
 import { useNavDirtyGuard } from "../lib/useDirtyGuard";
 import { DEFAULT_MOBILE_TAB_HREFS, MOBILE_TABS_MAX, MOBILE_TABS_MIN, useMobileTabs, type MobileTabsState } from "../lib/mobile-tabs";
@@ -153,9 +153,6 @@ export function DesktopRail({ pendingCount, unreadCount = 0 }: { pendingCount: n
   );
 }
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 /** Sheet stops just above the fixed tab bar (rather than covering it) so the
  * bar — and any pin toggle's live effect on it — stays visible the whole
  * time the sheet is open. `barHeight` is the tab bar's real measured height
@@ -203,13 +200,13 @@ function TabsSheet({
   sheetId: string;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
-  const openerRef = useRef<HTMLElement | null>(null);
   const headingId = useId();
   const overlayId = useId();
   const [entered, setEntered] = useState(false);
   const barOffset = Math.max(barHeight, TABS_SHEET_BAR_FLOOR);
 
   useOverlay(overlayId, open, onClose);
+  useFocusTrap(sheetRef, open, { onEscape: onClose });
 
   useEffect(() => {
     if (!open) {
@@ -217,52 +214,8 @@ function TabsSheet({
       return;
     }
     const raf = requestAnimationFrame(() => setEntered(true));
-
-    const active = document.activeElement;
-    openerRef.current = active instanceof HTMLElement && active !== document.body && active !== document.documentElement ? active : null;
-    const sheet = sheetRef.current;
-    const focusables = sheet
-      ? Array.from(sheet.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) => !el.hasAttribute("disabled"))
-      : [];
-    try {
-      (focusables[0] ?? sheet)?.focus({ preventScroll: true });
-    } catch {
-      (focusables[0] ?? sheet)?.focus();
-    }
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const current = sheetRef.current;
-      if (!current) return;
-      const tabbables = Array.from(current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) => !el.hasAttribute("disabled"));
-      const activeEl = document.activeElement;
-      const isInside = activeEl instanceof Node ? current.contains(activeEl) : false;
-      const target = nextSheetFocusTarget(
-        tabbables,
-        activeEl instanceof HTMLElement ? activeEl : null,
-        current,
-        e.shiftKey,
-        isInside
-      );
-      if (target) {
-        e.preventDefault();
-        target.focus({ preventScroll: true });
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("keydown", onKey);
-      const opener = openerRef.current;
-      openerRef.current = null;
-      if (opener && opener.isConnected) opener.focus({ preventScroll: true });
-    };
-  }, [open, onClose]);
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
 
   if (!open) return null;
 

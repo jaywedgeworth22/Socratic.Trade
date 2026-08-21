@@ -269,10 +269,19 @@ private struct CoachBubble: View {
         HStack {
             if turn.isUser { Spacer(minLength: 36) }
             VStack(alignment: turn.isUser ? .trailing : .leading, spacing: 6) {
-                Text(turn.text)
-                    .font(.appBody)
-                    .foregroundStyle(turn.isUser ? Color.white : Color.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Assistant replies are markdown (headings, bullets, tables, bold).
+                // What the owner typed is not — render it exactly as typed, same split
+                // the console makes between AssistantMarkdown and a plain paragraph.
+                if turn.isUser {
+                    Text(turn.text)
+                        .font(.appBody)
+                        .foregroundStyle(Color.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    CoachMarkdownText(turn.text)
+                        .font(.appBody)
+                        .foregroundStyle(Color.primary)
+                }
                 if !turn.citations.isEmpty {
                     Text(turn.citations.joined(separator: " · "))
                         .font(.appCaption2)
@@ -320,7 +329,10 @@ private struct CoachDraftCard: View {
                         .font(.appCaption)
                         .foregroundStyle(AppPalette.warning)
                 } else {
-                    Text("This is a draft only.  Approve it in Proposals before anything is sent, or wait for the next strategy cycle.")
+                    // Do not promise "approve it in Proposals": /api/proposals/from-draft is
+                    // wired only from the web draft card, so there is no path from an iOS
+                    // Coach draft into the approval queue.
+                    Text("This is a draft only.  Nothing is sent until it is staged for approval.")
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

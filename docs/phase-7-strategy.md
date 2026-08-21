@@ -592,7 +592,8 @@ via `setPolicy` ONLY (keeping `account_strategy_state` + the active-profile mirr
 `(user, account, subsystem)`, and marks the row reverted (idempotent). This GENERALIZES the #296
 tuning-specific revert — it does not duplicate it. Recording is passive/always-on (audit trail only — it
 changes no trading behavior). The one-click revert route `POST /api/admin/learning-ledger` is `requireAdmin`
-(this repo has prior IDOR history); `GET` lists entries for the caller's active account.
+(this repo has prior IDOR history); `GET` lists entries for the caller's active account. Console entry:
+`/console/lessons#learning-ledger` (operator-gated; same GET/POST, no server-behavior change).
 
 #### E.6 Paired-t significance on the autonomous OOS gate (follow-on P0-2 — DEFAULT no-op)
 The autonomous OOS gate (E.1) is extended with a proper effect-size + PAIRED-t significance test on the
@@ -621,8 +622,9 @@ Tuning` in `src/lib/strategy-tuning.ts`) consumed by both the real apply and a n
 OOS + paired-t + P2-5/P2-6 guards) and returns exactly what an apply WOULD do — `{ wouldApply, before, after,
 clampedDeltas, oosICCandidate/Baseline, oosReadout, invariantViolations }` — with ZERO writes (no `setPolicy`,
 ledger, audit, or cadence advance; asserted by spies). Exposed at `GET /api/admin/tuning-dry-run`
-(`requireAdmin`, mirrors the backtest-ic "suggestion only" pattern). The operator on-ramp: inspect the decision
-before enabling `autoApplyWeights`.
+(`requireAdmin`, mirrors the backtest-ic "suggestion only" pattern) and on `/console/strategy#weight-tuning-preview`.
+The operator on-ramp: inspect the decision before enabling `autoApplyWeights`. Factor IC diagnostics that used
+to be curl-only live at `/admin/backtest-ic`. Raw `GET /api/audit` is the Activity **Audit** tab.
 
 #### E.9 Purged & embargoed walk-forward split (broader-backlog P1-2 — DEFAULT off, byte-identical)
 `splitWalkForward` gained an opt-in `{ purge }` control and `runWalkForwardOOS` an `purgeEmbargo` option

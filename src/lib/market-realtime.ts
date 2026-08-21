@@ -94,17 +94,43 @@ function positive(n: unknown): number | undefined {
   return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-async function fetchJson<T>(url: string, headers: Record<string, string>, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T | null> {
+type JsonFetch<T> =
+  | { kind: "ok"; data: T }
+  | { kind: "http_error"; status: number }
+  | { kind: "network_error" };
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled json fetch kind: ${String(value)}`);
+}
+
+async function fetchJsonResult<T>(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<JsonFetch<T>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { headers, cache: "no-store", signal: controller.signal });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
+    if (!res.ok) return { kind: "http_error", status: res.status };
+    return { kind: "ok", data: (await res.json()) as T };
   } catch {
-    return null;
+    return { kind: "network_error" };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function fetchJson<T>(url: string, headers: Record<string, string>, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T | null> {
+  const result = await fetchJsonResult<T>(url, headers, timeoutMs);
+  switch (result.kind) {
+    case "ok":
+      return result.data;
+    case "http_error":
+    case "network_error":
+      return null;
+    default:
+      return assertNever(result);
   }
 }
 
@@ -206,8 +232,18 @@ export function normalizeTimeframe(raw?: string | null): string {
 }
 
 /**
+ * Intraday fetch outcome.  `ok` means a provider answered — including a confirmed empty
+ * window (weekend / halt).  `unavailable` means no provider confirmed the window, so the
+ * peer route must return a non-200 and let Congress.Trade fall back.  NEVER substitutes
+ * a current quote for a past bar.
+ */
+export type IntradayBarsResult =
+  | { kind: "ok"; bars: IntradayBar[] }
+  | { kind: "unavailable"; reason: string };
+
+/**
  * Historical intraday bars — the honest way to answer "what was the price at time T" for a T that has
- * already passed. Returns null when unavailable; NEVER substitutes a current quote for a past bar.
+ * already passed.
  */
 export async function fetchIntradayBars(
   rawSymbol: string,
@@ -215,9 +251,9 @@ export async function fetchIntradayBars(
   endIso: string,
   timeframe = "1Min",
   userId?: string
-): Promise<IntradayBar[] | null> {
+): Promise<IntradayBarsResult> {
   const symbol = normalizeSymbol(rawSymbol);
-  if (!symbol) return null;
+  if (!symbol) return { kind: "unavailable", reason: "symbol required" };
 
   // Robinhood first: finer granularity than Alpaca (down to 15-second bars vs a 1-minute floor) and it
   // answered ~100 consecutive research calls without a quota refusal while FMP rate-limited on the
@@ -236,15 +272,18 @@ export async function fetchIntradayBars(
       const mapped = rhBars
         .filter((b) => typeof b.time === "string" && Number.isFinite(b.close))
         .map((b) => ({ t: String(b.time), o: b.open, h: b.high, l: b.low, c: b.close, v: b.volume }));
-      if (mapped.length > 0) return mapped;
+      if (mapped.length > 0) return { kind: "ok", bars: mapped };
     }
   }
 
   const { apiKey, secretKey } = resolveAlpacaHistoryCredential(userId);
-  if (!apiKey || !secretKey) return null;
+  if (!apiKey || !secretKey) {
+    return { kind: "unavailable", reason: "no history credential" };
+  }
 
   const bars: IntradayBar[] = [];
   let pageToken: string | undefined;
+  let confirmedEmpty = false;
   for (let page = 0; page < 10; page += 1) {
     const params = new URLSearchParams({
       timeframe: normalizeTimeframe(timeframe),
@@ -256,27 +295,43 @@ export async function fetchIntradayBars(
     });
     if (pageToken) params.set("page_token", pageToken);
     const url = `https://data.alpaca.markets/v2/stocks/${encodeURIComponent(toAlpacaSymbol(symbol))}/bars?${params}`;
-    const json = await fetchJson<{ bars?: unknown; next_page_token?: string | null }>(url, {
+    const json = await fetchJsonResult<{ bars?: unknown; next_page_token?: string | null }>(url, {
       accept: "application/json",
       "APCA-API-KEY-ID": apiKey,
       "APCA-API-SECRET-KEY": secretKey
     });
-    if (!json) break;
-    const raw = Array.isArray(json.bars)
-      ? json.bars
-      : json.bars && typeof json.bars === "object"
-        ? ((json.bars as Record<string, unknown[]>)[toAlpacaSymbol(symbol)] ?? (json.bars as Record<string, unknown[]>)[symbol] ?? [])
+    switch (json.kind) {
+      case "http_error":
+        return bars.length > 0
+          ? { kind: "ok", bars }
+          : { kind: "unavailable", reason: `alpaca bars HTTP ${json.status}` };
+      case "network_error":
+        return bars.length > 0
+          ? { kind: "ok", bars }
+          : { kind: "unavailable", reason: "alpaca bars request failed" };
+      case "ok":
+        break;
+      default:
+        return assertNever(json);
+    }
+    const raw = Array.isArray(json.data.bars)
+      ? json.data.bars
+      : json.data.bars && typeof json.data.bars === "object"
+        ? ((json.data.bars as Record<string, unknown[]>)[toAlpacaSymbol(symbol)] ?? (json.data.bars as Record<string, unknown[]>)[symbol] ?? [])
         : [];
+    confirmedEmpty = true;
     for (const b of raw as Array<Record<string, unknown>>) {
       const c = positive(b.c);
       const t = typeof b.t === "string" ? b.t : undefined;
       if (c === undefined || !t) continue;
       bars.push({ t, o: positive(b.o), h: positive(b.h), l: positive(b.l), c, v: typeof b.v === "number" ? b.v : undefined });
     }
-    pageToken = json.next_page_token ?? undefined;
+    pageToken = json.data.next_page_token ?? undefined;
     if (!pageToken) break;
   }
-  return bars.length > 0 ? bars : null;
+  if (bars.length > 0) return { kind: "ok", bars };
+  if (confirmedEmpty) return { kind: "ok", bars: [] };
+  return { kind: "unavailable", reason: "alpaca bars request failed" };
 }
 
 /** Nearest bar at or after `atIso`, within `toleranceMin`. Pure — the price-at-a-past-instant primitive

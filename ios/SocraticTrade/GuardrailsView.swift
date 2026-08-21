@@ -66,11 +66,15 @@ struct GuardrailsView: View {
                 policyRow("Horizon", AppFormat.policyHorizonValue(snapshot.policy.holdingHorizon))
                 policyRow("Cadence", AppFormat.cadenceMinutesValue(snapshot.policy.runCadenceMinutes))
                 policyRow("Extended Hours", DeskCopy.yesNo(snapshot.policy.runDuringExtendedHours))
-                policyRow("Max Order", AppFormat.money(snapshot.policy.maxOrderNotional))
+                // "Max Order" read as an order COUNT next to "Daily Orders"; "Daily Cap"
+                // collided with the daily order cap, the daily loss stop, and the daily
+                // drawdown stop.  Web's longer labels say which cap this is.
+                policyRow("Max Per Order", AppFormat.money(snapshot.policy.maxOrderNotional))
                 policyRow("Max Order % NAV", DeskCopy.percentPoints(snapshot.policy.maxOrderPctOfNav))
-                policyRow("Daily Cap", AppFormat.money(snapshot.policy.maxDailyNotional))
+                policyRow("Max Spend Per Day", AppFormat.money(snapshot.policy.maxDailyNotional))
                 policyRow("Daily Cap % NAV", DeskCopy.percentPoints(snapshot.policy.maxDailyPctOfNav))
-                policyRow("Daily Orders", snapshot.policy.maxDailyOrders.map(String.init) ?? "—")
+                // "Opening" is load-bearing: protective exits never count against this cap.
+                policyRow("Max Opening Orders Per Day", snapshot.policy.maxDailyOrders.map(String.init) ?? "—")
                 policyRow("Typed Confirm", DeskCopy.yesNo(snapshot.policy.requireTypedConfirmation))
             }
         }
@@ -81,7 +85,9 @@ struct GuardrailsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading("Universe")
                 policyRow("Indices", DeskCopy.joinedIndexList(snapshot.policy.includedIndices))
-                policyRow("Extra Symbols", DeskCopy.joinedList(snapshot.policy.additionalSymbols))
+                // These names are EXEMPT from the universe floor, not merely appended —
+                // "Extra Symbols" undersold that.  Web: "Always include (symbols)".
+                policyRow("Always Include (Symbols)", DeskCopy.joinedList(snapshot.policy.additionalSymbols))
                 policyRow("Blocklist", DeskCopy.joinedList(snapshot.policy.blocklist))
             }
         }
@@ -93,11 +99,15 @@ struct GuardrailsView: View {
                 SectionHeading("Stops and Models")
                 policyRow("Green Team", DeskCopy.modelSeatValue(policy.llmModel, fallbacks: policy.llmFallbackModels ?? []))
                 policyRow("Red Team", DeskCopy.modelSeatValue(policy.redTeamLlmModel, fallbacks: policy.llmFallbackModels ?? []))
-                policyRow("Stop Loss", DeskCopy.percentPoints(policy.stopLossPct))
+                // "(Base %)" because ATR stops are on by default — this is only the
+                // fallback distance, and no ATR row sits next to it to say so.
+                policyRow("Stop-Loss (Base %)", DeskCopy.percentPoints(policy.stopLossPct))
                 policyRow("Trailing Stop", DeskCopy.percentPoints(policy.trailingStopPct))
-                policyRow("Short Stop", DeskCopy.percentPoints(policy.shortStopLossPct))
-                policyRow("Sell to Fund", (policy.sellToFundBuy ?? "off").replacingOccurrences(of: "_", with: " ").lowercased())
-                policyRow("Override Mode", (policy.socraticOverrideMode ?? "off").lowercased())
+                // "Short Stop" collided with broker-held short buy-stops, which are resting
+                // ORDERS.  This row is a stop DISTANCE.
+                policyRow("Short Stop-Loss", DeskCopy.percentPoints(policy.shortStopLossPct))
+                policyRow("Sell to Fund Buys", DeskCopy.sellToFundValue(policy.sellToFundBuy))
+                policyRow("Override Mode", DeskCopy.socraticOverrideValue(policy.socraticOverrideMode))
             }
         }
     }

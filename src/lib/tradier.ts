@@ -582,7 +582,12 @@ class TradierBrokerGateway implements BrokerGateway {
   async getEquityOrders(accountNumber: string, options?: GetEquityOrdersOptions): Promise<EquityOrder[]> {
     const fullHistory = options?.fullHistory === true;
     const sinceMs = options?.since ? Date.parse(options.since) : Date.parse(equityOrdersDefaultSinceIso());
-    const maxPages = fullHistory ? 50 : 5;
+    // Always walk up to 50 pages. Tradier defaults to 25 rows/page, newest first, with no
+    // status=open split (unlike Alpaca). A 5-page default (#2886) stopped after ~125 recent
+    // rows — often option/combo activity — and hid a later-page GTC equity protective stop.
+    // liveExitOrderCoverage then saw no exit and the synthetic-stop monitor double-sold.
+    // Continue on the RAW page (any class). Do not stop when the equity filter drops a page.
+    const maxPages = 50;
     return this.trackHealth(async () => {
       const all: Record<string, unknown>[] = [];
       const seen = new Set<string>();
@@ -593,15 +598,23 @@ class TradierBrokerGateway implements BrokerGateway {
         const ordersField = typeof body.orders === "object" && body.orders ? (body.orders as Record<string, unknown>).order : undefined;
         const rows = arr<Record<string, unknown>>(ordersField);
         if (rows.length === 0) break; // genuinely no more pages
+        // Pagination continuation is decided on the RAW page (ALL classes), NOT the
+        // post-equity-filter count. A mixed equity+options account can have a page holding
+        // only option/combo rows sitting BEFORE a later page that carries a resting
+        // protective EQUITY exit; breaking as soon as a page yields zero *equity* rows
+        // would stop before that exit, hiding it from liveExitOrderCoverage and letting
+        // the synthetic-stop monitor place a DUPLICATE.
         let newThisPage = 0;
         for (const o of rows) {
           const id = String(o.id);
           if (seen.has(id)) continue;
           seen.add(id);
           newThisPage += 1;
+          // Only EQUITY-class rows are RETURNED: mapping an option/combo as an EquityOrder
+          // coerces option sides/types into equity-looking orders on the underlying.
           for (const eq of equityRowsFromTradierOrder(o)) all.push(eq);
         }
-        if (newThisPage === 0) break;
+        if (newThisPage === 0) break; // fully-duplicate page — done
       }
       const scoped = fullHistory
         ? all

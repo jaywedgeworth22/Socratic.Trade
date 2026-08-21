@@ -65,7 +65,9 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .insights: return "Status brief and attention items."
         case .coach: return "Ask the desk — a real Coach conversation."
         case .scan: return "Ranked names with watchlist actions."
-        case .guardrails: return "Read the full policy and tighten it."
+        // Not "tighten it": this screen raises caps too, which GuardrailsView itself
+        // says ("Caps can go up or down").  Web's enumeration is the accurate line.
+        case .guardrails: return "Autonomy, spending caps, protective stops, schedule, and the trading rulebook."
         case .results: return "P&L, benchmark, and fill receipts."
         case .more: return "All screens and tab customization."
         }

@@ -128,7 +128,9 @@ struct ScanView: View {
                 systemImage: "tablecells"
             )
         } else {
-            ScanTableHeader()
+            // No table header: these are cards, not table rows.  Score / price / change
+            // stack vertically inside each card, so three fixed-width column headings
+            // labelled nothing and sat at a different inset than the values they claimed.
             ForEach(filtered) { candidate in
                 ScanRow(
                     candidate: candidate,
@@ -171,25 +173,6 @@ struct ScanView: View {
             )
             didAttemptLiveRefresh = true
         }
-    }
-}
-
-private struct ScanTableHeader: View {
-    var body: some View {
-        HStack {
-            Text("Name")
-            Spacer()
-            Text("Score")
-                .frame(width: 52, alignment: .trailing)
-            Text("Px")
-                .frame(width: 64, alignment: .trailing)
-            Text("Chg")
-                .frame(width: 56, alignment: .trailing)
-        }
-        .font(.appCaption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 4)
-        .accessibilityHidden(true)
     }
 }
 

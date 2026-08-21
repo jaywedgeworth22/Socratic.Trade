@@ -29,11 +29,32 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+# Latch BEFORE npm ci.  #2811 (docs-only) still ran a full ~30 min image build
+# after Coolify stopped the named container, so origin 503'd.  A refused
+# build here is seconds, not the Horizon budget.  Do not move this into
+# scripts/coolify-prod-start.sh and do not enable Coolify rolling (two
+# Litestream writers).  SOURCE_COMMIT lets the latch read the commit files
+# plus HOTFIX=1 from the public GitHub API.
+RUN npm install -g tsx@4.23.1
+COPY src/lib/market-hours.ts src/lib/market-hours.ts
+COPY src/lib/market-calendar.ts src/lib/market-calendar.ts
+COPY src/lib/deploy-image-impact.ts src/lib/deploy-image-impact.ts
+COPY src/lib/rth-deploy-latch.ts src/lib/rth-deploy-latch.ts
+COPY scripts/assert-rth-deploy-latch.ts scripts/assert-rth-deploy-latch.ts
+ARG HOTFIX=0
+ARG SOURCE_COMMIT=""
+ARG COOLIFY_COMMIT=""
+ARG COOLIFY_COMMIT_SHA=""
+ENV HOTFIX=${HOTFIX} \
+    SOURCE_COMMIT=${SOURCE_COMMIT} \
+    COOLIFY_COMMIT=${COOLIFY_COMMIT} \
+    COOLIFY_COMMIT_SHA=${COOLIFY_COMMIT_SHA} \
+    NEXT_TELEMETRY_DISABLED=1
+RUN tsx scripts/assert-rth-deploy-latch.ts
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
 # scripts/eval/* imports test/fixtures (dockerignored). Next typecheck includes
 # **/*.ts and would fail the image build. Drop eval runners before build.
 # --ignore-scripts on prune: avoid re-extracting glibc-2.38 prebuilds.
@@ -72,7 +93,12 @@ COPY --from=build /app /app
 
 USER root
 EXPOSE 4000
+# Traefik follows Docker health.  /api/health is the rich ops probe and
+# can 503 (Pinecone/RAG hard-stop) or exceed this 5s timeout after boot.
+# That marks running:unhealthy while the process is up -- public 503 for
+# ~20 min after #2810 finished on 2026-08-17.  /api/live is process+SQLite
+# only.  Do not point Coolify HTTP health back at /api/health.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:4000/api/health >/dev/null || exit 1
+  CMD curl -fsS http://127.0.0.1:4000/api/live >/dev/null || exit 1
 
 CMD ["bash", "scripts/coolify-prod-start.sh"]

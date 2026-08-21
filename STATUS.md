@@ -1,5 +1,30 @@
 # Current Status
 
+## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
+
+New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.
+
+## 2026-08-20 MONET - iOS/web parity resolved case by case, not synced one way
+
+Owner instruction was explicit that neither platform is assumed superior, and the audit bore that out: of 21 divergences, 9 adopt web, 6 KEEP BOTH, 4 adopt iOS, and 2 needed a third wording because both sides were wrong.  A blanket sync would have been wrong on 12 of 21.
+
+Web turned out to be the drifted side on Title Case -- the fleet copy doc names "Run Once", "Price Alerts", "Current Policy" and "Win Rate" as canonical, and every one of those is the iOS spelling.
+
+Two of my own instructions were wrong and the implementer pushed back rather than complying: unhyphenated "Exit Only" is a consistent COMMAND name (parallel to "Wind Down"), not an orphan spelling, because the app deliberately runs Title Case commands alongside sentence-case state words -- and it then found the identical casing defect the audit had missed.  It also caught that renaming only the read-only Guardrails rows would have left the EDIT controls on the same screen calling one field by a different name.
+
+Known limit: every screen changed sits behind the OAuth login wall, so there is no visual proof of the changed screens -- only BUILD SUCCEEDED, 190 passing iOS tests, and a clean launch.
+## 2026-08-20 MONET - timed-out work is now cancelled, and slow lanes stop spawning duplicates
+
+`withDeadline` was a bare Promise.race: on timeout the caller proceeded while the underlying broker call kept running with its socket open for the life of the process.  That is the leading candidate for why an aged process degrades (fresh serves /api/health in 0.61s, a 5h-old one took 55s).  It now aborts on the timeout branch only.
+
+More serious: both scheduler in-flight guards released on the RACED promise rather than the real work, so any broker lane slower than the 15s deadline got a duplicate launched on top of it every 60s tick, forever -- on the stale-exit lane that means duplicate remediation attempts against LIVE ORDERS.
+
+Order placement, cancel and replace are deliberately NOT abortable, enforced structurally by never passing a signal on those paths -- an aborted placement may still have reached the broker.
+
+Honest scope: this removes a leaked-work accumulator and a duplicate-launch path.  It is NOT proven to be what stopped runs completing; that still needs one production query (see #2967).
+
+One premise from the investigation did not hold and was deliberately not implemented: the Alpaca gateway has no fetch to thread a signal into, and the obvious axios-interceptor workaround attaches to a different module instance than the bundled SDK uses.  Filed as #2970 rather than shipping something that silently does nothing in production.
+
 ## 2026-08-20 MONET - `realized-pnl-ledger` up for review
 
 Accounting reads no longer take the OLDEST 500 fills.  `listFillEvents` defaults to the whole ledger; a numeric limit remains for display windows and returns the NEWEST N.  I rejected the cluster plan's "flip to newest-DESC everywhere" - for a stateful FIFO replay, truncating at either end is wrong: cutting the tail freezes P&L, cutting the head strands exits whose opening lot was never loaded.
@@ -53,6 +78,13 @@ would keep writing `missed_window` with no visible auth error.
 Fix: extend the existing pass-through.  `/api/market/flatfile` stays session-gated.
 Handlers still validate the token.  Rollout:
 `docs/rollouts/2026-08-20-peer-quotes-intraday-middleware.md`.
+## 2026-08-20 CURSOR-BUGBOT — #2953 intraday provider failure must be 502
+
+`GET /api/market/intraday/{symbol}` documented that empty `bars` means a confirmed empty window and that only non-200 is a provider failure.  `fetchIntradayBars` returned `null` for credential miss, HTTP 403/timeout, AND a genuine empty Alpaca page, and the route mapped `null` to `200 { bars: [] }`.  Congress.Trade therefore treated an Alpaca 403 the same as a weekend and skipped its fallback — the same silent `missed_window` blanking #2953 was shipped to stop.
+
+Fix: discriminate `ok` vs `unavailable`.  Confirmed empty stays 200 `[]`.  Provider failure is 502.  Did not touch #2957 middleware, #2947, or #2952.
+
+**IN PR.**  Branch `cursor/intraday-provider-fail-502`.  Rollout: `docs/rollouts/2026-08-20-intraday-provider-fail-502.md`.
 
 ## 2026-08-20 CLAUDE — ST->CT price service (PR pending, DO NOT MERGE YET)
 
@@ -118,6 +150,11 @@ ops/litestream/UX-program current-truth lines.  No product code.
 
 **IN PR #2945.**  Branch `cursor/stale-hosting-docs-b392`.  Rollout:
 `docs/rollouts/2026-08-20-stale-hosting-docs.md`.
+## 2026-08-20 CURSOR-BUGBOT — Tradier 5-page order cap hides GTC equity stops
+
+#2886 scoped default `getEquityOrders` to 5 Tradier pages.  Newest-first option/combo pages can fill that window and hide a later-page GTC equity protective stop.  `liveExitOrderCoverage` then sees no exit and the synthetic-stop monitor double-sells.  Fix: walk 50 pages again; keep the 24h *terminal* filter.  Did not change Alpaca (already splits `status:open`).  Did not touch #2861.
+
+PR **#2947**.  Branch `cursor/tradier-orders-page-cap-4f2a`.  Rollout: `docs/rollouts/2026-08-20-tradier-orders-page-cap.md`.
 
 ## 2026-08-20 MONET — `web-ios-contract-drift` up for review, and main's iOS test target is RED
 
@@ -599,6 +636,25 @@ Owner cut 2026-08-17: archive, not renew-vs-expire.  Harvest #2763 already persi
 Last published coverage (2026-08-16): 608 transcripts / 565 tickers vs a 1,000-issuer universe.  Most names still have only the latest call.  Did not re-walk from this empty cloud checkout.  No Stripe.  Left #2800 / #2798 / #2794 / #2792 alone.
 
 PR **#2813**.  Branch `cursor/roic-individual-archive-9ad4`.  Rebased onto `d3e2c9ee` (#2892).  Rollout: `docs/rollouts/2026-08-18-roic-individual-archive.md`.
+## 2026-08-18 CURSOR — Coolify RTH deploy latch (`HOTFIX=1` escape)
+## 2026-08-18 CURSOR — Coolify RTH latch + skip docs-only rebuilds (#2811 503)
+## 2026-08-18 CURSOR — Coolify RTH latch + skip docs-only + `/api/live`
+## 2026-08-18 CURSOR — Coolify RTH latch; `watch_paths` already live
+
+Jay wanted auto-deploy only outside RTH unless `HOTFIX=1`.  ASC refined
+tonight's 503: #2810 ~7m, #2811 ~6m, `processStartedAt` 00:49:27Z is #2811
+completing.  7:22–7:43pm CT #2810 was up (litestream log, no ERROR) while
+public 503 continued — `running:unhealthy` / Traefik.  ASC then applied
+`watch_paths` live on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`): runtime
+trees only; omitted `docs/**`, `STATUS.md`, `PLAN.md`, `ios/`, `test/`.
+App stayed healthy.  No bounce.  Auto-deploy still on.  Stop-old-first
+kept.  `health_check_start_period` still 60.  **Do not re-apply from this
+PR.**  Still shipping the in-repo RTH latch + `/api/live` HEALTHCHECK.
+Rebased onto `main` after #2824.  Did not bounce, `FORCE_RESTORE`, or PATCH
+Coolify.  Did not touch #2792/#2798/#2800/#2794.
+
+PR **#2817**.  Branch `cursor/rth-deploy-latch-c039`.
+Rollout: `docs/rollouts/2026-08-18-rth-deploy-latch.md`.
 
 ## 2026-08-18 CURSOR — Health JSON monitors + OPS token + R2 retain=1
 
@@ -618,6 +674,11 @@ Branch `cursor/health-json-monitors-ac72` rebased onto `main` 2026-08-18
 (PR #2816).  Runbook:
 `docs/runbooks/uptime-health-json-monitors.md`.  Rollout:
 `docs/rollouts/2026-08-18-health-json-monitors.md`.
+## 2026-08-18 CURSOR — Litestream restore drill (report only)
+
+ASC scratch-only B2 restore on `fleet-hetzner-nbg1` (2026-08-18 UTC).  No bounce, no `FORCE_RESTORE`, no Mac pm2, both scratches off the live volume, site stayed up.  **VERIFIED:** two B2 scratches (4.9G, integrity ok, L0 txid `80781` @ 01:14:43Z), later live compare seconds/~31 rows ahead, decrypt `fred` last-4 `6dd4`, one Socratic Litestream writer, host 6h local backups, R2 weekly retain=1 (exactly one `cold-snapshots/` object).  Nothing from this drill remains BLOCKED or NOT VERIFIED.  `R2_ARCHIVE_KEEP_GENERATIONS=2` is unused on ST.  Separate Coolify 503 ~00:15–00:49Z after #2810/#2811 is not the restore proof.
+
+Receipts flipped on **#2823** (`55a8613d`) after #2822 merged the stale BLOCKED / NOT VERIFIED rows.  This follow-up is docs-only **#2824** (`cursor/restore-receipts-followup-2cd9`).  Coolify `watch_paths` now omits `docs/**`, `STATUS.md`, `PLAN.md` — should not rebuild.  Rollout: `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
 ## 2026-08-18 CURSOR — Pinecone store-more vs condense-first (report only)
 
@@ -695,6 +756,35 @@ Local gate: lint 0 errors, `tsc --noEmit` clean, touched-file vitest green, `npm
 Read-only audit of ingest, SEC/ROIC/transcripts/news, chunk/embed, retrieval, grounding, PIT, lineage, learning ledger, memory, evals, and failure recovery.  Highest gaps: worker embeds raw HTML; transcripts have no FTS backstop; golden harness scores a different retriever than Green/Red; memory decay/lifecycle unwired; chat/desk omit `asOf` so prod `VECTOR_ASOF_STRICT` is a no-op there.
 
 Branch `cursor/rag-learning-recall-audit-f94a`.  PR #2803.  Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-17-rag-learning-recall-audit.md`.
+## 2026-08-17 CURSOR — Security / reliability audit (report-only)
+
+Read-only audit of auth, secrets, tenant isolation, supply chain, PII, Litestream/DR,
+deploy, alerting, fail-open/closed, spend, and SLOs.  Live health 200 on sha `4980322b`;
+Litestream replicating; restore still unproven on B2.  No code changes.
+
+Branch `cursor/security-reliability-audit-d8f6`, PR #2806.  Report:
+`docs/audits/2026-08-17-security-reliability.md`.  Rollout:
+`docs/rollouts/2026-08-17-security-reliability-audit.md`.
+## 2026-08-17 CURSOR — Brokers + data-cascade reliability audit (report-only)
+
+Read-only audit at `main` `4980322b`.  No broker mutations.  Report:
+`docs/audits/2026-08-17-brokers-data-cascade.md`.
+
+Highest remaining defects: Alpaca still sends `type: "stop_market"` (Tradier maps to
+`"stop"`; protective stops use that type; the current test pins the wrong wire word);
+Tradier plain-order prices skip `roundCents`; Marketstack history and ROIC financials
+skip `admitProviderRequests`; ROIC/Yahoo quote-only `asOf` is fetch time.
+
+FilingAPI: `main` is retired (#2787).  Owner reversal #2792 (soft-skip 401, CONFLICTING)
+is the live product question — do not claim Plus checkout and do not treat retirement
+as final.  #2788 re-retires.  #2798 mutes leftover 401s.  #2800 skips `vix-yahoo`
+re-probe while Cboe serves.
+
+Already closed on this HEAD: T sub-penny 422 (#2751), UND_ERR_SOCKET single-blip halt
+(#2720), RH MCP extra args (#2576), ROIC 714-row crash loop (#2750).
+
+Branch `cursor/brokers-data-cascade-audit-bed0`.  PR #2805.
+Rollout: `docs/rollouts/2026-08-17-brokers-data-cascade-audit.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
@@ -717,6 +807,22 @@ Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.
 
 Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
+## 2026-08-17 CURSOR — P3 curl-only diagnostics get UI entry (#2563)
+
+Four existing routes were curl-only: tuning-dry-run, learning-ledger, backtest-ic, `/api/audit`.
+This branch adds console/admin paths and does not change server behavior.
+
+- Strategy: Weight Tuning Preview (`GET /api/admin/tuning-dry-run`)
+- Lessons: Learning Ledger (`GET/POST /api/admin/learning-ledger`)
+- Admin: Factor Backtest (`GET /api/admin/backtest-ic`)
+- Activity: Audit tab (`GET /api/audit`)
+
+Branch `cursor/p3-curl-only-ui-2563-814a`.  PR #2793.  Rollout: `docs/rollouts/2026-08-17-curl-only-ui-entry.md`.
+## 2026-08-17 CURSOR — Console a11y batch (#2561)
+
+P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.
+
+Branch `cursor/console-a11y-batch-08ac`.  PR #2795.  Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.  No trading/money-path changes.
 
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 
@@ -729,6 +835,9 @@ Owner reversed the #2787 retirement.  Keep `FilingApiEnrichmentProvider`, the `f
 Aug 6: five Green Team runs died on OpenRouter `Empty response` across rotated models while the credits-low monitor flapped.  Green Team **is** the Bull proposer and already failed over on empty HTTP-200s when `llmFallbackModels` was set (#2313 / 2026-07-31).  Remaining gaps: malformed HTTP-200 JSON did not fail over; a rotating Green seat with no owner fallbacks was a single-model chain; `run_failed` never named a below-threshold OpenRouter balance.
 
 Branch `cursor/green-empty-failover-credits-7003`.  Rollout: `docs/rollouts/2026-08-17-green-empty-failover-credits.md`.
+## 2026-08-17 CURSOR — Website favicon cropped offset ST
+
+Issue #2731.  Website tab icon is the iOS App Icon's offset candlestick ST (S higher than T), cropped so it barely fits, transparent background.  Generator: `node scripts/generate-favicon-st.mjs`.  iOS App Icon was not written.  Branch `cursor/favicon-crop-st-e6ee`.  Rollout: `docs/rollouts/2026-08-17-favicon-crop-st.md`.
 
 ## 2026-08-17 GROK — Effort-board hygiene
 

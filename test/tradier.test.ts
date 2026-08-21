@@ -759,6 +759,36 @@ describe("Tradier adapter — getEquityOrders pagination (double-sell coverage, 
     expect(orders.every((o) => isLiveOrderState(o.state))).toBe(true);
     expect(orders.some((o) => o.id === "73")).toBe(false);
   });
+
+  it("does NOT stop after 5 option-only pages; a page-6 equity exit is still returned", async () => {
+    await seedTradier();
+    const optionPage = (id: number) => ({
+      match: (u: string, m: string) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes(`page=${id}`),
+      body: { orders: { order: [
+        { id, symbol: "AAPL", side: "buy_to_open", type: "limit", status: "open", quantity: 1, create_date: "2026-08-19", class: "option" }
+      ] } }
+    });
+    installFetchMock([
+      optionPage(1),
+      optionPage(2),
+      optionPage(3),
+      optionPage(4),
+      optionPage(5),
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes("page=6"),
+        body: { orders: { order: [
+          { id: 66, symbol: "MSFT", side: "sell", type: "stop", status: "open", quantity: 5, create_date: "2026-07-10", stop_price: 300, tag: "protect", class: "equity" }
+        ] } }
+      },
+      { match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`), body: { orders: "null" } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    expect(orders.map((o) => o.id)).toEqual(["66"]);
+    expect(orders[0]).toMatchObject({ symbol: "MSFT", side: "sell", type: "stop_market", state: "open", stopPrice: 300 });
+    const { isLiveOrderState } = await import("../src/lib/broker-side");
+    expect(isLiveOrderState(orders[0].state)).toBe(true);
+  });
 });
 
 describe("Tradier adapter — OTOCO/OCO equity legs surface for coverage (codex-autofix reconciliation)", () => {
