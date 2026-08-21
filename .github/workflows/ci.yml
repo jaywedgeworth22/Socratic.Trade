@@ -272,10 +272,10 @@ jobs:
       - name: Refresh checkout before package operations
         uses: actions/checkout@v4
       # verify-hosted only runs when docs-only is false (job-level `if` above), so per-step
-      # docs-only guards are unnecessary here. Tokenless `npm install` — the shared dependency
-      # resolves over public HTTPS now (no deploy key), matching main's verify + deploy.yml.
+      # docs-only guards are unnecessary here. Tokenless `npm ci` from the lockfile — the
+      # shared dependency resolves over public HTTPS now (no deploy key).
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit
       # The scheduled ios-ship cron has no `paths:` filter of its own, so
       # scripts/ios-scheduled-ship-gate.sh is the only thing keeping a
       # backend-only commit from becoming a TestFlight build (run 31723515355
