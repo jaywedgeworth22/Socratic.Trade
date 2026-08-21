@@ -18,6 +18,7 @@ The first revision dropped the signal on the paid/scarce enrichment waves (`paid
 - `src/lib/market.ts`
 - `src/lib/data-providers.ts`
 - `test/strategy-gather.test.ts` (new)
+- `test/enrichment-abort.test.ts` (new — paid-wave signal)
 - `test/quotes-cascade.test.ts`
 - `STATUS.md`
 - `PLAN.md`
@@ -38,7 +39,7 @@ Commands run after the first push:
 ```
 npm run lint
 npx tsc --noEmit
-npx vitest run test/strategy-gather.test.ts test/quotes-cascade.test.ts test/inflight-deadline.test.ts
+npx vitest run test/strategy-gather.test.ts test/quotes-cascade.test.ts test/enrichment-abort.test.ts test/inflight-deadline.test.ts
 npm test
 npm run build
 ```

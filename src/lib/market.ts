@@ -498,9 +498,9 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         }
         // Seed first so cascade gaps never blank a field we already know.
         const baselinePool = preselectionPool.map(applySeedBaseline);
-        const enrichment = options?.signal
-          ? await provider.enrich(baselinePool.map((quote) => quote.symbol), { signal: options.signal })
-          : await provider.enrich(baselinePool.map((quote) => quote.symbol));
+        const enrichment = await provider.enrich(baselinePool.map((quote) => quote.symbol), {
+          signal: options?.signal
+        });
         const rescoredBySymbol = new Map(
           baselinePool.map((quote) => {
             const live = enrichment[quote.symbol];
