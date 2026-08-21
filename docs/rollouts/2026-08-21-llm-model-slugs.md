@@ -61,9 +61,10 @@ iOS was touched (`DeskModels.swift` Coach options + firstAvailable test).  Local
 
 ## Next Steps & Blockers
 
-1. Watch first production OpenRouter calls after merge for 404s on owner wire slugs that differ from yesterday's dated ids.
+Merged to `main` as #3003 squash `36f0a3c8` at 09:56 UTC (auto-deploy).  Single-shot `verify-deploy-sha.sh` immediately after merge still showed live `e0a4959a` (behind; no restart yet).  Do not hand-trigger a deploy.
+
+1. Watch first production OpenRouter calls after the Coolify swap for 404s on owner wire slugs that differ from yesterday's dated ids.
 2. Congress.Trade catalog alignment if that app still ships its own hardcoded list.
-3. Do not announce deploys; auto-deploy is on.
 
 ## Zero-Code Findings
 
