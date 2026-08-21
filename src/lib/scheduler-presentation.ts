@@ -27,7 +27,7 @@ export function presentAccountSchedule(args: {
   const lastRunAt = args.memoryLastRunAt ?? args.lastStrategyRunStartedAt;
   const lane = cadenceLaneDecision({
     triggerSettings: args.triggerSettings,
-    runCadenceMinutes: args.runCadenceMinutes
+    runCadenceMinutes: args.runCadenceMinutes ?? 60
   });
   const autonomyActive = args.systemState === "active" && lane.run;
 

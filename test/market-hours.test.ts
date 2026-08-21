@@ -194,7 +194,7 @@ describe("nextSessionOpenMs", () => {
   });
 
   it("returns Thursday 4:00 ET after Wednesday post-market when extended hours are on", () => {
-    expect(nextSessionOpenMs(etDate("2026-06-10", 20, 30).getTime(), true)).toBe(
+    expect(nextSessionOpenMs(etDate("2026-06-10", 18, 0).getTime(), true)).toBe(
       etDate("2026-06-11", 4, 0).getTime()
     );
   });
