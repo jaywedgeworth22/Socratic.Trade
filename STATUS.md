@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-08-21 CURSOR — native weekly value + momentum screens
+
+Option 3 of the Perplexity-ritual ask: ST now builds those weekly screens from its own tape.  Value = large-cap ≥ $10b, price > $5, volume ≥ 500k, trailing P/E > 0 and ≤ 10, within 10% of the 52-week low.  Momentum = the same floor ranked by 5-day return, with ROC/RSI/MAs when bars exist.  Full `quotesBySymbol` universe (not the ranked cut).  Missing fields exclude the name.  Dashboard is cache/value-only; scheduler + `GET /api/scan/weekly-digest?refresh=1` do the bar work.  Cards on Macro + Scan; thin iOS Scan card; Green gets `weeklyScreens` as advisory DATA (`agentic-strategy@2.15.0`).  No Perplexity scrape/key, no auto-trade, no scoring/policy change.
+
+**Risk:** first Swift compile is CI-only.  Momentum is empty until grouped-daily or per-symbol OHLC lands.
+
+Branch `cursor/weekly-market-screens-2b0c`.  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+
 ## 2026-08-21 CURSOR — three-column LLM catalog (display / OpenRouter / native)
 
 Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settings, pickers, logs, and iOS Coach store **display slugs**.  Live OpenRouter calls send column 2 via `normalizeOpenRouterModelId` / `openRouterSlugFor`.  Direct-provider stubs use `nativeSlugFor` so a future native path cannot send an OpenRouter vendor path.  Older persisted ids (`gpt-5.4-mini`, `claude-sonnet-5`, `grok-4.5`, `deepseek-v4-flash`, `gemini-3.5-flash-lite`, …) alias onto the new display slugs.  Models not on the owner list are no longer advertised.  Congress.Trade has no cheap parallel catalog in a Cursor CT lane — follow-up only.

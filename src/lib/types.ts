@@ -2280,6 +2280,8 @@ export interface MarketQuoteSummary {
   dividendYield?: number;
   eps?: number;
   sharesOutstanding?: number;
+  /** Screener / implied cap.  Optional so older summaries stay valid. */
+  marketCap?: number;
   pbRatio?: number;
   shortPercentOfFloat?: number;
   beta?: number;
