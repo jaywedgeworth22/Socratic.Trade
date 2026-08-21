@@ -1190,7 +1190,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
       configured: Boolean(policy.notificationSettings.webhookUrl?.trim()),
       enabledEvents: policy.notificationSettings.enabledEvents
     },
-    scheduler: getSchedulerState(userId),
+    scheduler: getSchedulerState(userId, policy.connectedAccountId),
     webSources: getWebSourcesStatus(),
     robinhoodMcpConnected: policy.activeBroker === "robinhood" ? Boolean(getStoredMcpOAuthTokens(userId)) : true,
     autoResumeOnBoot: getAutoResumeOnBoot(userId),

@@ -17,6 +17,8 @@ import { cx, SENTENCE_GAP } from "../lib/format";
 import { useFocusTrap } from "../ui/focus-trap";
 import { Tooltip } from "../ui/primitives";
 import { useToast } from "../ui/toast";
+import { openSymbolDetails } from "../ui/symbol-drilldown";
+import { useSymbolDrawer } from "../ui/symbol-drawer";
 import { DEFAULT_VISIBLE_SCAN_COLUMN_IDS, SCAN_COLUMNS, type ScanColumn } from "./columns";
 
 /** Approx row height for virtualized height budgeting (con-table cells). */
@@ -156,12 +158,27 @@ function ScanCard({
   pending: boolean;
   onToggleWatch: () => void;
 }) {
+  const { openDrawer } = useSymbolDrawer();
   const symbolColumn = SCAN_COLUMNS.find((c) => c.id === SYMBOL_COLUMN_ID);
   const fields = CARD_FIELD_IDS.map((id) => SCAN_COLUMNS.find((c) => c.id === id)).filter(
     (c): c is ScanColumn => Boolean(c)
   );
+  const normalized = q.symbol.trim().toUpperCase();
+  const openDetails = () => openSymbolDetails(openDrawer, normalized, q);
   return (
-    <div className="con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={openDetails}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openDetails();
+        }
+      }}
+      aria-label={q.companyName ? `${q.companyName} — open ${normalized} details` : `Open ${normalized} details`}
+      className="con-row flex cursor-pointer flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3"
+    >
       <div className="flex items-center gap-2">
         <WatchButton symbol={q.symbol} watched={watched} pending={pending} onToggle={onToggleWatch} />
         {symbolColumn?.render(q)}

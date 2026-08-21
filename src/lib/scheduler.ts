@@ -37,6 +37,7 @@ import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { isLiveOrderState } from "./broker-side";
 import type { EquityOrder, TradingPolicy } from "./types";
+import { presentAccountSchedule } from "./scheduler-presentation";
 import { cadenceLaneDecision, drainMaterialEventQueue } from "./triggers";
 import {
   getTechnicalWatchlist,
@@ -400,7 +401,17 @@ export function getSchedulerState(userId: string = "local", connectedAccountId?:
   // Default to the active account's schedule (dashboard shows the active account).
   const accountId = connectedAccountId ?? getActiveConnectedAccount(userId)?.id;
   if (!accountId) return { lastRunAt: null, nextRunAt: null };
-  return accountSchedules[scheduleKey(userId, accountId)] ?? { lastRunAt: null, nextRunAt: null };
+  const memory = accountSchedules[scheduleKey(userId, accountId)];
+  const policy = getPolicy(userId, accountId);
+  return presentAccountSchedule({
+    memoryLastRunAt: memory?.lastRunAt,
+    memoryNextRunAt: memory?.nextRunAt,
+    lastStrategyRunStartedAt: getLastStrategyRunStartedAt(userId, accountId),
+    systemState: policy.systemState,
+    runCadenceMinutes: policy.runCadenceMinutes,
+    triggerSettings: policy.triggerSettings,
+    runDuringExtendedHours: policy.runDuringExtendedHours === true
+  });
 }
 
 export function startScheduler(): void {
@@ -1019,7 +1030,17 @@ async function tickInner(): Promise<void> {
         }
 
         if (!isRunAllowedNow(policy.runDuringExtendedHours)) {
-          // Market is closed; don't update nextRunAt — it will recalculate when open
+          // Still publish the next session so Home / iOS do not read "not scheduled"
+          // on an Autopilot account after a restart or after the cash close.
+          schedule.nextRunAt = presentAccountSchedule({
+            memoryLastRunAt: schedule.lastRunAt,
+            memoryNextRunAt: null,
+            lastStrategyRunStartedAt: schedule.lastRunAt,
+            systemState: policy.systemState,
+            runCadenceMinutes: policy.runCadenceMinutes,
+            triggerSettings: policy.triggerSettings,
+            runDuringExtendedHours: policy.runDuringExtendedHours === true
+          }).nextRunAt;
           continue;
         }
 

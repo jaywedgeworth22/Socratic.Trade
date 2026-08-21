@@ -44,7 +44,14 @@ describe("compactMobileMarketScan", () => {
         topGaps: []
       },
       topCandidates: [
-        quote({ symbol: "BRK-B", companyName: "Berkshire Hathaway", price: 500, score: 88 }),
+        quote({
+          symbol: "BRK-B",
+          companyName: "Berkshire Hathaway",
+          price: 500,
+          score: 88,
+          sector: "Financial Services",
+          industry: "Insurance — Diversified"
+        }),
         quote({ symbol: "GOOG", price: 180, score: 86 })
       ]
     }));
@@ -57,6 +64,11 @@ describe("compactMobileMarketScan", () => {
       source: "nasdaq-delayed-screener+yahoo-finance"
     });
     expect(compact?.topCandidates.map((row) => row.symbol)).toEqual(["BRK-B", "GOOG"]);
+    expect(compact?.topCandidates[0]).toMatchObject({
+      companyName: "Berkshire Hathaway",
+      sector: "Financial Services",
+      industry: "Insurance — Diversified"
+    });
     expect(compact?.warnings).toContain("Coverage is thin on a few names.");
     expect(compact?.warnings).toContain("Some ranked names are missing P/E.");
     expect(compact).not.toHaveProperty("quotesBySymbol");

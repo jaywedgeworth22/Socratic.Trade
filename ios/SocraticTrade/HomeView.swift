@@ -733,12 +733,16 @@ private struct PerformanceOverviewCard: View {
 private struct ScheduleOverviewCard: View {
     let snapshot: MobileSnapshot
 
+    private var autonomyActive: Bool {
+        snapshot.policy.systemState == "active" || snapshot.readiness.systemState == "active"
+    }
+
     var body: some View {
         AppCard {
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeading("Schedule")
-                LabeledContent("Last Run", value: AppFormat.relative(snapshot.scheduler.lastRunAt))
-                LabeledContent("Next Run", value: AppFormat.relative(snapshot.scheduler.nextRunAt))
+                LabeledContent("Last Run", value: AppFormat.lastRun(snapshot.scheduler.lastRunAt))
+                LabeledContent("Next Run", value: AppFormat.nextRun(snapshot.scheduler.nextRunAt, autonomyActive: autonomyActive))
                 LabeledContent(
                     "Cadence",
                     value: AppFormat.cadenceMinutesValue(snapshot.policy.runCadenceMinutes)
