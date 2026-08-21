@@ -42,8 +42,10 @@ npm run lint            # eslint 9 flat config; fails on errors only
 npx tsc --noEmit        # fast type gate
 npx vitest run test/<your-new-or-touched-files>   # focused first
 npm run build           # full Next build; also regenerates .next types
-# Playwright (local smoke recipe — same as playwright.config.ts webServer):
-npm run build && PRIMARY_USER_EMAIL=smoke-test@agentic.local ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef DATABASE_URL=file:/tmp/st-review.db npx playwright test --project=mobile-chrome
+# Playwright (local smoke recipe — same as playwright.config.ts webServer).
+# Load PRIMARY_USER_EMAIL, ENCRYPTION_KEY, and DATABASE_URL from the local
+# env file — do not inline values (gitleaks flags hex-looking placeholders).
+npm run build && npx playwright test --project=mobile-chrome
 # Live probe after deploy/merge: headless Chrome at 320/390/430 for the chrome bar + scope:
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --dump-dom --window-size=320,700 https://socratictrade.com/console
 ```
