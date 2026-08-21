@@ -6,7 +6,7 @@ Option 3 of the Perplexity-ritual ask: ST now builds those weekly screens from i
 
 **Risk:** first Swift compile is CI-only.  Momentum is empty until grouped-daily or per-symbol OHLC lands.
 
-Branch `cursor/weekly-market-screens-2b0c`.  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+PR #3009 (`cursor/weekly-market-screens-2b0c`).  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
 
 ## 2026-08-21 CURSOR — three-column LLM catalog (display / OpenRouter / native)
 

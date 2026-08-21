@@ -18,10 +18,8 @@
 import { audit, getInternalSetting, getPolicy, listUsers, setInternalSetting } from "./db";
 import { invalidateDashboardSnapshotCache } from "./dashboard-snapshot-cache";
 import { getSymbolFieldLatestBySymbol } from "./db-fundamentals";
-import { fetchDailyOHLC } from "./history";
 import { rocPct, rsiSeries, sma, type OHLCBar } from "./indicators";
 import { newestPersistedMarketScan } from "./market-scan-freshness";
-import { fetchGroupedBarsRest } from "./market-signals/massive";
 import { normalizeSymbol } from "./money";
 import type { MarketQuote, MarketQuoteSummary, MarketScan } from "./types";
 
@@ -484,6 +482,8 @@ async function fetchGroupedClosesBySymbol(
 ): Promise<{ closesBySymbol: Record<string, number[]>; daysUsed: number }> {
   const closesBySymbol: Record<string, number[]> = {};
   let daysUsed = 0;
+  // Refresh-only: keep the sync dashboard/strategy path from loading Massive at import time.
+  const { fetchGroupedBarsRest } = await import("./market-signals/massive");
   for (const date of calendarDatesUtc(WEEKLY_DIGEST_GROUPED_CALENDAR_DAYS, now).reverse()) {
     const bars = await fetchGroupedBarsRest(date, userId);
     if (!bars || bars.length === 0) continue;
@@ -504,6 +504,8 @@ async function fetchDetailCloses(
   budget: number
 ): Promise<Record<string, number[]>> {
   const out: Record<string, number[]> = {};
+  // Refresh-only: keep the sync dashboard/strategy path from loading the OHLC cascade at import time.
+  const { fetchDailyOHLC } = await import("./history");
   const unique = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean))).slice(0, budget);
   const concurrency = 4;
   for (let i = 0; i < unique.length; i += concurrency) {

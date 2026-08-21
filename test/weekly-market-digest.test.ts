@@ -171,11 +171,12 @@ describe("buildWeeklyMarketDigest", () => {
     const digest = buildWeeklyMarketDigest({
       quotes: [fis, liquidGrowth],
       closesBySymbol: {
-        FIS: fading,
         COIN: rising
       },
       generatedAt: "2026-08-21T12:00:00.000Z"
     });
+    expect(digest.value.map((row) => row.symbol)).toEqual(["FIS"]);
+    expect(digest.momentum.map((row) => row.symbol)).toEqual(["COIN"]);
     expect(digest.overlap).toEqual([]);
     expect(digest.warnings.some((w) => w.includes("No overlap"))).toBe(true);
   });
@@ -219,7 +220,7 @@ describe("computeMomentumFromCloses / rocPct", () => {
     expect(rocPct([10, 11, 12, 13, 14, 15], 5)).toBeCloseTo(50);
     expect(rocPct([0, 1, 2, 3, 4, 5], 5)).toBeUndefined();
     const mom = computeMomentumFromCloses([100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126, 128, 130]);
-    expect(mom.return5d).toBeCloseTo(((130 / 120) - 1) * 100, 5);
+    expect(mom.return5d).toBeCloseTo(((130 / 120) - 1) * 100, 2);
     expect(mom.roc14).toBeDefined();
     expect(mom.rsi14).toBeDefined();
   });

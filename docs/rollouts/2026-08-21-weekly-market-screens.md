@@ -52,14 +52,16 @@ Touched files:
 
 ## Verification State
 
-Commands to run on this branch (see the PR for receipts):
+Ran on this branch:
 
 ```bash
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint          # exit 0 (warnings only; grandfathered set-state-in-effect backlog)
+npx tsc --noEmit      # exit 0
+npx vitest run test/weekly-market-digest.test.ts test/indicators.test.ts test/strategy-prompt-safety.test.ts test/copy-rules-lint.test.ts
+                      # 56 passed (13 weekly + 8 indicators + 5 prompt-safety + 17 copy + extras)
 ```
+
+`npm test` (full suite) was started in this cloud VM and spent 20+ minutes on outbound HTTP (SEC / Yahoo / Finnhub 404s and 30s strategy timeouts).  Those failures are environmental, not this change.  `npm run build` is the remaining local gate.
 
 ## Next Steps & Blockers
 

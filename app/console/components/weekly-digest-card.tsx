@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { WeeklyDigestName, WeeklyMarketDigest } from "@/lib/weekly-market-digest";
 import { cx, fmtMoney, fmtPct, EM_DASH, SENTENCE_GAP } from "../lib/format";
@@ -43,11 +43,9 @@ export function WeeklyDigestCard() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const snapshotDigest = snapshot?.weeklyMarketDigest;
-  const digest = override ?? snapshotDigest;
-
-  useEffect(() => {
-    setOverride(null);
-  }, [snapshotDigest?.generatedAt, snapshotDigest?.scanGeneratedAt]);
+  const sameScan =
+    Boolean(override?.scanGeneratedAt) && override?.scanGeneratedAt === snapshotDigest?.scanGeneratedAt;
+  const digest = sameScan ? override : (snapshotDigest ?? override);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -82,7 +80,7 @@ export function WeeklyDigestCard() {
 
   return (
     <Card
-      title={<span title="Large-cap value near the 52-week low, and liquid names ranked by 5-day return.  Advisory data only.">Weekly Screens</span>}
+      title={<span title={`Large-cap value near the 52-week low, and liquid names ranked by 5-day return.${SENTENCE_GAP}Advisory data only.`}>Weekly Screens</span>}
       action={
         <div className="flex items-center gap-2">
           <Chip tone={chip.tone} title={digest.warnings.slice(0, 4).join("\n") || chip.label}>
@@ -93,7 +91,7 @@ export function WeeklyDigestCard() {
             variant="outline"
             onClick={() => void onRefresh()}
             disabled={refreshing}
-            title="Rebuild the screens from this scan plus daily bars.  Read-only: it never places trades."
+            title={`Rebuild the screens from this scan plus daily bars.${SENTENCE_GAP}Read-only: it never places trades.`}
           >
             <RefreshCw size={13} className={cx(refreshing && "animate-spin")} aria-hidden />
             {refreshing ? "Refreshing…" : "Refresh bars"}
