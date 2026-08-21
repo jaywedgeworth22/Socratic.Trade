@@ -740,7 +740,7 @@ describe("dashboard feed helpers", () => {
     const group = runGroups[0]!;
     expect(group.events.length).toBe(4);
     // The strategy_run event is the primary: rendered once as the card's title/detail.
-    expect(group.title).toBe("Strategy run completed");
+    expect(group.title).toBe("Strategy Run Completed");
     expect(group.detail).toContain("Evaluated 3 proposal(s).");
     expect(group.status).toBe("completed");
     // Account attribution from any event in the group reaches the card (#8).

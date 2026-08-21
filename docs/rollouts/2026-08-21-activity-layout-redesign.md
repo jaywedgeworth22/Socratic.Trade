@@ -62,6 +62,8 @@ Touched files:
 - `test/dashboard-feed.test.ts`
 - `test/apns-deep-link-contract.test.ts`
 - `test/apns-push.test.ts`
+- `test/notification-history.test.ts`
+- `test/admin-user-ids.test.ts`
 - `docs/phase-6-customization-risk-notifications.md`
 - `docs/rollouts/2026-08-21-activity-layout-redesign.md`
 - `STATUS.md`
@@ -80,14 +82,22 @@ Touched files:
 
 ## 4. Verification State
 
-Local (this Linux cloud VM) — commands run after the PR is opened:
+Local (this Linux cloud VM):
 
 ```
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint          # 0 errors (grandfathered warnings only)
+npx tsc --noEmit      # clean
+npx vitest run test/activity-tabs.test.ts test/admin-user-ids.test.ts \
+  test/strategy-run-failure.test.ts test/console-tabs-keyboard.test.ts \
+  test/alpaca-quote-fallback.test.ts test/quotes-cascade.test.ts \
+  test/dashboard-feed.test.ts test/apns-deep-link-contract.test.ts \
+  test/apns-push.test.ts test/console-nav-labels.test.ts \
+  test/notification-history.test.ts test/connection-health-routing.test.ts
+                      # 12 files / related suites green after Title Case + failure-body assertion updates
+npm run build         # Next.js 16.3.1 webpack build succeeded
 ```
+
+A full `npm test` pass was started and then stopped after ~15m: unrelated files were timing out on network (history/Yahoo, strategy gather, RAG coverage).  The Activity/notify/quotes suites above are the ones this change owns.
 
 Swift: not compiled here.  First compile is CI `ios-build`.
 
