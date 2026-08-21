@@ -256,7 +256,7 @@ jobs:
       # cleanup-caches.yml deletes stray PR-ref entries on PR close and prunes older
       # lineage entries daily.
       - name: Restore Next.js build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
@@ -316,7 +316,7 @@ jobs:
         # so cache storage stays one rolling lineage per OS. The schedule leg keeps the Linux
         # cache fresh during quiet stretches with no main pushes.
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}

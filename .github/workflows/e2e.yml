@@ -170,7 +170,7 @@ jobs:
       # multi-minute download and only re-applies system deps.
       - name: Cache Playwright browsers
         if: needs.classify.outputs.docs-only != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
@@ -186,7 +186,7 @@ jobs:
       # `npm run build` reuses prior compilation output instead of a cold build.
       - name: Restore Next.js build cache
         if: needs.classify.outputs.docs-only != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
