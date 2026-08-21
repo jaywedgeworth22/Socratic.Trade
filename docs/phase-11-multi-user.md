@@ -387,10 +387,15 @@ set of trading controls:
 - `/mobile` redirects to `/console`.  The live phone surfaces are the website at
   phone width and the native iOS app (`ios/SocraticTrade/`), both using the same
   backend command model.
-- `ios/SocraticTrade/` provides a SwiftUI starter that uses the same endpoints
-  and keeps only the backend session on-device. User-visible copy is product
-  copy only — coordinator or owner notes (remotes, surfaces, Infisical, other
-  agents) belong in PRs and docs, not the iOS UI.
+- `ios/SocraticTrade/` uses the same endpoints and keeps only the backend session
+  on-device. User-visible copy is product copy only — coordinator or owner notes
+  belong in PRs and docs, not the iOS UI. Agent Controls expose Start / Stop /
+  Close Only / Wind Down (protective commands stay available even when the
+  snapshot is stale). Setup that the phone cannot edit (broker connect, strategy
+  universe) opens Safari to `/console/connections` and `/console/strategy` —
+  those paths are deliberately not AASA-claimed so the tap does not loop back
+  into a missing screen. Export compliance (`ITSAppUsesNonExemptEncryption=false`)
+  and `PrivacyInfo.xcprivacy` ship with the target.
 - Account deletion routes reuse the audited M7 deletion lifecycle: prepare first,
   type the signed-in identity and required phrase, then confirm/sign out with
   provider-side guidance for optional OAuth grant revocation.
