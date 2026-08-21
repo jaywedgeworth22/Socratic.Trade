@@ -332,4 +332,16 @@ describe("fetchFreshQuotesCascade", () => {
     expect(result.TSLA.delayedFallback).toBe(true);
     expect(result.TSLA.fetchedAt).toBeTruthy();
   });
+
+  it("does not start broker work when the gather deadline has already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("strategy gather timeout"));
+
+    await expect(
+      fetchFreshQuotesCascade(["AAPL"], "local", "ACC123", undefined, { signal: controller.signal })
+    ).rejects.toThrow("strategy gather timeout");
+
+    expect(mockGetEquityQuotes).not.toHaveBeenCalled();
+    expect(mockEnrich).not.toHaveBeenCalled();
+  });
 });
