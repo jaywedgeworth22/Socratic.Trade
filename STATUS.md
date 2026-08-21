@@ -4,7 +4,8 @@
 
 Owner: whole scan card opens company info; iOS company name darker than industry; Roth IRA Home said "not scheduled" for Last Run and Next Run on Autopilot.  Last run now comes from `strategy_runs` (never cadence copy).  Next run is filled for an active account even after restart / cash close.
 
-PR on `cursor/ios-scan-card-schedule-e224`.  iOS ships via TestFlight only.  API half needs a post-close (or HOTFIX) deploy for live Home stamps.  Rollout: `docs/rollouts/2026-08-21-ios-scan-card-schedule.md`.
+PR #3019 on `cursor/ios-scan-card-schedule-e224`, rebased/merged onto `origin/main` `e3278a5f`.  iOS ships via TestFlight only.  API half needs a post-close (or HOTFIX) deploy for live Home stamps.  Rollout: `docs/rollouts/2026-08-21-ios-scan-card-schedule.md`.
+
 ## 2026-08-21 CURSOR — strategy gather timeout all day (Roth + Paper)
 
 Ops snapshot 19:18Z: scheduler ticking, LLM keys present, last completed runs 2026-08-20 20:16Z (Roth) and 20:22Z (Paper).  Today every recent run is `failed · strategy gather timeout` (Paper 27 consecutive, Roth 12) plus a few stale-run sweeps on process restart.  Live sha `e0a4959a73a7` (started 19:06Z) is still the RTH-latched image — #2852/#2854 are already in that sha.

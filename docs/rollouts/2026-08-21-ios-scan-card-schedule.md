@@ -66,7 +66,7 @@ Swift compile is CI `ios-build.yml` — this VM has no `xcodebuild`.
 
 ## Next Steps & Blockers
 
-iOS binary change ships only via `scripts/ios-ship-testflight.sh`.  Last/next run honesty on TestFlight 1.0.x still needs the API deploy (weekday RTH latch applies).  Cloud VM cannot run `xcodebuild`; Mac `ios-build.yml` is the Swift compile of record.
+Branch merged `origin/main` `e3278a5f` (clean auto-merge) so #3019 is no longer dirty.  Dispatch `verify` via `workflow_dispatch` — cloud-proxy pushes do not fire `pull_request`.  iOS binary change ships only via `scripts/ios-ship-testflight.sh`.  Last/next run honesty on TestFlight 1.0.x still needs the API deploy (weekday RTH latch applies).  Cloud VM cannot run `xcodebuild`; Mac `ios-build.yml` is the Swift compile of record.
 
 ## Zero-Code Findings
 
