@@ -1902,6 +1902,7 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         dividendYield: quote.dividendYield,
         eps: quote.eps,
         sharesOutstanding: quote.sharesOutstanding,
+        marketCap: quote.marketCap,
         pbRatio: quote.pbRatio,
         shortPercentOfFloat: quote.shortPercentOfFloat,
         beta: quote.beta,
