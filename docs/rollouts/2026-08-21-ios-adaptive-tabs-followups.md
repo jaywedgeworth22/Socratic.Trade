@@ -46,7 +46,8 @@ the branch (05:22:30 and 06:21:48), and `verify` was green.
 Run 32529663287 concluded `success` in ~2 minutes: `Using simulator: iPhone 17 Pro`,
 `** TEST SUCCEEDED **`, 232 tests / 0 failures, including all 30 `TabPreferencesTests`.
 Screenshots (iPad Air 11" portrait/landscape, borrowed-slot behaviour, Mac window drag)
-still need a human on a Mac; CI cannot see the bar.
+still need a human on a Mac; CI cannot see the bar.  Paste-ready brief for a local
+Grok Mac seat: `docs/rollouts/2026-08-21-ios-adaptive-tabs-mac-qa.md`.
 
 ```bash
 xcodebuild test -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
