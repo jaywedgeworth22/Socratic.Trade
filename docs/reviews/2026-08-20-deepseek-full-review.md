@@ -69,4 +69,10 @@ Priorities: P0 = correctness/money-path/blocking; P1 = significant; P2 = polish/
 
 State comments added on the board: `830c892f` (ruleset needs ios-build as a required check), `89249c60` + `3b343933` (both confirmed fixed on main; systemic parts remain), `620ef423` (sign-in drops deep-link destination; `redirectTo: "/"` hardcoded in all three OAuth server actions).
 
-Follow-up: re-run the four deep-dive tracks (desktop console internals, phone-viewport details, iOS screen-by-screen, backend/API/ops) with narrowed scopes to extend this outline with file:line depth.
+Follow-up: re-run the remaining deep-dive tracks (desktop console internals, phone-viewport details, iOS screen-by-screen) with narrowed scopes to extend this outline with file:line depth.
+
+## 5. Backend / API / Ops / Docs track — COMPLETED (report committed)
+
+The backend deep-dive completed after the first pass and is committed in full: `docs/audits/2026-08-20-deepseek-backend-ops-docs.md` (plus detail reports `2026-08-20-deepseek-api-routes.md`, `2026-08-20-deepseek-scripts.md`, `2026-08-20-deepseek-docs.md`).  Verdict: **no P0, no unguarded money-path bug** — the exit-code contract, admin gate (all 26 routes), identity chain, scheduler lease/lane guards, and broker-I/O deadline discipline all hold under direct inspection.  New board filings from this track: `99ab01c7` (P1 drain exits 0 on failed nudge), `8c9ce3b9` (P1 deployment.md mislabels live replica as R2 — live is B2), `220c6cc6` (P2 watchdog pages on latched RTH merges), `68d11cc9` (P2 retired-lane scripts shipped), `7db3350e` (P2 ops doc stale topology), `3a8bcdcf` (P3 from-draft rate limit gap), `d6f0a9d3` (P3 API error honesty), `cc0caa64` (P3 checkBrokerHealth inline, no tick deadline), `51c52fd6` (P3 /api/health public + heavy), `67558af0` (P3 quotes asOf = serve time).
+
+Quick wins from the track (S-effort each): `exit 1` in `scripts/rth-deploy-drain.sh` on `nudge_ok=0`; rewrite `docs/deployment.md:70-81` R2→B2 framing; add the orders rate limit to `/api/proposals/from-draft`; 502 `{error}` on `/api/history` failure and broker-backed GETs; RTH-latch awareness in `alert-deploy-freshness.sh` (M).
