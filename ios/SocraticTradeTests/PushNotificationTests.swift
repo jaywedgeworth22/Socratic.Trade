@@ -327,32 +327,32 @@ final class PushDeepLinkContractTests: XCTestCase {
         Row("fill", "https://socratictrade.com/console/orders?symbol=AAPL", .markets),
         Row("limit_order_stale", "https://socratictrade.com/console/orders?symbol=NVDA", .markets),
         Row("price_alert", "https://socratictrade.com/console/watchlist?symbol=TSLA", .markets),
-        Row("run_failed", "https://socratictrade.com/console/activity", .activity),
-        Row("kill_switch", "https://socratictrade.com/console/activity", .activity),
-        Row("block", "https://socratictrade.com/console/activity", .activity),
-        Row("provider_degraded", "https://socratictrade.com/console/activity", .activity),
-        Row("budget_alert", "https://socratictrade.com/console/activity", .activity),
-        Row("learning_review", "https://socratictrade.com/console/activity", .activity),
-        Row("deterministic_bear_veto", "https://socratictrade.com/console/activity", .activity),
-        Row("red_team_veto_override_requested", "https://socratictrade.com/console/activity", .activity),
-        Row("red_team_veto_overridden", "https://socratictrade.com/console/activity", .activity),
-        Row("prompt_injection_suspected", "https://socratictrade.com/console/activity", .activity),
-        Row("evidence_age_anomaly", "https://socratictrade.com/console/activity", .activity),
-        Row("storage_warning", "https://socratictrade.com/console/activity", .activity),
-        Row("autonomy_halted_on_boot", "https://socratictrade.com/console/activity", .activity),
-        Row("option_alert", "https://socratictrade.com/console/activity", .activity),
-        Row("earningscalls_entitlement_blocked", "https://socratictrade.com/console/activity", .activity),
-        Row("risk_advisory", "https://socratictrade.com/console/activity", .activity),
-        Row("protective_exit_failing", "https://socratictrade.com/console/activity", .activity),
-        Row("signal_health", "https://socratictrade.com/console/activity", .activity),
-        Row("watchlist_digest", "https://socratictrade.com/console/activity", .activity),
+        Row("run_failed", "https://socratictrade.com/console/activity?tab=alerts", .activity),
+        Row("kill_switch", "https://socratictrade.com/console/activity?tab=alerts", .activity),
+        Row("block", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("provider_degraded", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("budget_alert", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("learning_review", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("deterministic_bear_veto", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("red_team_veto_override_requested", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("red_team_veto_overridden", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("prompt_injection_suspected", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("evidence_age_anomaly", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("storage_warning", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("autonomy_halted_on_boot", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("option_alert", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("earningscalls_entitlement_blocked", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("risk_advisory", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("protective_exit_failing", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("signal_health", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("watchlist_digest", "https://socratictrade.com/console/activity?tab=notifications", .activity),
         // The lookahead audit's findings panel lives on the WEB Results page, which this app has
         // no screen for and the AASA file does not claim.  Routing the tap at /console/results
         // would satisfy "points at the right web page" and fail the only thing that matters here:
         // DeepLink.destination(for:) rejects it, so the tap would open the app and stop.  Activity
         // is where the notification itself is listed, and the body already names the Results page
         // for anyone reading it on the web.
-        Row("lookahead_leak", "https://socratictrade.com/console/activity", .activity)
+        Row("lookahead_leak", "https://socratictrade.com/console/activity?tab=notifications", .activity)
     ]
 
     /// Every URL the server can emit routes somewhere.  A nil here is a push that opens the app

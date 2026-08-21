@@ -98,7 +98,7 @@ export function NotificationInbox({ snapshot }: { snapshot: DashboardSnapshot })
                 className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
                 onClick={close}
               >
-                Open Alert Center
+                Open Alerts Center
               </Link>
             </div>
             {preview.length === 0 ? (

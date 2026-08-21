@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-08-21 CURSOR — Activity layout redesign (Alerts Center first)
+
+Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now five Title Case tabs in this order: Alerts Center, Notifications, Strategy Runs, Order Fills, Audit Log.  Default Alerts Center.  Former All unified feed is Audit Log.  Failed runs show wrapping English.  APNs is auto-included when the user has a live device.  Admins get system alerts.  Alpaca session close is no longer stamped Delayed Quote.  Push `?tab=` is additive so another agent's deep-link pairing is not smashed.
+
+Branch `cursor/activity-layout-redesign-085b`.  Do not HOTFIX during RTH.  iOS first compile is CI.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
+
+# Current Status
+
 ## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
 
 Owner asked to drop the daytime deploy ban and instead cut over only when nothing is mid-flight.

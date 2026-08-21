@@ -292,6 +292,24 @@ describe("dashboard feed helpers", () => {
     expect(item.detail).toBe(expected);
   });
 
+  it("explains a failed strategy run in plain English instead of the delivery chip", () => {
+    const item = formatNotificationDisplay(
+      {
+        id: "run-timeout",
+        createdAt: "2026-08-21T00:00:00.000Z",
+        type: "run_failed",
+        title: "Strategy Run Failed",
+        status: "sent",
+        payload: { summary: "strategy gather timeout" }
+      } satisfies NotificationEvent,
+      {}
+    );
+
+    expect(item.title).toBe("Strategy Run Failed");
+    expect(item.detail).toMatch(/gathering market data took too long/);
+    expect(item.detail).not.toBe("Sent");
+  });
+
   it("resolves nested proposal ids for blocked notification audits", () => {
     const audit: AuditEvent[] = [
       {

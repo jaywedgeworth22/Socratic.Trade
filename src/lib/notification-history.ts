@@ -1,4 +1,5 @@
 import { formatNotificationDisplay } from "./dashboard-ui";
+import { deliveryChannelLabel } from "./notification-delivery";
 import type { ConnectedAccount, NotificationEvent } from "./types";
 
 /** Slim, already-worded inbox row.  Same recency window as the dashboard Alert Center (100). */
@@ -15,6 +16,7 @@ export type NotificationHistoryItem = {
   acknowledgedAt: string | null;
   connectedAccountId?: string;
   accountLabel?: string;
+  channel?: string;
 };
 
 export function inScopeNotificationEvents<T extends { connectedAccountId?: string }>(
@@ -62,7 +64,8 @@ export function buildNotificationHistory(input: {
         status: event.status,
         acknowledgedAt: event.acknowledgedAt ?? null,
         ...(event.connectedAccountId ? { connectedAccountId: event.connectedAccountId } : {}),
-        ...(accountLabel ? { accountLabel } : {})
+        ...(accountLabel ? { accountLabel } : {}),
+        channel: deliveryChannelLabel(event)
       };
     });
 }
