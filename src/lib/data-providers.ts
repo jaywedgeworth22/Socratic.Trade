@@ -394,11 +394,12 @@ export function scarceEnrichmentGateEnabled(): boolean {
  * Free-first field-demand planner — DEFAULT ON.
  *
  * Wave A: free/keyless/broker-bundled providers (`costTier !== "paid"`) over the full batch.
- * Wave B: paid non-scarce providers only for symbols that still have a coverage gap, with a
- *         `coveredFields` hint so they can skip redundant sub-calls.
+ * Wave B: keyed non-scarce providers (`costTier === "paid"` means has an API key, not a
+ *         paid Finnhub/All-In-One subscription) only for symbols that still have a coverage
+ *         gap, with a `coveredFields` hint so they can skip redundant sub-calls.
  * Wave C: scarce RapidAPI failover (existing `quotaScarce` gate) for remaining field gaps.
  *
- * When a free-wave provider throws, it is retried once before the paid wave so a transient
+ * When a free-wave provider throws, it is retried once before the keyed wave so a transient
  * timeout/429 does not permanently suppress the keyless floor for that scan.
  *
  * Set `ENRICHMENT_FREE_FIRST_ENABLED=0` to restore the prior single concurrent non-scarce wave.
@@ -1431,7 +1432,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       const freeProviders = freeIndexes.map((i) => this.providers[i]);
       let freeRuns: ProviderRun[];
       if (enrichmentShortCircuitEnabled()) {
-        // Coverage hint still comes from App A's result before the paid wave.
+        // Coverage hint still comes from App A's result before the keyed wave.
         // Do not await congress.trade alone — a 404/empty App A must not latch
         // gather while Yahoo/Finnhub sit idle (live `9d71dda4` 01:01:53Z).
         const congressProvider = freeProviders.find((p) => p.name === "congress.trade");
@@ -1471,7 +1472,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         }
       }
 
-      // ── Wave B: paid non-scarce, gap-only ───────────────────────────────────
+      // ── Wave B: keyed non-scarce (costTier paid = has a key), gap-only ──────
       throwIfEnrichmentAborted(context?.signal);
       if (paidIndexes.length > 0) {
         const filledAfterFree = buildFilledBySymbol(freeIndexes);

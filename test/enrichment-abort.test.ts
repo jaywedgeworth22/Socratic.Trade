@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CascadingEnrichmentProvider, type MarketEnrichmentProvider } from "../src/lib/data-providers";
 
 describe("CascadingEnrichmentProvider gather abort", () => {
-  it("forwards the gather signal into the paid wave and stops when it fires", async () => {
+  it("forwards the gather signal into the keyed wave and stops when it fires", async () => {
     const controller = new AbortController();
     let paidSignal: AbortSignal | undefined;
     const free: MarketEnrichmentProvider = {
