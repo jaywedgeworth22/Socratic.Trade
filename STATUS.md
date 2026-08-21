@@ -1,5 +1,22 @@
 # Current Status
 
+## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
+
+Owner asked to drop the daytime deploy ban and instead cut over only when nothing is mid-flight.
+Design handoff written rather than improvised into the deploy path of a live trading app.
+
+The note leads with the constraint that decides the whole design: this is a SINGLE-WRITER SQLITE
+process, so two containers cannot run at once and literal blue-green is off the table.  The
+achievable promise is "never cut a run in half", not "zero downtime" -- and those are different
+promises that should be agreed with the owner before anyone builds.
+
+It also corrects a premise (the build never stopped the container -- the build itself was refused),
+records what already exists so it is not rebuilt, and flags that `hasInFlightStrategyWork()` is
+unscoped and unbounded, so one stuck 'running' row would make the app never quiescent.
+
+One decision is deliberately left to the owner: what happens when the drain cap expires with a
+run still in flight.  That is a real-money risk call and it is the whole point of the feature.
+
 ## 2026-08-21 CURSOR — adaptive-tabs follow-ups: unhang ios-build + run XCTests
 
 Nobody had claimed `docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`.  Remote Control cannot start this work: Cursor wants a private worker and this repo has none (failed agent `bc-c04cab0c`).  Hosted Linux did the CI slice.
