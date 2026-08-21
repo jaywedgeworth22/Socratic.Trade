@@ -9,6 +9,7 @@ struct LoginView: View {
 
     /// Keep in sync with `LOGIN_VALUE_BULLETS` in `app/login/page.tsx`.
     private static let valueBullets = [
+        "Configure strategic framework and guardrails",
         "Review and approve proposals",
         "Track positions, orders, and performance",
         "Run, pause, and approve from your phone"
@@ -27,7 +28,11 @@ struct LoginView: View {
                     signIn
                     privacyNote
                 }
-                .frame(maxWidth: 400)
+                // 352 (not 400): ASAuthorizationAppleIDButton hard-caps its width at
+                // 375pt, so a wider column left Sign in with Apple visibly narrower than
+                // the Google/GitHub buttons.  Keep the column under that cap and all three
+                // render at identical width.
+                .frame(maxWidth: Self.contentWidth)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 48)
                 .frame(maxWidth: .infinity)
@@ -46,11 +51,13 @@ struct LoginView: View {
     }
 
     private var brand: some View {
-        // Web: HeaderLogo height={20}; slightly taller on phone for legibility.
-        CandleWordmarkView(height: 24)
-            .frame(maxWidth: .infinity)
+        // Login treats the wordmark as the page headline, so it scales to the content
+        // column rather than sitting at top-bar size (the console top bar still uses
+        // the fixed-height form).
+        CandleWordmarkView(fillsWidth: true)
             .padding(.horizontal, 8)
-            .padding(.bottom, 4)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
     }
 
     private var valueCard: some View {
@@ -127,17 +134,19 @@ struct LoginView: View {
                 onCompletion: complete
             )
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 48)
+            .frame(height: Self.buttonHeight)
             // Apple's ASAuthorizationAppleIDButton hard-caps width at 375pt. Stretching the
             // UIKit host wider (e.g. 392pt after horizontal padding) trips unsatisfiable
-            // NSAutoresizingMaskLayoutConstraints in the console. Do not follow this with
-            // another maxWidth:.infinity — that re-expands the UIKit host and revives the conflict.
-            .frame(maxWidth: 375)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            // NSAutoresizingMaskLayoutConstraints in the console. The content column is now
+            // 352pt, safely under the cap, so this frame fills rather than clamps. Do not
+            // follow it with another maxWidth:.infinity — that re-expands the UIKit host and
+            // revives the conflict.
+            .frame(maxWidth: Self.contentWidth)
+            .clipShape(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous))
             .disabled(store.isSigningIn)
             .overlay {
                 if store.isSigningIn {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                         .fill(Color.black.opacity(0.35))
                     ProgressView()
                         .tint(.white)
@@ -145,6 +154,12 @@ struct LoginView: View {
             }
         }
     }
+
+    /// Shared sign-in button metrics — every provider button renders at the same
+    /// width, height, and corner radius; only the branding inside differs.
+    private static let contentWidth: CGFloat = 352
+    private static let buttonHeight: CGFloat = 50
+    private static let buttonRadius: CGFloat = 10
 
     private enum WebAuthStyle {
         case accent
@@ -162,20 +177,20 @@ struct LoginView: View {
         } label: {
             HStack(spacing: 8) {
                 icon()
-                    .frame(width: 18, height: 18)
+                    .frame(width: 20, height: 20)
                 Text(title)
-                    .font(.appSubheadline.weight(.medium))
+                    .font(.appBody.weight(.medium))
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 48)
+            .frame(height: Self.buttonHeight)
             .foregroundStyle(style == .accent ? Color.white : Color.primary)
             .background {
                 switch style {
                 case .accent:
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                         .fill(AppPalette.accent)
                 case .outline:
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                         .fill(Color(uiColor: UIColor { traits in
                             if traits.userInterfaceStyle == .dark {
                                 return UIColor(red: 22 / 255, green: 22 / 255, blue: 22 / 255, alpha: 0.78)
@@ -183,7 +198,7 @@ struct LoginView: View {
                             return UIColor(white: 1, alpha: 0.65)
                         }))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                                 .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.1), lineWidth: 1)
                         }
                 }
@@ -196,14 +211,14 @@ struct LoginView: View {
     private var privacyNote: some View {
         VStack(spacing: 8) {
             Label(
-                "The app stores only your Socratic Trade session.  Broker and provider keys stay with your account.",
+                "The app stores only your Socratic Trade session.  Broker and provider keys stay with your account at SocraticTrade.com.",
                 systemImage: "lock.fill"
             )
             .font(.appCaption)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
 
-            Text("By signing in you agree to the Terms and Privacy Policy.  Not investment advice.  You set authority.")
+            Text("By signing in, you agree to the Terms and Privacy Policy linked below.  AI generated proposals, behaviors, and actions are not guaranteed though strategic framework is customizable and defined by each user.  Site and app do not provide financial or investment advice and were made for educational, experimental, and/or informational use only.")
                 .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

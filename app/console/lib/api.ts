@@ -75,12 +75,12 @@ function looksLikeHtml(contentType: string, payload: unknown): boolean {
  *  other HTML error page get a generic "edge/proxy error" framing that still surfaces the code. */
 function edgeErrorMessage(status: number): string {
   if (status === 524) {
-    return "The server took too long to respond at the edge (524). The operation may still be running — check the Activity feed.";
+    return "The server took too long to respond at the edge (524).  The operation may still be running — check the Activity feed.";
   }
   if (status >= 520 && status <= 530) {
-    return `The edge network returned an error (${status}) instead of reaching the app. The operation may still be running — check the Activity feed.`;
+    return `The edge network returned an error (${status}) instead of reaching the app.  The operation may still be running — check the Activity feed.`;
   }
-  return `The server returned an unexpected error page (${status}) instead of a normal response. The operation may still be running — check the Activity feed.`;
+  return `The server returned an unexpected error page (${status}) instead of a normal response.  The operation may still be running — check the Activity feed.`;
 }
 
 /** Shared by every helper below so a raw HTML error page is never surfaced as an error message —

@@ -431,7 +431,7 @@ function ControlSheet({
     };
     const liquidatingOption = {
         id: "liquidating",
-        title: "Wind down",
+        title: "Wind Down",
         body:
           "The strategy sells positions until the account is in cash. This SELLS things — it may realize losses and taxes.",
         available: state !== "liquidating",
@@ -492,7 +492,7 @@ function ControlSheet({
                 )}
                 {o.id === "liquidating" && (
                   <Btn variant="dangerOutline" size="sm" disabled={busy !== null} onClick={() => setConfirmVerb(confirmVerb === "liquidate" ? null : "liquidate")}>
-                    Wind down…
+                    Wind Down…
                   </Btn>
                 )}
                 {o.id === "start" && (
@@ -509,7 +509,7 @@ function ControlSheet({
                   value={armText}
                   onChange={setArmText}
                   busy={busy === "liquidating"}
-                  confirmLabel="Wind down — this sells"
+                  confirmLabel="Wind Down — this sells"
                   variant="danger"
                   onConfirm={() =>
                     void act("liquidating", () => setSystemState("liquidating", snapshot.policy.connectedAccountId), "Winding down", "Only sell orders until the account is in cash.")
@@ -779,7 +779,7 @@ export function RunOnceButton({
         size={size}
         disabled={running}
         onClick={() => void run()}
-        aria-label={iconOnly ? (running ? "Running…" : "Run once") : undefined}
+        aria-label={iconOnly ? (running ? "Running…" : "Run Once") : undefined}
         title={
           preflight
             ? `Blocked: ${preflight.title}. Click to see why and where to fix it.`
@@ -789,10 +789,10 @@ export function RunOnceButton({
         {/* Emoji bolt, not lucide Zap (owner preference 2026-08-08 — the colored emoji
             reads better than the line icon). Still not Play: Start/Resume owns Play. */}
         <span aria-hidden className="text-[13px] leading-none">⚡</span>
-        {iconOnly ? null : running ? "Running…" : "Run once"}
+        {iconOnly ? null : running ? "Running…" : "Run Once"}
       </Btn>
 
-      <Sheet open={block !== null} onClose={() => setBlock(null)} title="Run once can't go ahead">
+      <Sheet open={block !== null} onClose={() => setBlock(null)} title="Run Once Can't Go Ahead">
         {block && (
           <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
             <div className="flex items-center gap-2">

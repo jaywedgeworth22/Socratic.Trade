@@ -363,7 +363,7 @@ describe("getThesisScorecard", () => {
     expect(efficacy.survivorRiskHitRate).toBe(50); // 1 of 2 matured vetoes missed a winner
     expect(efficacy.avgReturnPct).toBe(0); // (-10 + 10) / 2
 
-    const modelA = efficacy.byModel.find((m) => m.model === "gpt-5.4-mini");
+    const modelA = efficacy.byModel.find((m) => m.model === "gpt-mini-latest");
     expect(modelA?.maturedVetoes).toBe(2);
     expect(modelA?.vetoValueAddRate).toBe(50);
     expect(modelA?.survivorRiskHitRate).toBe(50);

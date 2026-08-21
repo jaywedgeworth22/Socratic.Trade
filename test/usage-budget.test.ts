@@ -59,8 +59,8 @@ function status(providers: Array<{
 
 describe("usage-budget: cheaperModel", () => {
   it("maps known models down a tier and returns undefined when none", () => {
-    expect(budget.cheaperModel("openai/gpt-4o")).toBe("openai/gpt-5.4-mini");
-    expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-4-6");
+    expect(budget.cheaperModel("openai/gpt-4o")).toBe("openai/gpt-mini-latest");
+    expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-latest");
     expect(budget.cheaperModel("claude-haiku-4-5-20251001")).toBeUndefined(); // already cheapest (prefix)
     expect(budget.cheaperModel("openai/gpt-5.4-nano")).toBeUndefined();
     expect(budget.cheaperModel(undefined)).toBeUndefined();
@@ -87,8 +87,8 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBe("openai/gpt-5.4-mini");
-    expect(decision.redTeamLlmModel).toBe("openai/gpt-5.4-mini");
+    expect(decision.llmModel).toBe("openai/gpt-mini-latest");
+    expect(decision.redTeamLlmModel).toBe("openai/gpt-mini-latest");
   });
 
   it("skips the cycle when over budget and already on the cheapest tier", async () => {
@@ -175,14 +175,23 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBe("openai/gpt-5.4-mini");
+    expect(decision.llmModel).toBe("openai/gpt-mini-latest");
   });
 });
 
 describe("usage-budget: getBudgetStatusCached", () => {
-  afterEach(() => {
+  const priorReadToken = process.env.USAGE_READ_TOKEN;
+  beforeEach(() => {
+    delete process.env.USAGE_READ_TOKEN;
+  });
+  afterEach(async () => {
     delete process.env.USAGE_MONITOR_BASE_URL;
     delete process.env.USAGE_INGEST_TOKEN;
+    if (priorReadToken === undefined) delete process.env.USAGE_READ_TOKEN;
+    else process.env.USAGE_READ_TOKEN = priorReadToken;
+    budget.resetUsageBudgetCacheForTests();
+    const { resetPeerLaneBackoffForTests } = await import("../src/lib/peer-lane-backoff");
+    resetPeerLaneBackoffForTests();
   });
 
   it("fetches + parses the monitor response with bearer auth", async () => {
@@ -244,6 +253,22 @@ describe("usage-budget: getBudgetStatusCached", () => {
     expect(s?.providers[0]?.projectedEomUsd).toBeNull();
     expect(s?.providers[0]?.projectedRunoutDate).toBeNull();
     expect(s?.providers[0]?.spendCoverage).toBeNull();
+  });
+
+  it("does not stall a run on a slow UM — serves stale cache / fail-open (#2550)", async () => {
+    process.env.USAGE_MONITOR_BASE_URL = BASE;
+    process.env.USAGE_INGEST_TOKEN = TOKEN;
+    const { recordPeerLaneSample, PEER_LANE_USAGE_MONITOR } = await import("../src/lib/peer-lane-backoff");
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 6900);
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 7100);
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify(status([{ name: "openai", status: "ok" }])), { status: 200 });
+    }) as unknown as typeof fetch;
+    const s = await budget.getBudgetStatusCached({ fetchImpl });
+    expect(s).toBeNull();
+    expect(calls).toBe(0);
   });
 });
 

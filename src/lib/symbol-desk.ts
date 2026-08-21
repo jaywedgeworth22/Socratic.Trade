@@ -1,5 +1,5 @@
 /**
- * Per-symbol desk facts for the ticker sheet (web drawer, PWA, iOS).
+ * Per-symbol desk facts for the ticker sheet (web drawer, iOS).
  *
  * Current-account lot economics stay on the existing snapshot.  This module
  * adds the pieces the snapshot does not carry into the sheet: the persisted

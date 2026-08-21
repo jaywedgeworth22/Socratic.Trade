@@ -8,6 +8,7 @@ import { LANE_WAITS, withAccountMutation } from "./account-mutation";
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { runMarketScanFreshnessIfDue } from "./market-scan-freshness";
+import { runWeeklyMarketDigestRefreshIfDue } from "./weekly-market-digest";
 import { runHealthLaneReprobeIfDue } from "./health-lane-reprobe";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
 import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from "./earningscalls-transcripts";
@@ -672,6 +673,13 @@ async function tickInner(): Promise<void> {
   // the newest persisted scan's age (default 20h; MARKET_SCAN_FRESHNESS_MAX_AGE_HOURS=0 disables).
   void journalLane("market-scan-freshness", {}, () => runMarketScanFreshnessIfDue(Date.now(), process.uptime())).catch((err) =>
     console.error("[scheduler] market-scan freshness error:", err)
+  );
+
+  // Native weekly value + momentum screens.  Rebuilds when a user's persisted scan
+  // is newer than the last digest.  Bar work (grouped daily + detail OHLC) lives here,
+  // never on the dashboard read path.
+  void journalLane("weekly-market-digest", {}, () => runWeeklyMarketDigestRefreshIfDue(Date.now())).catch((err) =>
+    console.error("[scheduler] weekly-market-digest error:", err)
   );
 
   // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded. Runs per-user so

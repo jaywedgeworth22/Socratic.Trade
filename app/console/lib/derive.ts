@@ -98,9 +98,9 @@ export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, 
 // ── Run-state / authority words ──────────────────────────────────────────────
 
 /** The one shared run-state vocabulary. Every surface that names the run state
- *  (console chrome StateChip, Guardrails Autonomy panel, PWA header) MUST render
+ *  (console chrome StateChip, Guardrails Autonomy panel, iOS) MUST render
  *  one of these words via deriveStateInfo — never a private systemState→label
- *  map, which is how the PWA once said "Running" while the console said
+ *  map, which is how the retired PWA once said "Running" while the console said
  *  "Paused · market closed" for the same account.
  *
  *  Autopilot is NOT a run-state word.  It is the auto-decide authority label
@@ -148,9 +148,9 @@ export function deriveStateInfo(
           word: "Paused · market closed",
           label: `${authority} · market closed`,
           detail:
-            `${authority} is still on.  Scheduled runs wait for the next open ` +
+            `${authority} is still on.  Scheduled runs wait for the next open ` +
             `(${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}).  ` +
-            "Stop Agent turns them off.  The market being closed is not the same as the agent being stopped.",
+            "Stop Agent turns them off.  The market being closed is not the same as the agent being stopped.",
           tone: "muted",
           marketOpen: false
         };
@@ -162,7 +162,7 @@ export function deriveStateInfo(
         detail:
           policy.strategyAuthority === "decide"
             ? "The strategy runs on schedule and may place orders itself, inside your guardrails."
-            : "The strategy runs on schedule.  Every trade waits for your approval.",
+            : "The strategy runs on schedule.  Every trade waits for your approval.",
         tone: policy.strategyAuthority === "decide" ? "warn" : "pos",
         ...(marketOpen === undefined ? {} : { marketOpen: true })
       };
@@ -172,7 +172,7 @@ export function deriveStateInfo(
         state: "close_only",
         word: "Exit-only",
         label: "Exit-only",
-        detail: "No new buys. Protective exits keep working. This is the state circuit breakers set.",
+        detail: "No new buys.  Protective exits keep working.  This is the state circuit breakers set.",
         tone: "warn"
       };
     case "liquidating":
@@ -180,7 +180,7 @@ export function deriveStateInfo(
         state: "liquidating",
         word: "Winding down",
         label: "Winding down",
-        detail: "Only sell orders, until the account is in cash. This sells things.",
+        detail: "Only sell orders, until the account is in cash.  This sells things.",
         tone: "warn"
       };
     default:
@@ -189,7 +189,7 @@ export function deriveStateInfo(
         word: "Stopped",
         label: "Stopped",
         detail:
-          "Nothing trades — no buys, no sells, and this app's automatic stops are paused too. Broker-held brackets keep resting at the broker. Nothing is sold.",
+          "Nothing trades — no buys, no sells, and this app's automatic stops are paused too.  Broker-held brackets keep resting at the broker.  Nothing is sold.",
         tone: "neg"
       };
   }
@@ -305,7 +305,7 @@ function deriveBaseProtection(
   if (hasWorkingClosingStop(orders, position.symbol, isShort)) {
     return {
       label: "Broker stop",
-      detail: "A stop order is resting at the broker. It keeps protecting even if this app is down or stopped.",
+      detail: "A stop order is resting at the broker.  It keeps protecting even if this app is down or stopped.",
       tone: "pos"
     };
   }
@@ -336,13 +336,13 @@ function deriveBaseProtection(
     if (policy.systemState === "halted") {
       return {
         label: `${word} · paused`,
-        detail: "App-managed stop rules are configured but paused while the system is Stopped. They resume when you start or switch to Exit-only.",
+        detail: "App-managed stop rules are configured but paused while the system is Stopped.  They resume when you start or switch to Exit-only.",
         tone: "warn"
       };
     }
     return {
       label: word,
-      detail: `Managed by this app on its scheduler tick${isShort ? " (exits with a buy-to-cover)" : ""}. It requires the app to be running and pauses if you Stop everything.`,
+      detail: `Managed by this app on its scheduler tick${isShort ? " (exits with a buy-to-cover)" : ""}.  It requires the app to be running and pauses if you Stop everything.`,
       tone: "pos"
     };
   }
@@ -385,8 +385,8 @@ export function unmanagedShortNotice(count: number, reason: UnmanagedShortReason
   if (count <= 0) return null;
   if (reason === "broker_unprotected") {
     return count === 1
-      ? "1 short position has no broker-held buy-stop — live shorts are Alpaca-only.  Close it or move it to Alpaca for resting cover protection."
-      : `${count} short positions have no broker-held buy-stop — live shorts are Alpaca-only.  Close them or move them to Alpaca for resting cover protection.`;
+      ? "1 short position has no broker-held buy-stop — live shorts are Alpaca-only.  Close it or move it to Alpaca for resting cover protection."
+      : `${count} short positions have no broker-held buy-stop — live shorts are Alpaca-only.  Close them or move them to Alpaca for resting cover protection.`;
   }
   if (reason === "stops_disabled") {
     return count === 1
@@ -523,7 +523,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       id: "pending",
       tone: "accent",
       title: `${pending} trade ${pending === 1 ? "idea is" : "ideas are"} waiting for you`,
-      detail: "Nothing happens until you approve or reject each one. Doing nothing lets them expire.",
+      detail: "Nothing happens until you approve or reject each one.  Doing nothing lets them expire.",
       href: "/console/approvals"
     });
   }
@@ -534,7 +534,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       tone: "neg",
       title: "The strategy is stopped",
       detail:
-        "No runs, no orders — and this app's automatic stops are paused. Broker-held brackets keep resting. Approving or rejecting proposals is refused while stopped.",
+        "No runs, no orders — and this app's automatic stops are paused.  Broker-held brackets keep resting.  Approving or rejecting proposals is refused while stopped.",
       href: "/console/guardrails"
     });
   } else if (state === "close_only") {
@@ -542,7 +542,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       id: "close-only",
       tone: "warn",
       title: "Exit-only mode",
-      detail: "No new buys will happen. Protective sells still work. A circuit breaker or a person set this.",
+      detail: "No new buys will happen.  Protective sells still work.  A circuit breaker or a person set this.",
       href: "/console/activity"
     });
   } else if (state === "liquidating") {
@@ -559,7 +559,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       tone: "warn",
       title: "Setup: add an LLM key",
       detail:
-        "Strategy runs need OpenRouter (or another configured LLM key) so Green/Red teams can propose and debate. Market data, positions, and guardrails still work without it.",
+        "Strategy runs need OpenRouter (or another configured LLM key) so Green/Red teams can propose and debate.  Market data, positions, and guardrails still work without it.",
       href: "/console/connections#api-keys"
     });
   }
@@ -570,7 +570,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       tone: "accent",
       title: "Setup: connect a broker account",
       detail:
-        "Connect Alpaca or Robinhood (live preferred when ready; paper is fine for training reps). The app cannot place orders without a connected account.",
+        "Connect Alpaca or Robinhood (live preferred when ready; paper is fine for training reps).  The app cannot place orders without a connected account.",
       href: "/console/connections"
     });
   }
@@ -580,7 +580,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       id: "setup-models",
       tone: "warn",
       title: "Setup: choose Green team model",
-      detail: "Strategy → Models — pick the model that writes trade ideas. Red team is optional; blank means you are the sole adversary.",
+      detail: "Strategy → Models — pick the model that writes trade ideas.  Red team is optional; blank means you are the sole adversary.",
       href: "/console/strategy"
     });
   }
@@ -600,7 +600,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       tone: "neg",
       title: `${failed.length} order ${failed.length === 1 ? "intent" : "intents"} awaiting reconciliation`,
       detail:
-        "A broker call failed or its response was lost. The durable intent was recorded before the call, so it cannot double-place — the broker-truth sweep will resolve it. Do not retry manually.",
+        "A broker call failed or its response was lost. The durable intent was recorded before the call, so it cannot double-place — the broker-truth sweep will resolve it.  Do not retry manually.",
       href: "/console/activity"
     });
   }
@@ -711,7 +711,7 @@ export function deriveReadinessChecklist(snapshot: DashboardSnapshot): Readiness
       title: "Connect a broker",
       detail: hasBroker
         ? `${snapshot.connectedAccounts.length} account${snapshot.connectedAccounts.length === 1 ? "" : "s"} connected.`
-        : "Connect Alpaca or Robinhood (live when ready; paper is fine for training). The app cannot place orders without a connected account.",
+        : "Connect Alpaca or Robinhood (live when ready; paper is fine for training).  The app cannot place orders without a connected account.",
       complete: hasBroker,
       href: hasBroker ? undefined : "/console/connections#brokers",
       ctaLabel: hasBroker ? undefined : "Open Connections"
@@ -769,7 +769,7 @@ export function deriveReadinessChecklist(snapshot: DashboardSnapshot): Readiness
       title: "Run once → review Proposals",
       detail: hasRunOnce
         ? "At least one strategy run or proposal is on the record."
-        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject.",
+        : "Use Run Once in the top bar to generate the first decision trace, then open Proposals to approve or reject.",
       complete: hasRunOnce,
       // No deep-link to empty Proposals: the action is chrome Run once, not this row.
       href: undefined,
@@ -987,6 +987,6 @@ export function selectEquityWindow(points: EquityCurvePoint[], now = new Date())
   if (points.length < 2) return { points, label: "Equity" };
   const sameDay = (iso: string) => dayKey(iso) === dayKey(now.toISOString());
   const intraday = points.filter((point) => sameDay(point.timestamp));
-  if (intraday.length >= 2) return { points: intraday, label: "Intraday mark-to-market" };
-  return { points: points.slice(-24), label: "Recent equity" };
+  if (intraday.length >= 2) return { points: intraday, label: "Intraday Mark-to-Market" };
+  return { points: points.slice(-24), label: "Recent Equity" };
 }

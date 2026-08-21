@@ -1,8 +1,8 @@
 // push-deep-links.ts — the universal-link URL and collapse id carried by a native push.
 //
 // The iOS app opens https://socratictrade.com universal links, so a push's deep link is an
-// ordinary app URL: tapping the notification routes in-app, and the same URL opened anywhere else
-// (web, PWA) lands on a real page. Every shape emitted here therefore points at a route that
+// ordinary app URL: tapping the notification routes in-app, and the same URL opened on the
+// website lands on a real page. Every shape emitted here therefore points at a route that
 // EXISTS in the web app (app/console/*) — a link that 404s on the web is a broken link in the app
 // too.
 //

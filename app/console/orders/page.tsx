@@ -110,7 +110,7 @@ function deriveOrderRowView(
       ? `Becomes available once the order has been working ${row.thresholdMinutes} minutes without filling (your policy's stale threshold) — currently ${fmtMinutes(row.ageMinutes)}.`
       : "Stale-limit detection is disabled (policy stale threshold is 0), so the server refuses market replacements."
     : halted
-      ? "Start the system first — replacing places a NEW order, which the server refuses while everything is stopped. Cancelling stays available."
+      ? "Start the system first — replacing places a NEW order, which the server refuses while everything is stopped.  Cancelling stays available."
       : noAccount
         ? "Market replacement needs a broker-backed Paper or Live account; no account is connected."
         : `Cancel this stale ${orderTypeLabel(order.type)} order and submit the remaining ${fmtQty(row.remaining)} shares as a market order${live ? " — typed broker confirmation required" : ""}.`;
@@ -148,7 +148,7 @@ function OrderPriceInfo({ view }: { view: ReturnType<typeof deriveOrderRowView> 
       {view.limitGapPct !== undefined && (
         <span
           className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-          title="How far the latest known price sits from the resting limit price. Positive = market above the limit."
+          title="How far the latest known price sits from the resting limit price.  Positive = market above the limit."
         >
           {fmtPct(view.limitGapPct, 1, true)} vs limit
         </span>
@@ -188,7 +188,7 @@ function OrderRowActions({
         size="sm"
         variant="dangerOutline"
         onClick={onCancel}
-        title="Ask the broker to cancel this order. Risk-reducing — allowed even while the system is stopped; fills that already happened stand."
+        title="Ask the broker to cancel this order.  Risk-reducing — allowed even while the system is stopped; fills that already happened stand."
         className="max-lg:min-h-10"
         align="right"
       >
@@ -325,7 +325,7 @@ function OrdersPageInner() {
           size="sm"
           onClick={() => void doRefresh()}
           disabled={refreshing}
-          title="Fetch the latest orders from the broker now. The console also refreshes automatically every 15 seconds."
+          title="Fetch the latest orders from the broker now.  The console also refreshes automatically every 15 seconds."
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </Btn>
@@ -351,18 +351,18 @@ function OrdersPageInner() {
             filling.
           </span>{" "}
           <span className="text-[color:var(--con-muted)]">
-            The market may have moved away from the limit price. Review each: keep waiting, cancel, or replace the
+            The market may have moved away from the limit price.  Review each: keep waiting, cancel, or replace the
             remainder at market.
           </span>
         </div>
       )}
 
-      <Card title={`Open orders (${rows.length})`} padded={false}>
+      <Card title={`Open Orders (${rows.length})`} padded={false}>
         {rows.length === 0 ? (
           <Empty>
             {noAccount
               ? "No working orders — connect a broker Paper or Live account first. Working orders appear once an account is active."
-              : "No working orders at the broker. When you or the strategy place a limit or stop order, it appears here until it fills, expires, or is cancelled."}
+              : "No working orders at the broker.  When you or the strategy place a limit or stop order, it appears here until it fills, expires, or is cancelled."}
           </Empty>
         ) : (
           <>
@@ -372,26 +372,26 @@ function OrdersPageInner() {
                   <tr>
                     <th title="Ticker — click a symbol to open its price history and details.">Symbol</th>
                     <th title="Order direction: buy, sell, short, or cover.">Side</th>
-                    <th title="Order type. Limit and stop-limit orders can sit unfilled and go stale; market orders execute immediately.">
+                    <th title="Order type.  Limit and stop-limit orders can sit unfilled and go stale; market orders execute immediately.">
                       Type
                     </th>
-                    <th className="num" title="Order size as the broker holds it: share quantity, or an approximate dollar amount for notional orders. Partial fills show how much already executed.">
+                    <th className="num" title="Order size as the broker holds it: share quantity, or an approximate dollar amount for notional orders.  Partial fills show how much already executed.">
                       Size
                     </th>
-                    <th className="num" title="Resting limit price and/or stop trigger price the broker holds for this order. '—' when the broker reported neither (e.g. a market order).">
+                    <th className="num" title="Resting limit price and/or stop trigger price the broker holds for this order.  '—' when the broker reported neither (e.g. a market order).">
                       Limit / Stop
                     </th>
-                    <th className="num" title="Latest price this app has for the symbol: this account's OWN held mark (from the same snapshot as the order) when the symbol is currently held, else the most recent market scan (can be minutes old), else the durable per-symbol store's last-known price (age-tagged; can be hours or days old). '—' only when none is available. Where the order has a limit price, the gap between this price and the limit is shown underneath.">
+                    <th className="num" title="Latest price this app has for the symbol: this account's OWN held mark (from the same snapshot as the order) when the symbol is currently held, else the most recent market scan (can be minutes old), else the durable per-symbol store's last-known price (age-tagged; can be hours or days old).  '—' only when none is available.  Where the order has a limit price, the gap between this price and the limit is shown underneath.">
                       Last price
                     </th>
-                    <th title="Time-in-force: how long the order stays working. DAY/GFD expires at market close; GTC rests until cancelled.">
+                    <th title="Time-in-force: how long the order stays working.  DAY/GFD expires at market close; GTC rests until cancelled.">
                       TIF
                     </th>
                     <th
                       title={
                         thresholdMinutes > 0
-                          ? `How long the order has been working. Limit/stop-limit orders older than your ${thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
-                          : "How long the order has been working. Stale-limit detection is disabled (policy stale threshold is 0)."
+                          ? `How long the order has been working.  Limit/stop-limit orders older than your ${thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
+                          : "How long the order has been working.  Stale-limit detection is disabled (policy stale threshold is 0)."
                       }
                     >
                       Age
@@ -447,7 +447,7 @@ function OrdersPageInner() {
         )}
       </Card>
 
-      <Card title="Recent finished orders" padded={false}>
+      <Card title="Recent Finished Orders" padded={false}>
         {history.length === 0 ? (
           <Empty>
             {noAccount
@@ -463,7 +463,7 @@ function OrdersPageInner() {
                     <th title="Ticker — click a symbol to open its price history and details.">Symbol</th>
                     <th title="Order direction: buy, sell, short, or cover.">Side</th>
                     <th title="Order type as placed.">Type</th>
-                    <th title="Time-in-force as placed. DAY/GFD expires at market close; GTC rests until cancelled.">TIF</th>
+                    <th title="Time-in-force as placed.  DAY/GFD expires at market close; GTC rests until cancelled.">TIF</th>
                     <th className="num" title="Order size: share quantity or approximate dollar amount.">Size</th>
                     <th className="num" title="Average price the broker reports for the executed part; '—' when nothing executed.">
                       Avg fill
@@ -635,7 +635,7 @@ function OpenOrderTr({ row, quotes, positions, fallbackPrices, companyName, halt
           <Chip
             tone="warn"
             className="ml-1.5"
-            title={`Working ${fmtMinutes(row.ageMinutes)} without filling — past your ${row.thresholdMinutes}-minute stale threshold. Heuristic, not an error: the market has likely moved away from the limit price, so it may never fill. You can keep waiting, cancel, or replace the remainder at market.`}
+            title={`Working ${fmtMinutes(row.ageMinutes)} without filling — past your ${row.thresholdMinutes}-minute stale threshold.  Heuristic, not an error: the market has likely moved away from the limit price, so it may never fill.  You can keep waiting, cancel, or replace the remainder at market.`}
           >
             stale {fmtMinutes(row.ageMinutes)}
           </Chip>
@@ -751,8 +751,8 @@ function OpenOrderCard({ row, quotes, positions, fallbackPrices, companyName, ha
           className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
           title={
             row.thresholdMinutes > 0
-              ? `How long the order has been working. Limit/stop-limit orders older than your ${row.thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
-              : "How long the order has been working. Stale-limit detection is disabled (policy stale threshold is 0)."
+              ? `How long the order has been working.  Limit/stop-limit orders older than your ${row.thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
+              : "How long the order has been working.  Stale-limit detection is disabled (policy stale threshold is 0)."
           }
         >
           <div className="flex justify-between items-baseline gap-0.5">

@@ -3,10 +3,10 @@
  * llm-10, confirmed 2026-08-20).
  *
  * BEFORE this fix: `applyRotationUserModelAllowlist` checked a HARDCODED, PERMANENT
- * `DEAD_OPENROUTER_ROTATION_MODELS` list (`kimi-latest`, `claude-fable-5`) BEFORE ever
+ * `DEAD_OPENROUTER_ROTATION_MODELS` list (`kimi-latest`, `claude-fable-latest`) BEFORE ever
  * consulting the live `/models/user` catalog, so both models were excluded from rotation
  * forever -- even though OpenRouter's live catalog serves both today
- * (`anthropic/claude-fable-5`, `~moonshotai/kimi-latest`).  No code path could ever re-admit
+ * (`anthropic/claude-fable-latest`, `~moonshotai/kimi-latest`).  No code path could ever re-admit
  * them.  The cited justification (`anthropic/claude-fable-latest` 404ing) was also never the
  * wire slug `normalizeOpenRouterModelId` actually sends.
  *
@@ -43,51 +43,51 @@ afterEach(() => {
 describe("live catalog wins over the (removed) permanent dead-slug list", () => {
   // Verification item (a): a live catalog listing both slugs keeps BOTH in the rotation pool.
   // This is the core regression -- it FAILS on the pre-fix code, which drops both unconditionally.
-  it("keeps BOTH claude-fable-5 and kimi-latest when the live /models/user catalog lists them", () => {
+  it("keeps BOTH claude-fable-latest and kimi-latest when the live /models/user catalog lists them", () => {
     const liveCatalog = new Set([
-      "anthropic/claude-fable-5",
+      "anthropic/claude-fable-latest",
       "~moonshotai/kimi-latest",
       "openai/gpt-5.4-mini",
       "google/gemini-3.7-flash"
     ]);
     const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, liveCatalog);
     expect(result.emptiedByAllowlist).toBe(false);
-    expect(result.pool).toContain("claude-fable-5");
+    expect(result.pool).toContain("claude-fable-latest");
     expect(result.pool).toContain("kimi-latest");
-    expect(result.skipped).not.toContain("claude-fable-5");
+    expect(result.skipped).not.toContain("claude-fable-latest");
     expect(result.skipped).not.toContain("kimi-latest");
   });
 
   it("still excludes a model the live catalog genuinely does not list (the allowlist itself is unchanged)", () => {
     const liveCatalog = new Set(["openai/gpt-5.4-mini"]);
     const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, liveCatalog);
-    expect(result.pool).toEqual(["gpt-5.4-mini"]);
-    expect(result.skipped).toContain("claude-fable-5");
+    expect(result.pool).toEqual(["gpt-mini-latest"]);
+    expect(result.skipped).toContain("claude-fable-latest");
     expect(result.skipped).toContain("kimi-latest");
   });
 
   it("a live-catalog hit wins even while the SAME slug is simultaneously cooling down from a past 404", () => {
-    recordOpenRouterModelNotFound("claude-fable-5");
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(true);
-    const liveCatalog = new Set(["anthropic/claude-fable-5", "openai/gpt-5.4-mini"]);
+    recordOpenRouterModelNotFound("claude-fable-latest");
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(true);
+    const liveCatalog = new Set(["anthropic/claude-fable-latest", "openai/gpt-5.4-mini"]);
     const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, liveCatalog);
     // The live catalog says it's servable right now -- that wins over a stale cooldown.
-    expect(result.pool).toContain("claude-fable-5");
+    expect(result.pool).toContain("claude-fable-latest");
   });
 });
 
 describe("per-slug 404 cooldown -- fail-open paths only", () => {
   // Verification item (b): after recording an observed 404, the fail-open path drops it.
   it("drops a model from the fail-open pool only after an OBSERVED 404 is recorded for it", () => {
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(false);
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(false);
     const before = applyRotationAvailabilityFailOpen(MODEL_ROTATION_POOL);
-    expect(before).toContain("claude-fable-5");
+    expect(before).toContain("claude-fable-latest");
     expect(before.length).toBe(MODEL_ROTATION_POOL.length); // nothing dropped -- nothing recorded
 
-    recordOpenRouterModelNotFound("claude-fable-5");
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(true);
+    recordOpenRouterModelNotFound("claude-fable-latest");
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(true);
     const after = applyRotationAvailabilityFailOpen(MODEL_ROTATION_POOL);
-    expect(after).not.toContain("claude-fable-5");
+    expect(after).not.toContain("claude-fable-latest");
     // Only the recorded slug cools -- kimi-latest, never recorded, is untouched.
     expect(after).toContain("kimi-latest");
     expect(after.length).toBe(before.length - 1);
@@ -106,27 +106,27 @@ describe("per-slug 404 cooldown -- fail-open paths only", () => {
   it("admits the model again once the cooldown TTL elapses", () => {
     vi.useFakeTimers();
     const start = Date.now();
-    recordOpenRouterModelNotFound("claude-fable-5");
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(true);
+    recordOpenRouterModelNotFound("claude-fable-latest");
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(true);
 
     vi.setSystemTime(start + OPENROUTER_MODEL_NOT_FOUND_COOLDOWN_MS - 1);
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(true); // still cooling, 1ms short
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(true); // still cooling, 1ms short
 
     vi.setSystemTime(start + OPENROUTER_MODEL_NOT_FOUND_COOLDOWN_MS);
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(false); // TTL elapsed -- lazily pruned
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(false); // TTL elapsed -- lazily pruned
 
     const readmitted = applyRotationAvailabilityFailOpen(MODEL_ROTATION_POOL);
-    expect(readmitted).toContain("claude-fable-5");
+    expect(readmitted).toContain("claude-fable-latest");
     expect(readmitted.length).toBe(MODEL_ROTATION_POOL.length);
   });
 
   it("clearOpenRouterModelCooldowns wipes all recorded cooldowns (test-only reset)", () => {
-    recordOpenRouterModelNotFound("claude-fable-5");
+    recordOpenRouterModelNotFound("claude-fable-latest");
     recordOpenRouterModelNotFound("kimi-latest");
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(true);
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(true);
     expect(isOpenRouterModelCoolingDown("kimi-latest")).toBe(true);
     clearOpenRouterModelCooldowns();
-    expect(isOpenRouterModelCoolingDown("claude-fable-5")).toBe(false);
+    expect(isOpenRouterModelCoolingDown("claude-fable-latest")).toBe(false);
     expect(isOpenRouterModelCoolingDown("kimi-latest")).toBe(false);
   });
 });
@@ -139,7 +139,7 @@ describe("getOpenRouterUserModelAvailability injectable fetcher", () => {
       calls.push(url);
       return new Response(
         JSON.stringify({
-          data: [{ id: "anthropic/claude-fable-5" }, { id: "~moonshotai/kimi-latest" }, { id: "openai/gpt-5.4-mini" }]
+          data: [{ id: "anthropic/claude-fable-latest" }, { id: "~moonshotai/kimi-latest" }, { id: "openai/gpt-5.4-mini" }]
         }),
         { status: 200, headers: { "content-type": "application/json" } }
       );
@@ -151,7 +151,7 @@ describe("getOpenRouterUserModelAvailability injectable fetcher", () => {
     expect(calls.length).toBe(1);
     expect(result.status).toBe("available");
     if (result.status === "available") {
-      expect(result.modelIds.has("anthropic/claude-fable-5")).toBe(true);
+      expect(result.modelIds.has("anthropic/claude-fable-latest")).toBe(true);
       expect(result.modelIds.has("~moonshotai/kimi-latest")).toBe(true);
       expect(result.modelIds.has("openai/gpt-5.4-mini")).toBe(true);
     }
@@ -161,7 +161,7 @@ describe("getOpenRouterUserModelAvailability injectable fetcher", () => {
     const fakeFetch = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          data: [{ id: "anthropic/claude-fable-5" }, { id: "~moonshotai/kimi-latest" }, { id: "openai/gpt-5.4-mini" }]
+          data: [{ id: "anthropic/claude-fable-latest" }, { id: "~moonshotai/kimi-latest" }, { id: "openai/gpt-5.4-mini" }]
         }),
         { status: 200, headers: { "content-type": "application/json" } }
       )
@@ -170,7 +170,7 @@ describe("getOpenRouterUserModelAvailability injectable fetcher", () => {
     expect(availability.status).toBe("available");
     if (availability.status !== "available") return;
     const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, availability.modelIds);
-    expect(result.pool).toContain("claude-fable-5");
+    expect(result.pool).toContain("claude-fable-latest");
     expect(result.pool).toContain("kimi-latest");
   });
 

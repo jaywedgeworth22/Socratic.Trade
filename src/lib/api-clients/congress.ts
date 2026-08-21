@@ -1,5 +1,10 @@
 import { CongressTradeClient } from "@jaywedgeworth22/congress-trading-shared";
 import { logApiHealth } from "../db-health";
+import {
+  PEER_LANE_CONGRESS_TRADE,
+  recordPeerLaneSample,
+  shouldDeferPeerRefresh,
+} from "../peer-lane-backoff";
 
 const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -68,6 +73,11 @@ export function getCongressTradeClient(): CongressTradeClient {
       baseUrl: baseUrl(),
       token: readToken(),
       fetch: async (input, init) => {
+        if (shouldDeferPeerRefresh(PEER_LANE_CONGRESS_TRADE)) {
+          const err = new Error("congress.trade deferred (peer lane slow)");
+          err.name = "AbortError";
+          throw err;
+        }
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs());
         const start = Date.now();
@@ -81,7 +91,15 @@ export function getCongressTradeClient(): CongressTradeClient {
             signal: controller.signal,
             cache: "no-store"
           });
-          logApiHealth({ service: "congress.trade", ok: res.ok, latencyMs: Date.now() - start, errorText: res.ok ? undefined : `HTTP ${res.status}` });
+          const latencyMs = Date.now() - start;
+          recordPeerLaneSample(PEER_LANE_CONGRESS_TRADE, latencyMs);
+          logApiHealth({
+            service: "congress.trade",
+            ok: res.ok,
+            latencyMs,
+            errorText: res.ok ? undefined : `HTTP ${res.status}`,
+            soft: !res.ok && (res.status === 429 || res.status === 503),
+          });
           // Live `9d71dda4`: a 502 must fail-open gather, not keep pulling the
           // rest of the 250-name batch.  404 stays a miss (return the body).
           if (!res.ok && (res.status === 429 || res.status >= 500)) {
@@ -89,7 +107,17 @@ export function getCongressTradeClient(): CongressTradeClient {
           }
           return res;
         } catch (err) {
-          logApiHealth({ service: "congress.trade", ok: false, latencyMs: Date.now() - start, errorText: err instanceof Error ? err.message : String(err) });
+          const errorText = err instanceof Error ? err.message : String(err);
+          if (/^HTTP \d+/.test(errorText)) throw err;
+          const latencyMs = Date.now() - start;
+          recordPeerLaneSample(PEER_LANE_CONGRESS_TRADE, latencyMs);
+          logApiHealth({
+            service: "congress.trade",
+            ok: false,
+            latencyMs,
+            errorText,
+            soft: true,
+          });
           throw err;
         } finally {
           clearTimeout(timer);
@@ -98,6 +126,11 @@ export function getCongressTradeClient(): CongressTradeClient {
     });
   }
   return sharedClientInstance;
+}
+
+/** Test-only: drop the shared client so a later getCongressTradeClient() rebuilds the wrapper. */
+export function resetCongressTradeClientForTests(): void {
+  sharedClientInstance = null;
 }
 
 import type { PriceClose } from "@jaywedgeworth22/congress-trading-shared";

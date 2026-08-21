@@ -15,6 +15,8 @@ struct ScanView: View {
         SnapshotScaffold(hidesWorkspaceError: true) { snapshot in
             header(snapshot: snapshot)
                 .cardSpansAllColumns()
+            weeklyScreensCard(snapshot: snapshot)
+                .cardSpansAllColumns()
             filterField
                 .cardSpansAllColumns()
             content
@@ -83,6 +85,62 @@ struct ScanView: View {
                         .font(.appCaption)
                         .foregroundStyle(AppPalette.warning)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func weeklyScreensCard(snapshot: MobileSnapshot) -> some View {
+        if let digest = snapshot.weeklyMarketDigest, digest.hasRows {
+            AppCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeading("Weekly Screens", subtitle: DeskCopy.weeklyScreensNote)
+                    Text(digest.status == "ready" ? "ready" : digest.status.replacingOccurrences(of: "_", with: " "))
+                        .font(.appCaption)
+                        .foregroundStyle(.secondary)
+                    screenLine(title: "Value", names: digest.value, empty: DeskCopy.weeklyScreensValueEmpty) { name in
+                        "\(AppFormat.percent(name.pctAbove52wLow)) · pe \(name.peRatio.map { $0.formatted(.number.precision(.fractionLength(0...1))) } ?? "—")"
+                    }
+                    screenLine(title: "Momentum", names: digest.momentum, empty: DeskCopy.weeklyScreensMomentumEmpty) { name in
+                        "\(AppFormat.percent(name.return5d, signed: true)) · rsi \(name.rsi14.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—")"
+                    }
+                    ForEach(digest.warnings.prefix(2), id: \.self) { warning in
+                        Text(warning)
+                            .font(.appCaption)
+                            .foregroundStyle(AppPalette.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func screenLine(
+        title: String,
+        names: [WeeklyDigestName],
+        empty: String,
+        detail: (WeeklyDigestName) -> String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.appSubheadline.weight(.semibold))
+            if names.isEmpty {
+                Text(empty)
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(names.prefix(8)) { name in
+                    HStack(spacing: 8) {
+                        SymbolTapButton(symbol: name.symbol, logoSize: 18, font: .appSubheadline) {
+                            presentedSymbol = PresentedSymbol(symbol: name.symbol)
+                        }
+                        Text(detail(name).lowercased())
+                            .font(.appCaption)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
                 }
             }
         }

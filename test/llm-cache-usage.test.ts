@@ -125,8 +125,8 @@ describe("remapOpenRouterTelemetry — family identity", () => {
     expect(remapOpenRouterTelemetry("openrouter", "google/gemini-3.1-pro-preview").model).toBe("gemini-pro-latest");
   });
 
-  it("maps every Claude Opus slug onto claude-opus-5", () => {
-    expect(remapOpenRouterTelemetry("openrouter", "anthropic/claude-opus-4-8").model).toBe("claude-opus-5");
-    expect(remapOpenRouterTelemetry("anthropic", "claude-opus-4-8").model).toBe("claude-opus-5");
+  it("maps every Claude Opus slug onto claude-opus-latest", () => {
+    expect(remapOpenRouterTelemetry("openrouter", "anthropic/claude-opus-4-8").model).toBe("claude-opus-latest");
+    expect(remapOpenRouterTelemetry("anthropic", "claude-opus-4-8").model).toBe("claude-opus-latest");
   });
 });

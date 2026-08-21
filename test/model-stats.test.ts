@@ -63,11 +63,11 @@ describe("aggregateModelStats — live usage rollup", () => {
       closedLots: []
     });
 
-    const green = statFor(stats, "gpt-5.4-mini", "green");
+    const green = statFor(stats, "gpt-mini-latest", "green");
     expect(green.liveCalls).toBe(10);
     expect(green.avgCostUsd).toBeCloseTo(0.02, 6);
 
-    const red = statFor(stats, "gpt-5.4-mini", "red");
+    const red = statFor(stats, "gpt-mini-latest", "red");
     expect(red.liveCalls).toBe(4);
     expect(red.avgCostUsd).toBeCloseTo(0.01, 6);
   });
@@ -91,11 +91,11 @@ describe("aggregateModelStats — live usage rollup", () => {
       closedLots: []
     });
 
-    const green = statFor(stats, "claude-sonnet-5", "green");
+    const green = statFor(stats, "claude-sonnet-latest", "green");
     expect(green.latencySamples).toBe(3);
     expect(green.p50LatencyMs).toBe(8000);
 
-    const red = statFor(stats, "claude-sonnet-5", "red");
+    const red = statFor(stats, "claude-sonnet-latest", "red");
     expect(red.latencySamples).toBe(1);
     expect(red.p50LatencyMs).toBe(5000);
   });
@@ -156,7 +156,7 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
       closedLots: []
     });
 
-    const strategist = statFor(stats, "gpt-5.4-mini", "strategist");
+    const strategist = statFor(stats, "gpt-mini-latest", "strategist");
     expect(strategist.liveCalls).toBe(5);
     expect(strategist.avgCostUsd).toBeCloseTo(0.03, 6);
     expect(strategist.totalCostUsd).toBeCloseTo(0.15, 6);
@@ -170,9 +170,9 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
     expect(strategist.reviewerPerf).toBeNull();
 
     // Green/red rows for the same model are unaffected by the strategist usage.
-    const green = statFor(stats, "gpt-5.4-mini", "green");
+    const green = statFor(stats, "gpt-mini-latest", "green");
     expect(green.liveCalls).toBe(10);
-    const red = statFor(stats, "gpt-5.4-mini", "red");
+    const red = statFor(stats, "gpt-mini-latest", "red");
     expect(red.liveCalls).toBe(10);
   });
 
@@ -183,7 +183,7 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
       benchmarkSummaries: NO_BENCH,
       closedLots: []
     });
-    const strategist = statFor(stats, "grok-4.5", "strategist");
+    const strategist = statFor(stats, "grok-latest", "strategist");
     expect(strategist.liveCalls).toBe(0);
     expect(strategist.avgCostUsd).toBeNull();
     expect(strategist.totalCostUsd).toBeNull();
@@ -199,7 +199,7 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
         { model: "claude-sonnet-5", maturedVetoes: 42, vetoValueAddRate: 61.9, survivorRiskHitRate: 38.1, avgReturnPct: -1.87 }
       ]
     });
-    const strategist = statFor(stats, "claude-sonnet-5", "strategist");
+    const strategist = statFor(stats, "claude-sonnet-latest", "strategist");
     expect(strategist.closedTrades).toBe(0);
     expect(strategist.perf).toBeNull();
     expect(strategist.reviewerPerf).toBeNull();
@@ -219,7 +219,7 @@ describe("aggregateModelStats — performance gating", () => {
       benchmarkSummaries: NO_BENCH,
       closedLots: lots("gpt-5.4-mini", 3, 1)
     });
-    const green = statFor(stats, "gpt-5.4-mini", "green");
+    const green = statFor(stats, "gpt-mini-latest", "green");
     expect(green.closedTrades).toBe(4);
     expect(green.perf).not.toBeNull();
     expect(green.perf!.closedTrades).toBe(4);
@@ -235,7 +235,7 @@ describe("aggregateModelStats — performance gating", () => {
       benchmarkSummaries: NO_BENCH,
       closedLots: []
     });
-    const green = statFor(stats, "grok-4.5", "green");
+    const green = statFor(stats, "grok-latest", "green");
     expect(green.closedTrades).toBe(0);
     expect(green.perf).toBeNull();
   });
@@ -247,11 +247,11 @@ describe("aggregateModelStats — performance gating", () => {
       benchmarkSummaries: NO_BENCH,
       closedLots: lots("gpt-5.4-mini", 30, 30)
     });
-    const green = statFor(stats, "gpt-5.4-mini", "green");
+    const green = statFor(stats, "gpt-mini-latest", "green");
     expect(green.closedTrades).toBe(60);
     expect(green.perf).not.toBeNull();
 
-    const red = statFor(stats, "gpt-5.4-mini", "red");
+    const red = statFor(stats, "gpt-mini-latest", "red");
     expect(red.closedTrades).toBe(0);
     expect(red.perf).toBeNull();
   });
@@ -266,7 +266,7 @@ describe("aggregateModelStats — performance gating", () => {
         { reviewedByModel: "claude-sonnet-5", pnl: -50, returnPct: -2 }
       ]
     });
-    const red = statFor(stats, "claude-sonnet-5", "red");
+    const red = statFor(stats, "claude-sonnet-latest", "red");
     expect(red.closedTrades).toBe(2);
     expect(red.perf).not.toBeNull();
     expect(red.perf!.closedTrades).toBe(2);
@@ -274,7 +274,7 @@ describe("aggregateModelStats — performance gating", () => {
     expect(red.perf!.avgPnlPct).toBe(1);
     expect(red.perf!.totalPnlUsd).toBe(50);
 
-    const green = statFor(stats, "claude-sonnet-5", "green");
+    const green = statFor(stats, "claude-sonnet-latest", "green");
     expect(green.closedTrades).toBe(0);
     expect(green.perf).toBeNull();
   });
@@ -287,7 +287,7 @@ describe("aggregateModelStats — performance gating", () => {
       closedLots: [{ pnl: 10, returnPct: 1 }, ...lots("gpt-5.4-mini", 1, 0)],
       models: []
     });
-    const green = statFor(stats, "gpt-5.4-mini", "green");
+    const green = statFor(stats, "gpt-mini-latest", "green");
     expect(green.closedTrades).toBe(1);
   });
 });
@@ -308,7 +308,7 @@ describe("aggregateModelStats — reviewer veto value-add", () => {
       reviewerPerfByModel: reviewerRows
     });
 
-    const red = statFor(stats, "claude-sonnet-5", "red");
+    const red = statFor(stats, "claude-sonnet-latest", "red");
     expect(red.reviewerPerf).toEqual({
       maturedVetoes: 42,
       vetoValueAddRate: 61.9,
@@ -317,7 +317,7 @@ describe("aggregateModelStats — reviewer veto value-add", () => {
     });
 
     // Realized-P&L perf and reviewerPerf never cross roles: the GREEN row stays null.
-    const green = statFor(stats, "claude-sonnet-5", "green");
+    const green = statFor(stats, "claude-sonnet-latest", "green");
     expect(green.reviewerPerf).toBeNull();
   });
 
@@ -361,10 +361,10 @@ describe("aggregateModelStats — reviewer veto value-add", () => {
       reviewerPerfByModel: [{ model: "claude-sonnet-5", maturedVetoes: 30, vetoValueAddRate: 60, survivorRiskHitRate: 40, avgReturnPct: -2 }]
     });
     // grok-4.3 has usage but no reviewer data → its RED row is null.
-    expect(statFor(stats, "grok-4.5", "red").reviewerPerf).toBeNull();
+    expect(statFor(stats, "grok-latest", "red").reviewerPerf).toBeNull();
     // A model with reviewer data still has a null RED row default when reviewerPerfByModel is omitted.
     const noReviewerInput = aggregateModelStats({ usageRows: [], latencyEvents: [], benchmarkSummaries: NO_BENCH, closedLots: [], models: ["claude-sonnet-5"] });
-    expect(statFor(noReviewerInput, "claude-sonnet-5", "red").reviewerPerf).toBeNull();
+    expect(statFor(noReviewerInput, "claude-sonnet-latest", "red").reviewerPerf).toBeNull();
   });
 });
 

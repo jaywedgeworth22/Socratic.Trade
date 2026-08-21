@@ -174,7 +174,11 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
   `applyCongressEvent`, and treats `cursor`/`ping`/`reconnect`/`error` as recognized control frames (no
   per-heartbeat "dropped unparseable" noise). Tested incremental frame parser, reconnect/backoff, and
   `Last-Event-ID` resume. Started from `startStreams()` when `CONGRESS_STREAM_ENABLED` is on; **inert**
-  until a subscription is provisioned. (Before the fix the consumer connected without `?subscription=`,
+  until a subscription is provisioned. **Flap policy (2026-08-17, #2550):** connect abort at 8s;
+  backoff resets only after the stream has lived 30s; five short-lived connects in 10 minutes jump
+  to a 5-minute cap; disconnects log `soft: true` so they cannot hard-STOP the lane or bury the
+  console Attention list. HTTP reads fail fast with `AbortError` when the congress.trade p50 is
+  already > 2s. (Before the 2026-07-01 fix the consumer connected without `?subscription=`,
   so App A returned `400 missing ?subscription=` and the push path never connected.)
 - **Idempotency:** events deduped by `id` (bounded in-memory set). `congress.trade` → `upsertCongressTrades`
   (deduped + pruned to 120d); `insider.update` → raw Form-4 filings *or* a precomputed `insiderSentiment`

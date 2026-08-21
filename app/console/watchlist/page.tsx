@@ -231,7 +231,7 @@ function WatchlistPageInner() {
               spellCheck={false}
               className="con-mono w-28"
               aria-label="Symbol to add"
-              title="Ticker to follow. Watching a symbol never trades it — it only shows up here with a quote."
+              title="Ticker to follow.  Watching a symbol never trades it — it only shows up here with a quote."
             />
             <Btn variant="primary" size="sm" type="submit" disabled={busy || newSymbol.trim().length === 0} title="Add this ticker to your watchlist.">
               <Plus size={13} /> Add
@@ -243,7 +243,7 @@ function WatchlistPageInner() {
         {data === null ? (
           <Empty>Loading watchlist…</Empty>
         ) : data.items.length === 0 ? (
-          <Empty>Nothing watched yet. Add a ticker above — watching is free and never trades.</Empty>
+          <Empty>Nothing watched yet.  Add a ticker above — watching is free and never trades.</Empty>
         ) : (
           <>
             <div className="hidden overflow-x-auto lg:block">
@@ -251,7 +251,7 @@ function WatchlistPageInner() {
                 <thead>
                   <tr>
                     <th>Symbol</th>
-                    <th className="num" title="Latest known price from the active account's data source. '—' means no quote is available right now — never a made-up number.">
+                    <th className="num" title="Latest known price from the active account's data source.  '—' means no quote is available right now — never a made-up number.">
                       Price
                     </th>
                     <th className="num" title="Armed price alerts on this symbol.">Alerts</th>
@@ -277,7 +277,7 @@ function WatchlistPageInner() {
                           className="num con-num"
                           title={
                             typeof quote?.price === "number"
-                              ? `${item.symbol}: ${fmtMoney(quote.price)}${quote.provider ? ` via ${quote.provider}` : ""}. Quotes may be delayed.`
+                              ? `${item.symbol}: ${fmtMoney(quote.price)}${quote.provider ? ` via ${quote.provider}` : ""}.  Quotes may be delayed.`
                               : "No quote available — quotes come from the active account's data source and may be delayed."
                           }
                         >
@@ -348,7 +348,7 @@ function WatchlistPageInner() {
       </Card>
 
       {/* ── Price alerts ── */}
-      <Card title="Price alerts">
+      <Card title="Price Alerts">
         <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
           Armed alerts are checked against live quotes about once a minute while the app&apos;s server is running. A
           trigger fires once, then the alert moves to &ldquo;triggered&rdquo; — it never re-arms by itself. Delivery
@@ -406,7 +406,7 @@ function WatchlistPageInner() {
               variant="primary"
               disabled={busy || alertSymbol.trim().length === 0 || alertPrice.trim().length === 0}
               onClick={() => void createAlert()}
-              title="Arm the alert. It notifies once when the level is crossed — it never trades."
+              title="Arm the alert.  It notifies once when the level is crossed — it never trades."
             >
               <BellPlus size={13} /> Arm alert
             </Btn>
@@ -416,7 +416,7 @@ function WatchlistPageInner() {
         {alerts === null ? (
           <Empty>Loading alerts…</Empty>
         ) : alerts.length === 0 ? (
-          <Empty>No price alerts yet. Arm one above, or use the Alert button on a watched symbol.</Empty>
+          <Empty>No price alerts yet.  Arm one above, or use the Alert button on a watched symbol.</Empty>
         ) : (
           <div className="flex flex-col">
             {[...alerts]
@@ -465,7 +465,7 @@ function WatchlistPageInner() {
                     variant="ghost"
                     disabled={busy}
                     onClick={() => void removeAlert(alert)}
-                    title="Delete this alert. Armed alerts stop watching; triggered ones just leave the list."
+                    title="Delete this alert.  Armed alerts stop watching; triggered ones just leave the list."
                   >
                     <Trash2 size={13} />
                   </Btn>
@@ -506,7 +506,7 @@ function WatchlistRowActions({
         variant="ghost"
         disabled={busy}
         onClick={onRemove}
-        title={`Stop watching ${symbol}. Its alerts are separate and stay armed until deleted.`}
+        title={`Stop watching ${symbol}.  Its alerts are separate and stay armed until deleted.`}
         align="right"
       >
         <Trash2 size={13} />

@@ -413,7 +413,7 @@ export function PolicySaveBar({
                 Commit changes <LiveTag />
               </>
             }
-            note="At least one change expands authority on a brokerage account. Unlocking authority costs a typed word; locking things down never does."
+            note="At least one change expands authority on a brokerage account.  Unlocking authority costs a typed word; locking things down never does."
             onConfirm={() => void commit()}
           />
         ) : (

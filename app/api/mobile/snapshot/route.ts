@@ -28,9 +28,9 @@ export async function GET(request: Request) {
       blocklist: snapshot.policy.blocklist ?? [],
       holdingHorizon: snapshot.policy.holdingHorizon,
       runCadenceMinutes: snapshot.policy.runCadenceMinutes,
-      // Lets the PWA share the console's market-aware run-state vocabulary
+      // Lets iOS share the console's market-aware run-state vocabulary
       // (deriveStateInfo): without it "active" outside market hours renders
-      // "Running" on mobile while the console says "Paused · market closed".
+      // "Running" on the phone while the console says "Paused · market closed".
       runDuringExtendedHours: snapshot.policy.runDuringExtendedHours,
       maxOrderNotional: snapshot.policy.maxOrderNotional,
       maxOrderPctOfNav: snapshot.policy.maxOrderPctOfNav,
@@ -57,6 +57,7 @@ export async function GET(request: Request) {
     }),
     recentCommands: listMobileCommands({ userId: user.userId, limit: 30 }),
     // Same last-good universe `/console/scan` paints when live Refresh 503s.
-    latestScan: compactMobileMarketScan(snapshot.latestScan)
+    latestScan: compactMobileMarketScan(snapshot.latestScan),
+    weeklyMarketDigest: snapshot.weeklyMarketDigest
   });
 }

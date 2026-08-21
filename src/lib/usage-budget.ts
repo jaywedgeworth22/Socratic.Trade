@@ -32,6 +32,11 @@ import type { TradingPolicy } from "./types";
 import { resolveOpenAiModel } from "./llm-request";
 import { usageMonitorBaseUrl, usageMonitorToken, usageMonitorEnabled } from "./usage-monitor-push";
 import { alertUsageLimitHit } from "./usage-limit-alerts";
+import {
+  PEER_LANE_USAGE_MONITOR,
+  recordPeerLaneSample,
+  shouldDeferPeerRefresh,
+} from "./peer-lane-backoff";
 
 // ── Contract (subset of the monitor's GET /api/budget-status response) ──────────
 
@@ -204,10 +209,12 @@ async function fetchBudgetStatus(fetchImpl: typeof fetch = fetch): Promise<Budge
       signal: controller.signal,
       cache: "no-store",
     });
+    const latencyMs = Date.now() - start;
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, latencyMs);
     logApiHealth({
       service: "usage-monitor",
       ok: res.ok,
-      latencyMs: Date.now() - start,
+      latencyMs,
       errorText: res.ok ? undefined : `budget-status HTTP ${res.status}`,
     });
     if (!res.ok) return null;
@@ -217,10 +224,12 @@ async function fetchBudgetStatus(fetchImpl: typeof fetch = fetch): Promise<Budge
     // Soft: this read is explicitly FAIL-OPEN (the catch returns null and the caller does not
     // enforce), so an abort/network blip changes no behavior and must not page at level=error.
     // The row is still stored ok=0, so Admin Connections shows the lane honestly.
+    const latencyMs = Date.now() - start;
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, latencyMs);
     logApiHealth({
       service: "usage-monitor",
       ok: false,
-      latencyMs: Date.now() - start,
+      latencyMs,
       errorText: err instanceof Error ? err.message : String(err),
       soft: true,
     });
@@ -239,9 +248,19 @@ export async function getBudgetStatusCached(opts: { force?: boolean; fetchImpl?:
   const now = Date.now();
   const cached = cacheHost.__usageBudgetCache;
   if (!opts.force && cached && now - cached.fetchedAt < ttlMs()) return cached.status;
+  // #2550: a 7s UM must not stall a strategy run. Serve stale cache (or fail-open
+  // null) and skip the network while the peer-lane p50 is slow.
+  if (!opts.force && shouldDeferPeerRefresh(PEER_LANE_USAGE_MONITOR, now)) {
+    return cached?.status ?? null;
+  }
   const status = await fetchBudgetStatus(opts.fetchImpl);
   if (status) cacheHost.__usageBudgetCache = { status, fetchedAt: now };
   return status; // null on failure → fail-open
+}
+
+/** Test-only: drop the in-process budget cache so tests do not leak across files. */
+export function resetUsageBudgetCacheForTests(): void {
+  delete cacheHost.__usageBudgetCache;
 }
 
 // ── Forecast-aware alert level ───────────────────────────────────────────────────
@@ -358,42 +377,49 @@ const CHEAPER_MODEL: Record<string, string> = {
   "gpt-5.6": "gpt-5.6-terra",
   "gpt-5.6-sol": "gpt-5.6-terra",
   "gpt-5.6-terra": "gpt-5.6-luna",
-  "gpt-5.6-luna": "gpt-5.4-mini",
-  "gpt-5.5": "gpt-5.4-mini",
-  "gpt-5.4": "gpt-5.4-mini",
+  "gpt-5.6-luna": "gpt-mini-latest",
+  "gpt-5.5": "gpt-mini-latest",
+  "gpt-5.4": "gpt-mini-latest",
+  "gpt-mini-latest": "gpt-5.4-nano",
   "gpt-5.4-mini": "gpt-5.4-nano",
-  "gpt-4o": "gpt-5.4-mini",
+  "gpt-4o": "gpt-mini-latest",
   "gpt-4.1": "gpt-4.1-mini",
   "o1": "o1-mini",
   "o1-preview": "o1-mini",
-  // (no o3-mini → o4-mini: identically priced in MODEL_PRICE_PER_M, so it saves nothing)
   // Anthropic
-  "claude-fable-5": "claude-sonnet-5",
-  "claude-opus-5": "claude-sonnet-5",
-  "claude-sonnet-5": "claude-haiku-4.5",
-  "claude-opus-4-8": "claude-sonnet-4-6",
-  "claude-sonnet-4-6": "claude-haiku-4-5",
+  "claude-fable-latest": "claude-sonnet-latest",
+  "claude-opus-latest": "claude-sonnet-latest",
+  "claude-sonnet-latest": "claude-haiku-latest",
+  "claude-fable-5": "claude-sonnet-latest",
+  "claude-opus-5": "claude-sonnet-latest",
+  "claude-sonnet-5": "claude-haiku-latest",
+  "claude-opus-4-8": "claude-sonnet-latest",
+  "claude-sonnet-4-6": "claude-haiku-latest",
   // xAI
-  "grok-4.5": "grok-build-latest",
+  "grok-latest": "grok-build-0.1",
+  "grok-4.5": "grok-build-0.1",
   "grok-4.3": "grok-build-0.1",
   // Gemini
   "gemini-pro-latest": "gemini-flash-latest",
   "gemini-flash-latest": "gemini-flash-lite-latest",
-  "gemini-3.1-pro-preview": "gemini-3.7-flash",
+  "gemini-3.1-pro-preview": "gemini-flash-latest",
   "gemini-3.7-flash": "gemini-flash-lite-latest",
   "gemini-3.6-flash": "gemini-flash-lite-latest",
-  "gemini-3.5-flash": "gemini-3.1-flash-lite",
-  "gemini-2.5-pro": "gemini-2.5-flash",
-  "gemini-2.5-flash": "gemini-2.5-flash-lite",
+  "gemini-3.5-flash": "gemini-flash-lite-latest",
+  "gemini-2.5-pro": "gemini-flash-latest",
+  "gemini-2.5-flash": "gemini-flash-lite-latest",
   // Mistral
+  "mistral-large-latest": "mistral-medium-latest",
   "mistral-medium-latest": "mistral-small-latest",
-  "mistral-large-2512": "mistral-medium-3-5",
+  "mistral-large-2512": "mistral-medium-latest",
   "mistral-medium-3-5": "mistral-small-latest",
-  "mistral-large": "mistral-medium",
-  "mistral-medium": "mistral-small",
+  "mistral-large": "mistral-medium-latest",
+  "mistral-medium": "mistral-small-latest",
   // DeepSeek
-  "deepseek-v4-pro": "deepseek-v4-flash",
-  "deepseek-reasoner": "deepseek-v4-flash",
+  "deepseek-pro-latest": "deepseek-flash-latest",
+  "deepseek-r1": "deepseek-flash-latest",
+  "deepseek-v4-pro": "deepseek-flash-latest",
+  "deepseek-reasoner": "deepseek-flash-latest",
 };
 
 /** A cheaper model in the same family, or undefined if none is known. */

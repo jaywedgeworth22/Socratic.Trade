@@ -12,6 +12,11 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // PWA kill-switch: leftover workers must revalidate this file, not a cached old worker.
+        source: "/sw.js",
+        headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }]
+      },
+      {
         // /framework is human-eyes-only: never indexed, cached, archived, or
         // used for AI training. Enforcement is layered — these headers are the
         // published opt-out; the route itself gates on user-agent and renders

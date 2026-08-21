@@ -46,6 +46,11 @@ describe("middleware — subdomain routing for mobile and console", () => {
     expect(resMobile.status).toBe(307);
     expect(resMobile.headers.get("location")).toBe("https://mobile.socratictrade.com/console");
 
+    const reqNested = createRequest("https://mobile.socratictrade.com/mobile/home", "mobile.socratictrade.com");
+    const resNested = await middleware(reqNested);
+    expect(resNested.status).toBe(307);
+    expect(resNested.headers.get("location")).toBe("https://mobile.socratictrade.com/console");
+
     const reqConsole = createRequest("https://console.socratictrade.com/console", "console.socratictrade.com");
     const resConsole = await middleware(reqConsole);
     expect(resConsole.status).not.toBe(307);

@@ -41,7 +41,7 @@ const MA_META: Record<
   above_both: { label: "above both MAs", tone: "pos", title: "Price sits above both the 50-day and 200-day moving averages — an uptrend read." },
   below_both: { label: "below both MAs", tone: "neg", title: "Price sits below both the 50-day and 200-day moving averages — a downtrend read." },
   mixed: { label: "mixed vs MAs", tone: "warn", title: "Price sits between the 50-day and 200-day moving averages — no clean trend read." },
-  unknown: { label: "MA data unavailable", tone: "muted", title: "No moving-average series was available when this proposal was built.  Nothing is fabricated in its place." }
+  unknown: { label: "MA data unavailable", tone: "muted", title: "No moving-average series was available when this proposal was built.  Nothing is fabricated in its place." }
 };
 
 const ATTRIBUTION_META: Array<{ key: "technical" | "news" | "fundamentals" | "market"; label: string; color: string }> = [
@@ -117,7 +117,7 @@ export function ProposalScorecardBlock({
                 <Chip tone={MA_META[data.maAlignment].tone} title={MA_META[data.maAlignment].title}>
                   {MA_META[data.maAlignment].label}
                 </Chip>
-                <span className="con-num text-[color:var(--con-muted)]" title="Decision-time price vs the 50-day / 200-day simple moving averages.  Missing values were unavailable, never invented.">
+                <span className="con-num text-[color:var(--con-muted)]" title="Decision-time price vs the 50-day / 200-day simple moving averages.  Missing values were unavailable, never invented.">
                   {fmtMoney(data.priceVsMa.price)} vs SMA50 {data.priceVsMa.sma50 !== undefined ? fmtMoney(data.priceVsMa.sma50) : EM_DASH} · SMA200{" "}
                   {data.priceVsMa.sma200 !== undefined ? fmtMoney(data.priceVsMa.sma200) : EM_DASH}
                 </span>
@@ -144,8 +144,8 @@ export function ProposalScorecardBlock({
                   <div
                     title={
                       sniper.secondaryBuyBasis === "owner-set"
-                        ? "Owner-configured secondary entry (secondaryBuyPullbackPct override).  Display only — nothing is traded from it."
-                        : "Volatility-aware secondary entry derived from ATR(14), clamped 1-4%.  Display only — nothing is traded from it."
+                        ? "Owner-configured secondary entry (secondaryBuyPullbackPct override).  Display only — nothing is traded from it."
+                        : "Volatility-aware secondary entry derived from ATR(14), clamped 1-4%.  Display only — nothing is traded from it."
                     }
                   >
                     <dt className="flex items-center gap-1 text-[color:var(--con-faint)]">
@@ -200,7 +200,7 @@ export function ProposalScorecardBlock({
             <div>
               <div
                 className="con-card-title mb-1"
-                title="Deterministic attribution of the scan's factor scores across four signal families, normalized to 100.  Computed from the quote's factor breakdown — no model opinion involved."
+                title="Deterministic attribution of the scan's factor scores across four signal families, normalized to 100.  Computed from the quote's factor breakdown — no model opinion involved."
               >
                 Signal attribution
               </div>
@@ -224,7 +224,7 @@ export function ProposalScorecardBlock({
             <div>
               <div
                 className="con-card-title mb-1"
-                title="Append-only lifecycle receipt of what happened to this decision, in order.  Validated at persistence time; malformed chains are receipted, never dropped."
+                title="Append-only lifecycle receipt of what happened to this decision, in order.  Validated at persistence time; malformed chains are receipted, never dropped."
               >
                 Decision chain
               </div>

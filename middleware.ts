@@ -68,7 +68,9 @@ const PUBLIC_PREFIXES = [
   // "no rules"). Discovered live 2026-07-11: production redirected all three.
   "/robots.txt",
   "/sitemap.xml",
-  "/manifest.webmanifest",
+  // Kill-switch worker for leftover PWA installs.  Must stay anonymous so a
+  // controlling worker can fetch the update instead of an auth HTML redirect.
+  "/sw.js",
   // Apple's CDN fetches this anonymously to verify the universal-link claim; behind auth it
   // 307s to /login and the domain never claims the iOS app (app/.well-known/...
   // apple-app-site-association/route.ts).
@@ -308,7 +310,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
 
   // Host-level routing: mobile.socratictrade.com / mobile.socratic.trade
-  // PWA retired (owner 2026-08-16) — send this host to the website console.
+  // PWA retired (owner 2026-08-16/17) — send this host to the website console.
   if (host === "mobile.socratictrade.com" || host === "mobile.socratic.trade") {
     if (pathname === "/" || pathname === "/mobile" || pathname.startsWith("/mobile/")) {
       return NextResponse.redirect(new URL("/console", req.url));
@@ -316,6 +318,21 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (!pathname.startsWith("/console") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
       return NextResponse.redirect(new URL(`/console${pathname}`, req.url));
     }
+  }
+
+  // Apex (and every other host): leftover PWA paths go to the website console.
+  // Do not match /api/mobile/* — that is the native iOS command gateway.
+  if (pathname === "/mobile" || pathname.startsWith("/mobile/")) {
+    return withSecurityHeaders(NextResponse.redirect(new URL("/console", req.url)));
+  }
+
+  if (pathname === "/manifest.webmanifest") {
+    return withSecurityHeaders(
+      new NextResponse(null, {
+        status: 410,
+        headers: { "cache-control": "no-store" }
+      })
+    );
   }
 
   // Host-level routing: console.socratictrade.com / console.socratic.trade

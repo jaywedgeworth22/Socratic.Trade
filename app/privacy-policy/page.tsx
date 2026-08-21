@@ -25,14 +25,14 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "1. Who we are",
     body: [
-      "Socratic Trade (socratictrade.com) is a privately operated software product for market research, autonomous reasoning, and trade execution. It is not a broker-dealer, bank, or registered investment adviser. This policy explains what information the service collects, how it is used, and how you can control it."
+      "Socratic Trade (socratictrade.com) is a privately operated software product for market research, autonomous reasoning, and trade execution.  It is not a broker-dealer, bank, or registered investment adviser.  This policy explains what information the service collects, how it is used, and how you can control it."
     ]
   },
   {
     title: "2. Information we collect",
     body: [
       "Account information: your email address, authentication credentials, and any profile details you provide.",
-      "Connected-account data: broker/API credentials you supply to connect a trading account (e.g. Alpaca, Robinhood), and the account, position, order, and fill data those connections return. Credentials are encrypted at rest.",
+      "Connected-account data: broker/API credentials you supply to connect a trading account (e.g. Alpaca, Robinhood), and the account, position, order, and fill data those connections return.  Credentials are encrypted at rest.",
       "Notification preferences: the delivery channels you enable (push, webhook, email, SMS) and the destination for each — including the phone number you provide if you enable SMS notifications.",
       "Usage data: application logs, audit events, and diagnostic information generated as you use the service, used to operate, secure, and improve it."
     ]
@@ -40,11 +40,11 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "3. SMS / text message notifications",
     body: [
-      "If you opt in to SMS notifications in Settings, we use your phone number solely to send you the account and trading alerts you configure (for example: order fills, risk-guardrail events, or daily review summaries). SMS is off by default and only activates once you enter a number and enable the channel.",
+      "If you opt in to SMS notifications in Settings, we use your phone number solely to send you the account and trading alerts you configure (for example: order fills, risk-guardrail events, or daily review summaries).  SMS is off by default and only activates once you enter a number and enable the channel.",
       "Message frequency varies with your account activity and the alert types you enable.",
       "Message and data rates may apply, per your carrier plan.",
-      "Reply STOP at any time to opt out of SMS notifications, or disable the SMS channel in Settings. Reply HELP for help, or contact us at the email below.",
-      "We do not sell or share your phone number with third parties for marketing purposes. It is used only to route the notifications you request, via our SMS delivery provider."
+      "Reply STOP at any time to opt out of SMS notifications, or disable the SMS channel in Settings.  Reply HELP for help, or contact us at the email below.",
+      "We do not sell or share your phone number with third parties for marketing purposes.  It is used only to route the notifications you request, via our SMS delivery provider."
     ]
   },
   {
@@ -59,15 +59,15 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "5. Third-party services",
     body: [
-      "The service relies on third-party providers to function: your connected broker(s), market-data and language-model providers for research and analysis, an email provider for email notifications, and an SMS provider for text-message notifications. Each processes only the data necessary to perform its function and is bound by its own privacy terms."
+      "The service relies on third-party providers to function: your connected broker(s), market-data and language-model providers for research and analysis, an email provider for email notifications, and an SMS provider for text-message notifications.  Each processes only the data necessary to perform its function and is bound by its own privacy terms."
     ]
   },
   {
     title: "6. Data retention",
     body: [
       "We retain account, connection, and audit data for as long as your account is active and as needed to comply with legal obligations, resolve disputes, and enforce agreements.",
-      "Database backups are kept for 7 days, then deleted.  Deleting your account removes this account's app data; leftover backup copies expire at the end of that window.",
-      "You can delete your account yourself in Settings → Danger using the typed confirmation.  That permanently removes this account's app data and stored secrets.  Open positions at your broker and sign-in connections with other services are not closed or revoked by this app."
+      "Database backups are kept for 7 days, then deleted.  Deleting your account removes this account's app data; leftover backup copies expire at the end of that window.",
+      "You can delete your account yourself in Settings → Danger using the typed confirmation.  That permanently removes this account's app data and stored secrets.  Open positions at your broker and sign-in connections with other services are not closed or revoked by this app."
     ]
   },
   {
@@ -75,15 +75,15 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
     body: [
       "You control which notification channels are enabled and can disable any of them, including SMS, at any time in Settings.",
       "You can disconnect a broker account at any time, which stops further data retrieval from that connection.",
-      "Account deletion is self-serve: Settings → Danger (or Account & Settings on iOS) with typed confirmation.  You can also contact us at the email below."
+      "Account deletion is self-serve: Settings → Danger (or Account & Settings on iOS) with typed confirmation.  You can also contact us at the email below."
     ]
   },
   {
     title: "8. Shared market-data pool and research corpus",
     body: [
-      "Using the app requires contributing general market data — quotes, fundamentals, price history, and news pulled through your keys or broker — to a shared pool that other accepted users can read.  Personal account data (positions, orders, balances, P&L, credentials, watchlists, and strategy settings) is never pooled.",
-      "A shared research corpus may include fact-level notes you choose to contribute.  Risk rules and strategy instructions stay private and are never written to the shared corpus.",
-      "If more than one person uses the service, each account is private.  Positions, orders, credentials, and private settings are not visible across accounts."
+      "Using the app requires contributing general market data — quotes, fundamentals, price history, and news pulled through your keys or broker — to a shared pool that other accepted users can read.  Personal account data (positions, orders, balances, P&L, credentials, watchlists, and strategy settings) is never pooled.",
+      "A shared research corpus may include fact-level notes you choose to contribute.  Risk rules and strategy instructions stay private and are never written to the shared corpus.",
+      "If more than one person uses the service, each account is private.  Positions, orders, credentials, and private settings are not visible across accounts."
     ]
   },
   {
@@ -93,7 +93,7 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "10. Changes to this policy",
     body: [
-      "We may update this policy as the service evolves. Material changes will be reflected by updating the effective date below."
+      "We may update this policy as the service evolves.  Material changes will be reflected by updating the effective date below."
     ]
   },
   {

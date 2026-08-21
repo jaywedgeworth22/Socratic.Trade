@@ -247,7 +247,7 @@ export default function ResultsPage() {
       )}
 
       {/* Benchmark */}
-      <Card title="Versus the market (SPY buy-and-hold)">
+      <Card title="Versus the Market (SPY Buy-and-Hold)">
         {perf?.benchmark ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -255,7 +255,7 @@ export default function ResultsPage() {
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
                 sub={`Trailing ~${perf.benchmark.points} session${perf.benchmark.points === 1 ? "" : "s"} (${perf.benchmark.startDate} → ${perf.benchmark.endDate})`}
-                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others. Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would. This window is bounded to your most recently stored equity snapshots — a rolling window, not necessarily your full account history."
+                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others.  Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would.  This window is bounded to your most recently stored equity snapshots — a rolling window, not necessarily your full account history."
               />
               <Stat
                 label={perf.benchmark.benchmarkSymbol}
@@ -267,7 +267,7 @@ export default function ResultsPage() {
                 <div className="con-card-title">vs {perf.benchmark.benchmarkSymbol}</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
                   <SignedText value={perf.benchmark.excessReturnPct}>
-                    <span title="Your time-weighted account return minus the chained SPY return. Deposits and withdrawals define the sub-period cuts; they are not counted as performance.">
+                    <span title="Your time-weighted account return minus the chained SPY return.  Deposits and withdrawals define the sub-period cuts; they are not counted as performance.">
                       {fmtPct(perf.benchmark.excessReturnPct, 2, true)}
                     </span>
                   </SignedText>
@@ -281,7 +281,7 @@ export default function ResultsPage() {
               {perf.benchmark.cashFlowAdjusted
                 ? `Time-weighted across capital regimes — neutralized ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} net ${
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
-                  } (deposits +, withdrawals −). Each stretch between transfers is its own sub-period for you and for SPY; overall = product of (1 + r) − 1. Flows are inferred from snapshots and fills, not a broker transfer ledger.`
+                  } (deposits +, withdrawals −).  Each stretch between transfers is its own sub-period for you and for SPY; overall = product of (1 + r) − 1.  Flows are inferred from snapshots and fills, not a broker transfer ledger.`
                 : "No material deposits or withdrawals detected — single continuous period (account equity growth vs SPY over the same dates)."}
               {(perf.benchmark.unverifiedFlows?.length ?? 0) > 0 &&
                 ` ${perf.benchmark.unverifiedFlows!.length} inferred transfer${
@@ -290,7 +290,7 @@ export default function ResultsPage() {
             </p>
             {perf.benchmark.subPeriods && perf.benchmark.subPeriods.length > 1 && (
               <div className="mt-3 overflow-x-auto border-t border-[color:var(--con-line)] pt-2">
-                <div className="con-card-title mb-1.5">Capital regimes (between deposits / withdrawals)</div>
+                <div className="con-card-title mb-1.5">Capital Regimes (Between Deposits / Withdrawals)</div>
                 <table className="w-full min-w-[32rem] text-left text-[length:var(--con-fs-xs)]">
                   <thead className="text-[color:var(--con-faint)]">
                     <tr>
@@ -319,7 +319,7 @@ export default function ResultsPage() {
                               {seg.flowUnverified && (
                                 <Chip
                                   tone="warn"
-                                  title="This inferred transfer is far larger than this sub-period's own equity move, so it cannot be reconciled — a real transfer moves equity by roughly its size. It is shown for your review but EXCLUDED from the time-weighted return; this row's return is the raw equity growth."
+                                  title="This inferred transfer is far larger than this sub-period's own equity move, so it cannot be reconciled — a real transfer moves equity by roughly its size.  It is shown for your review but EXCLUDED from the time-weighted return; this row's return is the raw equity growth."
                                 >
                                   inferred — unverified
                                 </Chip>
@@ -371,7 +371,7 @@ export default function ResultsPage() {
           clears the app shell's sticky reality/chrome header (see shell.tsx). */}
       <div id="thesis-regime" className="grid scroll-mt-28 gap-4 lg:grid-cols-2">
         <ScorecardCard
-          title="By thesis"
+          title="By Thesis"
           rows={(snapshot.thesisScorecard ?? []).map((t: ThesisStat) => ({
             name: thesisTagLabel(t.thesisTag),
             trades: t.trades,
@@ -382,7 +382,7 @@ export default function ResultsPage() {
           nameLabel="Thesis"
         />
         <ScorecardCard
-          title="By market regime at entry"
+          title="By Market Regime at Entry"
           rows={(snapshot.regimeScorecard ?? []).map((r: RegimeStat) => ({
             name: r.regime,
             trades: r.trades,
@@ -448,21 +448,21 @@ function SignalHealthCard() {
   }, []);
 
   const advisoryChip = (
-    <Chip tone="muted" title="Rolling rank IC of the AI's own confidence scores against matured side-adjusted outcome returns.  Advisory diagnostics — sizing only changes under the opt-in signal-health auto-throttle.">
+    <Chip tone="muted" title="Rolling rank IC of the AI's own confidence scores against matured side-adjusted outcome returns.  Advisory diagnostics — sizing only changes under the opt-in signal-health auto-throttle.">
       confidence vs outcomes
     </Chip>
   );
 
   if (state.status === "loading") {
     return (
-      <Card title="Signal health" action={advisoryChip}>
+      <Card title="Signal Health" action={advisoryChip}>
         <Empty>Loading signal health…</Empty>
       </Card>
     );
   }
   if (state.status === "error") {
     return (
-      <Card title="Signal health" action={advisoryChip}>
+      <Card title="Signal Health" action={advisoryChip}>
         <Empty>{state.message}</Empty>
       </Card>
     );
@@ -475,7 +475,7 @@ function SignalHealthCard() {
 
   if (!anyData || !selected) {
     return (
-      <Card title="Signal health" action={advisoryChip}>
+      <Card title="Signal Health" action={advisoryChip}>
         <Empty>
           Not enough matured decisions to measure signal health yet.{SENTENCE_GAP}It needs at least {data.minObservations}{" "}
           decisions with matured outcomes per horizon; nothing is estimated in the meantime.
@@ -487,7 +487,7 @@ function SignalHealthCard() {
   const slope = latest?.rollingRankICSlope;
   return (
     <Card
-      title="Signal health"
+      title="Signal Health"
       action={
         <div className="flex items-center gap-2">
           {advisoryChip}
@@ -514,27 +514,27 @@ function SignalHealthCard() {
               value={<SignedText value={latest.rankIC}>{latest.rankIC.toFixed(3)}</SignedText>}
               sub={`t ${latest.tStat.toFixed(2)} · ${latest.nObservations} decisions over ${latest.nDates} days`}
               tone={latest.rankIC > 0 ? "pos" : latest.rankIC < 0 ? "neg" : "muted"}
-              title="Pooled Spearman rank correlation between the AI's confidence score and the matured side-adjusted return.  Positive means higher confidence really did precede better outcomes."
+              title="Pooled Spearman rank correlation between the AI's confidence score and the matured side-adjusted return.  Positive means higher confidence really did precede better outcomes."
             />
             <Stat
               label="Trend"
               value={slope !== undefined ? <SignedText value={slope}>{`${slope > 0 ? "+" : ""}${slope.toFixed(4)}`}</SignedText> : <Dash />}
               sub={slope !== undefined ? "rolling rank-IC slope, per window" : "needs a second daily snapshot"}
               tone={slope !== undefined ? (slope < 0 ? "neg" : "pos") : "muted"}
-              title="OLS slope of the rolling rank-IC series.  A sustained negative slope is the drift alarm's trigger — signal decay shows here weeks before the equity curve."
+              title="OLS slope of the rolling rank-IC series.  A sustained negative slope is the drift alarm's trigger — signal decay shows here weeks before the equity curve."
             />
             <Stat
-              label={`Top-${data.topK} churn`}
+              label={`Top-${data.topK} Churn`}
               value={latest.topKChurnPct !== undefined ? fmtPct(latest.topKChurnPct, 1) : <Dash />}
               sub={latest.topKChurnPct !== undefined ? "mean Jaccard distance, consecutive days" : "needs two decision days"}
-              title="How much the AI's highest-confidence names reshuffle day to day.  High churn means conviction is flipping names faster than a thesis should."
+              title="How much the AI's highest-confidence names reshuffle day to day.  High churn means conviction is flipping names faster than a thesis should."
             />
             <Stat
-              label="Gross vs net"
+              label="Gross vs Net"
               value={`${fmtPct(latest.grossReturnPct, 2, true)} / ${fmtPct(latest.netOfCostReturnPct, 2, true)}`}
               sub={`mean matured return, net of ${data.costRoundTripBps}bps round-trip`}
               tone={latest.netOfCostReturnPct > 0 ? "pos" : latest.netOfCostReturnPct < 0 ? "neg" : "muted"}
-              title="Mean side-adjusted matured return across observations, gross and after debiting the round-trip transaction-cost estimate.  A signal that only wins gross is not a signal."
+              title="Mean side-adjusted matured return across observations, gross and after debiting the round-trip transaction-cost estimate.  A signal that only wins gross is not a signal."
             />
           </div>
           <div className="mt-4 overflow-x-auto">
@@ -615,21 +615,21 @@ function LookaheadAuditCard() {
   }, []);
 
   const replayChip = (
-    <Chip tone="muted" title="Weekly truncated-replay audit: momentum/liquidity factors are recomputed from OHLC truncated to each decision date, and RAG evidence is re-retrieved with the as-of pin under a strict point-in-time filter.  Factors with no point-in-time source stay honestly unverifiable.  Advisory only — findings gate nothing.">
+    <Chip tone="muted" title="Weekly truncated-replay audit: momentum/liquidity factors are recomputed from OHLC truncated to each decision date, and RAG evidence is re-retrieved with the as-of pin under a strict point-in-time filter.  Factors with no point-in-time source stay honestly unverifiable.  Advisory only — findings gate nothing.">
       truncated replay
     </Chip>
   );
 
   if (state.status === "loading") {
     return (
-      <Card title="Lookahead audit" action={replayChip}>
+      <Card title="Lookahead Audit" action={replayChip}>
         <Empty>Loading lookahead audit…</Empty>
       </Card>
     );
   }
   if (state.status === "error") {
     return (
-      <Card title="Lookahead audit" action={replayChip}>
+      <Card title="Lookahead Audit" action={replayChip}>
         <Empty>{state.message}</Empty>
       </Card>
     );
@@ -639,7 +639,7 @@ function LookaheadAuditCard() {
   const { verdict } = data;
   if (data.findings.length === 0) {
     return (
-      <Card title="Lookahead audit" action={replayChip}>
+      <Card title="Lookahead Audit" action={replayChip}>
         <Empty>
           No findings yet.{SENTENCE_GAP}The weekly audit samples matured decisions once they clear the outcome
           horizon; nothing is estimated in the meantime.
@@ -660,7 +660,7 @@ function LookaheadAuditCard() {
 
   return (
     <Card
-      title="Lookahead audit"
+      title="Lookahead Audit"
       action={
         <div className="flex items-center gap-2">
           {replayChip}
@@ -748,11 +748,11 @@ function CriticFailureStat({ criticFailure }: { criticFailure: RedTeamEfficacySn
     : undefined;
   return (
     <Stat
-      label={`Critic failure rate (${criticFailure?.windowDays ?? 30}d)`}
+      label={`Critic Failure Rate (${criticFailure?.windowDays ?? 30}d)`}
       value={reviews > 0 ? fmtPct(criticFailure?.failureRatePct ?? 0, 1) : <Dash />}
       sub={reviews > 0 ? [`${failures}/${reviews} reviews failed`, topText].filter(Boolean).join(" · ") : "no reviews attempted in the window"}
       tone={failures > 0 ? "neg" : reviews > 0 ? "pos" : "muted"}
-      title="Of the proposals whose adversarial review was attempted (a redTeamVerdict exists), the share where the review FAILED to run (timeout, provider error, rate limit, malformed response). User-wide across accounts — critic failures are a model/config condition. Proposals below every review trigger are not counted."
+      title="Of the proposals whose adversarial review was attempted (a redTeamVerdict exists), the share where the review FAILED to run (timeout, provider error, rate limit, malformed response).  User-wide across accounts — critic failures are a model/config condition.  Proposals below every review trigger are not counted."
     />
   );
 }
@@ -760,7 +760,7 @@ function CriticFailureStat({ criticFailure }: { criticFailure: RedTeamEfficacySn
 function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot | undefined }) {
   if (!efficacy) {
     return (
-      <Card title="Red Team veto efficacy">
+      <Card title="Red Team Veto Efficacy">
         <Empty>Select an account to score Red Team history.</Empty>
       </Card>
     );
@@ -768,7 +768,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
 
   if (efficacy.vetoDecisions === 0) {
     return (
-      <Card title="Red Team veto efficacy">
+      <Card title="Red Team Veto Efficacy">
         <Empty>No Red Team veto decisions recorded yet.</Empty>
         {/* Critic health must not hide behind an empty veto history — a batch of failed reviews
             with zero vetoes is exactly the "nobody sees it in aggregate" case (#2552). */}
@@ -787,7 +787,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
 
   return (
     <Card
-      title="Red Team veto efficacy"
+      title="Red Team Veto Efficacy"
       action={
         <Chip
           tone={sampleTier === "ready" ? "pos" : sampleTier === "caution" ? "warn" : "muted"}
@@ -799,43 +799,43 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <Stat
-          label="Veto decisions"
+          label="Veto Decisions"
           value={efficacy.vetoDecisions}
           sub={`${efficacy.totalVetoes} blocking · ${efficacy.appliedOverrideVetoes}/${efficacy.overrideVetoes} overrides applied`}
-          title="Opening-side Red Team veto decisions only. Blocking vetoes keep the trade out; applied overrides proceed on a logged autonomy thesis and are not counted as missed opportunities. Survived Red Team reviews are not persisted in this metric."
+          title="Opening-side Red Team veto decisions only.  Blocking vetoes keep the trade out; applied overrides proceed on a logged autonomy thesis and are not counted as missed opportunities.  Survived Red Team reviews are not persisted in this metric."
         />
         <Stat
-          label="Resolved blocking vetoes"
+          label="Resolved Blocking Vetoes"
           value={efficacy.totalVetoes > 0 ? `${efficacy.maturedVetoes}/${efficacy.totalVetoes}` : <Dash />}
           sub={efficacy.totalVetoes > 0 ? efficacy.coverage : "no blocking vetoes recorded"}
-          title="Blocking vetoes whose forward return actually resolved. Unresolvable names stay disclosed instead of disappearing from the denominator."
+          title="Blocking vetoes whose forward return actually resolved.  Unresolvable names stay disclosed instead of disappearing from the denominator."
         />
         <Stat
-          label="Applied override share"
+          label="Applied Override Share"
           value={fmtPct(efficacy.overrideSharePct, 1)}
           sub={efficacy.appliedOverrideVetoes > 0 ? `${efficacy.appliedOverrideVetoes} applied` : "none applied"}
-          title="Share of opening-side Red Team veto decisions where the Socratic override path actually applied. Refused overrides and later blocks are not counted as applied."
+          title="Share of opening-side Red Team veto decisions where the Socratic override path actually applied.  Refused overrides and later blocks are not counted as applied."
         />
         <Stat
-          label="Avoided losers"
+          label="Avoided Losers"
           value={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? fmtPct(efficacy.vetoValueAddRate, 1) : <Dash />}
           sub={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "resolved blocking vetoes" : `needs >=${RED_TEAM_EFFICACY_MIN_RESOLVED} resolved vetoes`}
           tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "pos" : "muted"}
-          title="Among resolved blocking vetoes, how often the vetoed trade would have lost money. Higher is better for the reviewer."
+          title="Among resolved blocking vetoes, how often the vetoed trade would have lost money.  Higher is better for the reviewer."
         />
         <Stat
-          label="Missed winners"
+          label="Missed Winners"
           value={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? fmtPct(efficacy.survivorRiskHitRate, 1) : <Dash />}
           sub={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "resolved blocking vetoes" : `needs >=${RED_TEAM_EFFICACY_MIN_RESOLVED} resolved vetoes`}
           tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "neg" : "muted"}
           title="Among resolved blocking vetoes, how often the veto killed a trade that would have made money."
         />
         <Stat
-          label="Avg vetoed trade return"
+          label="Avg Vetoed Trade Return"
           value={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? fmtPct(efficacy.avgReturnPct, 2, true) : <Dash />}
           sub={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? "negative = good for the veto" : `needs >=${RED_TEAM_EFFICACY_MIN_RESOLVED} resolved vetoes`}
           tone={efficacy.maturedVetoes >= RED_TEAM_EFFICACY_MIN_RESOLVED ? (efficacy.avgReturnPct < 0 ? "pos" : efficacy.avgReturnPct > 0 ? "neg" : "muted") : "muted"}
-          title="Average side-adjusted forward return of the trades the blocking veto kept out. Negative means the veto avoided losses; positive means it missed winners."
+          title="Average side-adjusted forward return of the trades the blocking veto kept out.  Negative means the veto avoided losses; positive means it missed winners."
         />
         <CriticFailureStat criticFailure={efficacy.criticFailure} />
       </div>
@@ -843,7 +843,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <div>
           <div className="mb-1.5 flex items-center gap-2">
-            <div className="con-card-title">By reviewer attribution</div>
+            <div className="con-card-title">By Reviewer Attribution</div>
             <Chip tone="muted" title="Rows without a persisted reviewer model are shown as unattributed, never backfilled from current settings.">
               persisted only
             </Chip>
@@ -859,7 +859,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
                     <th className="num">n</th>
                     <th className="num">Avoided</th>
                     <th className="num">Missed</th>
-                    <th className="num" title="Average side-adjusted vetoed-trade return. Negative is good for the veto.">Avg</th>
+                    <th className="num" title="Average side-adjusted vetoed-trade return.  Negative is good for the veto.">Avg</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -906,7 +906,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
 
         <div>
           <div className="mb-1.5 flex items-center gap-2">
-            <div className="con-card-title">Recent resolved vetoes</div>
+            <div className="con-card-title">Recent Resolved Vetoes</div>
             <Chip tone="muted" title="Most recent resolved blocking vetoes first. Positive means the veto killed a would-have-worked trade; negative means it kept out a loser.">
               blocking only
             </Chip>
@@ -922,7 +922,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
                     <th>Side</th>
                     <th>Thesis</th>
                     <th>Red Team</th>
-                    <th className="num" title="Side-adjusted forward return after the veto. Negative = the veto avoided a loser.">Return</th>
+                    <th className="num" title="Side-adjusted forward return after the veto.  Negative = the veto avoided a loser.">Return</th>
                     <th>Readout</th>
                   </tr>
                 </thead>
@@ -985,9 +985,9 @@ function BucketCard({
   unmatchedClosingFills?: number;
 }) {
   const realizedBasisNote =
-    "All-time, app-booked closed lots (this app's own FIFO lot ledger). Exits of positions this app did not open — pre-app holdings, manual trades — are not included.";
+    "All-time, app-booked closed lots (this app's own FIFO lot ledger).  Exits of positions this app did not open — pre-app holdings, manual trades — are not included.";
   const unrealizedBasisNote =
-    "This app's lot ledger: average entry price of app-booked open lots × quantity, marked to the latest known price. May differ from your broker's own cost-basis figure for positions built partly outside this app.";
+    "This app's lot ledger: average entry price of app-booked open lots × quantity, marked to the latest known price.  May differ from your broker's own cost-basis figure for positions built partly outside this app.";
   return (
     <Card title={title}>
       <div className="grid grid-cols-2 gap-3">
@@ -1020,14 +1020,14 @@ function BucketCard({
           </div>
         </div>
         <div>
-          <div className="con-card-title" title="Share of CLOSED lots that were profitable. Shows — until this bucket has closed at least one lot — a 0% here would otherwise be indistinguishable from “no trades closed yet”.">
-            Win rate
+          <div className="con-card-title" title="Share of CLOSED lots that were profitable.  Shows — until this bucket has closed at least one lot — a 0% here would otherwise be indistinguishable from “no trades closed yet”.">
+            Win Rate
           </div>
           <div className="con-num mt-0.5">{closedLotCount > 0 && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
         </div>
         <div>
-          <div className="con-card-title" title="Capital-weighted realized return across closed lots (sum of P&amp;L ÷ sum of entry notional). Not the same as account NAV change — open positions and cash are excluded. Unweighted trade averages were retired because small round-trips dominated. The SPY panel below is the account equity time-weighted return.">Avg return / closed capital</div>
-          <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices. It is not adjusted for SPY or market beta.">
+          <div className="con-card-title" title="Capital-weighted realized return across closed lots (sum of P&amp;L ÷ sum of entry notional).  Not the same as account NAV change — open positions and cash are excluded.  Unweighted trade averages were retired because small round-trips dominated.  The SPY panel below is the account equity time-weighted return.">Avg Return / Closed Capital</div>
+          <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices.  It is not adjusted for SPY or market beta.">
             {closedLotCount > 0 && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
           </div>
         </div>
@@ -1037,7 +1037,7 @@ function BucketCard({
         {curve.length >= 2 && (
           <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Raw account equity — includes any deposits/withdrawals, so a transfer moves this line without being a
-            gain or loss. The market comparison below adjusts for detected transfers.
+            gain or loss.  The market comparison below adjusts for detected transfers.
           </p>
         )}
       </div>
@@ -1067,7 +1067,7 @@ function ScorecardCard({
                 <th>{nameLabel}</th>
                 <th className="num">n</th>
                 <th className="num">Win</th>
-                <th className="num" title="Raw average realized return per closed lot in this group, not benchmark-relative. Use the SPY panel for excess return.">Avg</th>
+                <th className="num" title="Raw average realized return per closed lot in this group, not benchmark-relative.  Use the SPY panel for excess return.">Avg</th>
                 <th className="num">P&amp;L</th>
               </tr>
             </thead>
@@ -1079,7 +1079,7 @@ function ScorecardCard({
                     <td className="font-semibold">{row.name}</td>
                     <td className="num con-num">{row.trades}</td>
                     <td className="num con-num">{fmtPct(row.winRate, 0)}</td>
-                    <td className="num" title="Raw average realized return for this thesis/regime group. Positive means the closed lots made money in their own direction; it is not SPY-relative.">
+                    <td className="num" title="Raw average realized return for this thesis/regime group.  Positive means the closed lots made money in their own direction; it is not SPY-relative.">
                       <SignedText value={row.avgReturnPct}>{fmtPct(row.avgReturnPct, 2, true)}</SignedText>
                     </td>
                     <td className="num">
@@ -1127,20 +1127,20 @@ function TaxBlock() {
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
-          label={`Short-term realized ${tax.taxYear}${subtractFromResults && !ira ? " (net)" : ""}`}
+          label={`Short-Term Realized ${tax.taxYear}${subtractFromResults && !ira ? " (net)" : ""}`}
           value={fmtSignedMoney(shortTermDisplay)}
         />
-        <Stat label={`Long-term realized${subtractFromResults && !ira ? " (net)" : ""}`} value={fmtSignedMoney(longTermDisplay)} />
-        <Stat label="Disallowed wash-sale loss" value={fmtMoney(tax.disallowedWashSaleLoss)} />
-        <Stat label="Estimated tax liability" value={fmtMoney(tax.estimatedTaxLiability)} sub={`ST ${fmtMoney(tax.estimatedShortTermTax)} · LT ${fmtMoney(tax.estimatedLongTermTax)}`} />
+        <Stat label={`Long-Term Realized${subtractFromResults && !ira ? " (net)" : ""}`} value={fmtSignedMoney(longTermDisplay)} />
+        <Stat label="Disallowed Wash-Sale Loss" value={fmtMoney(tax.disallowedWashSaleLoss)} />
+        <Stat label="Estimated Tax Liability" value={fmtMoney(tax.estimatedTaxLiability)} sub={`ST ${fmtMoney(tax.estimatedShortTermTax)} · LT ${fmtMoney(tax.estimatedLongTermTax)}`} />
       </div>
 
       {tax.lockedSymbols.length > 0 && (
         <div>
-          <div className="con-card-title mb-1">Wash-sale lockouts (all your accounts)</div>
+          <div className="con-card-title mb-1">Wash-Sale Lockouts (All Your Accounts)</div>
           <div className="flex flex-wrap gap-1.5">
             {tax.lockedSymbols.map((s) => (
-              <Chip key={s} tone="warn" title={ira ? "A taxable account realized a loss in this symbol. Ignore does not constrain this IRA. Auto weighs it. Block refuses. Minimum loss is optional." : "Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically."}>
+              <Chip key={s} tone="warn" title={ira ? "A taxable account realized a loss in this symbol.  Ignore does not constrain this IRA.  Auto weighs it.  Block refuses.  Minimum loss is optional." : "Rebuying within 30 days of the loss would forfeit the loss deduction.  The buy gate enforces this automatically."}>
                 <SymbolButton symbol={s} className="text-inherit" /> locked
               </Chip>
             ))}
@@ -1150,7 +1150,7 @@ function TaxBlock() {
 
       {tax.openLots.length > 0 && (
         <div>
-          <div className="con-card-title mb-1">Open lots — days to long-term treatment</div>
+          <div className="con-card-title mb-1">Open Lots — Days to Long-Term Treatment</div>
           <div className="overflow-x-auto">
             <table className="con-table">
               <thead>
@@ -1175,7 +1175,7 @@ function TaxBlock() {
                           {lot.ledgerMismatch && (
                             <Chip
                               tone="warn"
-                              title="This symbol's recorded lots disagree with the live broker position (wrong side, wrong size, or no position at all). Its lot-derived figures are suppressed and it is excluded from wash-sale and early-exit tax math."
+                              title="This symbol's recorded lots disagree with the live broker position (wrong side, wrong size, or no position at all).  Its lot-derived figures are suppressed and it is excluded from wash-sale and early-exit tax math."
                             >
                               ledger mismatch
                             </Chip>
@@ -1213,7 +1213,7 @@ function TaxBlock() {
 
       {tax.harvestCandidates.length > 0 && (
         <div>
-          <div className="con-card-title mb-1">Loss-harvest candidates</div>
+          <div className="con-card-title mb-1">Loss-Harvest Candidates</div>
           <div className="flex flex-wrap gap-1.5">
             {tax.harvestCandidates.slice(0, 8).map((h) => (
               <Chip key={h.symbol} tone="muted">
