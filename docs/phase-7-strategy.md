@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-21 Gather deadline must abort + last-good tape
+
+Ops snapshot 2026-08-21 19:18Z: Roth 12 and Paper 27 consecutive `strategy gather timeout` after both completed the prior close (20:16Z / 20:22Z).  Scheduler was ticking.  LLM keys were configured.  Live sha `e0a4959a` already included #2852 (Robinhood max-10) and #2854 (no Pinecone inventory).  The 8-minute gather `withDeadline` was a pure race: the run failed and the Nasdaq/enrichment/broker walk kept going, so the next account's gather stacked on top until nothing finished.  `gatherStrategyMarket` now aborts that controller, stops cascade/enrichment waves on the signal, and if a last completed MarketScan exists continues the run with that real tape plus a 45s quote refresh so Green can start.  No last-good row still fails the run.  Do not raise the 8-minute cap as the fix.  Rollout: `docs/rollouts/2026-08-21-gather-timeout-abort.md`.
+
 ## 2026-08-21 Native weekly screens (advisory DATA)
 
 Green may see `weeklyScreens`: native large-cap value (trailing P/E ≤ 10, within 10% of the 52-week low) and 5-day momentum names from THIS account's scan tape.  Compacted next to `marketSignals`.  Named in the DATA-NOT-COMMAND boundary.  Never a standalone trigger and never a reason to change risk limits or sizing.  Prompt `agentic-strategy@2.15.0`.  Engine: `src/lib/weekly-market-digest.ts`.  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
