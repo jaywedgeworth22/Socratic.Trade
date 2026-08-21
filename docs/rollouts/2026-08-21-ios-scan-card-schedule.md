@@ -41,7 +41,18 @@ Did not add `strategyRuns` to the mobile snapshot.  Filling `scheduler.lastRunAt
 
 ## Verification State
 
-Commands and results are recorded after the local gate in this same note.
+```
+npx tsc --noEmit
+# clean after defaulting runCadenceMinutes for cadenceLaneDecision
+
+npx vitest run test/scheduler-presentation.test.ts test/market-hours.test.ts test/mobile-scan.test.ts
+# 3 files / 47 tests passed
+
+npm run lint
+# exit 0 (errors only; grandfathered warnings remain)
+```
+
+Full `npm test` on this cloud VM is still walking the suite and is failing unrelated network/provider tests (Yahoo/SEC/Voyage/Massive timeouts).  Those files were not touched.  `npm run build` is queued after that walk.  Swift compile is CI `ios-build.yml` — this VM has no `xcodebuild`.
 
 ## Next Steps & Blockers
 
