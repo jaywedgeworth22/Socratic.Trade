@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-08-21 CURSOR — light pill provider buttons, matching monochrome marks
+
+Owner: keep the light Google button look, apply it to all three providers, same style
+logo on Google / GitHub / Apple.  Do not add email/password.  Passkey left as a maybe.
+
+Website and iOS now share one white (dark: near-black) capsule with a hairline border,
+soft shadow, centered icon + label, and ink-colored marks.  OAuth actions unchanged.
+
+Branch `cursor/login-light-provider-buttons`.  Rollout:
+`docs/rollouts/2026-08-21-login-light-provider-buttons.md`.
+
+# Current Status
+
 ## 2026-08-21 CURSOR — adaptive-tabs follow-ups: unhang ios-build + run XCTests
 
 Nobody had claimed `docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`.  Remote Control cannot start this work: Cursor wants a private worker and this repo has none (failed agent `bc-c04cab0c`).  Hosted Linux did the CI slice.

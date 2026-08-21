@@ -2,7 +2,8 @@ import AuthenticationServices
 import SwiftUI
 
 /// Native login — visual parity with `app/login/page.tsx`:
-/// candlestick wordmark, accent-dot value bullets, Google (accent) / GitHub (outline) / Apple.
+/// candlestick wordmark, accent-dot value bullets, and one light pill per
+/// provider with matching monochrome marks (Google / GitHub / Apple).
 struct LoginView: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var store: MobileStore
@@ -128,7 +129,7 @@ struct LoginView: View {
                 ink: googleInk,
                 action: { beginWebAuth(provider: "google") }
             ) {
-                GoogleMark()
+                GoogleMark(ink: googleInk)
             }
             .accessibilityHint("Opens the secure Socratic Trade sign-in page")
 
@@ -161,7 +162,7 @@ struct LoginView: View {
     }
 
     /// Shared sign-in button metrics — every provider button renders at the same
-    /// width, height, and corner radius; only the branding inside differs.
+    /// width, height, and pill; only the branding inside differs.
     private static let contentWidth: CGFloat = 352
     /// Owner 2026-08-20: the login wordmark at 80% of the content column.
     private static let brandWidth: CGFloat = (352 - 16) * 0.8
@@ -174,36 +175,26 @@ struct LoginView: View {
     // 44 is also Apple's own recommended default height and the iOS minimum tap target.
     private static let buttonHeight: CGFloat = 44
     private static let buttonTitleSize: CGFloat = 19
-    private static let buttonRadius: CGFloat = 10
-    /// Fixed logo column, so all three marks sit on one optical axis and all three titles
-    /// start at the same x down the stack.
+    /// Fixed logo column, so all three marks share one optical size.
     private static let logoSlot: CGFloat = 20
-    /// Google's documented iOS padding for a custom Sign in with Google button: 16pt before
-    /// the logo, 12pt after it.  Adopted for all three rows — following Google's spec is
-    /// also what makes the stack line up.
-    private static let logoLeading: CGFloat = 16
     private static let logoGap: CGFloat = 12
 
     /// ONE button for all three providers.  The provider supplies a mark, a title, and an
-    /// ink colour; nothing else varies — same height, radius, fill, border, type ramp and
-    /// logo column.  That uniformity is the whole point, and it is also what each
-    /// provider's own guidelines happen to ask for:
+    /// ink colour; nothing else varies — same height, pill, fill, border, type ramp and
+    /// logo size.  Owner 2026-08-21: the light Google pill (white fill, hairline border,
+    /// soft shadow, icon + label grouped in the middle) with the same monochrome mark
+    /// style on Google, GitHub, and Apple.  Each provider's hard rules still hold:
     ///
-    ///  * **Google** mandates one of three themes for a custom button.  This is their Light
-    ///    theme verbatim — fill #FFFFFF, 1px inside stroke #747775, title #1F1F1F — and
-    ///    their Dark theme (#131314 / #8E918F / #E3E3E3) in dark mode.  The teal button this
-    ///    replaces broke an explicit "Don't: put the standard color Google 'G' icon on a
-    ///    colored background other than light, dark, or neutral".  Google also asks that
-    ///    their button be "at least as prominently" displayed as other providers and of
-    ///    "approximately the same size and similar visual weight" — which a uniform row is.
-    ///  * **Apple** permits a custom button and names this exact motivation: "you may want
-    ///    to align logos across multiple sign-in buttons".  Its hard constraints are that
-    ///    the background stay black or white and the logo and title both be black or both
-    ///    white — hence `ink` is pure black/white on that row only, while Google keeps its
-    ///    specified #1F1F1F.  The difference is imperceptible and each row obeys its own
-    ///    provider.  Apple explicitly allows the bezel stroke and a non-system title font.
-    ///  * **GitHub** imposes no button rules at all.  Its only constraint is on the mark:
-    ///    the Invertocat, unmodified, in black or white.
+    ///  * **Google** asks that a custom button sit on light, dark, or neutral — not a
+    ///    colored brand fill.  White / near-black pills satisfy that.  The four-color G
+    ///    is dropped so the mark matches GitHub and Apple; the letterform is unchanged.
+    ///  * **Apple** permits a custom button specifically "to align logos across multiple
+    ///    sign-in buttons".  Background stays black or white, logo and title both black
+    ///    or both white — hence `ink` is pure black/white on that row only, while Google
+    ///    keeps #1F1F1F.  The bezel stroke, non-system title font, and capsule radius
+    ///    are all allowed.  Title stays 43% of height (19pt on 44pt).
+    ///  * **GitHub** imposes no button rules.  The Invertocat stays unmodified, black or
+    ///    white.
     private func providerButton<Mark: View>(
         title: String,
         ink: Color,
@@ -217,14 +208,12 @@ struct LoginView: View {
                 Text(title)
                     .font(.custom(AppFont.regular, size: Self.buttonTitleSize, relativeTo: .body).weight(.medium))
                     .foregroundStyle(ink)
-                Spacer(minLength: 0)
             }
-            .padding(.leading, Self.logoLeading)
-            .padding(.trailing, Self.logoLeading)
             .frame(maxWidth: .infinity)
             .frame(height: Self.buttonHeight)
             .background(providerFill)
-            .contentShape(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous))
+            .contentShape(Capsule(style: .continuous))
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.25 : 0.08), radius: 2, y: 1)
         }
         // Without this the system's own bordered style paints a second, larger rounded
         // rectangle BEHIND this one.  That was the "strange sides" — a grey ghost box
@@ -234,22 +223,24 @@ struct LoginView: View {
         .disabled(store.isSigningIn)
     }
 
-    /// Google's custom-button colour table, used for every row.
+    /// Light pill used for every row — white on the default (light) theme, Google's
+    /// dark fill when the owner has chosen dark.  Hairline is lighter than Google's
+    /// #747775 spec so the stack matches the reference light Google button.
     @ViewBuilder
     private var providerFill: some View {
-        RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
+        Capsule(style: .continuous)
             .fill(Color(uiColor: UIColor { traits in
                 traits.userInterfaceStyle == .dark
                     ? UIColor(red: 0x13 / 255, green: 0x13 / 255, blue: 0x14 / 255, alpha: 1)
                     : UIColor.white
             }))
             .overlay {
-                RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
+                Capsule(style: .continuous)
                     .strokeBorder(
                         Color(uiColor: UIColor { traits in
                             traits.userInterfaceStyle == .dark
-                                ? UIColor(red: 0x8E / 255, green: 0x91 / 255, blue: 0x8F / 255, alpha: 1)
-                                : UIColor(red: 0x74 / 255, green: 0x77 / 255, blue: 0x75 / 255, alpha: 1)
+                                ? UIColor(white: 1, alpha: 0.18)
+                                : UIColor(white: 0, alpha: 0.12)
                         }),
                         lineWidth: 1
                     )
@@ -430,18 +421,17 @@ struct LoginView: View {
 // MARK: - Provider marks (match web button icons)
 
 private struct GoogleMark: View {
+    var ink: Color
+
     var body: some View {
-        // Multicolor "G" ring — Google brand colors from app/login/page.tsx GoogleIcon.
+        // Same G letterform as `app/login/page.tsx` GoogleIcon, drawn in the
+        // button ink so Google / GitHub / Apple share one monochrome mark style.
         Canvas { context, size in
-            let blue = Color(red: 0x42 / 255, green: 0x85 / 255, blue: 0xF4 / 255)
-            let green = Color(red: 0x34 / 255, green: 0xA8 / 255, blue: 0x53 / 255)
-            let yellow = Color(red: 0xFB / 255, green: 0xBC / 255, blue: 0x05 / 255)
-            let red = Color(red: 0xEA / 255, green: 0x43 / 255, blue: 0x35 / 255)
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
             let radius = size.width * 0.42
             let lw = size.width * 0.18
 
-            func arc(_ start: Double, _ end: Double, _ color: Color) {
+            func arc(_ start: Double, _ end: Double) {
                 var p = Path()
                 p.addArc(
                     center: center,
@@ -450,12 +440,12 @@ private struct GoogleMark: View {
                     endAngle: .degrees(end),
                     clockwise: false
                 )
-                context.stroke(p, with: .color(color), style: StrokeStyle(lineWidth: lw, lineCap: .butt))
+                context.stroke(p, with: .color(ink), style: StrokeStyle(lineWidth: lw, lineCap: .butt))
             }
-            arc(-35, 20, blue)
-            arc(20, 120, green)
-            arc(120, 220, yellow)
-            arc(220, 325, red)
+            arc(-35, 20)
+            arc(20, 120)
+            arc(120, 220)
+            arc(220, 325)
             context.fill(
                 Path(CGRect(
                     x: size.width * 0.48,
@@ -463,7 +453,7 @@ private struct GoogleMark: View {
                     width: size.width * 0.42,
                     height: size.width * 0.16
                 )),
-                with: .color(blue)
+                with: .color(ink)
             )
         }
         .accessibilityHidden(true)
