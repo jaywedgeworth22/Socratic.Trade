@@ -146,7 +146,7 @@ describe("console live-data derivations", () => {
     ];
 
     const selected = selectEquityWindow(points, new Date("2026-07-04T16:00:00.000Z"));
-    expect(selected.label).toBe("Intraday mark-to-market");
+    expect(selected.label).toBe("Intraday Mark-to-Market");
     expect(selected.points).toEqual(points.slice(1));
   });
 
@@ -158,7 +158,7 @@ describe("console live-data derivations", () => {
     }));
 
     const selected = selectEquityWindow(points, new Date("2026-07-04T16:00:00.000Z"));
-    expect(selected.label).toBe("Recent equity");
+    expect(selected.label).toBe("Recent Equity");
     expect(selected.points).toHaveLength(24);
     expect(selected.points[0]).toEqual(points[6]);
   });

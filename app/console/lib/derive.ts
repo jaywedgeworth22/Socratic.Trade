@@ -769,7 +769,7 @@ export function deriveReadinessChecklist(snapshot: DashboardSnapshot): Readiness
       title: "Run once → review Proposals",
       detail: hasRunOnce
         ? "At least one strategy run or proposal is on the record."
-        : "Use Run once in the top bar to generate the first decision trace, then open Proposals to approve or reject.",
+        : "Use Run Once in the top bar to generate the first decision trace, then open Proposals to approve or reject.",
       complete: hasRunOnce,
       // No deep-link to empty Proposals: the action is chrome Run once, not this row.
       href: undefined,
@@ -987,6 +987,6 @@ export function selectEquityWindow(points: EquityCurvePoint[], now = new Date())
   if (points.length < 2) return { points, label: "Equity" };
   const sameDay = (iso: string) => dayKey(iso) === dayKey(now.toISOString());
   const intraday = points.filter((point) => sameDay(point.timestamp));
-  if (intraday.length >= 2) return { points: intraday, label: "Intraday mark-to-market" };
-  return { points: points.slice(-24), label: "Recent equity" };
+  if (intraday.length >= 2) return { points: intraday, label: "Intraday Mark-to-Market" };
+  return { points: points.slice(-24), label: "Recent Equity" };
 }

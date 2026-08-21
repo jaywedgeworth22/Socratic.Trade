@@ -25,6 +25,14 @@ Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settin
 **Risk:** some owner wire slugs (untilded `*-latest`, `google/gemini-flash-latest`, period-form `mistralai/mistral-medium-3.5`) may 404 on OpenRouter today.  Owner said do not keep sending the dated ids the table replaced.
 
 MERGED to `main` as #3003 squash `36f0a3c8` at 09:56 UTC (auto-deploy).  Rollout: `docs/rollouts/2026-08-21-llm-model-slugs.md`.
+## 2026-08-21 MONET - web adopts iOS's Title Case, closing the parity work
+
+The web half of iOS/web parity.  Web was the drifted side on four of the 21 audited divergences: the fleet copy doc names "Run Once", "Price Alerts", "Current Policy" and "Win Rate" as canonical and every one of those is the iOS spelling.
+
+The distinction that mattered: run STATE words are values and stay sentence case on both platforms.  "Winding down" and "Exit-only" were deliberately untouched, and derive.ts's RunStateWord union is unchanged.  Title-Casing a state word because the button beside it is Title Case would have desynced web from iOS in the opposite direction.
+
+Also reversed one implementer decision on review -- "Wind Down - This Sells" back to "Wind Down - this sells", because the appended clause is a warning phrase rather than part of the control's name.  The Title Case rule governs what a control is CALLED, not everything printed on it.
+
 ## 2026-08-21 CLAUDE - adaptive tab bar MERGED; the unfinished half is written down
 
 PR #2987 merged to `main` as `9298c29` at 06:56 UTC.  Owner ask delivered in full: more than

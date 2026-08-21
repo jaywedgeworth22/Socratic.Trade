@@ -231,7 +231,7 @@ export default function ConsoleHomePage() {
             <Card
               title={
                 <span className="flex items-center gap-1.5">
-                  <Zap size={13} /> Latest strategy run
+                  <Zap size={13} /> Latest Strategy Run
                 </span>
               }
               action={
@@ -263,7 +263,7 @@ export default function ConsoleHomePage() {
             <Card
               title={
                 <span className="flex items-center gap-1.5">
-                  <Zap size={13} /> Autonomous actions
+                  <Zap size={13} /> Autonomous Actions
                 </span>
               }
               action={
@@ -284,7 +284,7 @@ export default function ConsoleHomePage() {
           <Card
             title={
               <span className="flex items-center gap-1.5">
-                <TrendingUp size={13} /> Outcome learning loop
+                <TrendingUp size={13} /> Outcome Learning Loop
               </span>
             }
             action={
@@ -332,7 +332,7 @@ export default function ConsoleHomePage() {
               </div>
               <Stat label="Cash" value={fmtMoney(portfolio?.cash)} sub={`Buying power ${fmtMoney(portfolio?.buyingPower)}`} />
               <Stat
-                label="Closed thesis samples"
+                label="Closed Thesis Samples"
                 value={snapshot.thesisScorecard?.reduce((sum, t) => sum + t.trades, 0) ?? 0}
                 sub="basis for future framework changes"
               />
@@ -401,7 +401,7 @@ export default function ConsoleHomePage() {
           <Card
             title={
               <span className="flex items-center gap-1.5">
-                <GitBranch size={13} /> Framework improvements
+                <GitBranch size={13} /> Framework Improvements
               </span>
             }
             action={
@@ -427,7 +427,7 @@ export default function ConsoleHomePage() {
             )}
           </Card>
 
-          <Card title="Run cadence">
+          <Card title="Run Cadence">
             {/* Run once lives only in the chrome bar (labeled desktop / icon-only phone).
                 A second button here stacked under the sticky header on mobile — two "Run once"
                 controls within ~1 inch (owner report). Cadence status chips stay local. */}
@@ -477,7 +477,7 @@ function MarkToMarketCard({
     <Card
       title={
         <span className="flex items-center gap-1.5">
-          <TrendingUp size={13} /> Mark to market
+          <TrendingUp size={13} /> Mark to Market
         </span>
       }
     >
@@ -488,7 +488,7 @@ function MarkToMarketCard({
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Open market value" value={fmtMoney(markToMarket.marketValue)} />
+            <Stat label="Open Market Value" value={fmtMoney(markToMarket.marketValue)} />
             <div>
               <div className="con-card-title">Open P&amp;L</div>
               <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold leading-tight">
@@ -505,7 +505,7 @@ function MarkToMarketCard({
               </div>
             </div>
             <Stat label="Cash" value={fmtMoney(markToMarket.cash)} />
-            <Stat label="Buying power" value={fmtMoney(markToMarket.buyingPower)} />
+            <Stat label="Buying Power" value={fmtMoney(markToMarket.buyingPower)} />
           </div>
           <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -525,19 +525,19 @@ function MarkToMarketCard({
 function RiskUtilizationCard({ risk }: { risk: ReturnType<typeof deriveRiskUtilization> }) {
   const rows = [
     {
-      label: "Daily notional",
+      label: "Daily Notional",
       used: fmtMoney(risk.dailyNotional.used),
       limit: typeof risk.dailyNotional.limit === "number" ? fmtMoneyWhole(risk.dailyNotional.limit) : "no cap",
       pct: risk.dailyNotional.pct
     },
     {
-      label: "Opening orders",
+      label: "Opening Orders",
       used: String(risk.dailyOrders.used),
       limit: String(risk.dailyOrders.limit ?? 0),
       pct: risk.dailyOrders.pct
     },
     {
-      label: "Capital deployed",
+      label: "Capital Deployed",
       used: fmtMoney(risk.investedCapital.used),
       limit: typeof risk.investedCapital.limit === "number" ? fmtMoney(risk.investedCapital.limit) : "n/a",
       pct: risk.investedCapital.pct
@@ -547,7 +547,7 @@ function RiskUtilizationCard({ risk }: { risk: ReturnType<typeof deriveRiskUtili
     <Card
       title={
         <span className="flex items-center gap-1.5">
-          <Database size={13} /> Risk utilization
+          <Database size={13} /> Risk Utilization
         </span>
       }
     >

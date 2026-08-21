@@ -600,7 +600,7 @@ function AutonomyCard() {
     <Card title="Autonomy">
       <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
         Is the agent on, on what cadence, and can you run it now?{" "}
-        <strong className="font-semibold text-[color:var(--con-fg)]">Run once</strong> and Start/Stop live in the top
+        <strong className="font-semibold text-[color:var(--con-fg)]">Run Once</strong> and Start/Stop live in the top
         bar only (one control each — this panel explains state and blockers, it does not duplicate those buttons).
       </p>
 
@@ -677,7 +677,7 @@ function AutonomyCard() {
         </div>
       ) : (
         <p className="mb-4 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Preflight looks clear for a manual Run once (LLM key + account readiness). Scheduled autonomy still depends
+          Preflight looks clear for a manual Run Once (LLM key + account readiness). Scheduled autonomy still depends
           on run state above.
         </p>
       )}
