@@ -158,9 +158,9 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     for (const model of excluded) expect(MODEL_ROTATION_POOL).not.toContain(model);
     // Keep-in-sync check: the pool is exactly the curated catalog minus the exclusions.
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
-    expect(MODEL_ROTATION_POOL).toContain("gpt-5.4-mini");
-    expect(MODEL_ROTATION_POOL).toContain("claude-fable-5");
-    expect(MODEL_ROTATION_POOL).toContain("grok-4.5");
+    expect(MODEL_ROTATION_POOL).toContain("gpt-mini-latest");
+    expect(MODEL_ROTATION_POOL).toContain("claude-fable-latest");
+    expect(MODEL_ROTATION_POOL).toContain("grok-latest");
     expect(MODEL_ROTATION_POOL).toContain("mistral-small-latest");
     expect(MODEL_ROTATION_POOL).toContain("mistral-medium-latest");
     expect(MODEL_ROTATION_POOL).toContain("kimi-latest");
@@ -179,8 +179,8 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     clearOpenRouterModelCooldowns();
     const safe = applyRotationAvailabilityFailOpen(MODEL_ROTATION_POOL);
     expect(safe).toContain("kimi-latest");
-    expect(safe).toContain("claude-fable-5");
-    expect(safe).toContain("gpt-5.4-mini");
+    expect(safe).toContain("claude-fable-latest");
+    expect(safe).toContain("gpt-mini-latest");
     expect(safe).toContain("gemini-flash-latest");
     expect(safe.length).toBe(MODEL_ROTATION_POOL.length);
   });
@@ -211,13 +211,13 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     const result = applyRotationUserModelAllowlist(MODEL_ROTATION_POOL, versionedOnly);
     expect(result.emptiedByAllowlist).toBe(false);
     expect(result.pool.length).toBeGreaterThan(0);
-    expect(result.pool).toContain("claude-haiku-4.5");
+    expect(result.pool).toContain("claude-haiku-latest");
     expect(result.pool).toContain("gemini-flash-latest");
     expect(result.pool).toContain("mistral-small-latest");
-    expect(result.pool).toContain("grok-4.5");
-    expect(result.pool).toContain("gpt-5.4-mini");
+    expect(result.pool).toContain("grok-latest");
+    expect(result.pool).toContain("gpt-mini-latest");
     expect(result.pool).not.toContain("kimi-latest");
-    expect(result.pool).not.toContain("claude-fable-5");
+    expect(result.pool).not.toContain("claude-fable-latest");
   });
 
   // CHANGED (review finding llm-10): the fail-open floor here used to always subtract the
@@ -233,7 +233,7 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     expect(result.pool.length).toBe(MODEL_ROTATION_POOL.length);
     expect(result.pool).toContain("gpt-5.6-terra");
     expect(result.pool).toContain("kimi-latest");
-    expect(result.pool).toContain("claude-fable-5");
+    expect(result.pool).toContain("claude-fable-latest");
   });
 });
 
@@ -249,12 +249,12 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     expect(pool.length).toBeGreaterThan(0);
     
     // GPT and Claude models should be kept (in pool) since openai/anthropic keys are active
-    expect(pool).toContain("gpt-5.4-mini");
-    expect(pool).toContain("claude-opus-5");
+    expect(pool).toContain("gpt-mini-latest");
+    expect(pool).toContain("claude-opus-latest");
     
     // Gemini and DeepSeek models should be skipped since gemini/deepseek keys are missing
     expect(skipped).toContain("gemini-flash-latest");
-    expect(skipped).toContain("deepseek-v4-pro");
+    expect(skipped).toContain("deepseek-pro-latest");
   });
 
   it("keeps the credential-filtered pool when OpenRouter /models/user returns 429", async () => {
@@ -303,11 +303,11 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     expect(result.availability).toBe("checked");
     expect(result.availabilityError).toBeUndefined();
     expect(result.pool.length).toBeGreaterThan(0);
-    expect(result.pool).toContain("claude-haiku-4.5");
+    expect(result.pool).toContain("claude-haiku-latest");
     expect(result.pool).toContain("gemini-flash-latest");
-    expect(result.pool).toContain("grok-4.5");
+    expect(result.pool).toContain("grok-latest");
     expect(result.pool).not.toContain("kimi-latest");
-    expect(result.pool).not.toContain("claude-fable-5");
+    expect(result.pool).not.toContain("claude-fable-latest");
     vi.unstubAllGlobals();
     clearOpenRouterUserModelAvailabilityCache();
   });
@@ -605,7 +605,7 @@ describe("implicitGreenRotationFallbacks", () => {
       expect(pick?.model).not.toBe("gpt-5.6-terra");
     }
     expect(greenFirstPickPool(["gpt-5.6-terra"])).toEqual(["gpt-5.6-terra"]);
-    const fallbacks = implicitGreenRotationFallbacks(MODEL_ROTATION_POOL, "claude-haiku-4.5");
+    const fallbacks = implicitGreenRotationFallbacks(MODEL_ROTATION_POOL, "claude-haiku-latest");
     expect(fallbacks).toEqual(["gemini-flash-latest", "mistral-medium-latest"]);
     expect(fallbacks).not.toContain("gpt-5.6-terra");
     const afterTerra = implicitGreenRotationFallbacks(MODEL_ROTATION_POOL, "gpt-5.6-terra");

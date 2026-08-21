@@ -30,6 +30,7 @@ describe("llm-request — model resolution", () => {
     expect(isReasoningModel("openai/gpt-5.5")).toBe(true);
     expect(isReasoningModel("o4-mini")).toBe(true);
     expect(isReasoningModel("openai/gpt-4.1-mini")).toBe(false);
+    expect(isReasoningModel("openai/gpt-4o-mini")).toBe(false);
     expect(isReasoningModel("openai/gpt-4o")).toBe(false);
     expect(isReasoningModel(undefined)).toBe(false);
   });
@@ -38,7 +39,7 @@ describe("llm-request — model resolution", () => {
     // No model is a default for anything, ever. An explicit choice is used verbatim; a blank/unset
     // policy resolves to "" (unconfigured — callers fail closed), NOT the OPENAI_MODEL env and NOT
     // any hardcoded default.
-    vi.stubEnv("OPENAI_MODEL", "openai/gpt-4.1-mini");
+    vi.stubEnv("OPENAI_MODEL", "openai/gpt-4o-mini");
     expect(resolveOpenAiModel({ llmModel: "openai/gpt-5.5" })).toBe("openai/gpt-5.5");
     expect(resolveOpenAiModel({ llmModel: "  " })).toBe("");
     expect(resolveOpenAiModel(null)).toBe("");
@@ -54,7 +55,7 @@ describe("llm-request — model resolution", () => {
     expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "high")).toBe("medium");
     expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "xhigh")).toBe("medium");
     expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "low")).toBe("low");
-    expect(interactiveStrategyReasoningEffort("openai/gpt-4.1-mini", "high")).toBeUndefined();
+    expect(interactiveStrategyReasoningEffort("openai/gpt-4o-mini", "high")).toBeUndefined();
   });
 
   it("maps provider-specific reasoning controls by model family", () => {
@@ -131,7 +132,7 @@ describe("llm-request — model resolution", () => {
 
   it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
     // Non-reasoning model: base bound regardless of the requested effort.
-    expect(strategyLlmTimeoutMs("openai/gpt-4.1-mini", "high")).toBe(LLM_TIMEOUT_MS);
+    expect(strategyLlmTimeoutMs("openai/gpt-4o-mini", "high")).toBe(LLM_TIMEOUT_MS);
     // DeepSeek at the default (medium => none, thinking OFF): base bound (fast, no widening).
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "medium")).toBe(LLM_TIMEOUT_MS);
     // DeepSeek with an explicit high effort (thinking ON): widened past the base.
@@ -141,24 +142,24 @@ describe("llm-request — model resolution", () => {
     // Both bounds are env-tunable.
     vi.stubEnv("STRATEGY_LLM_TIMEOUT_MS", "30000");
     vi.stubEnv("STRATEGY_LLM_REASONING_TIMEOUT_MS", "200000");
-    expect(strategyLlmTimeoutMs("openai/gpt-4.1-mini", "high")).toBe(30000);
+    expect(strategyLlmTimeoutMs("openai/gpt-4o-mini", "high")).toBe(30000);
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBe(200000);
   });
 });
 
 describe("llm-request — withLlmRequestBounds", () => {
   it("classic models keep temperature and exact token cap (no reasoning_effort)", () => {
-    const chat = withLlmRequestBounds({ model: "openai/gpt-4.1-mini" }, "chat-completions", {
+    const chat = withLlmRequestBounds({ model: "openai/gpt-4o-mini" }, "chat-completions", {
       maxOutputTokens: 1500,
-      model: "openai/gpt-4.1-mini"
+      model: "openai/gpt-4o-mini"
     });
     expect(chat.temperature).toBe(0);
     expect(chat.max_completion_tokens).toBe(1500);
     expect("reasoning_effort" in chat).toBe(false);
 
-    const resp = withLlmRequestBounds({ model: "openai/gpt-4.1-mini" }, "responses", {
+    const resp = withLlmRequestBounds({ model: "openai/gpt-4o-mini" }, "responses", {
       maxOutputTokens: 1500,
-      model: "openai/gpt-4.1-mini"
+      model: "openai/gpt-4o-mini"
     });
     expect(resp.temperature).toBe(0);
     expect(resp.max_output_tokens).toBe(1500);
@@ -310,7 +311,7 @@ describe("llm-request — withLlmRequestBounds", () => {
 
   it("resolveLlmWireOutputCap exposes the ACTUAL wire cap for LLM_OUTPUT_TOKEN_CAPS.strategyProposal, matching what withLlmRequestBounds embeds in the body", () => {
     // Non-reasoning: no headroom, wire cap == the raw strategyProposal cap.
-    expect(resolveLlmWireOutputCap("chat-completions", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "openai/gpt-4.1-mini" }))
+    expect(resolveLlmWireOutputCap("chat-completions", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "openai/gpt-4o-mini" }))
       .toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
 
     // Gemini at medium reasoning effort: +4000 headroom on top of the 4000 base cap — the exact

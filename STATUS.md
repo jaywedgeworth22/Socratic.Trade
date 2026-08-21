@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-08-21 CURSOR — three-column LLM catalog (display / OpenRouter / native)
+
+Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settings, pickers, logs, and iOS Coach store **display slugs**.  Live OpenRouter calls send column 2 via `normalizeOpenRouterModelId` / `openRouterSlugFor`.  Direct-provider stubs use `nativeSlugFor` so a future native path cannot send an OpenRouter vendor path.  Older persisted ids (`gpt-5.4-mini`, `claude-sonnet-5`, `grok-4.5`, `deepseek-v4-flash`, `gemini-3.5-flash-lite`, …) alias onto the new display slugs.  Models not on the owner list are no longer advertised.  Congress.Trade has no cheap parallel catalog in a Cursor CT lane — follow-up only.
+
+**Risk:** some owner wire slugs (untilded `*-latest`, `google/gemini-flash-latest`, period-form `mistralai/mistral-medium-3.5`) may 404 on OpenRouter today.  Owner said do not keep sending the dated ids the table replaced.
+
+Branch `agent/cursor/llm-model-slugs`, worktree `~/apps/trading-cursor`.  Rollout: `docs/rollouts/2026-08-21-llm-model-slugs.md`.
 ## 2026-08-21 CLAUDE - adaptive tab bar MERGED; the unfinished half is written down
 
 PR #2987 merged to `main` as `9298c29` at 06:56 UTC.  Owner ask delivered in full: more than

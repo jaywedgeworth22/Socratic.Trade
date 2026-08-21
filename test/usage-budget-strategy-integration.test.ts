@@ -266,17 +266,17 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     const payload = enforcedAudits[0].payload as { action?: string; before?: { llmModel?: string }; after?: { llmModel?: string } };
     expect(payload.action).toBe("downgrade");
     expect(payload.before?.llmModel).toBe("openai/gpt-4o");
-    expect(payload.after?.llmModel).toBe("openai/gpt-5.4-mini");
+    expect(payload.after?.llmModel).toBe("openai/gpt-mini-latest");
 
     // The model actually used for the Bull call was the downgraded one.
-    expect(bullModelUsed).toBe("openai/gpt-5.4-mini");
+    expect(bullModelUsed).toBe("openai/gpt-mini-latest");
     // Finding 6: the Bear (Red Team) request also carried the downgraded model.
-    expect(redTeamModelUsed).toBe("openai/gpt-5.4-mini");
+    expect(redTeamModelUsed).toBe("openai/gpt-mini-latest");
 
     // The persisted proposal reflects the served (downgraded) model.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
-    expect(aaplProposal?.proposal.proposedByModel).toBe("openai/gpt-5.4-mini");
+    expect(aaplProposal?.proposal.proposedByModel).toBe("openai/gpt-mini-latest");
 
     // The downgrade was NOT persisted — the saved policy still has the owner's original model.
     const savedPolicy = getPolicy("local");
