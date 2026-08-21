@@ -205,7 +205,7 @@ export async function fetchDailyOHLC(
   rawSymbol: string,
   now: number = Date.now(),
   userId?: string,
-  opts?: { skipAppATier?: boolean },
+  opts?: { skipAppATier?: boolean; usageLabel?: string },
 ): Promise<OHLCBar[] | null> {
   const symbol = normalizeSymbol(rawSymbol);
   if (!symbol) return null;
@@ -283,22 +283,22 @@ export async function fetchDailyOHLC(
     {
       scope: cacheScopeForKeySource(keySources.massive.source, userId),
       sourceId: "massive",
-      fetch: () => fetchMassive(symbol, startDate, keySources.massive.key)
+      fetch: () => fetchMassive(symbol, startDate, keySources.massive.key, opts?.usageLabel)
     },
     {
       scope: cacheScopeForKeySource(keySources.roic.source, userId),
       sourceId: "roic",
-      fetch: () => fetchRoic(symbol, startDate, keySources.roic.key)
+      fetch: () => fetchRoic(symbol, startDate, keySources.roic.key, opts?.usageLabel)
     },
     {
       scope: cacheScopeForKeySource(keySources.tiingo.source, userId),
       sourceId: "tiingo",
-      fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key)
+      fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key, opts?.usageLabel)
     },
     {
       scope: cacheScopeForKeySource(keySources.marketstack.source, userId),
       sourceId: "marketstack",
-      fetch: () => fetchMarketstack(symbol, keySources.marketstack.key)
+      fetch: () => fetchMarketstack(symbol, keySources.marketstack.key, opts?.usageLabel)
     },
     { scope: "shared", sourceId: "yahoo-finance", fetch: () => fetchYahoo(symbol) }
   ];
@@ -448,7 +448,7 @@ export function parseRoicStockPrices(rows: unknown): OHLCBar[] {
  * (limit ≤1000). Shares the "roic" admitProviderRequests bucket with
  * RoicAiEnrichmentProvider so enrichment + history cannot jointly over-burn.
  */
-async function fetchRoic(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
+async function fetchRoic(symbol: string, startDate: string, key?: string, usageLabel?: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
   if ((process.env.ROIC_HISTORY_ENABLED ?? "on").toLowerCase() === "off") return null;
   const credKey = await apiKeyFingerprint(key);
@@ -491,20 +491,20 @@ async function fetchRoic(symbol: string, startDate: string, key?: string): Promi
         url = next;
       }
     }
-    recordProviderCall("roic", { service: "market-data", ok: all.length >= 2 });
+    recordProviderCall("roic", { service: "market-data", ok: all.length >= 2, label: usageLabel });
     // Dedupe by date (overlap across pages) keeping last write.
     const byDate = new Map<string, OHLCBar>();
     for (const b of all) byDate.set(String(b.time), b);
     const bars = [...byDate.values()].sort((a, b) => String(a.time).localeCompare(String(b.time)));
     return bars.length >= 2 ? bars : null;
   } catch {
-    recordProviderCall("roic", { service: "market-data", ok: false });
+    recordProviderCall("roic", { service: "market-data", ok: false, label: usageLabel });
     return null;
   }
 }
 
 /** Massive daily aggregates (Polygon-compatible REST). Generous limits — the preferred primary. */
-async function fetchMassive(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
+async function fetchMassive(symbol: string, startDate: string, key?: string, usageLabel?: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
   if ((process.env.MASSIVE_HISTORY_ENABLED ?? "on").toLowerCase() === "off") return null;
   if (!reserveMassiveRestCall()) return null;
@@ -513,7 +513,7 @@ async function fetchMassive(symbol: string, startDate: string, key?: string): Pr
   try {
     const url = `${base}/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/1/day/${startDate}/${to}?adjusted=true&sort=asc&limit=50000`;
     const json = await politeFetchJson<MassiveAggResponse>(url, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" } });
-    recordProviderCall("massive", { service: "market-data", ok: true });
+    recordProviderCall("massive", { service: "market-data", ok: true, label: usageLabel });
     const rows = json?.results ?? [];
     const bars: OHLCBar[] = [];
     for (const r of rows) {
@@ -522,7 +522,7 @@ async function fetchMassive(symbol: string, startDate: string, key?: string): Pr
     }
     return bars.length >= 2 ? bars : null;
   } catch {
-    recordProviderCall("massive", { service: "market-data", ok: false });
+    recordProviderCall("massive", { service: "market-data", ok: false, label: usageLabel });
     return null;
   }
 }
@@ -689,14 +689,14 @@ interface TiingoPriceRow {
  * history call (or vice versa) blow the hourly cap. Prefers adjOpen/High/Low/Close over the raw OHLC
  * (same technique fetchYahoo uses: scale raw O/H/L by adjClose/close so all four stay on one basis).
  */
-async function fetchTiingo(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
+async function fetchTiingo(symbol: string, startDate: string, key?: string, usageLabel?: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
   const credKey = await apiKeyFingerprint(key);
   if (admitProviderRequests("tiingo", credKey, 1) < 1) return null; // hourly/daily budget exhausted this pass
   try {
     const url = `https://api.tiingo.com/tiingo/daily/${symbol.toLowerCase()}/prices?startDate=${startDate}&token=${key}`;
     const json = await politeFetchJson<TiingoPriceRow[]>(url, { headers: { Authorization: `Token ${key}`, Accept: "application/json" } });
-    recordProviderCall("tiingo", { service: "market-data", ok: true });
+    recordProviderCall("tiingo", { service: "market-data", ok: true, label: usageLabel });
     const rows = Array.isArray(json) ? json : [];
     const bars: OHLCBar[] = [];
     for (const r of rows) {
@@ -718,7 +718,7 @@ async function fetchTiingo(symbol: string, startDate: string, key?: string): Pro
     }
     return bars.length >= 2 ? bars : null;
   } catch {
-    recordProviderCall("tiingo", { service: "market-data", ok: false });
+    recordProviderCall("tiingo", { service: "market-data", ok: false, label: usageLabel });
     return null;
   }
 }
@@ -736,12 +736,12 @@ interface MarketstackEodResponse {
 }
 
 /** Marketstack EOD — keyed fallback (free tier is monthly-capped, so secondary to Tradier). */
-async function fetchMarketstack(symbol: string, key?: string): Promise<OHLCBar[] | null> {
+async function fetchMarketstack(symbol: string, key?: string, usageLabel?: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
   try {
     const url = `https://api.marketstack.com/v1/eod?access_key=${key}&symbols=${encodeURIComponent(symbol)}&limit=1500&sort=ASC`;
     const json = await politeFetchJson<MarketstackEodResponse>(url, {});
-    recordProviderCall("marketstack", { service: "market-data", ok: true });
+    recordProviderCall("marketstack", { service: "market-data", ok: true, label: usageLabel });
     const rows = json?.data ?? [];
     const bars: OHLCBar[] = [];
     for (const r of rows) {
@@ -750,7 +750,7 @@ async function fetchMarketstack(symbol: string, key?: string): Promise<OHLCBar[]
     }
     return bars.length >= 2 ? bars : null;
   } catch {
-    recordProviderCall("marketstack", { service: "market-data", ok: false });
+    recordProviderCall("marketstack", { service: "market-data", ok: false, label: usageLabel });
     return null;
   }
 }
