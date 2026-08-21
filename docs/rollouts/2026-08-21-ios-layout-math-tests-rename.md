@@ -87,7 +87,7 @@ WrappingHStackTests.swift).
 - Mac / human: iPad Air 11" portrait + landscape screenshots, borrowed-slot check,
   Mac window-drag fallback (item A visual).  Local Grok brief:
   `docs/rollouts/2026-08-21-ios-adaptive-tabs-mac-qa.md` -- start from
-  `origin/main`, not this PR (now DIRTY vs main).
+  `origin/main`, not this PR (main merged onto the rename branch).
 - Owner: keep or drop tab auto-fill (item E).  Tuning knobs only if the bar feels
   wrong (item F).
 - Owner/ruleset: make `ios-build` required (board `830c892f`).

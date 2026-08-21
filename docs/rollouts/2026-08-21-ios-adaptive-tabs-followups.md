@@ -48,7 +48,7 @@ Run 32529663287 concluded `success` in ~2 minutes: `Using simulator: iPhone 17 P
 Screenshots (iPad Air 11" portrait/landscape, borrowed-slot behaviour, Mac window drag)
 still need a human on a Mac; CI cannot see the bar.  Cursor local is down -- local
 Grok should take them from `origin/main` (the tab bar is already #2987).  Do not
-wait on PR #3027 (DIRTY vs main as of 2026-08-21 23:05Z).  Paste-ready brief:
+wait on PR #3027 (`origin/main` merged onto that branch 2026-08-21).  Paste-ready brief:
 `docs/rollouts/2026-08-21-ios-adaptive-tabs-mac-qa.md`.
 
 ```bash

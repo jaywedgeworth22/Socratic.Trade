@@ -72,14 +72,14 @@ If `git worktree add` refuses because the path exists, use
 `~/apps/trading-grok-tabs-2` or inspect the existing dir first.  Do not
 `reset --hard` another seat.
 
-## 2. PR #3027 is optional and currently stuck
+## 2. PR #3027 is optional (main already merged)
 
 https://github.com/jaywedgeworth22/Socratic.Trade/pull/3027
 Branch `cursor/ios-layout-math-tests-rename-3110`.  HEAD as of 2026-08-21
 23:05Z: `bf172407`.  Auto-merge is armed (`--squash --auto`) but
-`mergeStateStatus` is **DIRTY** (conflicts with origin/main).  Conflicts
-seen: `docs/EFFORT-LOG.md` (keep both rows) and `.gitleaksignore` (keep both
-ignore fingerprints).  STATUS.md / PLAN.md may also overlap.
+`mergeStateStatus` was **DIRTY**; resolved 2026-08-21 by merging
+`origin/main` `b2ca4c14` (commit `a37a7b2e`).  Both EFFORT-LOG rows and both
+`.gitleaksignore` fingerprints were kept.  Re-check before you babysit.
 
 The six greens you may see (gitleaks, xcodebuild, pin, auto-merge helpers)
 are **not** the merge gate.  The required check is **`verify`**.  CI run
@@ -95,10 +95,10 @@ gh pr view 3027 --json state,mergeable,mergeStateStatus,autoMergeRequest,statusC
 gh run list --branch cursor/ios-layout-math-tests-rename-3110 --workflow=CI --limit 5
 ```
 
-To unstick: **merge** `origin/main` into that branch (no rebase, no
-force-push).  Keep every other agent's EFFORT-LOG row.  Do not `--admin`.
-Do not land from the main integration worktree.  If Cursor Cloud is already
-resolving it, leave it.
+Main is already merged on this branch.  If it goes DIRTY again, merge
+`origin/main` (no rebase, no force-push) and keep every other agent's
+EFFORT-LOG row.  Do not `--admin`.  Do not land from the main integration
+worktree.
 
 ## 3. What is already done (do not redo)
 
