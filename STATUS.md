@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
+
+New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.
+
 ## 2026-08-20 MONET - iOS/web parity resolved case by case, not synced one way
 
 Owner instruction was explicit that neither platform is assumed superior, and the audit bore that out: of 21 divergences, 9 adopt web, 6 KEEP BOTH, 4 adopt iOS, and 2 needed a third wording because both sides were wrong.  A blanket sync would have been wrong on 12 of 21.
