@@ -10,6 +10,8 @@ The 8-minute gather deadline was a pure `Promise.race`.  When it fired, `runStra
 
 `gatherStrategyMarket` now passes an `AbortController` into `withDeadline`, threads that signal through `scanMarket` enrichment and `fetchFreshQuotesCascade` levels, and if the live scan still times out reuses `newestPersistedMarketScan` (real last tape) plus a 45s quote refresh.  No last-good row still fails the run.  The run audits `strategy_gather_used_last_good`.
 
+The first revision dropped the signal on the paid/scarce enrichment waves (`paidContext` / `scarceContext` were `{ coveredFields }` only).  That is the Finnhub wave — 5 paced calls per symbol at ~1.2s — so an 8-minute abort left the queue running and the next account stacked another scan.  Paid/scarce now keep `signal`, Finnhub `getJson` combines it with the 6s per-call timeout, and `scanMarket` rethrows an aborted enrich instead of swallowing it as "Enrichment failed."
+
 - `src/lib/strategy-gather.ts` (new)
 - `src/lib/strategy.ts`
 - `src/lib/quotes-cascade.ts`

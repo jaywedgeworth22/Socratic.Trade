@@ -301,8 +301,27 @@ export interface EnrichmentContext {
    *  and blended. Absent/unknown source → don't skip (treat as a distinct vote). */
   analystSource?: Record<string, string>;
   /** Strategy gather / interactive scan deadline.  Checked between enrichment waves
-   *  so an abandoned 8-minute gather stops starting paid RapidAPI work. */
+   *  and on paced paid fetches so an abandoned 8-minute gather stops starting
+   *  Finnhub/RapidAPI work instead of finishing the queue behind a failed run. */
   signal?: AbortSignal;
+}
+
+function throwIfEnrichmentAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error("Enrichment cancelled.");
+}
+
+function combineAbortSignals(local: AbortSignal, parent?: AbortSignal): AbortSignal {
+  if (!parent) return local;
+  if (typeof AbortSignal.any === "function") return AbortSignal.any([local, parent]);
+  if (parent.aborted) return parent;
+  if (local.aborted) return local;
+  const combined = new AbortController();
+  const abort = () => combined.abort(local.aborted ? local.reason : parent.reason);
+  local.addEventListener("abort", abort, { once: true });
+  parent.addEventListener("abort", abort, { once: true });
+  return combined.signal;
 }
 
 export interface MarketEnrichmentProvider {
@@ -1331,11 +1350,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
-    if (context?.signal?.aborted) {
-      throw context.signal.reason instanceof Error
-        ? context.signal.reason
-        : new Error("Enrichment cancelled.");
-    }
+    throwIfEnrichmentAborted(context?.signal);
     this.contributingNames = new Set();
     this.lastCoverageReport = null;
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
@@ -1343,11 +1358,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     // so the first-wins merge below is unchanged regardless of how we fetched.
     type ProviderRun = { name: string; data: Record<string, SymbolEnrichment>; failure?: ProviderFailureReceipt };
     const run = (p: MarketEnrichmentProvider, syms: string[], runContext: EnrichmentContext | undefined = context): Promise<ProviderRun> => {
-      if (runContext?.signal?.aborted) {
-        throw runContext.signal.reason instanceof Error
-          ? runContext.signal.reason
-          : new Error("Enrichment cancelled.");
-      }
+      throwIfEnrichmentAborted(runContext?.signal);
       return p
         .enrich(syms, runContext)
         .then((data) => ({ name: p.name, data }))
@@ -1461,11 +1472,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       }
 
       // ── Wave B: paid non-scarce, gap-only ───────────────────────────────────
-      if (context?.signal?.aborted) {
-        throw context.signal.reason instanceof Error
-          ? context.signal.reason
-          : new Error("Enrichment cancelled.");
-      }
+      throwIfEnrichmentAborted(context?.signal);
       if (paidIndexes.length > 0) {
         const filledAfterFree = buildFilledBySymbol(freeIndexes);
         const gapSymbols = normalized.filter((symbol) =>
@@ -1483,7 +1490,11 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
               if (srcKey) analystSource[s] = srcKey;
             }
           }
-          const paidContext: EnrichmentContext = { coveredFields, analystSource };
+          const paidContext: EnrichmentContext = {
+            coveredFields,
+            analystSource,
+            signal: context?.signal
+          };
           const paidRuns = await Promise.all(
             paidIndexes.map((providerIndex) => {
               const provider = this.providers[providerIndex];
@@ -1539,11 +1550,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       });
     }
 
-    if (context?.signal?.aborted) {
-      throw context.signal.reason instanceof Error
-        ? context.signal.reason
-        : new Error("Enrichment cancelled.");
-    }
+    throwIfEnrichmentAborted(context?.signal);
     if (scarceIndexes.length > 0) {
       // Prior waves' actual fills. A provider that threw contributed `{}`, so its fields read as
       // NOT covered and the scarce tier can still step in — failure must never suppress failover.
@@ -1552,7 +1559,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         : legacyWaveOneIndexes;
       const filledBySymbol = buildFilledBySymbol(priorIndexes);
       const coveredFields = coveredFieldsFrom(filledBySymbol);
-      const scarceContext: EnrichmentContext = { coveredFields };
+      const scarceContext: EnrichmentContext = { coveredFields, signal: context?.signal };
       const scarceRuns = await Promise.all(
         scarceIndexes.map(async (providerIndex) => {
           const provider = this.providers[providerIndex];
@@ -3146,21 +3153,23 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     if (misses.length > 0) {
       for (let i = 0; i < misses.length; i += CONCURRENCY) {
         const chunk = misses.slice(i, i + CONCURRENCY);
+        throwIfEnrichmentAborted(context?.signal);
         await Promise.all(
           chunk.map(async (symbol) => {
+            throwIfEnrichmentAborted(context?.signal);
             try {
               // Run all Finnhub calls in parallel per symbol. When FINNHUB_DROP_RECOMMENDATION is on we skip
               // issuing the `stock/recommendation` HTTP call entirely (4 calls/symbol instead of 5); recRaw
               // resolves to null so no analyst rating is derived from Finnhub and the cascade backstops it.
               const recCall = dropRecommendation
                 ? Promise.resolve(null)
-                : this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`);
+                : this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`, context?.signal);
               const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
-                this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
-                this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
+                this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`, context?.signal),
+                this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`, context?.signal),
                 recCall,
-                this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
-                this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
+                this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`, context?.signal),
+                this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`, context?.signal)
               ]);
 
               // Company profile → sector + industry + company name. Computed BEFORE the news
@@ -3299,7 +3308,8 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     // cache, since that row predates this field and never had it written into it (mirrors the
     // Alpha Vantage EARNINGS_CALENDAR fallback's same deliberate decoupling from its own row cache).
     if (this.needsEarningsCalendar(normalized, context, result)) {
-      await this.ensureEarningsCalendar(now);
+      throwIfEnrichmentAborted(context?.signal);
+      await this.ensureEarningsCalendar(now, context?.signal);
       this.applyEarningsCalendar(normalized, context, now, result);
     }
 
@@ -3360,8 +3370,9 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
    * reserve from here — Finnhub's free tier is a generous 60/min (see the module doc comment
    * above), so this instance's own apiKey/pacer (this.getJson) is all that's needed.
    */
-  private async ensureEarningsCalendar(now: number): Promise<void> {
+  private async ensureEarningsCalendar(now: number, signal?: AbortSignal): Promise<void> {
     if (finnhubEarningsCalendarCache && finnhubEarningsCalendarCache.expiresAt > now) return;
+    throwIfEnrichmentAborted(signal);
     try {
       const from = new Date(now).toISOString().split("T")[0];
       const to = new Date(now + FINNHUB_EARNINGS_CALENDAR_WINDOW_DAYS * 24 * 60 * 60 * 1000)
@@ -3369,7 +3380,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
         .split("T")[0];
       // No `symbol=` param — the market-wide mode (see the module doc comment above) so this ONE
       // call covers every symbol the cascade could ever ask about this TTL window, not just this batch.
-      const json = await this.getJson(`${this.base}/calendar/earnings?from=${from}&to=${to}&token=${this.apiKey}`);
+      const json = await this.getJson(`${this.base}/calendar/earnings?from=${from}&to=${to}&token=${this.apiKey}`, signal);
       if (looksLikeFinnhubEarningsCalendar(json)) {
         finnhubEarningsCalendarCache = {
           expiresAt: now + FINNHUB_EARNINGS_CALENDAR_TTL_MS,
@@ -3392,7 +3403,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     }
   }
 
-  private async getJson(url: string): Promise<unknown> {
+  private async getJson(url: string, signal?: AbortSignal): Promise<unknown> {
     // Finnhub's free tier is 60 req/min; the 5-wide symbol chunking above fires 5
     // endpoints/symbol, so gate actual dispatch through the shared per-provider pacer
     // (see provider-rate-limit.ts) instead of bursting 25-wide per chunk. The
@@ -3400,11 +3411,13 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     // starts counting at actual dispatch time, not when this call joins the queue —
     // otherwise queue wait eats into the timeout and every request dispatched after ~6s
     // arrives already aborted.
+    throwIfEnrichmentAborted(signal);
     const response = await withProviderLimit(this.name, async () => {
+      throwIfEnrichmentAborted(signal);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 6000);
       try {
-        return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey });
+        return await fetchWithRetry(url, { cache: "no-store", signal: combineAbortSignals(controller.signal, signal) }, { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey });
       } finally {
         clearTimeout(timeout);
       }
