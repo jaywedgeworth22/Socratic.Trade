@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct HomeView: View {
     @Binding var selectedTab: AppTab
@@ -12,6 +13,7 @@ struct HomeView: View {
                     snapshot: snapshot,
                     openSettings: { presentedSheet = .settings }
                 )
+                .cardSpansAllColumns()
                 // Agent overview only during setup — once ready, ReadyHomeHero already
                 // shows account, state, and authority (duplicate card was pure noise).
                 AgentOverviewCard(snapshot: snapshot, showInlineReadiness: true)
@@ -19,6 +21,7 @@ struct HomeView: View {
                 ReadyHomeHero(snapshot: snapshot) {
                     selectedTab = .proposals
                 }
+                .cardSpansAllColumns()
             }
             StrategyControlsCard(snapshot: snapshot)
             PortfolioOverviewCard(snapshot: snapshot)
@@ -265,8 +268,18 @@ private struct ReadyHomeHero: View {
         }
     }
 
+    /// The hero spans every column, so its action would otherwise be drawn a full window wide.
+    /// The cap never binds on a phone — 520pt is wider than any phone card — so nothing about
+    /// the iPhone layout moves.
     @ViewBuilder
     private var primaryCTA: some View {
+        cta
+            .frame(maxWidth: ContentColumns.maximumActionWidth)
+            .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var cta: some View {
         if pendingCount > 0 {
             Button(action: onReviewProposals) {
                 Label(
@@ -545,7 +558,7 @@ private struct PortfolioOverviewCard: View {
         VStack(spacing: 10) {
             SectionHeading("Portfolio")
             if let portfolio = snapshot.portfolio {
-                LazyVGrid(columns: columns, spacing: 10) {
+                AppMetricGrid {
                     MetricTile(title: "Equity", value: AppFormat.money(portfolio.totalMarketValue))
                     MetricTile(title: "Buying Power", value: AppFormat.money(portfolio.buyingPower))
                     MetricTile(title: "Cash", value: AppFormat.money(portfolio.cash))
@@ -569,9 +582,6 @@ private struct PortfolioOverviewCard: View {
         }
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.flexible()), GridItem(.flexible())]
-    }
 }
 
 private struct DeskShortcutsCard: View {
@@ -581,7 +591,7 @@ private struct DeskShortcutsCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading("Desk")
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                AppMetricGrid(minimumTileWidth: 150) {
                     shortcut("Coach", systemImage: "bubble.left.and.bubble.right.fill", tab: .coach)
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)
                     shortcut("Guardrails", systemImage: "shield.checkered", tab: .guardrails)
@@ -652,7 +662,7 @@ private struct PerformanceOverviewCard: View {
                     .font(.appCaption.weight(.semibold))
             }
             if let performance = snapshot.performance {
-                LazyVGrid(columns: columns, spacing: 10) {
+                AppMetricGrid {
                     MetricTile(
                         title: "Realized P&L",
                         value: AppFormat.money(realized),
@@ -712,10 +722,6 @@ private struct PerformanceOverviewCard: View {
                 )
             }
         }
-    }
-
-    private var columns: [GridItem] {
-        [GridItem(.flexible()), GridItem(.flexible())]
     }
 
     private func pnlColor(_ value: Double?) -> Color {
@@ -849,6 +855,23 @@ private struct AccountSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+                // ONE keyboard accessory for the whole Form, not one per row.  Number pads
+                // have no Return key, so before this there was no way to dismiss them from
+                // the keyboard at all — and now that blur is the commit point, dismissing
+                // IS saving.  Resigning first responder is what SwiftUI's @FocusState
+                // watches, so this reaches every field in the Form without any of them
+                // knowing about it.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil,
+                            from: nil,
+                            for: nil
+                        )
+                    }
                 }
             }
             .sheet(isPresented: $showingAdminPortal) {
@@ -1149,12 +1172,20 @@ private struct ConnectedAccountSettingsRow: View {
 struct LlmBudgetSection: View {
     @EnvironmentObject private var store: MobileStore
 
+    /// Named so the field that just LOST focus can be committed by name — `onChange` on a
+    /// `@FocusState` hands back the previous value, which is the one worth saving.
+    private enum BudgetField: String, Hashable {
+        case tokens = "tokenBudget"
+        case cost = "costBudgetUsd"
+    }
+
     @State private var response: LlmBudgetResponse?
     @State private var tokenText = ""
     @State private var costText = ""
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var loadError: String?
+    @FocusState private var focusedField: BudgetField?
 
     var body: some View {
         Section {
@@ -1174,14 +1205,20 @@ struct LlmBudgetSection: View {
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .disabled(isSaving)
-                        .onSubmit { Task { await commitTokens() } }
+                        .focused($focusedField, equals: .tokens)
+                        // Same dead `.onSubmit` as the data-source rows: neither .numberPad
+                        // nor .decimalPad has a Return key.  Here an explicit Save Caps
+                        // button meant nothing was actually lost, but the field still
+                        // behaved differently from every other settings field in the app.
+                        .onSubmit { Task { await commit(.tokens) } }
                 }
                 LabeledContent("Daily Cost Cap") {
                     TextField("blank = no cap", text: $costText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                         .disabled(isSaving)
-                        .onSubmit { Task { await commitCost() } }
+                        .focused($focusedField, equals: .cost)
+                        .onSubmit { Task { await commit(.cost) } }
                 }
                 if let response {
                     LabeledContent("Today") {
@@ -1209,6 +1246,12 @@ struct LlmBudgetSection: View {
             Text("Optional daily limit for model and research spend.  Leave a field blank for no cap.  When a cap is set, strategy, chat, and research pause for the rest of the day once spend reaches it.")
         }
         .task { await load() }
+        // Commit whichever field just lost focus.  Moving between the two fields commits
+        // the first, and the Form's keyboard "Done" resigns focus, which lands here too.
+        .onChange(of: focusedField) { previous, _ in
+            guard let previous else { return }
+            Task { await commit(previous) }
+        }
     }
 
     private func load() async {
@@ -1223,47 +1266,58 @@ struct LlmBudgetSection: View {
     }
 
     private func saveBoth() async {
-        await commitTokens()
-        await commitCost()
+        await commit(.tokens)
+        await commit(.cost)
     }
 
-    private func commitTokens() async {
-        await commit(field: "tokenBudget", text: tokenText)
+    private func text(for field: BudgetField) -> String {
+        field == .tokens ? tokenText : costText
     }
 
-    private func commitCost() async {
-        await commit(field: "costBudgetUsd", text: costText)
+    private func serverValue(for field: BudgetField) -> Double? {
+        field == .tokens ? response?.tokenBudget : response?.costBudgetUsd
     }
 
-    private func commit(field: String, text: String) async {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value: Any
-        if trimmed.isEmpty {
-            value = NSNull()
-        } else if let parsed = Double(trimmed), parsed >= 0 {
-            value = parsed
-        } else {
-            loadError = "Enter a non-negative number, or leave the field blank."
+    private func restore(_ field: BudgetField) {
+        let shown = NumberFieldEditor.display(serverValue(for: field))
+        if field == .tokens { tokenText = shown } else { costText = shown }
+    }
+
+    private func commit(_ field: BudgetField) async {
+        switch NumberFieldEditor.decide(
+            text: text(for: field),
+            serverValue: serverValue(for: field),
+            allowsEmpty: true
+        ) {
+        case .unchanged:
+            // Already what the server has.  This is what keeps Save Caps from re-sending
+            // a value a blur just saved, now that both paths exist.
             return
-        }
-        isSaving = true
-        defer { isSaving = false }
-        do {
-            apply(try await store.patchLlmBudget([field: value]))
-            loadError = nil
-        } catch {
-            loadError = error.localizedDescription
+        case .revert:
+            loadError = "Enter a non-negative number, or leave the field blank."
+            restore(field)
+            return
+        case .patch(let parsed):
+            // `nil` is meaningful here — the placeholder says "blank = no cap" — so it has
+            // to reach the API as JSON null, not be skipped.
+            let payload: Any = parsed.map { $0 as Any } ?? NSNull()
+            isSaving = true
+            defer { isSaving = false }
+            do {
+                apply(try await store.patchLlmBudget([field.rawValue: payload]))
+                loadError = nil
+            } catch {
+                loadError = error.localizedDescription
+            }
         }
     }
 
     private func apply(_ next: LlmBudgetResponse) {
         response = next
-        tokenText = next.tokenBudget.map { formatNumber($0) } ?? ""
-        costText = next.costBudgetUsd.map { formatNumber($0) } ?? ""
-    }
-
-    private func formatNumber(_ value: Double) -> String {
-        if value == floor(value) { return String(Int(value)) }
-        return String(value)
+        // Never overwrite a field the owner is currently in.  Committing one field applies
+        // the whole response, and without this guard saving the token cap would wipe an
+        // unsaved cost cap out from under the cursor.
+        if focusedField != .tokens { tokenText = NumberFieldEditor.display(next.tokenBudget) }
+        if focusedField != .cost { costText = NumberFieldEditor.display(next.costBudgetUsd) }
     }
 }

@@ -103,7 +103,7 @@ export function NotificationInbox({ snapshot }: { snapshot: DashboardSnapshot })
             </div>
             {preview.length === 0 ? (
               <p className="px-1 py-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                No notifications yet.  Alerts stay here after the toast is gone.
+                No notifications yet.  Alerts stay here after the toast is gone.
               </p>
             ) : (
               <ul className="flex max-h-[min(70vh,28rem)] flex-col gap-2 overflow-auto">

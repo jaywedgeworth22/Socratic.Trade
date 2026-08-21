@@ -70,7 +70,10 @@ final class AgentControlPlanTests: XCTestCase {
         )
         XCTAssertTrue(plan.showCloseOnly)
         XCTAssertFalse(plan.showWindDown)
-        XCTAssertEqual(plan.statusTitle, "Winding Down")
+        // Sentence case, per FLEET-UI-COPY "Values / answers / secondary status": this
+        // string renders as the Agent Controls SectionHeading SUBTITLE, not as a heading
+        // or a command name.  "Wind Down" stays Title Case as the BUTTON that starts it.
+        XCTAssertEqual(plan.statusTitle, "Winding down")
     }
 
     func testStoppedStillOffersProtectiveControls() {

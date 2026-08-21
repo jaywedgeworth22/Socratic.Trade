@@ -77,35 +77,35 @@ const WEIGHT_KEYS = Object.keys(DEFAULT_WEIGHTS) as Array<keyof ScoringWeights>;
 const FACTOR_META: Record<keyof ScoringWeights, { name: string; tip: string }> = {
   liquidity: {
     name: "Liquidity",
-    tip: "How easily you can trade the stock, from recent share volume. More weight favors high-volume names you can enter and exit cleanly, and penalizes thin, illiquid ones."
+    tip: "How easily you can trade the stock, from recent share volume.  More weight favors high-volume names you can enter and exit cleanly, and penalizes thin, illiquid ones."
   },
   momentum: {
     name: "Momentum",
-    tip: "Recent trend strength: intraday move, position within the 52-week range, and technical signals (RSI/MACD/moving averages). More weight favors names that are rising and near their highs."
+    tip: "Recent trend strength: intraday move, position within the 52-week range, and technical signals (RSI/MACD/moving averages).  More weight favors names that are rising and near their highs."
   },
   value: {
     name: "Value",
-    tip: "Cheapness from P/E and free-cash-flow yield. More weight tilts toward low-multiple, cash-generative names and away from expensive ones."
+    tip: "Cheapness from P/E and free-cash-flow yield.  More weight tilts toward low-multiple, cash-generative names and away from expensive ones."
   },
   quality: {
     name: "Quality",
-    tip: "Financial sturdiness: company size, low debt, and earnings growth. More weight favors large, low-leverage, profitably growing companies."
+    tip: "Financial sturdiness: company size, low debt, and earnings growth.  More weight favors large, low-leverage, profitably growing companies."
   },
   volatility: {
     name: "Volatility",
-    tip: "Steadiness, not choppiness — the score is highest for calm, low-beta names. Counter-intuitively, more weight here favors steady stocks and penalizes sharp movers and high-beta risk."
+    tip: "Steadiness, not choppiness — the score is highest for calm, low-beta names.  Counter-intuitively, more weight here favors steady stocks and penalizes sharp movers and high-beta risk."
   },
   sentiment: {
     name: "Sentiment",
-    tip: "Aggregate news, analyst, and market sentiment (0–100). More weight favors positively-covered names and discounts negatively-covered ones."
+    tip: "Aggregate news, analyst, and market sentiment (0–100).  More weight favors positively-covered names and discounts negatively-covered ones."
   },
   positioning: {
     name: "Positioning",
-    tip: "Smart-money accumulation: net congressional buying, insider open-market purchases (SEC Form 4), and short-squeeze setups. More weight favors names insiders and Congress are buying."
+    tip: "Smart-money accumulation: net congressional buying, insider open-market purchases (SEC Form 4), and short-squeeze setups.  More weight favors names insiders and Congress are buying."
   },
   diversification: {
     name: "Diversification",
-    tip: "Portfolio fit: a name you don't already hold scores higher than one you do. More weight pushes toward new positions instead of adding to what you already own — it's held-vs-not, not sector spread."
+    tip: "Portfolio fit: a name you don't already hold scores higher than one you do.  More weight pushes toward new positions instead of adding to what you already own — it's held-vs-not, not sector spread."
   }
 };
 
@@ -185,7 +185,7 @@ function ModelSelect({
         )}
         <option
           value={ROTATE_ALL_MODELS_ID}
-          title="Rotates through every curated model with a resolvable key, favoring models with less accrued history (2x pick weight), so attributed comparative history accrues evenly. Use only where model-to-model variation is acceptable."
+          title="Rotates through every curated model with a resolvable key, favoring models with less accrued history (2x pick weight), so attributed comparative history accrues evenly.  Use only where model-to-model variation is acceptable."
         >
           {ROTATE_ALL_MODELS_LABEL}
         </option>
@@ -723,7 +723,7 @@ function AccountScopedStrategyPage() {
                   <span className="text-[color:var(--con-neg)]">Red Team</span> Model
                 </>
               }
-              hint="The adversarial reviewer — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = not configured: it does NOT inherit the Green Team model — every risk-adding opening routes to human review until a Red Team model is set."
+              hint="The adversarial reviewer — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas.  Blank = not configured: it does NOT inherit the Green Team model — every risk-adding opening routes to human review until a Red Team model is set."
               htmlFor="rt-model"
             >
               <div className="flex items-start gap-2">
@@ -770,7 +770,7 @@ function AccountScopedStrategyPage() {
             )}
             {reviewerNotConfigured && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
-                No Reviewer model set — it does not inherit the Proposer. Every risk-adding opening
+                No Reviewer model set — it does not inherit the Proposer.  Every risk-adding opening
                 routes to human review until a Reviewer model is chosen.
               </p>
             )}
@@ -823,7 +823,7 @@ function AccountScopedStrategyPage() {
               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
             </svg>
             <div>
-              Custom model selected. Cost tracking will use a conservative fallback rate to prevent budget bypass.
+              Custom model selected.  Cost tracking will use a conservative fallback rate to prevent budget bypass.
             </div>
           </div>
         )}
@@ -853,7 +853,7 @@ function AccountScopedStrategyPage() {
       >
         <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Free-text brief the proposer LLM runs under: objective, selection logic, sell rules, sizing guidance, output
-          contract. The deterministic policy gate still constrains everything it proposes.
+          contract.  The deterministic policy gate still constrains everything it proposes.
         </p>
         <TextArea
           rows={16}
@@ -994,7 +994,7 @@ function PresetLibrary({
     try {
       if (activeAccount) {
         await copyProfileToAccount(profile.id, activeAccount.id);
-        toast.push("pos", `Applied “${profile.name}”`, "Copied onto this account. Run state unchanged.");
+        toast.push("pos", `Applied “${profile.name}”`, "Copied onto this account.  Run state unchanged.");
       } else {
         await activateProfile(profile.id);
         toast.push("pos", `Activated “${profile.name}”`, "Applied as the base strategy for new account scope.");
@@ -1024,7 +1024,7 @@ function PresetLibrary({
   };
 
   const removePreset = async (profile: StrategyProfile) => {
-    if (!window.confirm(`Delete preset “${profile.name}”? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete preset “${profile.name}”?  This cannot be undone.`)) return;
     setBusy(`delete-${profile.id}`);
     try {
       await deleteProfile(profile.id);
@@ -1505,8 +1505,8 @@ function AiReviewPanel({
               label="Strategist"
               hint={
                 rotationBlocksInheritance
-                  ? "Both team seats rotate, so there is no single model to inherit. Pick a strategist model here — left blank, the review runs on local rules (no LLM)."
-                  : `Blank = same as ${inheritedReviewerLabel}. AI Review has no separate account-level model.`
+                  ? "Both team seats rotate, so there is no single model to inherit.  Pick a strategist model here — left blank, the review runs on local rules (no LLM)."
+                  : `Blank = same as ${inheritedReviewerLabel}.  AI Review has no separate account-level model.`
               }
               htmlFor="ai-review-model"
             >
@@ -1643,7 +1643,7 @@ function AiReviewPanel({
                     Apply review changes <LiveTag />
                   </>
                 }
-                note="At least one proposed change expands authority on a brokerage account. Unlocking authority costs a typed word here exactly like it does in Guardrails."
+                note="At least one proposed change expands authority on a brokerage account.  Unlocking authority costs a typed word here exactly like it does in Guardrails."
                 onConfirm={() => void apply()}
               />
             ) : (

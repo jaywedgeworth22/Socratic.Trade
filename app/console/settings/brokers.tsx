@@ -153,7 +153,7 @@ export function BrokerAccountsCard() {
       await disconnectAccount(account.id);
       await refresh();
       setConfirmRemove(null);
-      toast.push("pos", "Connection removed", `${account.label || brokerName(account.broker)} was disconnected from this app. Nothing changed at the broker.`);
+      toast.push("pos", "Connection removed", `${account.label || brokerName(account.broker)} was disconnected from this app.  Nothing changed at the broker.`);
     } catch (error) {
       toast.push("neg", "Could not disconnect", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
@@ -261,7 +261,7 @@ export function BrokerAccountsCard() {
                   disabled={busy !== null}
                   onClick={() => setRenaming({ id: account.id, value: account.label || "" })}
                   className="shrink-0 text-[color:var(--con-faint)] hover:text-[color:var(--con-fg)] disabled:opacity-50"
-                  title="Rename this account's display name. The broker account number is not affected."
+                  title="Rename this account's display name.  The broker account number is not affected."
                 >
                   <Pencil className="size-3.5" />
                 </button>
@@ -353,7 +353,7 @@ export function BrokerAccountsCard() {
               variant="dangerOutline"
               disabled={busy !== null}
               onClick={() => setConfirmRemove(account)}
-              title="Remove this connection (and its stored credentials) from this app. The broker account itself is untouched — open positions and resting orders stay at the broker."
+              title="Remove this connection (and its stored credentials) from this app.  The broker account itself is untouched — open positions and resting orders stay at the broker."
             >
               Disconnect
             </Btn>
@@ -387,7 +387,7 @@ export function BrokerAccountsCard() {
             title={
               rhAuthed
                 ? "Robinhood OAuth is already connected — this re-syncs the agentic account details from the broker."
-                : "Opens Robinhood's own sign-in (OAuth). This app never sees your Robinhood password."
+                : "Opens Robinhood's own sign-in (OAuth).  This app never sees your Robinhood password."
             }
           >
             {busy === "robinhood" ? "Syncing…" : rhAuthed ? "Sync Robinhood" : "Connect Robinhood"}
@@ -397,7 +397,7 @@ export function BrokerAccountsCard() {
             variant="outline"
             disabled={busy !== null}
             onClick={() => setAlpacaOpen(true)}
-            title="Link an Alpaca account with its API key pair. Paper vs live is inferred from the credentials."
+            title="Link an Alpaca account with its API key pair.  Paper vs live is inferred from the credentials."
           >
             Connect Alpaca
           </Btn>
@@ -406,7 +406,7 @@ export function BrokerAccountsCard() {
             variant="outline"
             disabled={busy !== null}
             onClick={() => setTradierOpen(true)}
-            title="Link a Tradier account with an access token. Choose Sandbox (paper) or Production (live)."
+            title="Link a Tradier account with an access token.  Choose Sandbox (paper) or Production (live)."
           >
             Connect Tradier
           </Btn>
@@ -415,7 +415,7 @@ export function BrokerAccountsCard() {
             variant="outline"
             disabled={busy !== null}
             onClick={() => setExtraOpen("public")}
-            title="Link Public.com for quotes and history.  Order execution stays off until Settings → Public.com order execution is turned on (account not funded yet)."
+            title="Link Public.com for quotes and history.  Order execution stays off until Settings → Public.com order execution is turned on (account not funded yet)."
           >
             Connect Public
           </Btn>
@@ -423,7 +423,7 @@ export function BrokerAccountsCard() {
             size="sm"
             variant="outline"
             disabled
-            title="eToro has no API access on this account yet.  Connect will stay off until that exists."
+            title="eToro has no API access on this account yet.  Connect will stay off until that exists."
           >
             eToro — No API Yet
           </Btn>
@@ -431,7 +431,7 @@ export function BrokerAccountsCard() {
             size="sm"
             variant="outline"
             disabled
-            title="Webull official OpenAPI comes later.  Unofficial libraries are not used."
+            title="Webull official OpenAPI comes later.  Unofficial libraries are not used."
           >
             Webull — Later
           </Btn>
@@ -466,7 +466,7 @@ export function BrokerAccountsCard() {
               <div className="flex flex-col gap-2">{others.map(renderAccountRow)}</div>
             ) : (
               <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                No other accounts. Use the buttons above to connect one.
+                No other accounts.  Use the buttons above to connect one.
               </p>
             )}
           </section>
@@ -517,13 +517,13 @@ export function BrokerAccountsCard() {
             </p>
             {realityForAccount(confirmRemove).tone === "live" && (
               <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
-                This is a brokerage connection. After disconnecting, any app-managed stop rules for its
+                This is a brokerage connection.  After disconnecting, any app-managed stop rules for its
                 positions stop running — only broker-held orders keep protecting them.
               </p>
             )}
             {confirmRemove.isActive && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
-                This is the currently loaded account. Disconnecting it rescopes the console to the next loaded account,
+                This is the currently loaded account.  Disconnecting it rescopes the console to the next loaded account,
                 if one remains.
               </p>
             )}
@@ -635,7 +635,7 @@ function AlpacaConnectSheet({
           <span className={inferredPaper ? "font-bold text-[color:var(--con-paper)]" : "font-bold text-[color:var(--con-accent)]"}>
             {inferredPaper ? "Alpaca PAPER Account (NOT Real Money)" : "Brokerage Account"}
           </span>
-          . Credentials are stored server-side and never shown again.
+          .  Credentials are stored server-side and never shown again.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Label (optional)" hint="A name you'll recognize in the account switcher." htmlFor="alp-label">
@@ -653,7 +653,7 @@ function AlpacaConnectSheet({
               value={accountNumber}
               placeholder="e.g. PA12345"
               onChange={(e) => setAccountNumber(e.target.value)}
-              title="Your Alpaca account number. Determines paper vs live together with the key."
+              title="Your Alpaca account number.  Determines paper vs live together with the key."
             />
           </Field>
           <Field label="API key" hint='"PK…" keys are paper keys.' htmlFor="alp-key">
@@ -663,7 +663,7 @@ function AlpacaConnectSheet({
               autoComplete="off"
               placeholder="API key or OAuth token"
               onChange={(e) => setApiKey(e.target.value)}
-              title="The API key ID from Alpaca. Sent once to the server, never echoed back."
+              title="The API key ID from Alpaca.  Sent once to the server, never echoed back."
             />
           </Field>
           <Field label="API secret" hint="Required for key pairs; omit for OAuth tokens." htmlFor="alp-secret">
@@ -674,7 +674,7 @@ function AlpacaConnectSheet({
               autoComplete="off"
               placeholder="Secret key"
               onChange={(e) => setApiSecret(e.target.value)}
-              title="The matching secret key. Stored server-side only."
+              title="The matching secret key.  Stored server-side only."
             />
           </Field>
           <Field
@@ -780,7 +780,7 @@ function TradierConnectSheet({
           <span className={isLive ? "font-bold text-[color:var(--con-accent)]" : "font-bold text-[color:var(--con-paper)]"}>
             {isLive ? "Tradier Production (LIVE — Real Money)" : "Tradier Sandbox (Paper — NOT Real Money)"}
           </span>
-          . The token is stored server-side and never shown again.
+          .  The token is stored server-side and never shown again.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Label (optional)" hint="A name you'll recognize in the account switcher." htmlFor="trd-label">
@@ -811,7 +811,7 @@ function TradierConnectSheet({
               autoComplete="off"
               placeholder="Tradier access token"
               onChange={(e) => setApiKey(e.target.value)}
-              title="The access token from Tradier. Sent once to the server, never echoed back."
+              title="The access token from Tradier.  Sent once to the server, never echoed back."
             />
           </Field>
           <Field label="Account number (optional)" hint="Leave blank to use the token's account." htmlFor="trd-acct">
@@ -820,7 +820,7 @@ function TradierConnectSheet({
               value={accountNumber}
               placeholder="e.g. VA12345678"
               onChange={(e) => setAccountNumber(e.target.value)}
-              title="Your Tradier account number. Optional — the profile is probed on first use."
+              title="Your Tradier account number.  Optional — the profile is probed on first use."
             />
           </Field>
           <Field
@@ -843,7 +843,7 @@ function TradierConnectSheet({
         </div>
         {isLive && (
           <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
-            <LiveTag /> A production Tradier token trades <span className="font-semibold">real capital</span>. Orders can
+            <LiveTag /> A production Tradier token trades <span className="font-semibold">real capital</span>.  Orders can
             reach real money only when policy, approval, and risk gates allow them.
           </p>
         )}
@@ -890,16 +890,16 @@ function ExtraBrokerConnectSheet({
     broker === "public"
       ? {
           title: "Connect Public",
-          hint: "Paste the Individual API secret from public.com Account Settings → Security → API.  This is live-only.  Quotes and history can run now; order execution stays parked until the account is funded and Public.com Order Execution is turned on in Data Sources."
+          hint: "Paste the Individual API secret from public.com Account Settings → Security → API.  This is live-only.  Quotes and history can run now; order execution stays parked until the account is funded and Public.com Order Execution is turned on in Data Sources."
         }
       : broker === "etoro"
         ? {
             title: "Connect eToro",
-            hint: "Paste the application x-api-key and the user x-user-key from eToro Settings → Trading → API Key Management.  Demo keys stay paper; Real keys are live."
+            hint: "Paste the application x-api-key and the user x-user-key from eToro Settings → Trading → API Key Management.  Demo keys stay paper; Real keys are live."
           }
         : {
             title: "Connect Webull",
-            hint: "Paste official OpenAPI App Key + App Secret after Developer Tool approval.  Unofficial Webull libraries are never used for orders."
+            hint: "Paste official OpenAPI App Key + App Secret after Developer Tool approval.  Unofficial Webull libraries are never used for orders."
           };
 
   const submit = async () => {
@@ -1031,7 +1031,7 @@ function CapabilitiesSheet({
           <p className="text-[color:var(--con-muted)]">
             {caps
               ? "Broker capabilities confirmed via live API probe."
-              : "Gateway connected.  Capabilities default to standard equity trading until initial execution probe."}
+              : "Gateway connected.  Capabilities default to standard equity trading until initial execution probe."}
           </p>
         </div>
 

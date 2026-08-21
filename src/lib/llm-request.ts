@@ -1,3 +1,4 @@
+import { nativeSlugFor } from "./llm-model-catalog";
 import type { LlmReasoningEffort } from "./types";
 
 /** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
@@ -55,7 +56,9 @@ export function isModelRotationSentinel(model?: string | null): boolean {
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
  */
 export function isReasoningModel(model: string | undefined): boolean {
-  return /^(gpt-5|o\d)/i.test(lowerModel(model));
+  const leaf = lowerModel(model);
+  const native = nativeSlugFor(model).toLowerCase();
+  return /^(gpt-5|o\d)/i.test(leaf) || /^(gpt-5|o\d)/i.test(native);
 }
 
 /**

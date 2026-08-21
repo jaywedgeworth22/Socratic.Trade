@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     template: "%s · Socratic Trade"
   },
   description:
-    "Socratic Trade is an autonomous market-reasoning system that forms theses, acts within delegated authority, shows its evidence and dissent, and learns from outcomes. Not investment advice.",
+    "Socratic Trade is an autonomous market-reasoning system that forms theses, acts within delegated authority, shows its evidence and dissent, and learns from outcomes.  Not investment advice.",
   applicationName: "Socratic Trade",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
@@ -42,12 +42,12 @@ export const metadata: Metadata = {
     url: "/",
     title: "Socratic Trade",
     description:
-      "Autonomous market reasoning with visible theses, evidence, dissent, actions, and outcome learning. Not investment advice."
+      "Autonomous market reasoning with visible theses, evidence, dissent, actions, and outcome learning.  Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
     title: "Socratic Trade",
-    description: "Autonomous market reasoning with visible decisions and outcome learning. Not investment advice."
+    description: "Autonomous market reasoning with visible decisions and outcome learning.  Not investment advice."
   },
   // Default = NOINDEX. Only allow indexing when explicitly opted in (the app is private by default).
   robots:

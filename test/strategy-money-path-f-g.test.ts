@@ -206,7 +206,7 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
       rejected: false,
       available: true,
       reason: "No fatal flaw found.",
-      model: "gpt-5.4-mini",
+      model: "gpt-mini-latest",
       trigger: "all_openings"
     });
     // t3: the persisted proposal carries the FAILOVER-AWARE policy model (here the primary),
@@ -324,7 +324,7 @@ describe("strategy Red Team rejection — F2 audit", () => {
     // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
     // counterfactual return.
     expect(payload.runId).toBe(result.runId);
-    expect(payload.model).toBe("gpt-5.4-mini");
+    expect(payload.model).toBe("gpt-mini-latest");
 
     // A rejected proposal never reaches execution → no AAPL fill was booked.
     const fills = listFillEvents("TEST", undefined, 100, "local");

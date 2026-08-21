@@ -97,7 +97,7 @@ export default function LoginPage() {
                 </form>
                 {!googleConfigured && !githubConfigured && (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    Apple is your only sign-in method. Apple only sends your email on first
+                    Apple is your only sign-in method.  Apple only sends your email on first
                     authorization — if your session expires, you will need to add Google or
                     GitHub as a fallback to sign back in.
                   </p>
@@ -128,7 +128,7 @@ export default function LoginPage() {
           <a href="/privacy-policy" className="underline underline-offset-2 hover:text-fg">
             Privacy Policy
           </a>
-          .  Not investment advice.  You set authority.
+          .  Not investment advice.  You set authority.
         </p>
       </div>
     </main>

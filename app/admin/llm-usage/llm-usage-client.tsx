@@ -105,7 +105,7 @@ const COST_BASIS_LABEL: Record<CostBasis, string> = {
 
 const COST_BASIS_TITLE: Record<CostBasis, string> = {
   billed: "Charged amount reported by OpenRouter for these calls.",
-  estimated: "Estimated from the app's model price table.  Not a billed amount.",
+  estimated: "Estimated from the app's model price table.  Not a billed amount.",
   mixed: "Some calls report a charged amount; the rest are priced from the app's model price table.",
   none: ""
 };
@@ -272,7 +272,7 @@ function ModelBreakdownCard({ models }: { models: ModelUsageAggregate[] }) {
       </div>
       <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
         Calls for the same model are combined here whether they were routed through OpenRouter or sent
-        directly to the provider. The breakdown shows each route so earlier direct-provider usage stays visible.
+        directly to the provider.  The breakdown shows each route so earlier direct-provider usage stays visible.
       </p>
       <div className="space-y-1">
         {models.map((m) => {

@@ -13,7 +13,7 @@ import { ArrowDown, ArrowUp, Columns3, Star } from "lucide-react";
 import { TableVirtuoso } from "react-virtuoso";
 import type { MarketQuote, MarketScan } from "@/lib/types";
 import { receivedLabel } from "@/lib/dashboard-ui";
-import { cx } from "../lib/format";
+import { cx, SENTENCE_GAP } from "../lib/format";
 import { useFocusTrap } from "../ui/focus-trap";
 import { Tooltip } from "../ui/primitives";
 import { useToast } from "../ui/toast";
@@ -201,7 +201,7 @@ function ScanColumnsMenu({
 
   return (
     <div className="relative">
-      <Tooltip content="Show, hide, reorder, or reset scan columns. Saved in this browser.">
+      <Tooltip content={`Show, hide, reorder, or reset scan columns.${SENTENCE_GAP}Saved in this browser.`}>
         <button
           type="button"
           aria-expanded={open}

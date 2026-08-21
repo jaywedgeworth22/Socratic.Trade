@@ -41,6 +41,7 @@
 // pointer rows are no longer read or written (account-deletion cleanup still recognizes the
 // prefix for old rows).
 import { audit, getDb, resolveLlmCredential } from "./db";
+import { CATALOG_ROTATION_POOL } from "./llm-model-catalog";
 import { modelCredentialService, normalizeOpenRouterModelId, stripOpenRouterTilde } from "./llm-provider";
 import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
 import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
@@ -203,29 +204,7 @@ export function applyRotationUserModelAllowlist(
   return { pool: matched, skipped, emptiedByAllowlist: false };
 }
 
-export const MODEL_ROTATION_POOL: readonly string[] = [
-  "gpt-5.6-terra",
-  "claude-haiku-4.5",
-  "gemini-flash-latest",
-  "deepseek-v4-flash",
-  "mistral-small-latest",
-  "gpt-5.6-luna",
-  "claude-sonnet-5",
-  "gemini-flash-lite-latest",
-  "grok-4.5",
-  "gpt-5.4-mini",
-  "claude-opus-5",
-  "gemini-pro-latest",
-  "deepseek-v4-pro",
-  "mistral-medium-latest",
-  "gpt-5.6-sol",
-  "gpt-5.4-nano",
-  "claude-fable-5",
-  "kimi-latest",
-  "gpt-4o",
-  "llama-3.3-70b-instruct",
-  "deepseek-reasoner"
-];
+export const MODEL_ROTATION_POOL: readonly string[] = CATALOG_ROTATION_POOL;
 
 /** Owner request (2026-08-06, verbatim intent): a model UNDERREPRESENTED in the rotation's own
  *  statistics is twice as likely to be picked as an overrepresented one — which can still be

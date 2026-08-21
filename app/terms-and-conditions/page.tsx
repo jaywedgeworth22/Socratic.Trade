@@ -25,35 +25,35 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "1. Acceptance of terms",
     body: [
-      "By accessing or using Socratic Trade (socratictrade.com), you agree to these Terms and Conditions and to our Privacy Policy. If you do not agree, do not use the service."
+      "By accessing or using Socratic Trade (socratictrade.com), you agree to these Terms and Conditions and to our Privacy Policy.  If you do not agree, do not use the service."
     ]
   },
   {
     title: "2. Description of service",
     body: [
-      "Socratic Trade is software for market research, autonomous reasoning, and trade execution when connected to brokerage accounts you configure. It is not investment advice, a broker-dealer, a bank, or a registered investment adviser, and nothing in the service is a recommendation to buy or sell any security.",
-      "Trading and investing involve substantial risk of loss. Simulated, hypothetical, or historical performance has inherent limitations and does not guarantee future results. You are solely responsible for your own investment decisions and for any authority you grant to a connected trading system."
+      "Socratic Trade is software for market research, autonomous reasoning, and trade execution when connected to brokerage accounts you configure.  It is not investment advice, a broker-dealer, a bank, or a registered investment adviser, and nothing in the service is a recommendation to buy or sell any security.",
+      "Trading and investing involve substantial risk of loss.  Simulated, hypothetical, or historical performance has inherent limitations and does not guarantee future results.  You are solely responsible for your own investment decisions and for any authority you grant to a connected trading system."
     ]
   },
   {
     title: "3. Eligibility and accounts",
     body: [
-      "You must be at least 18 years old and able to form a binding contract to use the service. You are responsible for maintaining the confidentiality of your login credentials and for all activity under your account."
+      "You must be at least 18 years old and able to form a binding contract to use the service.  You are responsible for maintaining the confidentiality of your login credentials and for all activity under your account."
     ]
   },
   {
     title: "4. SMS / text message notifications",
     body: [
-      "If you opt in to SMS notifications, you consent to receive text messages at the phone number you provide for the account and trading alerts you configure. Consent to receive SMS is not a condition of using the service — SMS is one of several optional notification channels.",
-      "Message frequency varies with your account activity and the alert types you enable. Message and data rates may apply.",
-      "Text STOP to any message to opt out, or disable the SMS channel in Settings at any time. Text HELP for assistance.",
+      "If you opt in to SMS notifications, you consent to receive text messages at the phone number you provide for the account and trading alerts you configure.  Consent to receive SMS is not a condition of using the service — SMS is one of several optional notification channels.",
+      "Message frequency varies with your account activity and the alert types you enable.  Message and data rates may apply.",
+      "Text STOP to any message to opt out, or disable the SMS channel in Settings at any time.  Text HELP for assistance.",
       "Carriers are not liable for delayed or undelivered messages."
     ]
   },
   {
     title: "5. Connected broker accounts",
     body: [
-      "When you connect a broker or exchange account, you authorize Socratic Trade to read account data and, where you configure delegated authority, place orders on your behalf, subject to the guardrails you set. You can disconnect an account or revoke authority at any time. You remain responsible for the account and for complying with your broker's own terms."
+      "When you connect a broker or exchange account, you authorize Socratic Trade to read account data and, where you configure delegated authority, place orders on your behalf, subject to the guardrails you set.  You can disconnect an account or revoke authority at any time.  You remain responsible for the account and for complying with your broker's own terms."
     ]
   },
   {
@@ -65,14 +65,14 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "7. Disclaimers",
     body: [
-      "The service is provided \"as is\" and \"as available,\" without warranties of any kind, express or implied, including merchantability, fitness for a particular purpose, and non-infringement. We do not warrant that the service will be uninterrupted, error-free, or that any analysis, thesis, or automated action will be accurate or profitable."
+      "The service is provided \"as is\" and \"as available,\" without warranties of any kind, express or implied, including merchantability, fitness for a particular purpose, and non-infringement.  We do not warrant that the service will be uninterrupted, error-free, or that any analysis, thesis, or automated action will be accurate or profitable."
     ]
   },
   {
     title: "8. Shared market-data pool",
     body: [
-      "Using the app requires contributing general market data — quotes, fundamentals, price history, and news pulled through your keys or broker — to a shared pool that other accepted users can read.  Personal account data (positions, orders, balances, P&L, credentials, watchlists, and strategy settings) is never pooled.",
-      "A shared research corpus may include fact-level notes you choose to contribute.  Risk rules and strategy instructions stay private and are never written to the shared corpus.  See the Privacy Policy for retention and deletion details."
+      "Using the app requires contributing general market data — quotes, fundamentals, price history, and news pulled through your keys or broker — to a shared pool that other accepted users can read.  Personal account data (positions, orders, balances, P&L, credentials, watchlists, and strategy settings) is never pooled.",
+      "A shared research corpus may include fact-level notes you choose to contribute.  Risk rules and strategy instructions stay private and are never written to the shared corpus.  See the Privacy Policy for retention and deletion details."
     ]
   },
   {
@@ -84,13 +84,13 @@ const SECTIONS: Array<{ title: string; body: string[] }> = [
   {
     title: "10. Changes to the service and these terms",
     body: [
-      "We may modify or discontinue the service, in whole or part, at any time. We may update these terms as the service evolves; continued use after an update constitutes acceptance of the revised terms."
+      "We may modify or discontinue the service, in whole or part, at any time.  We may update these terms as the service evolves; continued use after an update constitutes acceptance of the revised terms."
     ]
   },
   {
     title: "11. Termination",
     body: [
-      "You may stop using the service and disconnect your accounts at any time. We may suspend or terminate access for violation of these terms or for any reason at our discretion."
+      "You may stop using the service and disconnect your accounts at any time.  We may suspend or terminate access for violation of these terms or for any reason at our discretion."
     ]
   },
   {

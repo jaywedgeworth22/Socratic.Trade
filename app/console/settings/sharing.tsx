@@ -111,7 +111,7 @@ export function DataSharingCard() {
       ? "Loading current state…"
       : poolAccepted
         ? "Required — general market data (quotes, fundamentals, history, news) you pull through your own keys or broker is pooled with other users who accepted the same terms.  Personal account data is never pooled."
-        : "Required to use the app.  Accept the terms notice to contribute and read the shared market-data pool.";
+        : "Required to use the app.  Accept the terms notice to contribute and read the shared market-data pool.";
 
   return (
     <Card title="Data sharing">
@@ -123,7 +123,7 @@ export function DataSharingCard() {
       {loadFailed && (
         <p className="mb-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
           Sharing state could not be loaded — the affected controls stay locked rather than showing a
-          guess.  Reload to retry.
+          guess.  Reload to retry.
         </p>
       )}
       <div className="flex flex-col gap-1">
@@ -145,7 +145,7 @@ export function DataSharingCard() {
           checked={lc?.includeShared ?? false}
           loading={busy || lc === null}
           onChange={(v) => void setLcSharing({ includeShared: v })}
-          rowTitle="Read the shared learned-fact pool.  Only fact-tier items exist there — risk and strategy directives are never shared by anyone."
+          rowTitle="Read the shared learned-fact pool.  Only fact-tier items exist there — risk and strategy directives are never shared by anyone."
         />
         <SharingRow
           title="Contribute your learned facts"
@@ -153,13 +153,13 @@ export function DataSharingCard() {
             lc === null
               ? "Loading current state…"
               : lc.contributeShared
-                ? "On — new fact-tier learnings from your runs are shared with opted-in users.  Risk and strategy directives never leave your private queue."
+                ? "On — new fact-tier learnings from your runs are shared with opted-in users.  Risk and strategy directives never leave your private queue."
                 : "Off — everything you learn stays private to your account."
           }
           checked={lc?.contributeShared ?? false}
           loading={busy || lc === null}
           onChange={(v) => void setLcSharing({ contributeShared: v })}
-          rowTitle="Share your fact-tier learnings back to the pool.  Only facts qualify; anything risk-bearing goes to your private confirmation queue instead."
+          rowTitle="Share your fact-tier learnings back to the pool.  Only facts qualify; anything risk-bearing goes to your private confirmation queue instead."
         />
       </div>
     </Card>

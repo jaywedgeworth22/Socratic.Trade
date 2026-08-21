@@ -389,7 +389,7 @@ export const ApprovalCard = memo(function ApprovalCard({
         "warn",
         "Approval is still busy",
         (result.reasons ?? []).join(" ") ||
-          "A strategy run is still in progress after waiting. Wait for the run to finish (or for its lock to expire, up to ~5 minutes), then Approve again."
+          "A strategy run is still in progress after waiting.  Wait for the run to finish (or for its lock to expire, up to ~5 minutes), then Approve again."
       );
     } else {
       toast.push("info", `Result: ${feedStatusLabel(result.status)}`, (result.reasons ?? []).join(" ") || undefined);
@@ -556,7 +556,7 @@ export const ApprovalCard = memo(function ApprovalCard({
             {estPnl && (
               <p
                 className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
-                title="Estimated at approval-card render time. The server re-prices at the moment you actually approve."
+                title="Estimated at approval-card render time.  The server re-prices at the moment you actually approve."
               >
                 Est. P/L if filled:{" "}
                 <SignedText value={estPnl.pnl}>
@@ -591,7 +591,7 @@ export const ApprovalCard = memo(function ApprovalCard({
         {estPnl && (
           <div
             className="rounded-control border border-[color:var(--con-line)] p-3"
-            title="Estimated at approval-card render time: shares this order would close × (current price − average cost), sign-flipped for a short cover. The server re-prices at the moment you actually approve."
+            title="Estimated at approval-card render time: shares this order would close × (current price − average cost), sign-flipped for a short cover.  The server re-prices at the moment you actually approve."
           >
             <div className="con-card-title mb-1 flex items-center gap-1.5">
               <TrendingUp size={12} /> Est. P/L if filled
@@ -623,7 +623,7 @@ export const ApprovalCard = memo(function ApprovalCard({
                     title={
                       greenPolicyRotates
                         ? "The policy rotates models each run; this legacy proposal predates per-proposal model stamping, so the concrete rotation pick was not recorded."
-                        : "This legacy proposal has no served-model stamp and no model is currently configured. The app has no hidden Green Team default."
+                        : "This legacy proposal has no served-model stamp and no model is currently configured.  The app has no hidden Green Team default."
                     }
                   >
                     ({greenPolicyRotates ? "policy rotates models" : "model not recorded"})
@@ -634,7 +634,7 @@ export const ApprovalCard = memo(function ApprovalCard({
             {typeof p.confidenceScore === "number" && (
               <div
                 className="shrink-0 cursor-default text-right"
-                title="The proposing model's stated conviction in this trade, on a 0–100 scale. Higher = stronger conviction; high scores can trigger the red-team debate and influence sizing."
+                title="The proposing model's stated conviction in this trade, on a 0–100 scale.  Higher = stronger conviction; high scores can trigger the red-team debate and influence sizing."
               >
                 <span className="con-confidence-num">{p.confidenceScore}</span>
                 <span className="con-num text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-faint)]">/100</span>
@@ -715,7 +715,7 @@ export const ApprovalCard = memo(function ApprovalCard({
         {redCard === "no-review" && (
           <p
             className="cursor-default text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-            title="None of the dissent triggers (confidence, notional, live opening, override request, risk regime) applied, so no adversarial reviewer was asked. The empty state is information, not an omission."
+            title="None of the dissent triggers (confidence, notional, live opening, override request, risk regime) applied, so no adversarial reviewer was asked.  The empty state is information, not an omission."
           >
             No adversarial review ran for this proposal — below every dissent trigger.
           </p>
@@ -857,7 +857,7 @@ export const ApprovalCard = memo(function ApprovalCard({
             </div>
           ) : (
             <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-              No proposal-linked RAG citations are attached to this card yet. Served model and policy evidence are still persisted above.
+              No proposal-linked RAG citations are attached to this card yet.  Served model and policy evidence are still persisted above.
             </p>
           )}
         </div>
@@ -872,11 +872,11 @@ export const ApprovalCard = memo(function ApprovalCard({
         {/* Since proposed + revalidation */}
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
-            <div className="con-card-title mb-1" title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. Positive means the idea has moved in the proposed direction.">
+            <div className="con-card-title mb-1" title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative.  Positive means the idea has moved in the proposed direction.">
               Since proposed
             </div>
             {typeof pending.performanceSinceProposalPct === "number" ? (
-              <p title="Raw proposal return since the decision-time reference price. It is not adjusted for SPY; benchmark-relative learning is handled separately in Results.">
+              <p title="Raw proposal return since the decision-time reference price.  It is not adjusted for SPY; benchmark-relative learning is handled separately in Results.">
                 <SignedText value={pending.performanceSinceProposalPct}>{fmtPct(pending.performanceSinceProposalPct, 2, true)}</SignedText>{" "}
                 <span className="text-[color:var(--con-faint)]">
                   in the proposed direction
@@ -916,14 +916,14 @@ export const ApprovalCard = memo(function ApprovalCard({
             </ul>
           ) : (
             <p className="text-[color:var(--con-muted)]">
-              Passed every check when proposed. The full gate re-runs server-side at the moment you approve — with fresh
+              Passed every check when proposed.  The full gate re-runs server-side at the moment you approve — with fresh
               prices, caps, and wash-sale state.
             </p>
           )}
           {pending.decision.washSale?.note && (
             <p
               className="mt-1 font-semibold text-[color:var(--con-warn)]"
-              title="This account's Tax rules disregard IRA wash sales (Rev. Rul. 2008-5 would otherwise block this rebuy). The purchase is annotated and audited; disregarding is an audit-risk acceptance."
+              title="This account's Tax rules disregard IRA wash sales (Rev. Rul. 2008-5 would otherwise block this rebuy).  The purchase is annotated and audited; disregarding is an audit-risk acceptance."
             >
               {pending.decision.washSale.note}
             </p>
@@ -940,7 +940,7 @@ export const ApprovalCard = memo(function ApprovalCard({
           <div>
             <div
               className="con-card-title mb-1"
-              title="Deterministic consistency checks run after the model produced this proposal.  Each entry names a correction or fallback the app applied — recorded as a receipt, never a silent edit, and never a block."
+              title="Deterministic consistency checks run after the model produced this proposal.  Each entry names a correction or fallback the app applied — recorded as a receipt, never a silent edit, and never a block."
             >
               Data adjustments
             </div>

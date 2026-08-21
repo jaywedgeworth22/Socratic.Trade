@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum AppTab: String, CaseIterable, Identifiable {
     case home
@@ -79,63 +80,213 @@ enum AppTab: String, CaseIterable, Identifiable {
     }
 }
 
-/// Persisted, owner-customizable tab-bar membership — the iOS counterpart of the web
-/// console's pinned mobile tabs (app/console/lib/mobile-tabs.ts): same min/max bounds,
-/// same membership-set semantics (the bar renders pinned tabs in canonical declaration
-/// order, not pin order), and the same guarantee that every screen stays reachable
-/// through More even when unpinned.
+/// How many customizable tabs fit beside More at a given window width.
+///
+/// Pure math, kept out of the view so XCTest can cover the breakpoints without hosting
+/// SwiftUI — the same split `WrappingHStackLayout` uses for the watchlist chip wrap.
+enum TabBarCapacity {
+    /// Any compact-width window — every iPhone, and an iPad in Slide Over — keeps the phone
+    /// bar: four screens plus More.  Widening it there only shrinks the touch targets.
+    static let compact = 4
+    /// Never fewer than this however narrow a Mac window is dragged: Home plus one slot.
+    static let minimum = 2
+    /// Ceiling regardless of width.  Past eight a tab bar stops being a bar and starts being
+    /// a menu, and More still has the customization list to hold.
+    static let maximum = 8
+
+    /// Width one item takes in the regular-width bar: icon, label, and its own padding.
+    static let slotWidth: CGFloat = 108
+    /// Width the bar spends on what is not a customizable tab — the More item plus the
+    /// capsule's end insets.
+    static let reservedWidth: CGFloat = 132
+
+    /// - Parameter isRegularWidth: regular horizontal size class AND not a phone.  An iPhone
+    ///   never grows the bar even if it were to report regular width in landscape.
+    static func fits(width: CGFloat, isRegularWidth: Bool) -> Int {
+        guard isRegularWidth else { return compact }
+        guard width.isFinite, width > 0 else { return compact }
+        let slots = Int(((width - reservedWidth) / slotWidth).rounded(.down))
+        return min(maximum, max(minimum, slots))
+    }
+}
+
+/// Persisted, owner-customizable tab-bar membership.
+///
+/// Three rules the bar obeys, in order:
+/// 1. **Home is chrome, not a preference.**  It is always pinned, always first, never
+///    toggleable — every other screen is optional.
+/// 2. **Width decides how many slots exist.**  `capacity` comes from the window, so an iPad
+///    or a wide Mac window shows more than the four an iPhone shows.  A window too narrow for
+///    the owner's chosen set falls back to the DEFAULTS, trimmed to fit; the stored choice is
+///    left untouched so widening restores it.
+/// 3. **The last slot before More is borrowed, not owned.**  Opening a screen from the More
+///    list hands it that slot (`dynamicTab`), displacing whatever sat there — Activity by
+///    default.  Pinning that screen makes it permanent and gives the slot back.
 @MainActor
 final class TabPreferences: ObservableObject {
     static let minTabs = 2
-    static let maxTabs = 4
+    /// Ceiling on what can be PINNED.  What actually renders is bounded by `capacity`.
+    static let maxTabs = TabBarCapacity.maximum
+    /// Always on the bar, never toggleable.
+    static let requiredTab: AppTab = .home
     /// Default pins mirror the web defaults (Home, Proposals, Activity, Orders) mapped
     /// onto this app's screens — Assets is where holdings/orders live on iOS.
     static let defaultTabs: [AppTab] = [.home, .proposals, .markets, .activity]
     private static let storageKey = "mobileTabs.v1"
+    private static let dynamicStorageKey = "mobileTabs.dynamic.v1"
 
     @Published private(set) var pinned: [AppTab]
+    /// False until the owner pins or unpins something.  Until then the bar AUTO-FILLS to
+    /// whatever the window fits — the whole point of a wider bar is that an iPad shows more
+    /// without anyone having to go and ask for it.  The first toggle freezes their choice.
+    @Published private(set) var hasCustomSelection: Bool
+    /// The screen currently borrowing the slot before More, or nil when nothing has been
+    /// opened from the More list.  Persisted so the bar does not snap back on relaunch.
+    @Published private(set) var dynamicTab: AppTab?
+    /// How many customizable tabs the current window fits.  Set by the shell from the live
+    /// width — see `TabBarCapacity.fits`.
+    @Published private(set) var capacity: Int
 
     private let userDefaults: UserDefaults
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(userDefaults: UserDefaults = .standard, capacity: Int = TabBarCapacity.compact) {
+        let slots = max(TabBarCapacity.minimum, min(TabBarCapacity.maximum, capacity))
+        // Unknown/stale raw values (a screen renamed or removed since the value was saved) and
+        // duplicates are dropped silently; a selection that fell below the minimum is treated
+        // as no selection at all rather than surfaced as an error — same recovery the web does.
+        let stored = Self.sanitize((userDefaults.stringArray(forKey: Self.storageKey) ?? [])
+            .compactMap(AppTab.init(rawValue:)))
+        // An unusable stored value is not a choice — it goes back to auto-fill rather than
+        // freezing the owner onto a set they never picked.
+        let isCustom = stored.count >= Self.minTabs
+        var restored = stored
+        if !restored.contains(Self.requiredTab) {
+            restored.insert(Self.requiredTab, at: 0)
+        }
+
         self.userDefaults = userDefaults
-        // Unknown/stale raw values (a screen renamed or removed since the value was
-        // saved) are dropped silently; a selection that fell below the minimum resets
-        // to the defaults rather than surfacing an error — same recovery the web does.
-        let stored = (userDefaults.stringArray(forKey: Self.storageKey) ?? [])
-            .compactMap(AppTab.init(rawValue:))
-            .filter { $0 != .more }
-        pinned = stored.count >= Self.minTabs ? Array(stored.prefix(Self.maxTabs)) : Self.defaultTabs
+        self.capacity = slots
+        self.hasCustomSelection = isCustom
+        self.pinned = isCustom ? Array(restored.prefix(Self.maxTabs)) : Self.autoFill(capacity: slots)
+        if let raw = userDefaults.string(forKey: Self.dynamicStorageKey),
+           let tab = AppTab(rawValue: raw), tab != .more {
+            self.dynamicTab = tab
+        }
     }
 
-    /// Pinned tabs in canonical order — what the bar actually renders.
+    /// The bar a window gets before the owner has expressed any preference: the owner-decided
+    /// defaults first, then the remaining screens in canonical order, cut to what fits.
+    static func autoFill(capacity: Int) -> [AppTab] {
+        let slots = max(minTabs, min(maxTabs, capacity))
+        let rest = AppTab.customizable.filter { !defaultTabs.contains($0) }
+        return Array((defaultTabs + rest).prefix(slots))
+    }
+
+    /// Drops `.more`, unknown values, and duplicates while keeping the stored order.
+    private static func sanitize(_ tabs: [AppTab]) -> [AppTab] {
+        var seen: Set<AppTab> = []
+        var result: [AppTab] = []
+        for tab in tabs where tab != .more && !seen.contains(tab) {
+            seen.insert(tab)
+            result.append(tab)
+        }
+        return result
+    }
+
+    /// Pinned tabs in canonical order — the owner's chosen membership, before the window's
+    /// width or the borrowed slot have any say.  (The bar renders declaration order, not the
+    /// order tabs happened to be pinned in.)
     var barTabs: [AppTab] { AppTab.customizable.filter { pinned.contains($0) } }
+
+    /// What the bar actually renders right now, in render order.  The borrowed occupant, when
+    /// there is one, is always the last entry — the slot immediately before More.
+    var visibleTabs: [AppTab] {
+        Self.resolve(barTabs: barTabs, dynamicTab: dynamicTab, capacity: capacity)
+    }
+
+    /// Pure resolution of (chosen membership, borrowed slot, available slots) -> rendered bar.
+    static func resolve(barTabs: [AppTab], dynamicTab: AppTab?, capacity: Int) -> [AppTab] {
+        let slots = max(minTabs, min(TabBarCapacity.maximum, capacity))
+        var base = barTabs
+        if base.count > slots {
+            // Too narrow for what the owner picked: fall back to the defaults.  Nothing is
+            // written to storage, so widening the window restores their choice untouched.
+            base = AppTab.customizable.filter { defaultTabs.contains($0) }
+        }
+        base = Array(base.prefix(slots))
+        guard let dynamicTab, dynamicTab != .more, !base.contains(dynamicTab) else { return base }
+        // The borrowed occupant displaces the LAST slot, never Home's.
+        guard base.count > 1 else { return base + [dynamicTab] }
+        return Array(base.dropLast()) + [dynamicTab]
+    }
 
     func isPinned(_ tab: AppTab) -> Bool { pinned.contains(tab) }
 
-    /// Whether pinning/unpinning this tab right now would respect the min/max bounds.
+    /// Whether pinning/unpinning this tab right now would respect the bounds.  Home is never
+    /// toggleable, and the ceiling is what this window fits — so the owner cannot pin a set
+    /// the bar would immediately have to fall back from.
     func canToggle(_ tab: AppTab) -> Bool {
-        pinned.contains(tab) ? pinned.count > Self.minTabs : pinned.count < Self.maxTabs
+        guard tab != .more, tab != Self.requiredTab else { return false }
+        if pinned.contains(tab) { return pinned.count > Self.minTabs }
+        return pinned.count < pinLimit
     }
 
+    /// The most tabs that may be pinned on this window size.
+    var pinLimit: Int { min(Self.maxTabs, max(Self.minTabs, capacity)) }
+
     func toggle(_ tab: AppTab) {
-        guard tab != .more else { return }
+        guard canToggle(tab) else { return }
+        // Touching the bar at all is the owner taking it over: auto-fill stops here.
+        hasCustomSelection = true
         if pinned.contains(tab) {
-            guard pinned.count > Self.minTabs else { return }
             pinned.removeAll { $0 == tab }
         } else {
-            guard pinned.count < Self.maxTabs else { return }
             pinned.append(tab)
+            // A screen that just earned a permanent slot has no use for the borrowed one.
+            if dynamicTab == tab { setDynamicTab(nil) }
         }
         userDefaults.set(pinned.map(\.rawValue), forKey: Self.storageKey)
+    }
+
+    /// Hand the slot before More to a screen that is not on the bar — what happens when the
+    /// owner opens one from the More list, follows a deep link, or when a window narrows far
+    /// enough to drop the screen they were already looking at.  A no-op for anything already
+    /// visible, so tapping a real tab never disturbs the borrowed one.
+    func promote(_ tab: AppTab) {
+        guard tab != .more, !visibleTabs.contains(tab) else { return }
+        setDynamicTab(tab)
+    }
+
+    /// Give the borrowed slot back to whatever the owner pinned there.
+    func clearDynamicTab() { setDynamicTab(nil) }
+
+    func setCapacity(_ value: Int) {
+        let clamped = max(TabBarCapacity.minimum, min(TabBarCapacity.maximum, value))
+        guard capacity != clamped else { return }
+        capacity = clamped
+        // Nothing is written to storage here — an auto-filled bar is still "no choice made",
+        // so rotating an iPad or resizing a Mac window never counts as customizing it.
+        if !hasCustomSelection {
+            pinned = Self.autoFill(capacity: clamped)
+        }
+    }
+
+    private func setDynamicTab(_ tab: AppTab?) {
+        guard dynamicTab != tab else { return }
+        dynamicTab = tab
+        if let tab {
+            userDefaults.set(tab.rawValue, forKey: Self.dynamicStorageKey)
+        } else {
+            userDefaults.removeObject(forKey: Self.dynamicStorageKey)
+        }
     }
 }
 
 struct MobileControlView: View {
     @EnvironmentObject private var store: MobileStore
     @StateObject private var tabPreferences = TabPreferences()
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedTab: AppTab = MobileControlView.initialTab()
-    @State private var morePath: [AppTab] = []
     /// Proposal id a deep link asked for, handed to whichever ProposalsView is on screen.
     @State private var focusedProposalId: String?
     /// Ticker a deep link asked for, handed to MarketsView (Assets).
@@ -157,9 +308,34 @@ struct MobileControlView: View {
         store.snapshot?.unreadNotificationCount ?? 0
     }
 
-    /// Programmatic jumps (e.g. Home's "Review Proposals") can target a screen the
-    /// owner unpinned from the bar. Rerouting those into the More stack keeps every
-    /// jump landing on a real screen instead of a selection with no matching tab.
+    /// The tabs the bar renders right now, in render order.
+    private var bar: [AppTab] { tabPreferences.visibleTabs }
+
+    /// An iPhone keeps the four-tab bar even if it ever reported regular width in landscape;
+    /// only an iPad or a Mac window earns extra slots.
+    private var isRegularWidth: Bool {
+        horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
+    }
+
+    private func badgeCount(for tab: AppTab) -> Int {
+        switch tab {
+        case .proposals: return pendingProposalCount
+        case .activity: return unreadNotificationCount
+        default: return 0
+        }
+    }
+
+    /// More carries what the bar cannot show, so a displaced Activity's unread count is never
+    /// invisible just because something borrowed its slot.
+    private var moreBadgeCount: Int {
+        AppTab.customizable
+            .filter { !bar.contains($0) }
+            .reduce(0) { $0 + badgeCount(for: $1) }
+    }
+
+    /// Programmatic jumps (e.g. Home's "Review Proposals") can target a screen that is not on
+    /// the bar. Handing it the borrowed slot keeps every jump landing on a real tab instead of
+    /// a selection with no matching tab.
     private var selection: Binding<AppTab> {
         Binding(
             get: { selectedTab },
@@ -168,12 +344,8 @@ struct MobileControlView: View {
                 // behind.  `apply` sets the focus AFTER moving the selection, so a link's own
                 // jump is not the change that clears it.
                 clearFocus()
-                if target == .more || tabPreferences.barTabs.contains(target) {
-                    selectedTab = target
-                } else {
-                    morePath = [target]
-                    selectedTab = .more
-                }
+                if target != .more { tabPreferences.promote(target) }
+                selectedTab = target
             }
         )
     }
@@ -181,77 +353,111 @@ struct MobileControlView: View {
     var body: some View {
         // iOS 26 `Tab` builder (not legacy `.tabItem`) — this is what keeps the bar on
         // the system Liquid Glass appearance and its iPad/Mac sidebar adaptations.
-        // Unrolled (no ForEach) so Release/archive can type-check; ForEach+Tab
-        // times out the Swift 6 compiler ("unable to type-check this expression").
+        //
+        // POSITIONAL, and unrolled on purpose.  Each block renders `bar[i]`, so the rendered
+        // order IS `visibleTabs` order and the borrowed occupant lands in the slot before
+        // More.  It stays unrolled (no ForEach) because ForEach+Tab times out the Swift 6
+        // compiler ("unable to type-check this expression") on Release/archive builds, and it
+        // stops at nine blocks + More because a result builder takes at most ten children.
         TabView(selection: selection) {
-            if tabPreferences.isPinned(.home) {
-                Tab(AppTab.home.title, systemImage: AppTab.home.systemImage, value: AppTab.home) {
-                    NavigationStack { destination(for: .home) }
+            if bar.count > 0 {
+                let tab = bar[0]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.proposals) {
-                Tab(AppTab.proposals.title, systemImage: AppTab.proposals.systemImage, value: AppTab.proposals) {
-                    NavigationStack { destination(for: .proposals) }
+            if bar.count > 1 {
+                let tab = bar[1]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
-                .badge(pendingProposalCount)
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.markets) {
-                Tab(AppTab.markets.title, systemImage: AppTab.markets.systemImage, value: AppTab.markets) {
-                    NavigationStack { destination(for: .markets) }
+            if bar.count > 2 {
+                let tab = bar[2]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.activity) {
-                Tab(AppTab.activity.title, systemImage: AppTab.activity.systemImage, value: AppTab.activity) {
-                    NavigationStack { destination(for: .activity) }
+            if bar.count > 3 {
+                let tab = bar[3]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
-                .badge(unreadNotificationCount)
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.insights) {
-                Tab(AppTab.insights.title, systemImage: AppTab.insights.systemImage, value: AppTab.insights) {
-                    NavigationStack { destination(for: .insights) }
+            if bar.count > 4 {
+                let tab = bar[4]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.coach) {
-                Tab(AppTab.coach.title, systemImage: AppTab.coach.systemImage, value: AppTab.coach) {
-                    NavigationStack { destination(for: .coach) }
+            if bar.count > 5 {
+                let tab = bar[5]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.scan) {
-                Tab(AppTab.scan.title, systemImage: AppTab.scan.systemImage, value: AppTab.scan) {
-                    NavigationStack { destination(for: .scan) }
+            if bar.count > 6 {
+                let tab = bar[6]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.guardrails) {
-                Tab(AppTab.guardrails.title, systemImage: AppTab.guardrails.systemImage, value: AppTab.guardrails) {
-                    NavigationStack { destination(for: .guardrails) }
+            if bar.count > 7 {
+                let tab = bar[7]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
+                .badge(badgeCount(for: tab))
             }
-            if tabPreferences.isPinned(.results) {
-                Tab(AppTab.results.title, systemImage: AppTab.results.systemImage, value: AppTab.results) {
-                    NavigationStack { destination(for: .results) }
+            if bar.count > 8 {
+                let tab = bar[8]
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack { destination(for: tab) }
                 }
+                .badge(badgeCount(for: tab))
             }
 
             Tab(AppTab.more.title, systemImage: AppTab.more.systemImage, value: AppTab.more) {
-                NavigationStack(path: $morePath) {
+                NavigationStack {
                     MoreView(
                         tabPreferences: tabPreferences,
                         pendingProposalCount: pendingProposalCount,
-                        unreadNotificationCount: unreadNotificationCount
+                        unreadNotificationCount: unreadNotificationCount,
+                        open: { selection.wrappedValue = $0 }
                     )
-                    .navigationDestination(for: AppTab.self) { tab in
-                        destination(for: tab)
-                    }
                 }
             }
+            .badge(moreBadgeCount)
         }
         .tint(AppPalette.accent)
+        // The window decides how many slots exist.  A Mac window dragged narrower, or an iPad
+        // rotated to portrait, re-runs this and the bar re-resolves live.
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            tabPreferences.setCapacity(TabBarCapacity.fits(width: width, isRegularWidth: isRegularWidth))
+        }
+        .onChange(of: bar) { _, tabs in
+            // A window that just got narrower can drop the screen currently on screen.  Hand
+            // it the borrowed slot rather than leaving the bar with a selection it cannot show.
+            if selectedTab != .more, !tabs.contains(selectedTab) {
+                tabPreferences.promote(selectedTab)
+            }
+        }
         .onChange(of: pendingDeepLink) { _, destination in
             apply(destination)
         }
         .onAppear {
             // A link or notification tap that launched the app can arrive before this view
             // exists, and one that arrives while signed out waits here until it does.
+            if selectedTab != .more { tabPreferences.promote(selectedTab) }
             apply(pendingDeepLink)
         }
         .onReceive(NotificationCenter.default.publisher(for: .ascSelectTab)) { note in
@@ -277,9 +483,10 @@ struct MobileControlView: View {
         return .home
     }
 
-    /// Deep links reuse the SAME rerouting `selection` binding as in-app jumps, so a link to an
-    /// UNPINNED screen lands in the More stack instead of selecting a tab that is not on the
-    /// bar.  Clearing `pendingDeepLink` afterwards keeps a repeat of the same link routable.
+    /// Deep links reuse the SAME `selection` binding as in-app jumps, so a link to a screen
+    /// that is not on the bar hands that screen the borrowed slot instead of selecting a tab
+    /// that does not exist.  Clearing `pendingDeepLink` afterwards keeps a repeat of the same
+    /// link routable.
     ///
     /// The focus id is set AFTER the tab move (the selection setter clears it) and expires on its
     /// own a few seconds later: the accent ring is a transient "here it is" cue for the card the
@@ -331,12 +538,14 @@ extension Notification.Name {
     static let ascSelectTab = Notification.Name("ascSelectTab")
 }
 
-/// The overflow + customization screen: every destination stays reachable here, and
-/// each row's pin toggle edits the bar live — the same two jobs as the web TabsSheet.
+/// The overflow + customization screen: every destination stays reachable here, each row's pin
+/// toggle edits the bar live, and opening a row that is not on the bar hands it the slot before
+/// More — the same two jobs as the web TabsSheet, plus the borrowed slot.
 private struct MoreView: View {
     @ObservedObject var tabPreferences: TabPreferences
     let pendingProposalCount: Int
     let unreadNotificationCount: Int
+    let open: (AppTab) -> Void
 
     var body: some View {
         List {
@@ -347,16 +556,26 @@ private struct MoreView: View {
             } header: {
                 Text("Screens")
             } footer: {
-                Text("Pinned screens show in the tab bar.  Pin up to \(TabPreferences.maxTabs); keep at least \(TabPreferences.minTabs).  Everything stays reachable from here either way.")
+                Text(footerText)
             }
         }
         .navigationTitle("More")
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    private var footerText: String {
+        let limit = tabPreferences.pinLimit
+        let filled = tabPreferences.hasCustomSelection
+            ? "A narrower window falls back to the default tabs and keeps your picks for when it widens again."
+            : "Until you pin or unpin something, the bar fills them for you."
+        return "Home always stays on the tab bar.  This window fits \(limit) screens.  \(filled)  Opening a screen from this list gives it the slot before More until you open another one."
+    }
+
     private func row(for tab: AppTab) -> some View {
         HStack(spacing: 12) {
-            NavigationLink(value: tab) {
+            Button {
+                open(tab)
+            } label: {
                 HStack(spacing: 12) {
                     Image(systemName: tab.systemImage)
                         .font(.appBody)
@@ -383,16 +602,27 @@ private struct MoreView: View {
                                     .padding(.vertical, 2)
                                     .background(AppPalette.accent, in: Capsule())
                             }
+                            if tabPreferences.dynamicTab == tab {
+                                Text("On Bar")
+                                    .font(.appCaption2.weight(.semibold))
+                                    .foregroundStyle(AppPalette.accent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(AppPalette.accent.opacity(0.12), in: Capsule())
+                            }
                         }
                         Text(tab.detail)
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.appCaption.weight(.semibold))
+                        .foregroundStyle(Color.secondary.opacity(0.6))
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
-            Spacer(minLength: 0)
 
             Button {
                 tabPreferences.toggle(tab)
@@ -402,15 +632,24 @@ private struct MoreView: View {
             }
             .buttonStyle(.borderless)
             .disabled(!tabPreferences.canToggle(tab))
-            .accessibilityLabel(tabPreferences.isPinned(tab) ? "Remove \(tab.title) from tab bar" : "Add \(tab.title) to tab bar")
-            .accessibilityHint(
-                tabPreferences.canToggle(tab)
-                    ? ""
-                    : tabPreferences.isPinned(tab)
-                        ? "Keep at least \(TabPreferences.minTabs) tabs"
-                        : "Up to \(TabPreferences.maxTabs) tabs — remove one first"
-            )
+            .accessibilityLabel(pinAccessibilityLabel(for: tab))
+            .accessibilityHint(pinAccessibilityHint(for: tab))
         }
+    }
+
+    private func pinAccessibilityLabel(for tab: AppTab) -> String {
+        if tab == TabPreferences.requiredTab { return "\(tab.title) is always on the tab bar" }
+        return tabPreferences.isPinned(tab)
+            ? "Remove \(tab.title) from tab bar"
+            : "Add \(tab.title) to tab bar"
+    }
+
+    private func pinAccessibilityHint(for tab: AppTab) -> String {
+        if tab == TabPreferences.requiredTab { return "Home cannot be removed" }
+        if tabPreferences.canToggle(tab) { return "" }
+        return tabPreferences.isPinned(tab)
+            ? "Keep at least \(TabPreferences.minTabs) tabs"
+            : "This window fits \(tabPreferences.pinLimit) tabs — remove one first"
     }
 }
 

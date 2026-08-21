@@ -174,11 +174,11 @@ enum CoachModelCatalog {
     static let storageKey = "console.assistant.model"
 
     static let options: [Option] = [
-        .init(id: "gpt-5.4-mini", label: "GPT Mini", provider: "openai", detail: "low-cost OpenAI"),
+        .init(id: "gpt-mini-latest", label: "GPT Mini (5.4)", provider: "openai", detail: "low-cost OpenAI"),
         .init(id: "gpt-5.6-terra", label: "GPT Terra", provider: "openai", detail: "balanced OpenAI"),
-        .init(id: "claude-haiku-4.5", label: "Claude Haiku", provider: "anthropic", detail: "fast Claude"),
-        .init(id: "claude-sonnet-5", label: "Claude Sonnet", provider: "anthropic", detail: "balanced Claude"),
-        .init(id: "grok-4.5", label: "Grok", provider: "xai", detail: "default Grok"),
+        .init(id: "claude-haiku-latest", label: "Claude Haiku (4.5)", provider: "anthropic", detail: "fast Claude"),
+        .init(id: "claude-sonnet-latest", label: "Claude Sonnet (5)", provider: "anthropic", detail: "balanced Claude"),
+        .init(id: "grok-latest", label: "Grok (4.5)", provider: "xai", detail: "default Grok"),
         .init(id: "gemini-flash-latest", label: "Gemini Flash", provider: "gemini", detail: "stable Flash")
     ]
 
@@ -459,6 +459,66 @@ struct SourceFeaturesResponse: Decodable {
 struct SourceSettingGroupInfo: Decodable {
     let title: String
     let blurb: String?
+}
+
+/// The one rule for what tapping away from a numeric settings field should do.
+///
+/// Extracted from the views because it is the whole of the behaviour worth pinning, and
+/// because it was previously spread across two files that disagreed: `DataSourcesSettings`
+/// silently dropped anything unparseable, while `LlmBudgetSection` showed a message —
+/// and BOTH only ran on `.onSubmit`, which a `.decimalPad` can never fire because that
+/// keyboard has no Return key.  A typed number was therefore discarded whenever the user
+/// tapped away, on iPhone as much as iPad, with no PATCH sent and no way to tell.
+enum NumberFieldCommit: Equatable {
+    /// Parseable and already what the server has.  Do not spend a round trip — this is also
+    /// what stops a Save button re-sending what a blur already saved.
+    case unchanged
+    /// Parseable and different.  `nil` clears the value, and is only ever produced for a
+    /// field where empty is a real choice ("blank = no cap").
+    case patch(Double?)
+    /// Empty where empty is not allowed, or not a number at all.  Put the stored value back
+    /// so the field shows what is actually saved rather than a phantom edit.
+    case revert
+}
+
+enum NumberFieldEditor {
+    static func decide(
+        text: String,
+        serverValue: Double?,
+        allowsEmpty: Bool,
+        minimum: Double? = 0
+    ) -> NumberFieldCommit {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            guard allowsEmpty else { return .revert }
+            return serverValue == nil ? .unchanged : .patch(nil)
+        }
+        guard let parsed = parse(trimmed), parsed.isFinite else { return .revert }
+        if let minimum, parsed < minimum { return .revert }
+        if let serverValue, parsed == serverValue { return .unchanged }
+        return .patch(parsed)
+    }
+
+    /// `Double(_:)` is not enough on its own.  `.decimalPad` prints the DEVICE locale's
+    /// decimal separator, which is a comma across much of the world, and `Double("1,5")` is
+    /// nil — so a comma-locale user's input would be thrown away by the very blur-commit
+    /// added here to stop input being thrown away.
+    static func parse(_ text: String, locale: Locale = .current) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let value = Double(trimmed) { return value }
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .decimal
+        return formatter.number(from: trimmed)?.doubleValue
+    }
+
+    /// How a stored value is shown in the field.  A whole number loses its ".0", so the
+    /// field does not visibly rewrite itself into "5.0" the moment it is committed.
+    static func display(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "" }
+        if value == value.rounded(), abs(value) < 1e15 { return String(Int(value)) }
+        return String(value)
+    }
 }
 
 struct SourceSettingRow: Decodable, Identifiable {

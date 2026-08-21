@@ -1,5 +1,96 @@
 # Current Status
 
+## 2026-08-21 MONET - P0: deploys have been failing for ~5 hours, prod serving stale code
+
+Every deployment from 2026-08-21T05:07Z onward failed on a top-level await in
+scripts/assert-rth-deploy-latch.ts, so the day's merged fixes -- including money-path changes --
+never reached production.  The running container kept serving healthy, so nothing external showed
+a problem; it was found only by reading Coolify diagnostics while chasing something else.
+
+package.json declares "type": "module", but the Dockerfile runs the latch at line 53 and copies
+package.json at line 54 -- deliberately, so a docs-only no-op fails in seconds rather than after a
+30-minute npm ci.  tsx therefore sees no package.json, falls back to CJS, and a top-level await is
+fatal there.  It runs fine locally and fails only in the image, which is why it shipped.
+
+Fixed by moving the await into an async main() with a catch that exits 1, so a crash can never
+silently allow a build.  A regression test now parses the Dockerfile and transpiles every
+build-time script that runs before package.json exists.
+
+VERIFY AFTER MERGE: the next deployment must succeed and the live sha must advance past 313603752.
+
+## 2026-08-21 CURSOR — three-column LLM catalog (display / OpenRouter / native)
+
+Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settings, pickers, logs, and iOS Coach store **display slugs**.  Live OpenRouter calls send column 2 via `normalizeOpenRouterModelId` / `openRouterSlugFor`.  Direct-provider stubs use `nativeSlugFor` so a future native path cannot send an OpenRouter vendor path.  Older persisted ids (`gpt-5.4-mini`, `claude-sonnet-5`, `grok-4.5`, `deepseek-v4-flash`, `gemini-3.5-flash-lite`, …) alias onto the new display slugs.  Models not on the owner list are no longer advertised.  Congress.Trade has no cheap parallel catalog in a Cursor CT lane — follow-up only.
+
+**Risk:** some owner wire slugs (untilded `*-latest`, `google/gemini-flash-latest`, period-form `mistralai/mistral-medium-3.5`) may 404 on OpenRouter today.  Owner said do not keep sending the dated ids the table replaced.
+
+MERGED to `main` as #3003 squash `36f0a3c8` at 09:56 UTC (auto-deploy).  Rollout: `docs/rollouts/2026-08-21-llm-model-slugs.md`.
+## 2026-08-21 CLAUDE - adaptive tab bar MERGED; the unfinished half is written down
+
+PR #2987 merged to `main` as `9298c29` at 06:56 UTC.  Owner ask delivered in full: more than
+four tabs on iPad and wide Mac windows, fall back to the defaults when too narrow, Home
+required, the slot before More swapped out by whatever is opened from the More list, plus the
+iPad Air 11" layout pass carried into Mac Catalyst.
+
+No deploy fires - `ios/**` and `docs/**` are both outside Coolify `watch_paths`, and the iOS
+app only changes when the TestFlight ship script runs.
+
+**Three things the merge does NOT prove, and I would rather they be loud than tidy:** the 45
+XCTests are compiled but have never been executed (nothing in this repo runs `xcodebuild
+test`); there is no screenshot of the new iPad layout; and `xcodebuild (unsigned)` hangs on
+every iOS PR (PR #2794 has the identical `cancelled` outcome), which is a runner-side
+`SWBBuildService` pipe hang that raising the timeout would not fix.
+
+Handoff with all six open items, each claimable on its own:
+`docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`.  Items A, B and D need a Mac -
+a cloud session cannot do them, those containers are Linux and hit the same wall.
+
+## 2026-08-21 CLAUDE - the tab bar now knows how wide the window is
+
+Owner ask: more than four tabs on iPad and on a wide Mac window, Home required, and the slot
+before More swapped out by whatever you open from the More list.  All four are in, plus the
+iPad Air 11" layout pass they asked for on top.
+
+`TabBarCapacity` turns the live width into a slot count: compact width keeps four, iPad Air
+11" gets six portrait / eight landscape, and a Mac window recomputes as it is dragged.  Home
+can no longer be unpinned.  The slot before More is borrowed - opening a screen from More
+takes it, pinning that screen makes it permanent and gives the slot back - and More carries an
+aggregate badge so a displaced Activity's unread count never vanishes.  Too narrow for the
+chosen set falls back to the DEFAULTS and writes nothing, so widening restores the owner's
+picks exactly.
+
+One decision worth flagging because it is not literally in the ask: until the owner pins or
+unpins anything the bar AUTO-FILLS to what fits.  Without it a fresh iPad would still show
+four tabs and the feature would only exist for someone who went looking for it.
+
+Layout: `SnapshotScaffold` picks 1/2/3 card columns from its own measured width, and one
+column is the existing `LazyVStack` untouched - the iPhone is deliberately unchanged.  Cards
+drop into the shortest column; the freshness banner and each screen's hero span.  Six
+hardcoded two-column metric grids now widen with the CARD they sit in rather than the screen.
+Coach keeps a readable measure instead of stretching a chat to 1148pt.
+
+**The Swift compiles** - the Mac runner printed `** BUILD SUCCEEDED **` twice on this branch
+(05:22:30 and 06:21:48), and `verify` is green.  Nothing could be compiled locally: this is a
+Linux remote container with no xcodebuild, swiftc, xcodegen, or simulator, and the repo's
+four-command gate compiles no Swift anyway.
+
+**The `xcodebuild` CHECK still reads `cancelled`, and it is not this change.**  I got the
+reason wrong the first time and said a cold cache made the build overrun the 30-minute
+timeout; the second attempt built in 21 minutes with nine minutes to spare and was cancelled
+anyway.  The step never exits after xcodebuild returns - `SWBBuildService` outlives it,
+inherits the step's stdout pipe, and the runner waits on the pipe.  Raising the timeout would
+not fix it.  PR #2794 (someone else's iOS PR, merged to main at 04:35 the same day) has the
+identical `cancelled` outcome, so this is red on base too; it merges because `ios-build` is
+not a required check.  Proposed patch (redirect xcodebuild output to a file so the daemon
+inherits a file, not the pipe) is in the rollout note - NOT applied, it is CI infrastructure
+outside this ask and affects every iOS PR.
+
+**Still open, stated plainly:** the XCTests are compiled but have never been executed
+(`ios-build.yml` runs `xcodebuild build`, not `test`), there is no screenshot, and the
+`WrappingHStackTests.swift` -> `LayoutMathTests.swift` rename needs `xcodegen` on a Mac.
+
+Rollout: `docs/rollouts/2026-08-21-ios-adaptive-tabs-ipad-layout.md`.
+
 ## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
 
 New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.
@@ -39,6 +130,13 @@ Rebased onto merged #2950; three overlaps hand-reconciled (both sides' `Performa
 #2853 adopted a `strategy_run_requests` row when the in-process heartbeat was older than 90s.  An event-loop freeze (SQLite `busy_timeout` 60s; measured >120s back-to-back) stops the 15s beat without killing `runStrategyOnce`.  Drain then `releaseStrategyLock` and starts a second gather/place on the same run id.  The still-running worker can already have passed `assertOwned` before `placeEquityOrder`, so the adopted run double-places.
 
 Fix: treat a map entry on this process as live, regardless of beat age.  Only a missing entry (process restart) is an orphan.  Rollout: `docs/rollouts/2026-08-20-drain-adopt-live-heartbeat.md`.
+## 2026-08-20 MONET - the two-space sentence rule now renders on the web
+
+The defect was not missing gaps in source.  Two literal ASCII spaces typed into JSX collapse to ONE at render, so the source looked compliant and the screen was not -- which is exactly how this stayed broken while looking fixed.
+
+Measured 698 real violations across 73 files (the review estimated ~600) and fixed 652.  The 46 remaining are entirely inside files held by peer PRs #2795 / #2793 / #2828.  `scripts/copy-rules-lint.mjs` ships with the fix and asserts on RENDERED output via a renderCollapse() implementation of the CSS whitespace rule, so this cannot silently regress.
+
+Worth knowing for anyone doing mass regex edits on TSX: building the fixer produced three bugs in the fixer, and only running the app's test suite caught them.  Two altered executable code, one corrupted numbered headings on the public legal pages.  Do not trust a non-AST regex pass on source without running the tests.
 ## 2026-08-20 MONET - LLM cost is now the provider's number, not our price table
 
 The review told us to add `usage:{include:true}` to every OpenRouter request.  That parameter is deprecated and inert -- usage is always returned now -- so it was deliberately NOT added; adding it would also risk the endpoint-filtering 404 class, since `require_parameters:true` filters on advertised request fields.  The real defect was read-side: `usage.cost` was arriving on every response and being thrown away.

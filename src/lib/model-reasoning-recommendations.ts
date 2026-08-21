@@ -15,6 +15,7 @@
 // guidance + rotation defaults, not a wire contract. Keep entries keyed by the exact curated
 // catalog ids (app/ui/llm-model-catalog.ts CURATED_LLM_MODEL_GROUPS / MODEL_ROTATION_POOL).
 
+import { displaySlugFor } from "./llm-model-catalog";
 import type { LlmReasoningEffort } from "./types";
 
 export interface ModelReasoningRecommendation {
@@ -73,36 +74,42 @@ export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecom
     advice: "Luna: Low for chat/high-volume synthesis; Medium for Green."
   },
   "gpt-5.4-nano": { effort: "low", advice: "Nano at Low: best for extraction and cheap chat." },
-  "gpt-5.4-mini": {
+  "gpt-mini-latest": {
     effort: "medium",
     roleEfforts: { chat: "low", red: "high", review: "high" },
     advice: "Mini: Low for Coach/chat, Medium for a low-cost Green Team."
   },
   "gpt-4o": { effort: "medium" },
+  "gpt-4o-mini": { effort: "low" },
   // Anthropic
-  "claude-haiku-4.5": { effort: "medium" },
-  "claude-sonnet-5": { effort: "medium" },
-  "claude-opus-5": { effort: "medium" },
-  "claude-fable-5": { effort: "medium" },
+  "claude-haiku-latest": { effort: "medium" },
+  "claude-sonnet-latest": { effort: "medium" },
+  "claude-opus-latest": { effort: "medium" },
+  "claude-fable-latest": { effort: "medium" },
   // xAI
-  "grok-4.5": { effort: "medium" },
-  "grok-build-latest": { effort: "medium" },
+  "grok-latest": { effort: "medium" },
+  "grok-build-0.1": { effort: "medium" },
   // Gemini
   "gemini-flash-lite-latest": { effort: "medium" },
   "gemini-flash-latest": { effort: "medium" },
   "gemini-pro-latest": { effort: "medium" },
   // DeepSeek
-  "deepseek-v4-flash": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "deepseek-v4-pro": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "deepseek-reasoner": { effort: "high" },
+  "deepseek-flash-latest": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "deepseek-pro-latest": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "deepseek-r1": { effort: "high" },
   // Mistral
   "mistral-small-latest": { effort: "none" },
   "mistral-medium-latest": { effort: "none", advice: MISTRAL_MEDIUM_ADVICE },
+  "mistral-large-latest": { effort: "medium" },
   // Meta
-  "llama-70b-latest": { effort: "medium" }
+  "llama-3.3-70b-instruct": { effort: "medium" }
 };
 
 function lookup(model: string | undefined): ModelReasoningRecommendation | undefined {
+  const display = displaySlugFor(model);
+  if (display && MODEL_REASONING_RECOMMENDATIONS[display]) {
+    return MODEL_REASONING_RECOMMENDATIONS[display];
+  }
   let id = (model ?? "").trim();
   if (id.includes("/")) {
     id = id.split("/").pop()!;

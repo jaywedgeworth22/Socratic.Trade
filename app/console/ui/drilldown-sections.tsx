@@ -166,7 +166,7 @@ export function PeerAccountsSection({
   return (
     <Section
       title="Other accounts"
-      titleHint={`Same owner, different account.  Only size and direction — open that account to see cost, P&amp;L, and the full exit plan.`}
+      titleHint={`Same owner, different account.  Only size and direction — open that account to see cost, P&amp;L, and the full exit plan.`}
     >
       <ul className="flex flex-col">
         {peers.map((peer) => (
@@ -203,7 +203,7 @@ export function LastCallSection({ lastCall }: { lastCall?: SymbolDeskLastCall })
   return (
     <Section
       title="Last desk call"
-      titleHint="The latest Green/Red decision case for this ticker on this account.  Full evidence stays on the decision page."
+      titleHint="The latest Green/Red decision case for this ticker on this account.  Full evidence stays on the decision page."
     >
       <div className="flex flex-wrap items-center gap-2">
         {lastCall.side && <Chip tone={lastCall.side === "buy" || lastCall.side === "cover" ? "pos" : "neg"}>{lastCall.side}</Chip>}
@@ -278,7 +278,7 @@ export function ExposureSection({
           </Tooltip>
           <Tooltip
             className="cursor-default flex flex-col"
-            content="Market value minus entry basis — the open gain or loss if closed at the latest known price. Not realized until sold."
+            content="Market value minus entry basis — the open gain or loss if closed at the latest known price.  Not realized until sold."
           >
             <div className="con-card-title mb-0.5">Unrealized P&L</div>
             <div className="text-[length:var(--con-fs-sm)]">
@@ -294,7 +294,7 @@ export function ExposureSection({
       {pending.length > 0 && (
         <div className={cx(position && "mt-3 border-t border-[color:var(--con-line)] pt-3")}>
           <div className="con-card-title mb-1.5">
-            <Tooltip content="Trade ideas for this symbol waiting for your approval. Nothing happens until you approve or reject them.">Waiting for you</Tooltip>
+            <Tooltip content="Trade ideas for this symbol waiting for your approval.  Nothing happens until you approve or reject them.">Waiting for you</Tooltip>
           </div>
           <ul className="flex flex-col">
             {pending.map((p) => (
@@ -435,7 +435,7 @@ export function DerivedTilesSection({ view, derived }: { view: QuoteView; derive
   return (
     <Section
       title="Derived metrics"
-      titleHint="Ratios this app computes from the raw quote data it already pulls — the same values handed to the trading agent. Hover any tile for what it means and how to read it."
+      titleHint="Ratios this app computes from the raw quote data it already pulls — the same values handed to the trading agent.  Hover any tile for what it means and how to read it."
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {tiles.map((t) => (
@@ -464,7 +464,7 @@ export function FactorSection({ view }: { view: QuoteView }) {
   return (
     <Section
       title="Factor breakdown"
-      titleHint="Every weighted sub-score (0–100 each) behind this symbol's composite scan score. The composite is the policy-weighted total the screener ranked by."
+      titleHint="Every weighted sub-score (0–100 each) behind this symbol's composite scan score.  The composite is the policy-weighted total the screener ranked by."
     >
       <div className="space-y-2">
         {rows.map((f) => (
@@ -548,7 +548,7 @@ export function AnalystSection({ view }: { view: QuoteView }) {
           <div
             className="cursor-default"
             title={withProvenance(
-              `Analyst 12-month price targets: low ${fmtMoney(view.targetLow)}, ${typeof view.targetMedian === "number" ? `median ${fmtMoney(view.targetMedian)}, ` : ""}${typeof view.targetMean === "number" ? `mean ${fmtMoney(view.targetMean)}, ` : ""}high ${fmtMoney(view.targetHigh)}. The marker is the current price — left of the mean implies analysts expect upside.`,
+              `Analyst 12-month price targets: low ${fmtMoney(view.targetLow)}, ${typeof view.targetMedian === "number" ? `median ${fmtMoney(view.targetMedian)}, ` : ""}${typeof view.targetMean === "number" ? `mean ${fmtMoney(view.targetMean)}, ` : ""}high ${fmtMoney(view.targetHigh)}.  The marker is the current price — left of the mean implies analysts expect upside.`,
               view,
               "targetMean"
             )}
@@ -615,7 +615,7 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
       title: withProvenance(
         pe?.na
           ? "Price ÷ trailing earnings per share. n/a because trailing earnings are negative or zero — the ratio genuinely doesn't exist, which is different from missing data."
-          : "Price ÷ trailing earnings per share. Under ~15 is traditionally cheap; over ~50 prices in a lot of growth.",
+          : "Price ÷ trailing earnings per share.  Under ~15 is traditionally cheap; over ~50 prices in a lot of growth.",
         view,
         "peRatio"
       )
@@ -625,21 +625,21 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
       label: "EPS (ttm)",
       value: typeof view.eps === "number" ? fmtMoney(view.eps) : null,
       stale: isStaleViewField(view, "eps"),
-      title: withProvenance("Trailing-twelve-month earnings per share. Negative = the company lost money over the last year.", view, "eps")
+      title: withProvenance("Trailing-twelve-month earnings per share.  Negative = the company lost money over the last year.", view, "eps")
     },
     {
       key: "epsGrowth",
       label: "EPS growth (YoY)",
       value: typeof view.epsGrowth === "number" ? fmtPct(view.epsGrowth * 100, 0, true) : null,
       stale: isStaleViewField(view, "epsGrowth"),
-      title: withProvenance("Year-over-year earnings-per-share growth. Positive and rising is the healthy pattern.", view, "epsGrowth")
+      title: withProvenance("Year-over-year earnings-per-share growth.  Positive and rising is the healthy pattern.", view, "epsGrowth")
     },
     {
       key: "pbRatio",
       label: "P/B ratio",
       value: typeof view.pbRatio === "number" ? view.pbRatio.toFixed(2) : null,
       stale: isStaleViewField(view, "pbRatio"),
-      title: "Price ÷ book value per share. Under 1 = trading below accounting net worth; capital-light businesses normally trade far above 1."
+      title: "Price ÷ book value per share.  Under 1 = trading below accounting net worth; capital-light businesses normally trade far above 1."
     },
     {
       key: "dividendYield",
@@ -660,7 +660,7 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
       label: "Debt / equity",
       value: typeof de === "number" ? de.toFixed(2) : null,
       stale: isStaleViewField(view, "debtToEquity"),
-      title: withProvenance("Total debt ÷ shareholder equity, normalized to a ratio. Under 0.5 = conservatively financed; over 3 = heavily leveraged.", view, "debtToEquity")
+      title: withProvenance("Total debt ÷ shareholder equity, normalized to a ratio.  Under 0.5 = conservatively financed; over 3 = heavily leveraged.", view, "debtToEquity")
     },
     {
       key: "beta",
@@ -678,43 +678,43 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
       key: "instOwn",
       label: "Institutional ownership",
       value: typeof view.institutionOwnershipPct === "number" ? fmtPct(view.institutionOwnershipPct, 1) : null,
-      title: "Percentage of shares held by institutions (funds, pensions). High ownership = professional validation but less retail float."
+      title: "Percentage of shares held by institutions (funds, pensions).  High ownership = professional validation but less retail float."
     },
     {
       key: "iv",
       label: "Near-the-money IV",
       value: typeof view.nearTheMoneyIv === "number" ? fmtPct(view.nearTheMoneyIv, 1) : null,
-      title: "Implied volatility of near-the-money options — the market's priced-in expectation of movement. Higher = bigger expected swings."
+      title: "Implied volatility of near-the-money options — the market's priced-in expectation of movement.  Higher = bigger expected swings."
     },
     {
       key: "putCall",
       label: "Put/call ratio",
       value: typeof view.putCallRatio === "number" ? view.putCallRatio.toFixed(2) : null,
-      title: "Put open interest ÷ call open interest around the money. Above 1 = more downside hedging/bets; below 1 = call-heavy optimism."
+      title: "Put open interest ÷ call open interest around the money.  Above 1 = more downside hedging/bets; below 1 = call-heavy optimism."
     },
     {
       key: "vwap",
       label: "VWAP",
       value: typeof view.vwap === "number" ? fmtMoney(view.vwap) : null,
-      title: withProvenance("Volume-weighted average price of the latest session. Price above VWAP = buyers paid up today; below = sellers dominated.", view, "vwap")
+      title: withProvenance("Volume-weighted average price of the latest session.  Price above VWAP = buyers paid up today; below = sellers dominated.", view, "vwap")
     },
     {
       key: "bidAsk",
       label: "Bid / ask",
       value: typeof view.bid === "number" && typeof view.ask === "number" ? `${fmtMoney(view.bid)} / ${fmtMoney(view.ask)}` : null,
-      title: withProvenance("The best quoted buy (bid) and sell (ask) prices from the last scan. The gap between them is the spread you pay to trade immediately.", view, "bid")
+      title: withProvenance("The best quoted buy (bid) and sell (ask) prices from the last scan.  The gap between them is the spread you pay to trade immediately.", view, "bid")
     },
     {
       key: "marketCap",
       label: "Market cap",
       value: fmtCompact(view.marketCap) ? `$${fmtCompact(view.marketCap)}` : null,
-      title: "Total value of all shares (price × shares outstanding). Over $10B = large cap; under $2B = small cap territory."
+      title: "Total value of all shares (price × shares outstanding).  Over $10B = large cap; under $2B = small cap territory."
     },
     {
       key: "volume",
       label: "Share volume",
       value: fmtCompact(view.volume),
-      title: withProvenance("Shares traded in the latest session. Compare with the stock's normal volume — spikes usually accompany news.", view, "volume")
+      title: withProvenance("Shares traded in the latest session.  Compare with the stock's normal volume — spikes usually accompany news.", view, "volume")
     },
     {
       key: "range52w",
@@ -730,7 +730,7 @@ export function FundamentalsSection({ view }: { view: QuoteView }) {
   return (
     <Disclosure
       title="Fundamentals & market data"
-      titleHint="Every raw enrichment field the last scan knew for this symbol. An em dash means the data wasn't available; 'n/a' on P/E means earnings are negative/zero (a real state, not missing data). Hover each row for meaning and source."
+      titleHint="Every raw enrichment field the last scan knew for this symbol.  An em dash means the data wasn't available; 'n/a' on P/E means earnings are negative/zero (a real state, not missing data).  Hover each row for meaning and source."
     >
       <div className="grid gap-x-6 sm:grid-cols-2">
         {rows.map((r) => (
