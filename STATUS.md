@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-08-21 CURSOR — Scan card tap + honest iOS last/next run
+
+Owner: whole scan card opens company info; iOS company name darker than industry; Roth IRA Home said "not scheduled" for Last Run and Next Run on Autopilot.  Last run now comes from `strategy_runs` (never cadence copy).  Next run is filled for an active account even after restart / cash close.
+
+PR on `cursor/ios-scan-card-schedule-e224`.  iOS ships via TestFlight only.  API half needs a post-close (or HOTFIX) deploy for live Home stamps.  Rollout: `docs/rollouts/2026-08-21-ios-scan-card-schedule.md`.
+
+# Current Status
+
 ## 2026-08-21 GROK — RTH drain actually nudges Coolify
 
 Live sha e0a4959a73a7 is 39 commits behind main.  Weekday Coolify builds are RTH-latched on purpose (keep last healthy container).  The 21:20 UTC drain then exited 0 without a nudge because GITHUB_TOKEN cannot redeliver hooks and COOLIFY_DEPLOY_WEBHOOK_URL was unset.

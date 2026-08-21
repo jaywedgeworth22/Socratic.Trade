@@ -240,8 +240,14 @@ private struct SchedulerActivityCard: View {
                         systemImage: "timer"
                     )
                 }
-                LabeledContent("Last Run", value: AppFormat.dateTime(snapshot.scheduler.lastRunAt))
-                LabeledContent("Next run", value: AppFormat.dateTime(snapshot.scheduler.nextRunAt))
+                LabeledContent("Last Run", value: AppFormat.lastRun(snapshot.scheduler.lastRunAt))
+                LabeledContent(
+                    "Next Run",
+                    value: AppFormat.nextRun(
+                        snapshot.scheduler.nextRunAt,
+                        autonomyActive: snapshot.policy.systemState == "active"
+                    )
+                )
                 LabeledContent("Cadence", value: snapshot.policy.runCadenceMinutes.map { "\($0) minutes" } ?? "Manual")
             }
         }

@@ -313,6 +313,21 @@ final class UserFacingCopyTests: XCTestCase {
         }
     }
 
+    /// Last Run is a completed stamp.  It must never reuse the Next Run
+    /// "not scheduled" empty copy — that is what made Autopilot Roth look idle.
+    func testLastRunNeverSaysNotScheduled() {
+        XCTAssertEqual(AppFormat.lastRun(nil), "never")
+        XCTAssertFalse(AppFormat.lastRun(nil).localizedCaseInsensitiveContains("scheduled"))
+        XCTAssertEqual(AppFormat.nextRun(nil, autonomyActive: false), "not scheduled")
+        XCTAssertEqual(AppFormat.nextRun(nil, autonomyActive: true), "due at next session")
+        XCTAssertFalse(AppFormat.nextRun(nil, autonomyActive: true).localizedCaseInsensitiveContains("not scheduled"))
+        let stamp = "2026-08-21T15:02:00.000Z"
+        XCTAssertNotEqual(AppFormat.lastRun(stamp), "never")
+        XCTAssertNotEqual(AppFormat.lastRun(stamp), "not scheduled")
+        XCTAssertNotEqual(AppFormat.nextRun(stamp, autonomyActive: true), "not scheduled")
+        XCTAssertNotEqual(AppFormat.nextRun(stamp, autonomyActive: true), "due at next session")
+    }
+
     /// The More-list line claimed the screen only tightens policy, which the screen
     /// itself contradicts ("Caps can go up or down").
     func testGuardrailsTabDetailDoesNotClaimTighteningOnly() {
