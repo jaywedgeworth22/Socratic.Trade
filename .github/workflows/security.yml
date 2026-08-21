@@ -48,7 +48,7 @@ jobs:
                 ;;
             esac
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Gitleaks must see full history: a secret added and removed in an
           # earlier PR commit must remain scannable, as must scheduled history.

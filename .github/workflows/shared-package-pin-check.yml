@@ -61,7 +61,7 @@ jobs:
     # Congress.Trade is public, so GITHUB_TOKEN can read the peer package.json.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -71,7 +71,7 @@ jobs:
       # Keep the consumer manifest present even if cleanup from a prior job
       # overlaps this long-lived runner workspace after the first checkout.
       - name: Refresh checkout before reading package metadata
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Compare shared-package version against the peer consumer
         env:
