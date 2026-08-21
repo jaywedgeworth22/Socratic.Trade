@@ -4,28 +4,47 @@ struct HomeView: View {
     @Binding var selectedTab: AppTab
     @State private var presentedSheet: HomeSheet?
 
-    var body: some View {
-        SnapshotScaffold { snapshot in
-            let readinessIncomplete = !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse
-            if readinessIncomplete {
-                ReadinessChecklistHero(
-                    snapshot: snapshot,
-                    openSettings: { presentedSheet = .settings }
-                )
-                // Agent overview only during setup — once ready, ReadyHomeHero already
-                // shows account, state, and authority (duplicate card was pure noise).
-                AgentOverviewCard(snapshot: snapshot, showInlineReadiness: true)
-            } else {
-                ReadyHomeHero(snapshot: snapshot) {
-                    selectedTab = .proposals
-                }
+    @ViewBuilder
+    private func hero(_ snapshot: MobileSnapshot) -> some View {
+        if !snapshot.readiness.hasAccount || !snapshot.readiness.hasUniverse {
+            ReadinessChecklistHero(
+                snapshot: snapshot,
+                openSettings: { presentedSheet = .settings }
+            )
+            // Agent overview only during setup — once ready, ReadyHomeHero already
+            // shows account, state, and authority (duplicate card was pure noise).
+            AgentOverviewCard(snapshot: snapshot, showInlineReadiness: true)
+        } else {
+            ReadyHomeHero(snapshot: snapshot) {
+                selectedTab = .proposals
             }
-            StrategyControlsCard(snapshot: snapshot)
-            PortfolioOverviewCard(snapshot: snapshot)
-            PerformanceOverviewCard(snapshot: snapshot, selectedTab: $selectedTab)
-            DeskShortcutsCard(selectedTab: $selectedTab)
-            ScheduleOverviewCard(snapshot: snapshot)
-            HomeAttentionCard(snapshot: snapshot, selectedTab: $selectedTab)
+        }
+    }
+
+    var body: some View {
+        SnapshotScaffold(column: .wide) { snapshot in
+            hero(snapshot)
+            // Seven cards in one column meant an iPad landscape showed two of them with
+            // ~40% dead margin either side.  The hero stays full-bleed; the rest pair up
+            // once there is genuinely room for two columns of cards.
+            AppSplitColumns {
+                StrategyControlsCard(snapshot: snapshot)
+                ScheduleOverviewCard(snapshot: snapshot)
+                DeskShortcutsCard(selectedTab: $selectedTab)
+            } right: {
+                PortfolioOverviewCard(snapshot: snapshot)
+                PerformanceOverviewCard(snapshot: snapshot, selectedTab: $selectedTab)
+                HomeAttentionCard(snapshot: snapshot, selectedTab: $selectedTab)
+            } narrow: {
+                // Today's order, spelled out.  Deliberately NOT `left()` then `right()`,
+                // which would silently reorder the phone.
+                StrategyControlsCard(snapshot: snapshot)
+                PortfolioOverviewCard(snapshot: snapshot)
+                PerformanceOverviewCard(snapshot: snapshot, selectedTab: $selectedTab)
+                DeskShortcutsCard(selectedTab: $selectedTab)
+                ScheduleOverviewCard(snapshot: snapshot)
+                HomeAttentionCard(snapshot: snapshot, selectedTab: $selectedTab)
+            }
         }
         .appScreenTitle("Home")
         .toolbar {
@@ -368,72 +387,111 @@ private struct StrategyControlsCard: View {
                     .font(.appSubheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .appProseMeasure()
 
-                if !heroOwnsRunOnce {
-                    runOnceButton
+                // The ladder of full-width capsules was the loudest tell that a phone
+                // layout had been dropped onto a desk — on a maximised Mac window each
+                // of these was ~1090pt wide.  Given room, the controls become a rail with
+                // their own legend beside them; without it, nothing changes.
+                //
+                // `ViewThatFits` measures IDEAL width, so the legend needs an explicit
+                // idealWidth or it reports one unwrapped ~1300pt line and the wide branch
+                // is never chosen.  Ideal here is 280 + 16 + 220 = 516pt, which an iPhone
+                // card interior (~326pt) cannot satisfy — so the phone always takes the
+                // second branch, i.e. today's ladder in today's order.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 16) {
+                        controlRail
+                            .frame(width: 280)
+                        legendAndBacklog
+                            .frame(minWidth: 220, idealWidth: 220, maxWidth: 460, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        controlRail
+                            // 420 never binds at 326pt of phone card interior.
+                            .appCenteredMeasure(AppLayout.entryRow)
+                        legendAndBacklog
+                    }
                 }
+            }
+        }
+    }
 
-                if plan.primary == .stop {
-                    stopButton
-                    if plan.showStart {
-                        startButton
-                    }
-                    if plan.showCloseOnly || plan.showWindDown {
-                        DisclosureGroup("More Postures") {
-                            VStack(spacing: 10) {
-                                if plan.showCloseOnly { closeOnlyButton }
-                                if plan.showWindDown { windDownButton }
-                            }
-                            .padding(.top, 8)
-                        }
-                        .font(.appSubheadline.weight(.semibold))
-                    }
-                } else if plan.showStart {
+    /// The buttons themselves, in the order the current plan calls for.
+    @ViewBuilder
+    private var controlRail: some View {
+        VStack(spacing: 14) {
+            if !heroOwnsRunOnce {
+                runOnceButton
+            }
+
+            if plan.primary == .stop {
+                stopButton
+                if plan.showStart {
                     startButton
-                    if let reason = plan.startDisabledReason, !plan.startEnabled {
-                        Text(reason)
-                            .font(.appCaption)
-                            .foregroundStyle(.secondary)
-                    }
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) {
-                            if plan.showCloseOnly { closeOnlyButton }
-                            if plan.showWindDown { windDownButton }
-                        }
-                        VStack(spacing: 10) {
-                            if plan.showCloseOnly { closeOnlyButton }
-                            if plan.showWindDown { windDownButton }
-                        }
-                    }
-                    if plan.showStop {
-                        stopButton
-                    }
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) {
-                            if plan.showCloseOnly { closeOnlyButton }
-                            if plan.showWindDown { windDownButton }
-                        }
-                        VStack(spacing: 10) {
-                            if plan.showCloseOnly { closeOnlyButton }
-                            if plan.showWindDown { windDownButton }
-                        }
-                    }
-                    if plan.showStop {
-                        stopButton
-                    }
                 }
-
-                Text("Exit Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
-                    .font(.appCaption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running > 0 {
-                    Text("\(snapshot.readiness.commandBacklog.queued) queued · \(snapshot.readiness.commandBacklog.running) running")
+                if plan.showCloseOnly || plan.showWindDown {
+                    DisclosureGroup("More Postures") {
+                        VStack(spacing: 10) {
+                            if plan.showCloseOnly { closeOnlyButton }
+                            if plan.showWindDown { windDownButton }
+                        }
+                        .padding(.top, 8)
+                    }
+                    .font(.appSubheadline.weight(.semibold))
+                }
+            } else if plan.showStart {
+                startButton
+                if let reason = plan.startDisabledReason, !plan.startEnabled {
+                    Text(reason)
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
+                postureButtons
+                if plan.showStop {
+                    stopButton
+                }
+            } else {
+                postureButtons
+                if plan.showStop {
+                    stopButton
+                }
+            }
+        }
+    }
+
+    /// The protective pair.  Was written out four times; it is one thing.
+    private var postureButtons: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                if plan.showCloseOnly { closeOnlyButton }
+                if plan.showWindDown { windDownButton }
+            }
+            VStack(spacing: 10) {
+                if plan.showCloseOnly { closeOnlyButton }
+                if plan.showWindDown { windDownButton }
+            }
+        }
+    }
+
+    /// What the buttons mean, plus anything still in flight.
+    @ViewBuilder
+    private var legendAndBacklog: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Exit Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
+                .font(.appCaption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                // AFTER fixedSize, never before: inside it the text takes its unwrapped
+                // ideal width first and runs straight past the cap.
+                .appProseMeasure()
+
+            if snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running > 0 {
+                Text("\(snapshot.readiness.commandBacklog.queued) queued · \(snapshot.readiness.commandBacklog.running) running")
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -452,6 +510,8 @@ private struct StrategyControlsCard: View {
         ) {
             submit("strategy.run_once")
         }
+        // Solitary CTA: capped here, not inside CommandButton — see the note there.
+        .appActionWidth()
     }
 
     private var startButton: some View {
@@ -464,6 +524,7 @@ private struct StrategyControlsCard: View {
         ) {
             submit("strategy.start")
         }
+        .appActionWidth()
     }
 
     private var stopButton: some View {
@@ -477,6 +538,7 @@ private struct StrategyControlsCard: View {
             submit("strategy.stop")
         }
         .tint(AppPalette.negative)
+        .appActionWidth()
     }
 
     // Protective de-risk states (labels match AppFormat.commandLabels; the store always
