@@ -843,7 +843,7 @@
   color: var(--con-accent);
 }
 
-/* Top bar top-inset (for standalone/PWA on iOS so it clears the physical notch/status bar). */
+/* Top bar top-inset if a leftover home-screen bookmark still opens standalone. */
 .con-topbar {
   padding-top: 0;
 }

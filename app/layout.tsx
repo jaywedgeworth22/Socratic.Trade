@@ -4,6 +4,7 @@ import { lato } from "./fonts/lato";
 import { ThemeProvider, themeInitScript } from "./ui/theme";
 import { Toaster } from "sonner";
 import { GlobalErrorToasts } from "./ui/global-error-toasts";
+import { pwaUnregisterScript } from "@/lib/pwa-unregister";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://socratictrade.com"),
@@ -14,12 +15,8 @@ export const metadata: Metadata = {
   description:
     "Socratic Trade is an autonomous market-reasoning system that forms theses, acts within delegated authority, shows its evidence and dissent, and learns from outcomes.  Not investment advice.",
   applicationName: "Socratic Trade",
-  manifest: "/manifest.webmanifest",
-  appleWebApp: {
-    capable: true,
-    title: "Socratic Trade",
-    statusBarStyle: "default"
-  },
+  // PWA retired: no web-app manifest and no standalone Add-to-Home-Screen.
+  appleWebApp: false,
   icons: {
     icon: [
       { url: "/icon.png", type: "image/png", sizes: "512x512" },
@@ -72,6 +69,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={lato.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script dangerouslySetInnerHTML={{ __html: pwaUnregisterScript }} />
       </head>
       <body>
         <ThemeProvider>
