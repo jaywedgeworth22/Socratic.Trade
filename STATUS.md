@@ -7,6 +7,14 @@ Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now fiv
 PR #3031 on `cursor/activity-layout-redesign-085b`.  Do not HOTFIX during RTH.  iOS first compile is CI.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
 
 # Current Status
+## 2026-08-21 GROK — website login provider family (leftover after #3008)
+
+Owner: make Apple / Google / GitHub one branded family.  iOS did that in #3008
+(Google Light/Dark chrome, official marks, custom Apple button).  The website
+still painted a teal Google button (`bg-accent` + color G — a Google Don't) plus
+an outlined GitHub and a black Apple.  Shared `.login-provider-btn` now matches
+the iOS metrics and colour table.  Branch `grok/login-unify-web`.  Board
+`02b5cf01`.  Rollout: `docs/rollouts/2026-08-21-web-login-provider-family.md`.
 
 ## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
 
