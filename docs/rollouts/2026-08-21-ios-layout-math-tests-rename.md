@@ -23,16 +23,15 @@ Touched files:
 
 - `ios/SocraticTradeTests/LayoutMathTests.swift` (renamed from `WrappingHStackTests.swift`)
 - `ios/project.yml`
+- `ios/Socratic Trade.xcodeproj/project.pbxproj` (XcodeGen 2.46.0 on Mac job 32534166394)
 - `.github/workflows/ios-build.yml`
+- `test/ios-privacy-manifest.test.ts`
 - `docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`
 - `docs/rollouts/2026-08-21-ios-adaptive-tabs-ipad-layout.md`
 - `docs/rollouts/2026-08-21-ios-layout-math-tests-rename.md`
 - `STATUS.md`
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
-
-The generated `ios/Socratic Trade.xcodeproj/project.pbxproj` is committed from the Mac
-job's `generated-pbxproj` artifact in a follow-up commit on this branch.
 
 ## 3. Decisions & Trade-offs
 
@@ -56,24 +55,35 @@ gh run view 32529663287 --json conclusion,status
 # https://github.com/jaywedgeworth22/Socratic.Trade/actions/runs/32529663287
 ```
 
-Local (this Linux cloud VM), after the rename:
+Local (this Linux cloud VM):
 
 ```
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint                    # exit 0 (warnings only)
+npx tsc --noEmit                # exit 0
+npx vitest run test/ios-privacy-manifest.test.ts
+                                # 1 file / 4 tests passed (after pbxproj commit)
 ```
 
-Mac `ios-build` on this PR is the Swift proof: generate must print
-`LayoutMathTests.swift in Sources` and `PrivacyInfo.xcprivacy in Resources`, then
-BUILD/TEST SUCCEEDED.
+Mac `ios-build` on this PR — run 32534166394, concluded `success` in ~3 minutes
+(22:44:00Z -> 22:46:46Z):
+
+```
+Using xcodegen: /opt/homebrew/bin/xcodegen
+Version: 2.46.0
+LayoutMathTests.swift in Sources
+PrivacyInfo.xcprivacy in Resources
+** BUILD SUCCEEDED **
+** TEST SUCCEEDED **
+```
+
+Job URL: https://github.com/jaywedgeworth22/Socratic.Trade/actions/runs/32534166394
+
+Generated `project.pbxproj` from that job's `generated-pbxproj` artifact is
+committed on this branch (objectVersion 100, LayoutMathTests.swift, no
+WrappingHStackTests.swift).
 
 ## 5. Next Steps & Blockers
 
-- Commit the generated `project.pbxproj` from the `generated-pbxproj` artifact so
-  local Xcode and the ship script match CI.  Done in a follow-up commit on this
-  branch once the Mac job uploads it.
 - Mac / human: iPad Air 11" portrait + landscape screenshots, borrowed-slot check,
   Mac window-drag fallback (item A visual).
 - Owner: keep or drop tab auto-fill (item E).  Tuning knobs only if the bar feels
