@@ -262,6 +262,10 @@ private struct ReadyHomeHero: View {
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 44)
             }
+            // The hero card is deliberately full-bleed, but its call to action is not the
+            // card — at a full window this was a ~950pt "Review 1 Proposal" bar.  Centred
+            // rather than leading, because it is the hero's focal point.
+            .appCenteredMeasure(AppLayout.actionRow)
             .buttonStyle(.borderedProminent)
             .tint(AppPalette.accent)
             .accessibilityHint("Opens the Proposals tab to approve or reject")

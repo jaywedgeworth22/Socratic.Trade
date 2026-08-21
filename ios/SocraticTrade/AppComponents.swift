@@ -1128,6 +1128,11 @@ private struct SnapshotStatusBanner: View {
             Text(AppFormat.marketSessionBannerLabel(snapshot.marketSession))
                 .font(.appCaption.weight(.medium))
                 .foregroundStyle(.secondary)
+            // Bounding the gap above makes the row NARROWER than a wide column, and an
+            // HStack centres what it cannot fill — which left the status line floating with
+            // ~170pt of margin either side while every card below it started at the column
+            // edge.  This absorbs the remainder so the row starts where the cards do.
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 4)
     }
