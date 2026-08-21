@@ -362,7 +362,7 @@ export async function checkBudgetAndAlert(
 
 /** Provider a model routes to — mirrors resolveLlmEndpoint's prefix logic. */
 function providerForModel(model: string | null | undefined): string {
-  const m = (model ?? "").toLowerCase();
+  const m = (model ?? "").replace(/^~/, "").toLowerCase();
   if (/^(claude|anthropic)/.test(m)) return "anthropic";
   if (/^grok/.test(m)) return "xai";
   if (/^gemini/.test(m)) return "gemini";
@@ -425,7 +425,7 @@ const CHEAPER_MODEL: Record<string, string> = {
 /** A cheaper model in the same family, or undefined if none is known. */
 export function cheaperModel(model: string | null | undefined): string | undefined {
   if (!model) return undefined;
-  const parts = model.toLowerCase().split("/");
+  const parts = model.toLowerCase().replace(/^~/, "").split("/");
   const prefix = parts.length > 1 ? parts.slice(0, -1).join("/") + "/" : "";
   const key = parts[parts.length - 1];
 
