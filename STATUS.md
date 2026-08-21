@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-08-21 GROK — RTH drain actually nudges Coolify
+
+Live sha e0a4959a73a7 is 39 commits behind main.  Weekday Coolify builds are RTH-latched on purpose (keep last healthy container).  The 21:20 UTC drain then exited 0 without a nudge because GITHUB_TOKEN cannot redeliver hooks and COOLIFY_DEPLOY_WEBHOOK_URL was unset.
+
+Drain now uses GH_PAT for redeliver, Coolify /api/v1/deploy with COOLIFY_DEPLOY as fallback, and fails the job when neither works.  Do not HOTFIX during cash hours.  Next after-close drain (or workflow_dispatch after 16:00 ET) should advance live sha.
+
+Rollout: docs/rollouts/2026-08-21-rth-drain-nudge.md.  Board 99ab01c7.
+
+# Current Status
+
 ## 2026-08-21 CURSOR — native weekly value + momentum screens
 
 Option 3 of the Perplexity-ritual ask: ST now builds those weekly screens from its own tape.  Value = large-cap ≥ $10b, price > $5, volume ≥ 500k, trailing P/E > 0 and ≤ 10, within 10% of the 52-week low.  Momentum = the same floor ranked by 5-day return, with ROC/RSI/MAs when bars exist.  Full `quotesBySymbol` universe (not the ranked cut).  Missing fields exclude the name.  Dashboard is cache/value-only; scheduler + `GET /api/scan/weekly-digest?refresh=1` do the bar work.  Cards on Macro + Scan; thin iOS Scan card; Green gets `weeklyScreens` as advisory DATA (`agentic-strategy@2.15.0`).  No Perplexity scrape/key, no auto-trade, no scoring/policy change.
@@ -33,6 +43,14 @@ Owner table is now the single catalog in `src/lib/llm-model-catalog.ts`.  Settin
 **Risk:** some owner wire slugs (untilded `*-latest`, `google/gemini-flash-latest`, period-form `mistralai/mistral-medium-3.5`) may 404 on OpenRouter today.  Owner said do not keep sending the dated ids the table replaced.
 
 MERGED to `main` as #3003 squash `36f0a3c8` at 09:56 UTC (auto-deploy).  Rollout: `docs/rollouts/2026-08-21-llm-model-slugs.md`.
+## 2026-08-21 MONET - web adopts iOS's Title Case, closing the parity work
+
+The web half of iOS/web parity.  Web was the drifted side on four of the 21 audited divergences: the fleet copy doc names "Run Once", "Price Alerts", "Current Policy" and "Win Rate" as canonical and every one of those is the iOS spelling.
+
+The distinction that mattered: run STATE words are values and stay sentence case on both platforms.  "Winding down" and "Exit-only" were deliberately untouched, and derive.ts's RunStateWord union is unchanged.  Title-Casing a state word because the button beside it is Title Case would have desynced web from iOS in the opposite direction.
+
+Also reversed one implementer decision on review -- "Wind Down - This Sells" back to "Wind Down - this sells", because the appended clause is a warning phrase rather than part of the control's name.  The Title Case rule governs what a control is CALLED, not everything printed on it.
+
 ## 2026-08-21 CLAUDE - adaptive tab bar MERGED; the unfinished half is written down
 
 PR #2987 merged to `main` as `9298c29` at 06:56 UTC.  Owner ask delivered in full: more than
@@ -98,6 +116,15 @@ outside this ask and affects every iOS PR.
 `WrappingHStackTests.swift` -> `LayoutMathTests.swift` rename needs `xcodegen` on a Mac.
 
 Rollout: `docs/rollouts/2026-08-21-ios-adaptive-tabs-ipad-layout.md`.
+## 2026-08-20 CLAUDE - login screen: hero wordmark, one set of provider buttons, fuller legal copy
+
+Owner screenshot review of the iOS sign-in screen.  Four changes, mirrored on the website login where the surface is shared: a new first value bullet ("Configure strategic framework and guardrails"), the candlestick wordmark scaled from a 24pt top-bar glyph to a headline that fills the content column, all three provider buttons rendered at identical width/height/radius, and the owner's expanded disclaimer (account at SocraticTrade.com, Terms/Privacy linked below, AI output not guaranteed though the framework is user-defined, educational/experimental/informational use only).
+
+The Apple button was narrower than the other two for a concrete reason worth recording: `ASAuthorizationAppleIDButton` hard-caps its width at 375pt, and the login content column was 400pt.  Fix is to narrow the column to 352, not to stretch the Apple host -- a prior comment in `LoginView.swift` already warned that stretching it past the cap trips unsatisfiable autoresizing constraints.
+
+Label-size parity inside the Apple button is NOT achievable without replacing it with a custom control, which would put Sign in with Apple branding compliance on us at App Review.  Google/GitHub labels went 15 -> 17pt medium to close most of the gap; the remaining difference is Apple's own.
+
+Verified with a simulator screenshot, not just a green build.  Copy and layout only -- no auth, session, or order path touched.  Rollout: `docs/rollouts/2026-08-20-login-hero-and-legal-copy.md`.
 
 ## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
 
@@ -920,6 +947,16 @@ Already closed on this HEAD: T sub-penny 422 (#2751), UND_ERR_SOCKET single-blip
 
 Branch `cursor/brokers-data-cascade-audit-bed0`.  PR #2805.
 Rollout: `docs/rollouts/2026-08-17-brokers-data-cascade-audit.md`.
+## 2026-08-17 CURSOR — Remove leftover installable PWA
+
+Owner never uses the PWA and asked to disable/delete it.  2026-08-16 only
+redirected `/mobile` and left the standalone manifest, `appleWebApp`, and dead
+PWA client in place.  This branch deletes the PWA client, stops advertising an
+installable web app, 410s `/manifest.webmanifest`, unregisters leftover service
+workers, and keeps `/api/mobile/*` + responsive `/console` + native iOS.
+
+Branch `cursor/retire-pwa-72cb`.  PR #2801.
+Rollout: `docs/rollouts/2026-08-17-retire-pwa.md`.
 
 ## 2026-08-17 CURSOR — Pinecone trial is not the Starter 2M monthly wall
 
@@ -969,6 +1006,14 @@ Branch `cursor/p3-curl-only-ui-2563-814a`.  PR #2793.  Rollout: `docs/rollouts/2
 P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.
 
 Branch `cursor/console-a11y-batch-08ac`.  PR #2795.  Rollout: `docs/rollouts/2026-08-17-console-a11y-batch.md`.  No trading/money-path changes.
+## 2026-08-17 CURSOR — CT+UM lane backoff (#2550)
+
+ST consumers of Congress.Trade and Usage-Monitor now widen backoff when those
+lanes are slow (p50 > 2s) and treat SSE flaps as soft.  Console stays up.  No
+CT/UM server changes.  Vitest `setupFiles` resets peer-lane samples after each
+test so `maxWorkers: 1` cannot leak a slow p50 into later files.
+
+Branch `cursor/ct-um-lane-backoff-7cf2`.  Rollout: `docs/rollouts/2026-08-17-ct-um-lane-backoff.md`.
 
 ## 2026-08-17 CURSOR — FilingAPI optional key, degrade on 401 (retarget #2778)
 

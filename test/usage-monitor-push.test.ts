@@ -69,8 +69,10 @@ function expectedTelemetryKey(kind: string, sourceId: string): string {
 }
 
 describe("usage-monitor-push", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     push.__resetUsageMonitorState();
+    const { resetPeerLaneBackoffForTests } = await import("../src/lib/peer-lane-backoff");
+    resetPeerLaneBackoffForTests();
     process.env.USAGE_MONITOR_BASE_URL = BASE;
     process.env.USAGE_INGEST_TOKEN = TOKEN;
     process.env.USAGE_MONITOR_ENV = "test";
@@ -88,6 +90,14 @@ describe("usage-monitor-push", () => {
     delete process.env.USAGE_MONITOR_CALLVOLUME_MAX_KEYS;
     delete process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS;
     delete process.env.USAGE_MONITOR_FLUSH_MS;
+  });
+
+  it("widens the flush delay when UM p50 is the 6.9s prod shape (#2550)", async () => {
+    const { recordPeerLaneSample, PEER_LANE_USAGE_MONITOR } = await import("../src/lib/peer-lane-backoff");
+    expect(push.usageMonitorFlushDelayMs()).toBe(2000);
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 6900);
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, 7100);
+    expect(push.usageMonitorFlushDelayMs()).toBe(8000);
   });
 
   it("is a no-op when unconfigured (no network calls)", async () => {

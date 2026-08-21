@@ -28,6 +28,7 @@ import { logApiHealth } from "./db-health";
 import { getDb } from "./db";
 import { deleteInternalSetting, setInternalSetting } from "./db-settings";
 import { getGitSha } from "./git-sha";
+import { PEER_LANE_USAGE_MONITOR, peerAwareDelayMs, recordPeerLaneSample } from "./peer-lane-backoff";
 import { suppressUsageMonitorProvider } from "./usage-monitor-provider-policy";
 import {
   createUsageTelemetryClient,
@@ -130,7 +131,12 @@ function classifierTelemetryMetadata(ctx: {
 }
 
 function flushDelayMs(): number {
-  return numEnv("USAGE_MONITOR_FLUSH_MS", 2000);
+  return peerAwareDelayMs(PEER_LANE_USAGE_MONITOR, numEnv("USAGE_MONITOR_FLUSH_MS", 2000));
+}
+
+/** Test seam: the latency-aware flush delay actually used after a sample is recorded. */
+export function usageMonitorFlushDelayMs(): number {
+  return flushDelayMs();
 }
 
 // ── Circuit breaker (dead-receiver protection) ──────────────────────────────────
@@ -1036,10 +1042,12 @@ function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown)
           (Number((err as { status?: unknown }).status) === 429 ||
             Number((err as { status?: unknown }).status) === 503 ||
             Number((err as { status?: unknown }).status) === 409)));
+    const latencyMs = Date.now() - startedAt;
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, latencyMs);
     logApiHealth({
       service: HEALTH_SERVICE,
       ok,
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
       ...(errorText ? { errorText } : {}),
       soft,
     });
