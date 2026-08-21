@@ -31,6 +31,8 @@ Green/Red consume 8/1 chunks and a 24k filings-family budget via `retrieveContex
 The rolling-24h write fuse must not treat local month-to-date WUs as Pinecone's bill.  That remainder clamp produced the 15-WU / 1-text skip (used 0, attempted 28) while the Standard trial still had credit.  Hybrid processed writes continue; do not raise a fake daily/monthly ceiling.  See `docs/rollouts/2026-08-17-pinecone-write-deadlock.md`.
 ## 2026-08-17 trading-outcomes audit
 Read-only validation review: `docs/audits/2026-08-17-trading-outcomes.md`.  It records that the paper→live transfer gate described in the 2026-07-13 block below was later superseded by owner-directed per-user pooling (`post-mortem.ts`, `outcome-engine.ts`, 2026-07-23 / 2026-08-04).  Docs and retrieval currently disagree.  Reconcile before treating Phase 7 as the live learning contract.
+## 2026-08-17 RAG / learning / recall residual gaps
+Read-only audit: `docs/audits/2026-08-17-rag-learning-recall.md`.  P0 follow-ups landed 2026-08-20 (`docs/rollouts/2026-08-20-rag-p0-followups.md`): one parsed-text SEC writer, ticker→CIK without sentinel, chat `asOf` default now, eval harness on `retrieveContextDetailed`.  Still open: transcript FTS join, memory decay/lifecycle, learning vector retry, 8-K feed dual-class.  Production strategy passes `runAsOf = now`.  Do not flip `RAG_PINECONE_WRITE_CLASS` off full-body until corpus-storage PR A/B land (`docs/designs/2026-08-16-proposer-corpus-storage.md`).
 
 ## 2026-07-13 evidence-contract and learning-boundary update
 
@@ -590,7 +592,8 @@ via `setPolicy` ONLY (keeping `account_strategy_state` + the active-profile mirr
 `(user, account, subsystem)`, and marks the row reverted (idempotent). This GENERALIZES the #296
 tuning-specific revert — it does not duplicate it. Recording is passive/always-on (audit trail only — it
 changes no trading behavior). The one-click revert route `POST /api/admin/learning-ledger` is `requireAdmin`
-(this repo has prior IDOR history); `GET` lists entries for the caller's active account.
+(this repo has prior IDOR history); `GET` lists entries for the caller's active account. Console entry:
+`/console/lessons#learning-ledger` (operator-gated; same GET/POST, no server-behavior change).
 
 #### E.6 Paired-t significance on the autonomous OOS gate (follow-on P0-2 — DEFAULT no-op)
 The autonomous OOS gate (E.1) is extended with a proper effect-size + PAIRED-t significance test on the
@@ -619,8 +622,9 @@ Tuning` in `src/lib/strategy-tuning.ts`) consumed by both the real apply and a n
 OOS + paired-t + P2-5/P2-6 guards) and returns exactly what an apply WOULD do — `{ wouldApply, before, after,
 clampedDeltas, oosICCandidate/Baseline, oosReadout, invariantViolations }` — with ZERO writes (no `setPolicy`,
 ledger, audit, or cadence advance; asserted by spies). Exposed at `GET /api/admin/tuning-dry-run`
-(`requireAdmin`, mirrors the backtest-ic "suggestion only" pattern). The operator on-ramp: inspect the decision
-before enabling `autoApplyWeights`.
+(`requireAdmin`, mirrors the backtest-ic "suggestion only" pattern) and on `/console/strategy#weight-tuning-preview`.
+The operator on-ramp: inspect the decision before enabling `autoApplyWeights`. Factor IC diagnostics that used
+to be curl-only live at `/admin/backtest-ic`. Raw `GET /api/audit` is the Activity **Audit** tab.
 
 #### E.9 Purged & embargoed walk-forward split (broader-backlog P1-2 — DEFAULT off, byte-identical)
 `splitWalkForward` gained an opt-in `{ purge }` control and `runWalkForwardOOS` an `purgeEmbargo` option

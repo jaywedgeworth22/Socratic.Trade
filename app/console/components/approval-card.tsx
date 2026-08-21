@@ -107,12 +107,25 @@ export function normalizeModelId(model: string | null | undefined): string {
   return canonicalModelId(model);
 }
 
-function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
+/** Human phrase for a persisted Green failover receipt, e.g. "gpt-5.6-terra failed (HTTP 400)". */
+function failoverCause(fallback: NonNullable<TradeProposal["greenServedByFallback"]>): string {
+  return fallback.reason ? `${fallback.fromModel} failed (${fallback.reason})` : `${fallback.fromModel} did not serve`;
+}
+
+export function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const configured = policy?.llmModel?.trim();
   const served = p.proposedByModel?.trim();
   // A rotating policy EXPECTS a different served model each run — say so plainly instead of
   // leaking the raw "__rotate__" sentinel and framing the rotation pick as an anomaly.
   const rotating = isModelRotationSentinel(configured);
+  // A persisted failover receipt outranks both branches below: it is the only source that knows
+  // the served model was NOT the model the run intended, and it must not be dressed up as a pick.
+  if (served && p.greenServedByFallback) {
+    const cause = failoverCause(p.greenServedByFallback);
+    return rotating
+      ? `configured to rotate; rotation pick ${cause}; served by fallback ${served}`
+      : `${cause}; served by fallback ${served}`;
+  }
   if (served && rotating) return `configured to rotate; served ${served} (this run's rotation pick)`;
   const normConfigured = normalizeModelId(configured);
   const normServed = normalizeModelId(served);
@@ -123,13 +136,21 @@ function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): s
   return "served model not exposed on this proposal";
 }
 
-function fallbackProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
+export function fallbackProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const fallbackModels = policy?.llmFallbackModels?.filter(Boolean) ?? [];
   const normServed = normalizeModelId(p.proposedByModel);
   const normFallbackModels = fallbackModels.map(normalizeModelId);
+  // The proposal's OWN receipt wins over every inference below.  The run appends implicit pool
+  // fallbacks when the Green seat rotates and the owner listed none, so "rotating, therefore not a
+  // failover" was never a safe deduction — it just happened to be unfalsifiable from this file.
+  if (p.proposedByModel && p.greenServedByFallback) {
+    const fallback = p.greenServedByFallback;
+    const position = fallback.attempt && fallback.attempts ? ` (attempt ${fallback.attempt} of ${fallback.attempts})` : "";
+    return `${failoverCause(fallback)}; served by fallback ${p.proposedByModel}${position}`;
+  }
   if (p.proposedByModel && normFallbackModels.includes(normServed)) return `served by configured fallback ${p.proposedByModel}`;
   if (p.proposedByModel && isModelRotationSentinel(policy?.llmModel)) {
-    return "policy rotates models — the served model is this run's rotation pick, not a failover";
+    return "policy rotates models — this run's rotation pick served; no failover was recorded";
   }
   const normConfigured = normalizeModelId(policy?.llmModel);
   if (p.proposedByModel && policy?.llmModel && normServed !== normConfigured) return "served model differs from configured primary";

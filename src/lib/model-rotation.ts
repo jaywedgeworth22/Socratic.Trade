@@ -41,7 +41,7 @@
 // pointer rows are no longer read or written (account-deletion cleanup still recognizes the
 // prefix for old rows).
 import { audit, getDb, resolveLlmCredential } from "./db";
-import { modelCredentialService } from "./llm-provider";
+import { modelCredentialService, normalizeOpenRouterModelId, stripOpenRouterTilde } from "./llm-provider";
 import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
 import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
 import { getOpenRouterUserModelAvailability, isOpenRouterModelAvailable } from "./openrouter-model-availability";
@@ -66,14 +66,78 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
  */
 /**
- * Catalog ids whose OpenRouter wire slugs 404 today (`moonshotai/kimi-latest`,
- * `anthropic/claude-fable-latest`).  When /models/user is reachable they are
- * already skipped.  When it times out we still must not serve them.
+ * Per-slug OpenRouter 404 cooldown (review finding llm-10, confirmed 2026-08-20).  This file
+ * used to hardcode a PERMANENT `DEAD_OPENROUTER_ROTATION_MODELS` list (`kimi-latest`,
+ * `claude-fable-5`) that `applyRotationUserModelAllowlist` consulted BEFORE the live
+ * `/models/user` catalog, so both models were excluded from rotation forever — even once
+ * OpenRouter started serving them again.  Worse, the comment's cited 404
+ * (`anthropic/claude-fable-latest`) was never the wire slug `normalizeOpenRouterModelId`
+ * actually sends (`anthropic/claude-fable-5`), so the exclusion outlived its own
+ * justification from day one and no code path could ever re-admit either model.  The review
+ * verified both `anthropic/claude-fable-5` and `~moonshotai/kimi-latest` are served by
+ * OpenRouter's live catalog today.
+ *
+ * The live catalog is now authoritative: `applyRotationUserModelAllowlist` keeps any slug the
+ * catalog lists, full stop.  This cooldown is consulted ONLY in the fail-open paths below —
+ * `/models/user` unreachable/timed out, or a live allowlist that matched nothing — and only
+ * for slugs that ACTUALLY 404'd recently, recorded via `recordOpenRouterModelNotFound` at the
+ * observed 404 call site (strategy.ts / red-team.ts own that call site; this module cannot
+ * edit them — see the wiring note on `recordOpenRouterModelNotFound` below).  A slug that was
+ * never recorded, or whose cooldown has expired, is never excluded by this mechanism — so it
+ * can never repeat the old bug of excluding a working model forever.
  */
-export const DEAD_OPENROUTER_ROTATION_MODELS: readonly string[] = [
-  "kimi-latest",
-  "claude-fable-5"
-];
+export const OPENROUTER_MODEL_NOT_FOUND_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h: long enough to stop
+// re-trying a genuinely broken slug on every scheduled run for the rest of the day, short
+// enough that a transient OpenRouter hiccup does not exile a working model for days.
+
+interface OpenRouterModelNotFoundCooldown {
+  /** Unix ms until which this wire slug is treated as dead in the fail-open paths. */
+  until: number;
+}
+
+/** In-process, per-slug 404 cooldown.  Same shape/spirit as the lane cooldown in
+ *  llm-provider-cooldown.ts, kept as its own small local Map rather than imported from there —
+ *  this cools an individual MODEL slug (any provider chain), not a provider/credential LANE,
+ *  and importing across modules for one Map would add a dependency this file does not need. */
+const openRouterModelNotFoundCooldowns = new Map<string, OpenRouterModelNotFoundCooldown>();
+
+/** Cooldown key: the normalized, tilde-stripped OpenRouter wire slug — so `kimi-latest` and
+ *  `moonshotai/kimi-latest` (or any tilde'd/aliased spelling of the same model) share one
+ *  cooldown entry regardless of which spelling 404'd or which spelling is being checked. */
+function openRouterModelCooldownKey(model: string): string {
+  return stripOpenRouterTilde(normalizeOpenRouterModelId(model));
+}
+
+/**
+ * Record an observed OpenRouter 404 for `model`'s wire slug, starting (or extending) its
+ * cooldown.  Called from the two places a 404 is actually observed, immediately after each
+ * chain's `recordLlmProviderFailure({...})` block and gated on
+ * `attempt.provider === "openrouter" && response.status === 404`: the Bull attempt loop in
+ * src/lib/strategy.ts and the Red attempt loop in src/lib/red-team.ts.  A real 404 is the only
+ * thing that may put a slug in this map — never a static list.
+ */
+export function recordOpenRouterModelNotFound(model: string): void {
+  const key = openRouterModelCooldownKey(model);
+  openRouterModelNotFoundCooldowns.set(key, { until: Date.now() + OPENROUTER_MODEL_NOT_FOUND_COOLDOWN_MS });
+}
+
+/** True while `model`'s wire slug is inside an active 404 cooldown.  `now` is injectable for
+ *  deterministic tests; an expired entry is pruned lazily on read. */
+export function isOpenRouterModelCoolingDown(model: string, now: number = Date.now()): boolean {
+  const key = openRouterModelCooldownKey(model);
+  const record = openRouterModelNotFoundCooldowns.get(key);
+  if (!record) return false;
+  if (now >= record.until) {
+    openRouterModelNotFoundCooldowns.delete(key);
+    return false;
+  }
+  return true;
+}
+
+/** Test-only: clear all per-slug OpenRouter 404 cooldown state. */
+export function clearOpenRouterModelCooldowns(): void {
+  openRouterModelNotFoundCooldowns.clear();
+}
 
 /**
  * Catalog ids that exist on public /models but OpenRouter cannot serve as a
@@ -104,20 +168,23 @@ export function greenFirstPickPool(pool: readonly string[]): string[] {
   return preferred.length > 0 ? preferred : [...pool];
 }
 
-export function isDeadOpenRouterRotationModel(model: string): boolean {
-  return DEAD_OPENROUTER_ROTATION_MODELS.includes(model);
-}
-
-/** Credential pool after dropping known-dead slugs. Used when /models/user is down. */
-export function applyRotationAvailabilityFailOpen(credentialPool: readonly string[]): string[] {
-  return credentialPool.filter((model) => !isDeadOpenRouterRotationModel(model));
+/** Credential pool after dropping slugs currently inside an OpenRouter 404 cooldown (see
+ *  `recordOpenRouterModelNotFound` above).  Used ONLY in fail-open paths — `/models/user`
+ *  unreachable/timed out, or a live allowlist that matched nothing — never while the live
+ *  catalog is reachable and actually lists the model.  `now` is injectable for deterministic
+ *  tests. */
+export function applyRotationAvailabilityFailOpen(credentialPool: readonly string[], now: number = Date.now()): string[] {
+  return credentialPool.filter((model) => !isOpenRouterModelCoolingDown(model, now));
 }
 
 /**
- * Keep catalog models whose `/models/user` row matches (alias/version-aware).
- * Known-dead slugs stay dropped.  If the allowlist would empty an otherwise
- * usable credential pool, fail OPEN to that pool minus the dead slugs — a
- * successful list that omitted `*-latest` aliases must not abort rotation.
+ * Keep catalog models whose `/models/user` row matches (alias/version-aware).  The LIVE
+ * catalog is authoritative: a slug it lists is kept even if that same slug happens to be
+ * inside a 404 cooldown from a past failure (review finding llm-10 — a live-catalog hit
+ * always wins; the cooldown is consulted ONLY in the fail-open branch below).  If the
+ * allowlist would empty an otherwise usable credential pool, fail OPEN to that pool minus
+ * only the slugs currently cooling down — a successful list that omitted `*-latest` aliases
+ * must not abort rotation, and must not re-exclude a model whose cooldown already expired.
  */
 export function applyRotationUserModelAllowlist(
   credentialPool: readonly string[],
@@ -126,16 +193,12 @@ export function applyRotationUserModelAllowlist(
   const matched: string[] = [];
   const skipped: string[] = [];
   for (const model of credentialPool) {
-    if (isDeadOpenRouterRotationModel(model)) {
-      skipped.push(model);
-      continue;
-    }
     if (isOpenRouterModelAvailable(model, modelIds)) matched.push(model);
     else skipped.push(model);
   }
   const usable = applyRotationAvailabilityFailOpen(credentialPool);
   if (matched.length === 0 && usable.length > 0) {
-    return { pool: usable, skipped: credentialPool.filter((model) => isDeadOpenRouterRotationModel(model)), emptiedByAllowlist: true };
+    return { pool: usable, skipped: credentialPool.filter((model) => isOpenRouterModelCoolingDown(model)), emptiedByAllowlist: true };
   }
   return { pool: matched, skipped, emptiedByAllowlist: false };
 }
@@ -294,14 +357,17 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
   const availability = await getOpenRouterUserModelAvailability(credential.key, credential.keyRef);
   if (availability.status === "unavailable") {
     // Fail OPEN to the credential-filtered pool so a /models/user timeout or 429 cannot
-    // wipe rotation (that aborted every scheduled run on 2026-08-13).  Still drop catalog
-    // ids whose OpenRouter wire slugs have 404'd (kimi-latest, claude-fable-latest) —
-    // serving those is how fail-open became "empty rotation seats" on 2026-08-13/14.
+    // wipe rotation (that aborted every scheduled run on 2026-08-13).  Still drop any slug
+    // currently inside an OpenRouter 404 cooldown (recordOpenRouterModelNotFound) — serving
+    // a slug that just 404'd is how fail-open became "empty rotation seats" on
+    // 2026-08-13/14.  Unlike the old hardcoded list, a slug only lands here after an
+    // OBSERVED recent 404, and it clears itself once the cooldown TTL elapses — it can never
+    // exclude a working model forever the way the old static list did (review finding llm-10).
     const safe = applyRotationAvailabilityFailOpen(credentialPool);
-    const dead = credentialPool.filter((model) => isDeadOpenRouterRotationModel(model));
+    const cooling = credentialPool.filter((model) => isOpenRouterModelCoolingDown(model));
     return {
       pool: safe,
-      skipped: [...skipped, ...dead],
+      skipped: [...skipped, ...cooling],
       availability: "unavailable",
       availabilityError: availability.reason
     };

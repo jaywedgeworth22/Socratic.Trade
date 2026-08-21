@@ -75,10 +75,13 @@ Supported events:
 - kill_switch
 
 Multi-channel delivery is implemented (`src/lib/notify.ts`, ported from Atlas):
-phone push (ntfy / Pushover), webhook, email (Resend), and SMS (Twilio). Each
-channel is independently gated — disabled unless admin config is present AND the
-user has a matching target. No configured channel means the event is audited as
-skipped, not failed.
+phone push (ntfy / Pushover), **native iOS APNs** (`src/lib/apns.ts`, device
+registry + `POST /api/mobile/push/register`), webhook, email (Resend), and SMS
+(Twilio). Each channel is independently gated — disabled unless admin config is
+present AND the user has a matching target. APNs stays silent ("not configured")
+until `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` / `APNS_P8` are set in
+Infisical — do not invent those secrets. No configured channel means the event
+is audited as skipped, not failed.
 
 Legacy strategy/feed events still call `sendNotification(...)` so the
 `notification_events` table and Activity feed semantics stay intact. That legacy

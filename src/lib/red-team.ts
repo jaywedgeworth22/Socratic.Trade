@@ -19,6 +19,8 @@ import { getPolicy } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { resolveRunAccountScope } from "./run-account-scope";
 import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
+import { recordLlmCallOutcome } from "./llm-late-usage";
+import { recordOpenRouterModelNotFound } from "./model-rotation";
 import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
@@ -92,6 +94,56 @@ export interface RedTeamReviewContext {
   ownerCoaching?: string;
   /** Compact scan candidates for the symbols under review — the R7 fact-check substrate. */
   candidatesUnderReview?: unknown;
+  /**
+   * The Green run's evidence-pack manifest (hashes + per-ref provenance metadata, no bodies).
+   * Small, and it must travel VERBATIM: `greenRedParityHash` is what proves both stages judged the
+   * same evidence pack, and `test/strategy-prompt-safety.test.ts` asserts the reviewer's manifest
+   * equals the strategist's exactly.  Declared here because the run-time review has always sent it
+   * — an interface that omitted a field the code sends is how this contract drifted in the first
+   * place.
+   */
+  evidenceManifest?: unknown;
+}
+
+/**
+ * The exact keys the run-time review sends.  Kept as a runtime list, not just a type, because a
+ * type alone cannot stop `{...userContent}` from shipping the entire Green payload — which is what
+ * it used to do: the full 48k-char evidence budget, every scan candidate, the RAG pack, learned
+ * context and the reflection summary, re-sent per opening and multiplied by the number of openings
+ * in a run, for a reviewer whose job is to fact-check ONE finalized proposal.
+ *
+ * Adding a key here is a deliberate widening of the reviewer's context.  Do it consciously.
+ */
+export const RED_TEAM_REVIEW_CONTEXT_KEYS = [
+  "currentDate",
+  "currentMarketRegime",
+  "regimeSeverity",
+  "macroeconomicData",
+  "limits",
+  "socraticAuthority",
+  "portfolio",
+  "positions",
+  "sectorComposition",
+  "thesisOutcomes",
+  "regimeOutcomes",
+  "comboOutcomes",
+  "closestHistoricalAnalogs",
+  "ownerCoaching",
+  "evidenceManifest"
+] as const satisfies readonly (keyof RedTeamReviewContext)[];
+
+/**
+ * Project a Green `userContent` object onto the documented reviewer contract.  `undefined` values
+ * are dropped so the payload keeps the same "omit, don't send null" shape the Green prompt uses.
+ * `candidatesUnderReview` is supplied separately by the caller, which owns symbol matching.
+ */
+export function projectRedTeamReviewContext(greenUserContent: Record<string, unknown>): RedTeamReviewContext {
+  const projected: Record<string, unknown> = {};
+  for (const key of RED_TEAM_REVIEW_CONTEXT_KEYS) {
+    const value = greenUserContent[key];
+    if (value !== undefined) projected[key] = value;
+  }
+  return projected as RedTeamReviewContext;
 }
 
 /** Finalized-size facts the prompt states upfront (§3.4) — computed by the caller, which owns the
@@ -376,6 +428,7 @@ export async function debateProposal(
           try {
             // Fast fallback to secondary models (§4.3): 1 attempt total per provider model, fresh
             // per-attempt timeout signal so a hung provider can't wedge the per-user run lock.
+            const redSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, resolveReviewerReasoningEffort(policy));
             const response = await llmFetchCapturing(
               attempt.url,
               {
@@ -384,10 +437,24 @@ export async function debateProposal(
                 body: JSON.stringify(attempt.body)
               },
               {
-                softTimeoutMs: strategyLlmTimeoutMs(
-                  attempt.model,
-                  resolveReviewerReasoningEffort(policy)
-                )
+                softTimeoutMs: redSoftTimeoutMs,
+                // Red Team used to pass NO onOutcome, so a reviewer that answered after the soft
+                // timeout produced neither an audit nor a ledger row — the provider billed a full
+                // reasoning completion that no surface in the app could see.  Reviewer seats are
+                // frequently the frontier (expensive) models, so this was the costliest blind
+                // spot of the class.  See src/lib/llm-late-usage.ts.
+                onOutcome: (o) =>
+                  void recordLlmCallOutcome(o, {
+                    userId,
+                    step: "red",
+                    provider: attempt.provider,
+                    model: attempt.model,
+                    softTimeoutMs: redSoftTimeoutMs,
+                    connectedAccountId: policy.connectedAccountId,
+                    keySource: attempt.keySource,
+                    keyRef: attempt.keyRef,
+                    usageContext: "red-team-late"
+                  })
               }
             );
 
@@ -405,6 +472,8 @@ export async function debateProposal(
                 userId,
                 connectedAccountId: policy.connectedAccountId
               });
+              // Same bounded per-slug cooldown the Green lane sets — see the note there.
+              if (attempt.provider === "openrouter" && response.status === 404) recordOpenRouterModelNotFound(attempt.model);
               const why = humanizeLlmError(rawDetail, { provider: attempt.provider, status: response.status });
               if (!isLast && isFailoverLlmStatus(response.status)) {
                 lastError = new Error(why);

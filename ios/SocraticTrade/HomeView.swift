@@ -105,14 +105,47 @@ private struct ReadinessChecklistHero: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(AppPalette.accent)
+                    ConsoleHandoffButton(
+                        title: "Open Connections",
+                        systemImage: "link",
+                        url: ConsoleHandoff.connections
+                    )
                 } else if needsUniverse {
                     Text(DeskCopy.universeRefreshAfterGuardrails)
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    ConsoleHandoffButton(
+                        title: "Open Strategy",
+                        systemImage: "safari",
+                        url: ConsoleHandoff.strategy
+                    )
                 }
             }
         }
+    }
+}
+
+/// Opens a website console page that the phone cannot edit.  Those URLs are not AASA-claimed,
+/// so the tap leaves the app instead of looping back to a missing screen.
+private struct ConsoleHandoffButton: View {
+    @Environment(\.openURL) private var openURL
+    let title: String
+    let systemImage: String
+    let url: URL
+
+    var body: some View {
+        Button {
+            openURL(url)
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.appBody.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .tint(AppPalette.accent)
+        .accessibilityHint("Opens the website in Safari")
     }
 }
 
@@ -879,6 +912,12 @@ private struct AccountSettingsView: View {
             } else {
                 Text("No connected accounts.  Connect one on the website, then return here to select it.")
                     .foregroundStyle(.secondary)
+                Button {
+                    openURL(ConsoleHandoff.connections)
+                } label: {
+                    Label("Open Connections", systemImage: "link")
+                }
+                .accessibilityHint("Opens the website in Safari")
             }
             Link("Open Connections", destination: URL(string: "https://socratictrade.com/console/connections")!)
         }

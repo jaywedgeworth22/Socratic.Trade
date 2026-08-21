@@ -32,6 +32,24 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+// Which model a request actually asks for, read from the request's OWN `model` field.
+//
+// These mocks used to branch on `String(init.body).includes("gpt-")` / `.includes("claude")`.  That
+// matched ANY occurrence of the model name anywhere in the serialized payload, which is fine right
+// up until the payload legitimately mentions another model -- e.g. a proposal carrying a
+// `greenServedByFallback.fromModel` receipt that names the primary which failed.  The Red Team call
+// then matched the GREEN branch and returned a 429/400, parking a provider-cooldown lane that
+// leaked into the next test in this file.  A real provider routes on the `model` field; so does
+// this.
+function requestedModel(init?: RequestInit): string {
+  try {
+    const parsed = JSON.parse(init?.body ? String(init.body) : "{}") as { model?: unknown };
+    return typeof parsed.model === "string" ? parsed.model : "";
+  } catch {
+    return "";
+  }
+}
+
 const PROPOSALS_JSON = JSON.stringify({
   proposals: [
     { symbol: "AAPL", side: "buy", type: "market", dollarAmount: 500, timeInForce: "gfd", marketHours: "regular_hours", rationale: "Bull thesis served via fallback provider.", tradeThesisTag: "Breakout", confidenceScore: 55 }
@@ -94,8 +112,7 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
       if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
-        const bodyStr = init?.body ? String(init.body) : "";
-        if (bodyStr.includes("gpt-")) return new Response("rate limited", { status: 429 });
+        if (requestedModel(init).includes("gpt-")) return new Response("rate limited", { status: 429 });
         return geminiOk();
       }
       if (href.includes("nasdaq.com")) return nasdaqRow();
@@ -136,8 +153,7 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
       if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
-        const bodyStr = init?.body ? String(init.body) : "";
-        if (bodyStr.includes("claude")) {
+        if (requestedModel(init).includes("claude")) {
           return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "" } }] }), {
             status: 200,
             headers: { "content-type": "application/json" }
@@ -182,8 +198,7 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
       if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
-        const bodyStr = init?.body ? String(init.body) : "";
-        if (bodyStr.includes("claude")) {
+        if (requestedModel(init).includes("claude")) {
           return new Response("{not-json", { status: 200, headers: { "content-type": "application/json" } });
         }
         return geminiOk();
@@ -264,7 +279,8 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
           redCalls += 1;
           return geminiRedOk();
         }
-        if (bodyStr.includes("claude") || bodyStr.includes("gpt-")) {
+        const greenModel = requestedModel(init);
+        if (greenModel.includes("claude") || greenModel.includes("gpt-")) {
           greenCalls += 1;
           return new Response(JSON.stringify({ error: { message: "Provider returned error", code: 400 } }), {
             status: 400,
