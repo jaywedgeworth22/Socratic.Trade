@@ -48,22 +48,36 @@ Touched files:
 
 ## 4. Verification State
 
-Commands run in this cloud VM will be pasted after the gate.  The proof that item C
-worked is this PR's `xcodebuild (unsigned)` job reaching `success` rather than
-`cancelled`, with the test step printing TEST SUCCEEDED.
+Local (this Linux cloud VM):
 
-Recent `ios-build` conclusions *before* this patch (last 40 runs): 26 success, 5
-cancelled (04:16-06:56 UTC cluster + one concurrency cancel), 9 failure (compile
-errors, not hangs).
+```
+npm run lint                    # exit 0 (warnings only)
+npx tsc --noEmit                # exit 0
+npx vitest run test/ios-privacy-manifest.test.ts
+                                # 1 file / 3 tests passed
+```
+
+Full local `npm test` was started and showed unrelated network flakes (Yahoo/Finnhub 404s, 30s gather timeouts) before finishing.  GitHub `verify` on this PR is the JS suite of record.
+
+Mac runner (the proof for item C and item A's XCTest half) -- run 32529663287, concluded `success` in ~2 minutes (21:41:21Z -> 21:43:10Z), not `cancelled`:
+
+```
+Using simulator: iPhone 17 Pro
+** BUILD SUCCEEDED **
+Test Suite 'TabPreferencesTests' passed ... Executed 30 tests, with 0 failures
+** TEST SUCCEEDED **
+Executed 232 tests, with 0 failures (0 unexpected)
+```
+
+Job URL: https://github.com/jaywedgeworth22/Socratic.Trade/actions/runs/32529663287
 
 ## 5. Next Steps & Blockers
 
-- Watch this PR's Mac job.  If it concludes `success`, the owner can make `ios-build`
-  required.
+- Owner can now make `ios-build` a required check (board `830c892f`).  This PR's job concluded `success`.
 - Mac seat: rename `WrappingHStackTests.swift` -> `LayoutMathTests.swift`, run
   `xcodegen generate`, restore `objectVersion = 100`.
 - Mac seat: iPad Air 11" portrait + landscape screenshots, borrowed-slot check, Mac
-  window-drag fallback.
+  window-drag fallback.  CI cannot see the bar.
 - Owner: keep or drop tab auto-fill (item E).
 
 ## 6. Zero-Code Findings
