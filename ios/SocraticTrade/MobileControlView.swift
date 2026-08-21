@@ -80,68 +80,210 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 /// Persisted, owner-customizable tab-bar membership — the iOS counterpart of the web
-/// console's pinned mobile tabs (app/console/lib/mobile-tabs.ts): same min/max bounds,
-/// same membership-set semantics (the bar renders pinned tabs in canonical declaration
-/// order, not pin order), and the same guarantee that every screen stays reachable
-/// through More even when unpinned.
+/// console's pinned mobile tabs (app/console/lib/mobile-tabs.ts), extended for iPad and
+/// Mac Catalyst.
+///
+/// Three rules the phone-only version did not have (owner 2026-08-21):
+///
+///  1. **Home is required.**  It can never leave the bar, so there is always one screen
+///     that is exactly where you left it.
+///  2. **The slot before More swaps.**  The bar is `stable` pins in canonical order, then
+///     ONE `flex` slot, then More.  Opening a screen from the More list that has no tab
+///     of its own moves it into that slot (Activity, the default occupant, steps out) —
+///     instead of the old behaviour of pushing it onto a navigation stack inside More,
+///     where it had no tab and no way back except the way you came.
+///  3. **The bar grows with the window.**  A phone holds four; a wide iPad or a
+///     full-screen Mac window holds up to seven.  Narrow the window past what the owner's
+///     pins need and the bar falls back to the default pins — plus, still, the flex slot,
+///     because the screen the owner is currently LOOKING at has to keep its tab.  Nothing
+///     is forgotten: `stable` is untouched, so widening restores it exactly.
 @MainActor
 final class TabPreferences: ObservableObject {
+    /// Home + the flex slot.  The smallest bar this model can produce.
     static let minTabs = 2
-    static let maxTabs = 4
-    /// Default pins mirror the web defaults (Home, Proposals, Activity, Orders) mapped
-    /// onto this app's screens — Assets is where holdings/orders live on iOS.
+    /// Phone-width ceiling (plus More).  Five items is where UIKit's own bar starts to crowd.
+    static let compactMaxTabs = 4
+    /// Wide-window ceiling.  Past seven the floating pill stops reading as navigation.
+    static let regularMaxTabs = 7
+    /// Always on the bar, never unpinnable.
+    static let requiredTab: AppTab = .home
+    /// The bar as shipped: web's defaults (Home, Proposals, Activity, Orders) mapped onto
+    /// this app's screens — Assets is where holdings/orders live on iOS.
     static let defaultTabs: [AppTab] = [.home, .proposals, .markets, .activity]
-    private static let storageKey = "mobileTabs.v1"
+    /// Whoever starts in the swappable slot.  Owner: "Activity by default".
+    static let defaultFlex: AppTab = .activity
+    /// The pins that survive a too-narrow window.
+    static var defaultStable: [AppTab] { defaultTabs.filter { $0 != defaultFlex } }
 
-    @Published private(set) var pinned: [AppTab]
+    private static let stableKey = "mobileTabs.stable.v2"
+    private static let flexKey = "mobileTabs.flex.v2"
+    /// Pre-flex-slot storage: a flat pinned list.  Its LAST entry becomes the flex slot.
+    private static let legacyKey = "mobileTabs.v1"
+
+    /// The owner's pinned screens.  Always contains `requiredTab`, never contains `flex`.
+    @Published private(set) var stable: [AppTab]
+    /// The swappable slot — the tab immediately before More.
+    @Published private(set) var flex: AppTab
+    /// How many bar slots the current window can hold, excluding More.  Written by the
+    /// shell from the live width; never persisted, because it describes the window and
+    /// not the owner.
+    @Published private(set) var capacity: Int = TabPreferences.compactMaxTabs
 
     private let userDefaults: UserDefaults
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        // Unknown/stale raw values (a screen renamed or removed since the value was
-        // saved) are dropped silently; a selection that fell below the minimum resets
-        // to the defaults rather than surfacing an error — same recovery the web does.
-        let stored = (userDefaults.stringArray(forKey: Self.storageKey) ?? [])
-            .compactMap(AppTab.init(rawValue:))
-            .filter { $0 != .more }
-        pinned = stored.count >= Self.minTabs ? Array(stored.prefix(Self.maxTabs)) : Self.defaultTabs
+
+        let storedStable = (userDefaults.stringArray(forKey: Self.stableKey))
+            .map { $0.compactMap(AppTab.init(rawValue:)) }
+        let storedFlex = userDefaults.string(forKey: Self.flexKey).flatMap(AppTab.init(rawValue:))
+
+        if let storedStable, !storedStable.isEmpty {
+            (stable, flex) = Self.normalize(stable: storedStable, flex: storedFlex ?? Self.defaultFlex)
+        } else if let legacy = userDefaults.stringArray(forKey: Self.legacyKey) {
+            // Migration: the v1 list rendered in canonical order, so its last canonical
+            // entry is the one that sat where the flex slot now sits.
+            let tabs = AppTab.customizable.filter { legacy.contains($0.rawValue) }
+            if tabs.count >= Self.minTabs, let last = tabs.last {
+                (stable, flex) = Self.normalize(stable: tabs.dropLast(), flex: last)
+            } else {
+                (stable, flex) = (Self.defaultStable, Self.defaultFlex)
+            }
+        } else {
+            (stable, flex) = (Self.defaultStable, Self.defaultFlex)
+        }
     }
 
-    /// Pinned tabs in canonical order — what the bar actually renders.
-    var barTabs: [AppTab] { AppTab.customizable.filter { pinned.contains($0) } }
+    /// Enforces every invariant in one place: `.more` is never a member, Home is always
+    /// pinned, the flex occupant is never also a stable pin, and a set that collapsed below
+    /// the floor resets to the defaults rather than rendering a broken bar.
+    private static func normalize<S: Sequence>(stable: S, flex: AppTab) -> ([AppTab], AppTab)
+    where S.Element == AppTab {
+        let requested = Set(stable)
+        var pins = AppTab.customizable.filter { requested.contains($0) }
+        if !pins.contains(requiredTab) { pins.insert(requiredTab, at: 0) }
+        var slot = flex == .more ? defaultFlex : flex
+        pins.removeAll { $0 == slot }
+        if pins.isEmpty { pins = [requiredTab] }
+        // The flex occupant cannot also be the required tab, or the bar would be Home twice.
+        if slot == requiredTab {
+            slot = AppTab.customizable.first { $0 != requiredTab && !pins.contains($0) } ?? defaultFlex
+        }
+        return (Array(pins.prefix(regularMaxTabs - 1)), slot)
+    }
 
-    func isPinned(_ tab: AppTab) -> Bool { pinned.contains(tab) }
+    /// Pinned tabs in canonical order, then the swappable slot.  What the bar renders.
+    ///
+    /// Both branches filter `flex` out of the pins before appending it.  Normally the two
+    /// sets are disjoint by construction, but `ensureVisible` can deliberately park a
+    /// PINNED tab in the slot to keep it selectable at a narrow width; without the filter
+    /// that tab would appear twice once the window widened again.
+    var barTabs: [AppTab] {
+        let pins = AppTab.customizable.filter { stable.contains($0) && $0 != flex }
+        let full = pins + [flex]
+        guard full.count > capacity else { return full }
+        // Too narrow for the owner's pins.  Fall back to the defaults — but keep the flex
+        // slot, so whatever screen is on screen right now still has a tab to be selected by.
+        // Dropping it instead would leave `selectedTab` pointing at a tab that no longer
+        // exists, which renders as an empty pane.
+        return AppTab.customizable.filter { Self.defaultStable.contains($0) && $0 != flex } + [flex]
+    }
 
-    /// Whether pinning/unpinning this tab right now would respect the min/max bounds.
+    /// Everything on the bar except the swappable slot.
+    var barLeadingTabs: [AppTab] { Array(barTabs.dropLast()) }
+    /// The swappable slot as actually rendered — the tab immediately before More.
+    var barTrailingTab: AppTab? { barTabs.last }
+
+    func isOnBar(_ tab: AppTab) -> Bool { tab == .more || barTabs.contains(tab) }
+    func isPinned(_ tab: AppTab) -> Bool { stable.contains(tab) }
+    func isRequired(_ tab: AppTab) -> Bool { tab == Self.requiredTab }
+
+    /// Whether pinning/unpinning this tab right now would respect the bounds.  Home is
+    /// never toggleable; a new pin needs room for itself AND the flex slot.
     func canToggle(_ tab: AppTab) -> Bool {
-        pinned.contains(tab) ? pinned.count > Self.minTabs : pinned.count < Self.maxTabs
+        guard tab != .more, !isRequired(tab) else { return false }
+        return stable.contains(tab) ? stable.count > 1 : stable.count + 2 <= capacity
     }
 
     func toggle(_ tab: AppTab) {
-        guard tab != .more else { return }
-        if pinned.contains(tab) {
-            guard pinned.count > Self.minTabs else { return }
-            pinned.removeAll { $0 == tab }
+        guard canToggle(tab) else { return }
+        if stable.contains(tab) {
+            stable.removeAll { $0 == tab }
         } else {
-            guard pinned.count < Self.maxTabs else { return }
-            pinned.append(tab)
+            stable.append(tab)
+            // Pinning the current occupant of the flex slot promotes it out of that slot,
+            // which then needs a new tenant — Activity if it is free, else the first
+            // unpinned screen, so the bar never shows a hole or a duplicate.
+            if tab == flex {
+                flex = Self.defaultFlex == tab || stable.contains(Self.defaultFlex)
+                    ? (AppTab.customizable.first { $0 != tab && !stable.contains($0) } ?? Self.defaultFlex)
+                    : Self.defaultFlex
+            }
         }
-        userDefaults.set(pinned.map(\.rawValue), forKey: Self.storageKey)
+        (stable, flex) = Self.normalize(stable: stable, flex: flex)
+        persist()
+    }
+
+    /// Move a screen into the swappable slot.  A no-op for a screen that is already pinned
+    /// (it has its own tab) or already in the slot.
+    func setFlex(_ tab: AppTab) {
+        guard tab != .more, !stable.contains(tab), tab != flex else { return }
+        (stable, flex) = Self.normalize(stable: stable, flex: tab)
+        persist()
+    }
+
+    /// Keep a screen selectable.  Called with the CURRENT selection whenever the bar
+    /// changes shape: narrowing the window (or unpinning from the More list) can drop a
+    /// tab the owner is actively looking at, and a selection with no matching `Tab`
+    /// renders as an empty pane rather than falling back to anything.  Parking it in the
+    /// swappable slot leaves its pin untouched, so widening restores the full set.
+    func ensureVisible(_ tab: AppTab) {
+        guard tab != .more, !barTabs.contains(tab) else { return }
+        flex = tab
+        persist()
+    }
+
+    /// Bar slots for a window this wide.  Compact width is always the phone bar; regular
+    /// width earns slots as the window grows, so a Mac window that is dragged narrow loses
+    /// them again.  `More` is budgeted separately because it is always present.
+    static func capacity(forWidth width: CGFloat, horizontalSizeClass: UserInterfaceSizeClass?) -> Int {
+        guard horizontalSizeClass == .regular, width > 0 else { return compactMaxTabs }
+        let usable = width * 0.86 - moreSlotWidth
+        return min(regularMaxTabs, max(compactMaxTabs, Int(usable / perItemWidth)))
+    }
+
+    /// Rough width of one icon+label tab item and of the More item, in points.  These only
+    /// need to be good enough to decide HOW MANY fit — the bar sizes itself.
+    private static let perItemWidth: CGFloat = 118
+    private static let moreSlotWidth: CGFloat = 100
+
+    func updateCapacity(width: CGFloat, horizontalSizeClass: UserInterfaceSizeClass?) {
+        let next = Self.capacity(forWidth: width, horizontalSizeClass: horizontalSizeClass)
+        guard next != capacity else { return }
+        capacity = next
+    }
+
+    private func persist() {
+        userDefaults.set(stable.map(\.rawValue), forKey: Self.stableKey)
+        userDefaults.set(flex.rawValue, forKey: Self.flexKey)
     }
 }
 
 struct MobileControlView: View {
     @EnvironmentObject private var store: MobileStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var tabPreferences = TabPreferences()
     @State private var selectedTab: AppTab = MobileControlView.initialTab()
-    @State private var morePath: [AppTab] = []
     /// Proposal id a deep link asked for, handed to whichever ProposalsView is on screen.
     @State private var focusedProposalId: String?
     /// Ticker a deep link asked for, handed to MarketsView (Assets).
     @State private var focusedSymbol: String?
     /// Clears the ring above once the cue has been seen (see `apply`).
     @State private var focusExpiry: Task<Void, Never>?
+    /// Last width the shell was laid out at, so a size-class flip (iPad Split View,
+    /// a Catalyst window crossing the regular/compact line) can recompute capacity
+    /// without waiting for a geometry change that may not come.
+    @State private var lastKnownWidth: CGFloat = 0
 
     @Binding private var pendingDeepLink: DeepLinkDestination?
 
@@ -157,9 +299,10 @@ struct MobileControlView: View {
         store.snapshot?.unreadNotificationCount ?? 0
     }
 
-    /// Programmatic jumps (e.g. Home's "Review Proposals") can target a screen the
-    /// owner unpinned from the bar. Rerouting those into the More stack keeps every
-    /// jump landing on a real screen instead of a selection with no matching tab.
+    /// The ONE way the selection ever moves — in-app jumps (Home's "Review Proposals"),
+    /// deep links, notification taps, and the More list all go through here.  A target
+    /// with no tab of its own is swapped into the bar's one flexible slot first, so every
+    /// jump lands on a real, selectable tab instead of a selection with no matching Tab.
     private var selection: Binding<AppTab> {
         Binding(
             get: { selectedTab },
@@ -168,12 +311,15 @@ struct MobileControlView: View {
                 // behind.  `apply` sets the focus AFTER moving the selection, so a link's own
                 // jump is not the change that clears it.
                 clearFocus()
-                if target == .more || tabPreferences.barTabs.contains(target) {
-                    selectedTab = target
-                } else {
-                    morePath = [target]
-                    selectedTab = .more
+                // A screen with no tab of its own takes over the swappable slot rather
+                // than being pushed inside More.  `setFlex` runs FIRST so the Tab for
+                // `target` already exists by the time the selection lands on it —
+                // reversed, the selection would point at a value the TabView has no Tab
+                // for and the pane would blank for a frame.
+                if !tabPreferences.isOnBar(target) {
+                    tabPreferences.setFlex(target)
                 }
+                selectedTab = target
             }
         )
     }
@@ -183,69 +329,111 @@ struct MobileControlView: View {
         // the system Liquid Glass appearance and its iPad/Mac sidebar adaptations.
         // Unrolled (no ForEach) so Release/archive can type-check; ForEach+Tab
         // times out the Swift 6 compiler ("unable to type-check this expression").
+        //
+        // Order is load-bearing: the pinned tabs come first in canonical order, then the
+        // ONE swappable slot, then More.  That is why the swappable tab is a single
+        // `Tab` whose value changes rather than nine more conditionals — it is the only
+        // way to keep it rendering immediately before More whatever screen is in it.
         TabView(selection: selection) {
-            if tabPreferences.isPinned(.home) {
-                Tab(AppTab.home.title, systemImage: AppTab.home.systemImage, value: AppTab.home) {
-                    NavigationStack { destination(for: .home) }
+            // Grouped, not loose: `TabContentBuilder` tops out at ten children like every
+            // other result builder, and nine pinnable tabs + the swappable slot + More is
+            // eleven.  The failure mode is an opaque "extra argument in call" pointing at
+            // the LAST child rather than at the arity, so leave the Group in place.
+            Group {
+                if tabPreferences.barLeadingTabs.contains(.home) {
+                    Tab(AppTab.home.title, systemImage: AppTab.home.systemImage, value: AppTab.home) {
+                        NavigationStack { destination(for: .home) }
+                    }
+                    .badge(badgeCount(for: .home))
                 }
-            }
-            if tabPreferences.isPinned(.proposals) {
-                Tab(AppTab.proposals.title, systemImage: AppTab.proposals.systemImage, value: AppTab.proposals) {
-                    NavigationStack { destination(for: .proposals) }
+                if tabPreferences.barLeadingTabs.contains(.proposals) {
+                    Tab(AppTab.proposals.title, systemImage: AppTab.proposals.systemImage, value: AppTab.proposals) {
+                        NavigationStack { destination(for: .proposals) }
+                    }
+                    .badge(badgeCount(for: .proposals))
                 }
-                .badge(pendingProposalCount)
-            }
-            if tabPreferences.isPinned(.markets) {
-                Tab(AppTab.markets.title, systemImage: AppTab.markets.systemImage, value: AppTab.markets) {
-                    NavigationStack { destination(for: .markets) }
+                if tabPreferences.barLeadingTabs.contains(.markets) {
+                    Tab(AppTab.markets.title, systemImage: AppTab.markets.systemImage, value: AppTab.markets) {
+                        NavigationStack { destination(for: .markets) }
+                    }
+                    .badge(badgeCount(for: .markets))
                 }
-            }
-            if tabPreferences.isPinned(.activity) {
-                Tab(AppTab.activity.title, systemImage: AppTab.activity.systemImage, value: AppTab.activity) {
-                    NavigationStack { destination(for: .activity) }
+                if tabPreferences.barLeadingTabs.contains(.activity) {
+                    Tab(AppTab.activity.title, systemImage: AppTab.activity.systemImage, value: AppTab.activity) {
+                        NavigationStack { destination(for: .activity) }
+                    }
+                    .badge(badgeCount(for: .activity))
                 }
-                .badge(unreadNotificationCount)
-            }
-            if tabPreferences.isPinned(.insights) {
-                Tab(AppTab.insights.title, systemImage: AppTab.insights.systemImage, value: AppTab.insights) {
-                    NavigationStack { destination(for: .insights) }
+                if tabPreferences.barLeadingTabs.contains(.insights) {
+                    Tab(AppTab.insights.title, systemImage: AppTab.insights.systemImage, value: AppTab.insights) {
+                        NavigationStack { destination(for: .insights) }
+                    }
+                    .badge(badgeCount(for: .insights))
                 }
-            }
-            if tabPreferences.isPinned(.coach) {
-                Tab(AppTab.coach.title, systemImage: AppTab.coach.systemImage, value: AppTab.coach) {
-                    NavigationStack { destination(for: .coach) }
+                if tabPreferences.barLeadingTabs.contains(.coach) {
+                    Tab(AppTab.coach.title, systemImage: AppTab.coach.systemImage, value: AppTab.coach) {
+                        NavigationStack { destination(for: .coach) }
+                    }
+                    .badge(badgeCount(for: .coach))
                 }
-            }
-            if tabPreferences.isPinned(.scan) {
-                Tab(AppTab.scan.title, systemImage: AppTab.scan.systemImage, value: AppTab.scan) {
-                    NavigationStack { destination(for: .scan) }
+                if tabPreferences.barLeadingTabs.contains(.scan) {
+                    Tab(AppTab.scan.title, systemImage: AppTab.scan.systemImage, value: AppTab.scan) {
+                        NavigationStack { destination(for: .scan) }
+                    }
+                    .badge(badgeCount(for: .scan))
                 }
-            }
-            if tabPreferences.isPinned(.guardrails) {
-                Tab(AppTab.guardrails.title, systemImage: AppTab.guardrails.systemImage, value: AppTab.guardrails) {
-                    NavigationStack { destination(for: .guardrails) }
+                if tabPreferences.barLeadingTabs.contains(.guardrails) {
+                    Tab(AppTab.guardrails.title, systemImage: AppTab.guardrails.systemImage, value: AppTab.guardrails) {
+                        NavigationStack { destination(for: .guardrails) }
+                    }
+                    .badge(badgeCount(for: .guardrails))
                 }
-            }
-            if tabPreferences.isPinned(.results) {
-                Tab(AppTab.results.title, systemImage: AppTab.results.systemImage, value: AppTab.results) {
-                    NavigationStack { destination(for: .results) }
+                if tabPreferences.barLeadingTabs.contains(.results) {
+                    Tab(AppTab.results.title, systemImage: AppTab.results.systemImage, value: AppTab.results) {
+                        NavigationStack { destination(for: .results) }
+                    }
+                    .badge(badgeCount(for: .results))
                 }
             }
 
+            if let trailing = tabPreferences.barTrailingTab {
+                Tab(trailing.title, systemImage: trailing.systemImage, value: trailing) {
+                    NavigationStack { destination(for: trailing) }
+                }
+                .badge(badgeCount(for: trailing))
+            }
+
             Tab(AppTab.more.title, systemImage: AppTab.more.systemImage, value: AppTab.more) {
-                NavigationStack(path: $morePath) {
+                NavigationStack {
                     MoreView(
                         tabPreferences: tabPreferences,
                         pendingProposalCount: pendingProposalCount,
-                        unreadNotificationCount: unreadNotificationCount
+                        unreadNotificationCount: unreadNotificationCount,
+                        openScreen: { selection.wrappedValue = $0 }
                     )
-                    .navigationDestination(for: AppTab.self) { tab in
-                        destination(for: tab)
-                    }
                 }
             }
         }
         .tint(AppPalette.accent)
+        // The bar earns slots as the window grows and gives them back as it shrinks —
+        // the whole point on Mac Catalyst, where the owner drags the window, and on an
+        // iPad rotating or entering Split View.  Width comes from the shell itself
+        // rather than a device check, so a half-width iPad gets a half-width bar.
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            lastKnownWidth = width
+            tabPreferences.updateCapacity(width: width, horizontalSizeClass: horizontalSizeClass)
+        }
+        .onChange(of: horizontalSizeClass) { _, _ in
+            tabPreferences.updateCapacity(width: lastKnownWidth, horizontalSizeClass: horizontalSizeClass)
+        }
+        // Anything that reshapes the bar — a resize that drops pins, an unpin from the
+        // More list — must not strand the screen the owner is on.  Converges in one pass:
+        // the repair puts `selectedTab` on the bar, so the next round is a no-op.
+        .onChange(of: tabPreferences.barTabs) { _, _ in
+            tabPreferences.ensureVisible(selectedTab)
+        }
         .onChange(of: pendingDeepLink) { _, destination in
             apply(destination)
         }
@@ -258,6 +446,16 @@ struct MobileControlView: View {
             if let raw = note.object as? String, let tab = AppTab(rawValue: raw) {
                 selection.wrappedValue = tab
             }
+        }
+    }
+
+    /// Badges follow the screen, not the slot: Proposals and Activity carry theirs into
+    /// the swappable slot too, so moving Activity there does not silently drop its count.
+    private func badgeCount(for tab: AppTab) -> Int {
+        switch tab {
+        case .proposals: return pendingProposalCount
+        case .activity: return unreadNotificationCount
+        default: return 0
         }
     }
 
@@ -333,10 +531,16 @@ extension Notification.Name {
 
 /// The overflow + customization screen: every destination stays reachable here, and
 /// each row's pin toggle edits the bar live — the same two jobs as the web TabsSheet.
+///
+/// Tapping a row now SELECTS that screen rather than pushing it inside this stack.  A
+/// screen with no tab of its own slides into the bar's swappable slot on the way, so it
+/// arrives with a tab you can come back to instead of being buried one level down inside
+/// More with only a back button.
 private struct MoreView: View {
     @ObservedObject var tabPreferences: TabPreferences
     let pendingProposalCount: Int
     let unreadNotificationCount: Int
+    let openScreen: (AppTab) -> Void
 
     var body: some View {
         List {
@@ -347,16 +551,29 @@ private struct MoreView: View {
             } header: {
                 Text("Screens")
             } footer: {
-                Text("Pinned screens show in the tab bar.  Pin up to \(TabPreferences.maxTabs); keep at least \(TabPreferences.minTabs).  Everything stays reachable from here either way.")
+                Text(footerText)
             }
         }
         .navigationTitle("More")
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    /// Says what the bar can actually do RIGHT NOW — the ceiling moves with the window,
+    /// so a fixed "pin up to 4" would be wrong on an iPad the moment it was read.
+    private var footerText: String {
+        let pinnable = max(0, tabPreferences.capacity - 1)
+        return "Home always stays on the bar, and the slot before More holds whichever "
+            + "screen you opened last.  Pin up to \(pinnable) screens alongside them.  "
+            + "This window fits \(tabPreferences.capacity); a wider one fits more, and a "
+            + "narrower one falls back to the default tabs without forgetting your pins.  "
+            + "Everything stays reachable from here either way."
+    }
+
     private func row(for tab: AppTab) -> some View {
         HStack(spacing: 12) {
-            NavigationLink(value: tab) {
+            Button {
+                openScreen(tab)
+            } label: {
                 HStack(spacing: 12) {
                     Image(systemName: tab.systemImage)
                         .font(.appBody)
@@ -368,32 +585,48 @@ private struct MoreView: View {
                             Text(tab.title)
                                 .font(.appBody.weight(.medium))
                             if tab == .proposals && pendingProposalCount > 0 {
-                                Text("\(pendingProposalCount)")
-                                    .font(.appCaption2.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(AppPalette.negative, in: Capsule())
+                                countPill("\(pendingProposalCount)", tint: AppPalette.negative)
                             }
                             if tab == .activity && unreadNotificationCount > 0 {
-                                Text("\(unreadNotificationCount)")
-                                    .font(.appCaption2.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(AppPalette.accent, in: Capsule())
+                                countPill("\(unreadNotificationCount)", tint: AppPalette.accent)
                             }
                         }
                         Text(tab.detail)
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.appCaption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            Spacer(minLength: 0)
+            pinControl(for: tab)
+        }
+    }
 
+    private func countPill(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.appCaption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(tint, in: Capsule())
+    }
+
+    /// Home shows a filled, dimmed pin it cannot lose — the affordance stays legible
+    /// rather than vanishing, which would read as a rendering bug next to eight rows
+    /// that all have one.
+    @ViewBuilder
+    private func pinControl(for tab: AppTab) -> some View {
+        if tabPreferences.isRequired(tab) {
+            Image(systemName: "pin.fill")
+                .foregroundStyle(Color.secondary.opacity(0.4))
+                .accessibilityLabel("\(tab.title) always stays on the tab bar")
+        } else {
             Button {
                 tabPreferences.toggle(tab)
             } label: {
@@ -402,13 +635,13 @@ private struct MoreView: View {
             }
             .buttonStyle(.borderless)
             .disabled(!tabPreferences.canToggle(tab))
-            .accessibilityLabel(tabPreferences.isPinned(tab) ? "Remove \(tab.title) from tab bar" : "Add \(tab.title) to tab bar")
+            .accessibilityLabel(tabPreferences.isPinned(tab) ? "Unpin \(tab.title) from tab bar" : "Pin \(tab.title) to tab bar")
             .accessibilityHint(
                 tabPreferences.canToggle(tab)
                     ? ""
                     : tabPreferences.isPinned(tab)
-                        ? "Keep at least \(TabPreferences.minTabs) tabs"
-                        : "Up to \(TabPreferences.maxTabs) tabs — remove one first"
+                        ? "Keep at least one pinned screen besides Home"
+                        : "This window fits \(tabPreferences.capacity) tabs — unpin one first, or widen the window"
             )
         }
     }
