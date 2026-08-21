@@ -1,5 +1,38 @@
 # Current Status
 
+## 2026-08-21 CLAUDE - the tab bar now knows how wide the window is
+
+Owner ask: more than four tabs on iPad and on a wide Mac window, Home required, and the slot
+before More swapped out by whatever you open from the More list.  All four are in, plus the
+iPad Air 11" layout pass they asked for on top.
+
+`TabBarCapacity` turns the live width into a slot count: compact width keeps four, iPad Air
+11" gets six portrait / eight landscape, and a Mac window recomputes as it is dragged.  Home
+can no longer be unpinned.  The slot before More is borrowed - opening a screen from More
+takes it, pinning that screen makes it permanent and gives the slot back - and More carries an
+aggregate badge so a displaced Activity's unread count never vanishes.  Too narrow for the
+chosen set falls back to the DEFAULTS and writes nothing, so widening restores the owner's
+picks exactly.
+
+One decision worth flagging because it is not literally in the ask: until the owner pins or
+unpins anything the bar AUTO-FILLS to what fits.  Without it a fresh iPad would still show
+four tabs and the feature would only exist for someone who went looking for it.
+
+Layout: `SnapshotScaffold` picks 1/2/3 card columns from its own measured width, and one
+column is the existing `LazyVStack` untouched - the iPhone is deliberately unchanged.  Cards
+drop into the shortest column; the freshness banner and each screen's hero span.  Six
+hardcoded two-column metric grids now widen with the CARD they sit in rather than the screen.
+Coach keeps a readable measure instead of stretching a chat to 1148pt.
+
+**Honest verification limit: no Swift in this change has been compiled and there is no
+screenshot.**  This is a Linux remote container - no xcodebuild, no swiftc, no xcodegen, no
+simulator - and the repo's four-command gate compiles no Swift, so running it would have
+proved nothing.  `ios-build.yml` on the Mac runner is the verification of record and I am
+driving it to green.  Screenshots and a `WrappingHStackTests.swift` -> `LayoutMathTests.swift`
+rename (needs `xcodegen`) are the two follow-ups that need a Mac.
+
+Rollout: `docs/rollouts/2026-08-21-ios-adaptive-tabs-ipad-layout.md`.
+
 ## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
 
 New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.
