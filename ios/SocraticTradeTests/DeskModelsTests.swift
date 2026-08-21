@@ -378,3 +378,99 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(AppTab.results.title, "Results")
     }
 }
+
+/// Commit rule for every numeric settings field.  These exist because the bug they cover
+/// was invisible: `commit()` ran only from `.onSubmit`, and a `.decimalPad` has no Return
+/// key, so a typed number was discarded on tap-away with no PATCH and no message.
+final class NumberFieldEditorTests: XCTestCase {
+    // MARK: - The data-loss case (empty not allowed: data-source rows)
+
+    func testTypedNumberIsSentWhenItDiffersFromTheStoredValue() {
+        XCTAssertEqual(
+            NumberFieldEditor.decide(text: "12", serverValue: 5, allowsEmpty: false),
+            .patch(12)
+        )
+    }
+
+    func testUnchangedValueCostsNoRoundTrip() {
+        XCTAssertEqual(NumberFieldEditor.decide(text: "5", serverValue: 5, allowsEmpty: false), .unchanged)
+        // …including when only the formatting differs.
+        XCTAssertEqual(NumberFieldEditor.decide(text: " 5.0 ", serverValue: 5, allowsEmpty: false), .unchanged)
+    }
+
+    func testGarbageRevertsRatherThanSilentlyDoingNothing() {
+        for text in ["", "   ", "abc", "1.2.3", "--4"] {
+            XCTAssertEqual(
+                NumberFieldEditor.decide(text: text, serverValue: 5, allowsEmpty: false),
+                .revert,
+                "\(text.debugDescription) should put the stored value back"
+            )
+        }
+    }
+
+    func testNegativeAndNonFiniteAreRefused() {
+        XCTAssertEqual(NumberFieldEditor.decide(text: "-1", serverValue: 5, allowsEmpty: false), .revert)
+        XCTAssertEqual(NumberFieldEditor.decide(text: "inf", serverValue: 5, allowsEmpty: false), .revert)
+        XCTAssertEqual(NumberFieldEditor.decide(text: "nan", serverValue: 5, allowsEmpty: false), .revert)
+        // A field that genuinely allows negatives opts out.
+        XCTAssertEqual(
+            NumberFieldEditor.decide(text: "-1", serverValue: 5, allowsEmpty: false, minimum: nil),
+            .patch(-1)
+        )
+    }
+
+    func testFirstEntryAgainstNoStoredValueStillSends() {
+        XCTAssertEqual(NumberFieldEditor.decide(text: "3", serverValue: nil, allowsEmpty: false), .patch(3))
+    }
+
+    // MARK: - The "blank = no cap" case (LLM budget)
+
+    func testBlankClearsTheValueWhereBlankIsMeaningful() {
+        XCTAssertEqual(NumberFieldEditor.decide(text: "", serverValue: 100, allowsEmpty: true), .patch(nil))
+    }
+
+    func testBlankAgainstAnAlreadyEmptyValueSendsNothing() {
+        // Otherwise merely focusing and leaving an empty cap field would PATCH null on
+        // every pass, which is what the unchanged branch exists to prevent.
+        XCTAssertEqual(NumberFieldEditor.decide(text: "", serverValue: nil, allowsEmpty: true), .unchanged)
+        XCTAssertEqual(NumberFieldEditor.decide(text: "  ", serverValue: nil, allowsEmpty: true), .unchanged)
+    }
+
+    func testZeroIsAValueNotAnAbsence() {
+        XCTAssertEqual(NumberFieldEditor.decide(text: "0", serverValue: nil, allowsEmpty: true), .patch(0))
+        XCTAssertEqual(NumberFieldEditor.decide(text: "0", serverValue: 0, allowsEmpty: true), .unchanged)
+    }
+
+    // MARK: - Parsing
+
+    func testCommaDecimalLocalesAreNotThrownAway() {
+        // `.decimalPad` prints the DEVICE locale's separator, and `Double("1,5")` is nil —
+        // without the formatter fallback the blur-commit added to STOP input being
+        // discarded would itself discard input across much of the world.
+        XCTAssertEqual(NumberFieldEditor.parse("1,5", locale: Locale(identifier: "de_DE")), 1.5)
+        XCTAssertEqual(NumberFieldEditor.parse("1.5", locale: Locale(identifier: "en_US")), 1.5)
+        XCTAssertNil(NumberFieldEditor.parse("abc", locale: Locale(identifier: "en_US")))
+    }
+
+    func testWholeNumbersDisplayWithoutATrailingPointZero() {
+        // The field must not visibly rewrite "5" into "5.0" the instant it is committed.
+        XCTAssertEqual(NumberFieldEditor.display(5), "5")
+        XCTAssertEqual(NumberFieldEditor.display(5.25), "5.25")
+        XCTAssertEqual(NumberFieldEditor.display(nil), "")
+        XCTAssertEqual(NumberFieldEditor.display(.nan), "")
+    }
+
+    func testDisplayRoundTripsThroughDecideAsUnchanged() {
+        for value in [0.0, 1, 5, 42.5, 1000, 0.25] {
+            XCTAssertEqual(
+                NumberFieldEditor.decide(
+                    text: NumberFieldEditor.display(value),
+                    serverValue: value,
+                    allowsEmpty: false
+                ),
+                .unchanged,
+                "\(value) rendered then re-read should be a no-op"
+            )
+        }
+    }
+}
