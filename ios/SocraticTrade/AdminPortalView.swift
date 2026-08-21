@@ -15,7 +15,9 @@ struct AdminPortalView: View {
 
     @EnvironmentObject private var store: MobileStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var selectedPage: AdminPortalPage = .overview
+    /// Optional so it matches SwiftUI `List(selection: Binding<Value?>)`.  Writes ignore
+    /// nil (a sidebar deselect) so the pane never blanks.
+    @State private var selectedPage: AdminPortalPage? = .overview
     @State private var sessionExpired = false
     @State private var isLoading = true
     @State private var loadError: String?
@@ -52,14 +54,21 @@ struct AdminPortalView: View {
 
     private var wideLayout: some View {
         HStack(spacing: 0) {
-            List(AdminPortalPage.allCases, selection: $selectedPage) { page in
+            List(
+                AdminPortalPage.allCases,
+                id: \.self,
+                selection: Binding(
+                    get: { selectedPage },
+                    set: { if let page = $0 { selectedPage = page } }
+                )
+            ) { page in
                 Label(page.title, systemImage: page.systemImage)
-                    .tag(page)
+                    .tag(Optional(page))
             }
             .listStyle(.sidebar)
             .frame(minWidth: 220, idealWidth: 260, maxWidth: 300)
             Divider()
-            portalPane(for: selectedPage)
+            portalPane(for: selectedPage ?? .overview)
         }
         .background(AppPalette.background)
     }

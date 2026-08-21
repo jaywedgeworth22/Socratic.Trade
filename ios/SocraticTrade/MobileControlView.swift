@@ -4,7 +4,7 @@ import UIKit
 enum AppTab: String, CaseIterable, Identifiable {
     case home
     case proposals
-    /// Holdings, orders, watchlist, alerts (tab label "Assets"; same chart symbol).
+    /// Holdings, orders, and watchlist (tab label "Assets"; same chart symbol).
     case markets
     case activity
     /// Snapshot brief + rule-based attention items — not the web console Coach chat.
