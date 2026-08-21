@@ -67,12 +67,30 @@ Priorities: P0 = correctness/money-path/blocking; P1 = significant; P2 = polish/
 - `34b8fbe7` (P2) — CSP is report-only with unsafe-inline/unsafe-eval on the live site.
 - `436a9b98` (P2) — Production is 8 commits behind main; live login page ships the 1 MB pre-crop icon (mobile LCP 8.3 s).
 
-State comments added on the board: `830c892f` (ruleset needs ios-build as a required check), `89249c60` + `3b343933` (both confirmed fixed on main; systemic parts remain), `620ef423` (sign-in drops deep-link destination; `redirectTo: "/"` hardcoded in all three OAuth server actions).
-
-Follow-up: re-run the remaining deep-dive tracks (desktop console internals, phone-viewport details, iOS screen-by-screen) with narrowed scopes to extend this outline with file:line depth.
+State comments added on the board: `830c892f` (ruleset needs ios-build as a required check), `89249c60` + `3b343933` (both confirmed fixed on main; systemic parts remain), `620ef423` (sign-in drops deep-link destination; `redirectTo: "/"` hardcoded in all three OAuth server actions; plus the 401 stale-data freeze mechanism from the mobile track).
 
 ## 5. Backend / API / Ops / Docs track — COMPLETED (report committed)
 
 The backend deep-dive completed after the first pass and is committed in full: `docs/audits/2026-08-20-deepseek-backend-ops-docs.md` (plus detail reports `2026-08-20-deepseek-api-routes.md`, `2026-08-20-deepseek-scripts.md`, `2026-08-20-deepseek-docs.md`).  Verdict: **no P0, no unguarded money-path bug** — the exit-code contract, admin gate (all 26 routes), identity chain, scheduler lease/lane guards, and broker-I/O deadline discipline all hold under direct inspection.  New board filings from this track: `99ab01c7` (P1 drain exits 0 on failed nudge), `8c9ce3b9` (P1 deployment.md mislabels live replica as R2 — live is B2), `220c6cc6` (P2 watchdog pages on latched RTH merges), `68d11cc9` (P2 retired-lane scripts shipped), `7db3350e` (P2 ops doc stale topology), `3a8bcdcf` (P3 from-draft rate limit gap), `d6f0a9d3` (P3 API error honesty), `cc0caa64` (P3 checkBrokerHealth inline, no tick deadline), `51c52fd6` (P3 /api/health public + heavy), `67558af0` (P3 quotes asOf = serve time).
 
 Quick wins from the track (S-effort each): `exit 1` in `scripts/rth-deploy-drain.sh` on `nudge_ok=0`; rewrite `docs/deployment.md:70-81` R2→B2 framing; add the orders rate limit to `/api/proposals/from-draft`; 502 `{error}` on `/api/history` failure and broker-backed GETs; RTH-latch awareness in `alert-deploy-freshness.sh` (M).
+
+## 6. Desktop web track — COMPLETED (report committed)
+
+`docs/audits/2026-08-20-deepseek-desktop-web.md` — 45 findings (2 P1, 12 P2, 17 P3, 14 P4), no P0.  P1s filed as `cf62f87a` (legacy NULL-executionMode proposals can never pass typed confirmation on a live account — client resolves "live" from the row stamp while the server 409s from the current account; card also mislabels "NO ACCOUNT"; same root in bulk approve) and `c53ad066` (Guardrails Discard does not clear the Universe-group `universeDraft` — discarded edits resurface in the next commit on the page governing what gets scanned/traded).  P2 filings: `28c50b28` (no per-page tab titles), `f49c871b` (evidence sheet can attach the latest run's rows to an unrelated older decision), `9fdfa035` (inert Coach quick-action chips), `adc4ec5b` (Send-test races the auto-save queue), `cdee1562` (read notifications below AA: 4.24:1/2.79:1), `7e93bbcc` (legal pages CDN-cached one year).  Verified strengths: dead-controls cluster genuinely wired, home rows use persisted ids, tone tokens pass AA in both themes, coalesced polling sane, watchlist optimistic star reverts.
+
+## 7. iOS track — COMPLETED (report committed; xcodebuild verified)
+
+`docs/audits/2026-08-20-deepseek-ios.md` — no P0; `xcodebuild build` and the test-target compile BOTH pass clean on main.  P1 filings: `d9f81e44` (Dictionary(uniqueKeysWithValues:) traps on duplicate command ids — server-data crash on every reconcile).  P2 filings: `179cc4b2` (one failed reload flips the staleness gate and disables Approve/Run/Watchlist/Policy with no SSE-fallback polling), `06edecc0` (@Observable rule violated — ObservableObject/@Published in three stores).  P3 filings: `7035a2ba` (version record drift: project.yml 1.0.8 vs TestFlight 1.0.68), `1dbdc227` (no 5xx retry; fixed-size chrome ignores Dynamic Type; sub-44pt targets; SSE event storms reload everything).  State comments: `64f21332` ~⅓ closed (list of remaining read-only gaps), `2056ceab` iOS half still open (system green ≈2.4:1), `ce75f8d0` three new mechanisms, `89249c60` re-verified (riskRules fixed; no-contract-test program still open).  App Store blocker: privacy manifest still absent (`410bda84`, confirmed again).
+
+## 8. Mobile web track — COMPLETED (report committed)
+
+`docs/audits/2026-08-20-deepseek-mobile-web.md` — 12 findings (1 P1, 7 P2, 3 P3, 1 P4).  The merged phone-touch-viewport cluster landed most of its four promises; the remaining gaps are documented on `bf05f16a` (avatar trigger hard-capped 32×32 by an inline style beating the 44px floor; Segmented/checkbox/summary/theme-picker below 44px; 320px scope collapse with no overflow-x guard) and `acc07df6` (still open: no phone type-scale — 424×11px / 188×12.5px / 13×10px uses; ~70px equity chart; unvirtualized scan card wall with no sort/filter while the desktop tree stays mounted; two gradient orbs animating under the opaque console; Coach composer Enter-always-sends on touch keyboards).  P1: `620ef423` deepened — an expired session 401s forever with zero 401 special-casing in the console fetch client, freezing the console on stale data with no route to /login (worse on a phone).  Caveat: console is auth-walled, so layout claims are static analysis + arithmetic; live probes of the /login surface were clean (no overflow at 320/390/430, zoom stays enabled, no 100vh anywhere).
+
+## 9. What to claim next (board items, in order)
+
+1. `cf62f87a` (P1, S-M) + `c53ad066` (P1, S) — the two desktop money-path P1s.
+2. `99ab01c7` (P1, S) — drain exit 1 on failed nudge; `8c9ce3b9` (P1, S) — deployment.md R2→B2 rewrite.
+3. `830c892f` (P1, S) — make ios-build a required check; `410bda84` (P1, S) — privacy manifest.
+4. `d9f81e44` (P1, S) — iOS dictionary crash; `179cc4b2` (P2, M) — staleness gate decouple.
+5. The P2 batch: `28c50b28` tab titles, `cdee1562` read-opacity, `7e93bbcc` legal cache, `3a8bcdcf` from-draft rate limit, `d6f0a9d3` API error honesty, `220c6cc6` watchdog RTH awareness (M), `34b8fbe7` CSP enforcement (M), `68d11cc9` retired-lane script deletions, `7db3350e` ops doc rewrite, mobile `bf05f16a`/`acc07df6` remnants.
