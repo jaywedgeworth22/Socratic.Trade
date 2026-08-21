@@ -58,13 +58,17 @@ Ran on this branch:
 npm run lint          # exit 0 (warnings only; grandfathered set-state-in-effect backlog)
 npx tsc --noEmit      # exit 0
 npx vitest run test/weekly-market-digest.test.ts test/indicators.test.ts test/strategy-prompt-safety.test.ts test/copy-rules-lint.test.ts
-                      # 56 passed (13 weekly + 8 indicators + 5 prompt-safety + 17 copy + extras)
+                      # 43 passed on the focused files (plus copy-rules extras)
+npm run build         # exit 0; route list includes /api/scan/weekly-digest
 ```
 
-`npm test` (full suite) was started in this cloud VM and spent 20+ minutes on outbound HTTP (SEC / Yahoo / Finnhub 404s and 30s strategy timeouts).  Those failures are environmental, not this change.  `npm run build` is the remaining local gate.
+`npm test` (full suite) in this cloud VM hung on outbound HTTP (SEC / Yahoo / Finnhub 404s and 30s strategy timeouts).  That process was stopped by PID.  Those failures are environmental, not this change.  GitHub `verify` is the official full-suite gate.
+
+Merged `origin/main` `86773171` (#3010 deploy-latch CJS fix) so the PR is no longer dirty.  Cloud-proxy pushes do not fire `pull_request` / `synchronize`, so `verify` is kicked with `gh workflow run ci.yml --ref cursor/weekly-market-screens-2b0c`.
 
 ## Next Steps & Blockers
 
+- Wait for GitHub `verify` on the post-merge SHA.  Do not merge until that check is green.
 - Confirm a live scan + Massive grouped-daily refresh paints both lists on Macro/Scan.
 - iOS decode is additive; first compile happens in CI (`ios-build`).  No TestFlight in this change.
 - Optional later: opt-in notify when the screens flip, or a settings toggle for the filters.

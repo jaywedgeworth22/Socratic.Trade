@@ -6,7 +6,8 @@ Option 3 of the Perplexity-ritual ask: ST now builds those weekly screens from i
 
 **Risk:** first Swift compile is CI-only.  Momentum is empty until grouped-daily or per-symbol OHLC lands.
 
-PR #3009 (`cursor/weekly-market-screens-2b0c`).  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+PR #3009 (`cursor/weekly-market-screens-2b0c`) is rebased onto `origin/main` `86773171` (#3010 deploy-latch CJS fix).  Cloud-proxy pushes do not fire `pull_request`, so `verify` is dispatched via `workflow_dispatch`.  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+
 ## 2026-08-21 MONET - P0: deploys have been failing for ~5 hours, prod serving stale code
 
 Every deployment from 2026-08-21T05:07Z onward failed on a top-level await in
