@@ -129,6 +129,10 @@ export const RATE_LIMITS = {
   /** Market scan: read-only but fans out to several data providers (Yahoo, Massive, broker quotes),
    *  so a tight-loop refresh can hammer upstreams. 30/min covers manual refreshes with headroom. */
   scan: { limit: 30, windowMs: 60_000 },
+  /** Weekly screens read: cache / value-only, cheap. */
+  weeklyDigest: { limit: 30, windowMs: 60_000 },
+  /** Weekly screens refresh: grouped daily + per-symbol OHLC.  Keep this tight. */
+  weeklyDigestRefresh: { limit: 6, windowMs: 60_000 },
   /** Paid strategy tuning performs a full LLM review; contain retries and compromised-session spend. */
   strategyTuning: { limit: 10, windowMs: 60_000 },
   /** Peer reads from App A (congress.trade) */

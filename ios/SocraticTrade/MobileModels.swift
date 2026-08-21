@@ -24,6 +24,8 @@ struct MobileSnapshot: Decodable {
     let recentCommands: [MobileCommand]
     /// Last-good `/api/scan` universe.  Same seed `/console/scan` keeps when Refresh 503s.
     let latestScan: MarketScanResponse?
+    /// Native weekly value + momentum screens.  Missing on older payloads.
+    let weeklyMarketDigest: WeeklyMarketDigest?
 
     private enum CodingKeys: String, CodingKey {
         case currentUser
@@ -44,6 +46,7 @@ struct MobileSnapshot: Decodable {
         case notifications
         case recentCommands
         case latestScan
+        case weeklyMarketDigest
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +75,7 @@ struct MobileSnapshot: Decodable {
         notifications = try values.decodeIfPresent([NotificationHistoryItem].self, forKey: .notifications) ?? []
         recentCommands = try values.decodeIfPresent([MobileCommand].self, forKey: .recentCommands) ?? []
         latestScan = try values.decodeIfPresent(MarketScanResponse.self, forKey: .latestScan)
+        weeklyMarketDigest = try values.decodeIfPresent(WeeklyMarketDigest.self, forKey: .weeklyMarketDigest)
     }
 
     var unreadNotificationCount: Int {
@@ -738,5 +742,71 @@ struct AccountDeletionResult: Decodable {
         ok = try values.decodeIfPresent(Bool.self, forKey: .ok) ?? true
         counts = try values.decodeIfPresent([String: Int].self, forKey: .counts) ?? [:]
         logoutUrl = try values.decodeIfPresent(String.self, forKey: .logoutUrl)
+    }
+}
+
+/// Native weekly value + momentum screens.  All arrays default empty so an older
+/// payload, or a partial object, cannot fail the whole snapshot decode.
+struct WeeklyDigestName: Decodable, Identifiable {
+    var id: String { symbol }
+    let symbol: String
+    let companyName: String?
+    let sector: String?
+    let price: Double
+    let marketCap: Double?
+    let peRatio: Double?
+    let pctAbove52wLow: Double?
+    let return5d: Double?
+    let rsi14: Double?
+    let rsiZone: String?
+    let vsSma20: String?
+    let vsSma50: String?
+    let vsSma200: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case symbol, companyName, sector, price, marketCap, peRatio
+        case pctAbove52wLow, return5d, rsi14, rsiZone, vsSma20, vsSma50, vsSma200
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        symbol = try values.decode(String.self, forKey: .symbol)
+        companyName = try values.decodeIfPresent(String.self, forKey: .companyName)
+        sector = try values.decodeIfPresent(String.self, forKey: .sector)
+        price = try values.decodeIfPresent(Double.self, forKey: .price) ?? 0
+        marketCap = try values.decodeIfPresent(Double.self, forKey: .marketCap)
+        peRatio = try values.decodeIfPresent(Double.self, forKey: .peRatio)
+        pctAbove52wLow = try values.decodeIfPresent(Double.self, forKey: .pctAbove52wLow)
+        return5d = try values.decodeIfPresent(Double.self, forKey: .return5d)
+        rsi14 = try values.decodeIfPresent(Double.self, forKey: .rsi14)
+        rsiZone = try values.decodeIfPresent(String.self, forKey: .rsiZone)
+        vsSma20 = try values.decodeIfPresent(String.self, forKey: .vsSma20)
+        vsSma50 = try values.decodeIfPresent(String.self, forKey: .vsSma50)
+        vsSma200 = try values.decodeIfPresent(String.self, forKey: .vsSma200)
+    }
+}
+
+struct WeeklyMarketDigest: Decodable {
+    let generatedAt: String?
+    let status: String
+    let value: [WeeklyDigestName]
+    let momentum: [WeeklyDigestName]
+    let overlap: [String]
+    let warnings: [String]
+
+    var hasRows: Bool { !value.isEmpty || !momentum.isEmpty }
+
+    private enum CodingKeys: String, CodingKey {
+        case generatedAt, status, value, momentum, overlap, warnings
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try values.decodeIfPresent(String.self, forKey: .generatedAt)
+        status = try values.decodeIfPresent(String.self, forKey: .status) ?? "pending"
+        value = try values.decodeIfPresent([WeeklyDigestName].self, forKey: .value) ?? []
+        momentum = try values.decodeIfPresent([WeeklyDigestName].self, forKey: .momentum) ?? []
+        overlap = try values.decodeIfPresent([String].self, forKey: .overlap) ?? []
+        warnings = try values.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
 }

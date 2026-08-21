@@ -57,6 +57,7 @@ export async function GET(request: Request) {
     }),
     recentCommands: listMobileCommands({ userId: user.userId, limit: 30 }),
     // Same last-good universe `/console/scan` paints when live Refresh 503s.
-    latestScan: compactMobileMarketScan(snapshot.latestScan)
+    latestScan: compactMobileMarketScan(snapshot.latestScan),
+    weeklyMarketDigest: snapshot.weeklyMarketDigest
   });
 }

@@ -206,7 +206,8 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
     // 2.12.0: IRA accounts are not told to tax-loss harvest
     // 2.13.0: IRA Ignore does not steer Green; Block is material locks only
     // 2.14.0: IRA Auto is a choosable option; min-loss is optional
-    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.14.0");
+    // 2.15.0: native weeklyScreens (value + 5-day momentum) as advisory DATA
+    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.15.0");
   });
 
   it("(a) buildBullSystem/buildRedTeamReviewSystem carry the data-not-command clause; reflection only by reference", async () => {

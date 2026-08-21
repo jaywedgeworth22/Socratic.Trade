@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-08-21 CURSOR — native weekly value + momentum screens
+
+Option 3 of the Perplexity-ritual ask: ST now builds those weekly screens from its own tape.  Value = large-cap ≥ $10b, price > $5, volume ≥ 500k, trailing P/E > 0 and ≤ 10, within 10% of the 52-week low.  Momentum = the same floor ranked by 5-day return, with ROC/RSI/MAs when bars exist.  Full `quotesBySymbol` universe (not the ranked cut).  Missing fields exclude the name.  Dashboard is cache/value-only; scheduler + `GET /api/scan/weekly-digest?refresh=1` do the bar work.  Cards on Macro + Scan; thin iOS Scan card; Green gets `weeklyScreens` as advisory DATA (`agentic-strategy@2.15.0`).  No Perplexity scrape/key, no auto-trade, no scoring/policy change.
+
+**Risk:** first Swift compile is CI-only.  Momentum is empty until grouped-daily or per-symbol OHLC lands.
+
+PR #3009 (`cursor/weekly-market-screens-2b0c`) is rebased onto `origin/main` `86773171` (#3010 deploy-latch CJS fix).  Cloud-proxy pushes do not fire `pull_request`, so `verify` is dispatched via `workflow_dispatch`.  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+
 ## 2026-08-21 MONET - P0: deploys have been failing for ~5 hours, prod serving stale code
 
 Every deployment from 2026-08-21T05:07Z onward failed on a top-level await in

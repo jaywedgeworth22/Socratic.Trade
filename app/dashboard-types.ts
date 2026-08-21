@@ -4,6 +4,7 @@ import type { PositionStopPlan } from "@/lib/db";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
+import type { WeeklyMarketDigest } from "@/lib/weekly-market-digest";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
 import type { RedTeamEfficacy, RegimeStat, ThesisStat } from "@/lib/performance";
 import type { TaxSummary } from "@/lib/tax";
@@ -107,6 +108,8 @@ export interface DashboardSnapshot {
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;
   latestScan?: MarketScan;
+  /** Native weekly value + momentum screens from this account's scan tape. */
+  weeklyMarketDigest?: WeeklyMarketDigest;
   dailyStats: { orderCount: number; openingOrderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
