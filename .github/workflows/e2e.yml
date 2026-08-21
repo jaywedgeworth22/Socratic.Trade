@@ -32,7 +32,7 @@ jobs:
     outputs:
       docs-only: ${{ steps.check.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.event_name == 'pull_request'
         with:
           # Classify only needs the two endpoint trees. Full-history fetches can
@@ -137,7 +137,7 @@ jobs:
       - name: Docs-only short-circuit
         if: needs.classify.outputs.docs-only == 'true'
         run: echo "docs-only diff — smoke skipped by path filter"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: needs.classify.outputs.docs-only != 'true'
       - uses: actions/setup-node@v4
         if: needs.classify.outputs.docs-only != 'true'
@@ -152,7 +152,7 @@ jobs:
         run: rm -rf ./* ./.git || true
       - name: Refresh checkout before package operations
         if: needs.classify.outputs.docs-only != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Assert package.json present
         if: needs.classify.outputs.docs-only != 'true'
         run: |
