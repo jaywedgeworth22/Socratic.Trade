@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-08-21 CURSOR — strategy gather timeout all day (Roth + Paper)
+
+Ops snapshot 19:18Z: scheduler ticking, LLM keys present, last completed runs 2026-08-20 20:16Z (Roth) and 20:22Z (Paper).  Today every recent run is `failed · strategy gather timeout` (Paper 27 consecutive, Roth 12) plus a few stale-run sweeps on process restart.  Live sha `e0a4959a73a7` (started 19:06Z) is still the RTH-latched image — #2852/#2854 are already in that sha.
+
+Root cause is the 8-minute gather `withDeadline` racing without an AbortController.  Timed-out Nasdaq/enrichment/broker walks keep running; the next account starts another full scan; the pile-up makes every later gather miss 8 minutes.  `market-scan-freshness` avg 115s / max 66m is the same scan competing on the event loop.
+
+Fix: abort the abandoned gather, stop cascade/enrichment waves on that signal, and if a last completed tape exists continue the run with that real scan plus a 45s quote refresh so Green can start.  Do not HOTFIX during cash hours — merge waits for the after-close drain.
+
+Rollout: `docs/rollouts/2026-08-21-gather-timeout-abort.md`.
+
+# Current Status
+
 ## 2026-08-21 GROK — RTH drain actually nudges Coolify
 
 Live sha e0a4959a73a7 is 39 commits behind main.  Weekday Coolify builds are RTH-latched on purpose (keep last healthy container).  The 21:20 UTC drain then exited 0 without a nudge because GITHUB_TOKEN cannot redeliver hooks and COOLIFY_DEPLOY_WEBHOOK_URL was unset.

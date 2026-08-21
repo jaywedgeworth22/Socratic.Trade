@@ -491,9 +491,16 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
 
     if (preselectionPool.length > 0 && provider) {
       try {
+        if (options?.signal?.aborted) {
+          throw options.signal.reason instanceof Error
+            ? options.signal.reason
+            : new Error("Market scan cancelled.");
+        }
         // Seed first so cascade gaps never blank a field we already know.
         const baselinePool = preselectionPool.map(applySeedBaseline);
-        const enrichment = await provider.enrich(baselinePool.map((quote) => quote.symbol));
+        const enrichment = await provider.enrich(baselinePool.map((quote) => quote.symbol), {
+          signal: options?.signal
+        });
         const rescoredBySymbol = new Map(
           baselinePool.map((quote) => {
             const live = enrichment[quote.symbol];

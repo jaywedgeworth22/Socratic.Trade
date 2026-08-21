@@ -66,10 +66,10 @@ function resolveRoleModel(
   return resolveOpenAiModel(policy);
 }
 
-/** Current OpenRouter Flash class — catalog column 2. */
-export const OPENROUTER_GEMINI_FLASH = "google/gemini-flash-latest";
-/** OpenRouter Flash batch/offline variant (~50% cheaper, higher latency). */
-export const OPENROUTER_GEMINI_FLASH_BATCH = "google/gemini-flash-latest:batch";
+/** Current OpenRouter Flash class — catalog column 2. Bare slug 404s. */
+export const OPENROUTER_GEMINI_FLASH = "~google/gemini-flash-latest";
+/** Pinned 3.7 batch/offline slug (the latest alias has no :batch sibling). */
+export const OPENROUTER_GEMINI_FLASH_BATCH = "google/gemini-3.7-flash:batch";
 /** Google AI Studio native Flash class — catalog column 3. */
 export const NATIVE_GEMINI_FLASH = "gemini-flash-latest";
 
@@ -89,21 +89,31 @@ export function stripOpenRouterTilde(id: string): string {
 
 function prefixUnknownOpenRouterId(raw: string): string {
   const model = raw.replace(/^openrouter\//i, "");
+  const keepTilde = /^\s*~/.test(model);
   const unprefixed = stripOpenRouterTilde(model);
+  let out: string;
   if (unprefixed.includes("/")) {
-    return stripOpenRouterTilde(model).replace(/^xai\//i, "x-ai/").replace(/^moonshot\//i, "moonshotai/");
+    out = unprefixed.replace(/^xai\//i, "x-ai/").replace(/^moonshot\//i, "moonshotai/");
+  } else if (/^claude/i.test(unprefixed)) {
+    out = `anthropic/${unprefixed}`;
+  } else if (/^grok/i.test(unprefixed)) {
+    out = `x-ai/${unprefixed}`;
+  } else if (/^gemini/i.test(unprefixed)) {
+    out = `google/${unprefixed}`;
+  } else if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(unprefixed)) {
+    out = `mistralai/${unprefixed}`;
+  } else if (/(kimi|moonshot)/i.test(unprefixed)) {
+    out = `moonshotai/${unprefixed}`;
+  } else if (/^deepseek/i.test(unprefixed)) {
+    out = `deepseek/${unprefixed}`;
+  } else if (/^llama/i.test(unprefixed)) {
+    out = `meta-llama/${unprefixed}`;
+  } else if (/^(gpt|o1|o3)/i.test(unprefixed)) {
+    out = `openai/${unprefixed}`;
+  } else {
+    out = unprefixed;
   }
-  if (/^claude/i.test(unprefixed)) return `anthropic/${unprefixed}`;
-  if (/^grok/i.test(unprefixed)) return `x-ai/${unprefixed}`;
-  if (/^gemini/i.test(unprefixed)) return `google/${unprefixed}`;
-  if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(unprefixed)) {
-    return `mistralai/${unprefixed}`;
-  }
-  if (/(kimi|moonshot)/i.test(unprefixed)) return `moonshotai/${unprefixed}`;
-  if (/^deepseek/i.test(unprefixed)) return `deepseek/${unprefixed}`;
-  if (/^llama/i.test(unprefixed)) return `meta-llama/${unprefixed}`;
-  if (/^(gpt|o1|o3)/i.test(unprefixed)) return `openai/${unprefixed}`;
-  return unprefixed;
+  return keepTilde && !out.startsWith("~") ? `~${out}` : out;
 }
 
 /**

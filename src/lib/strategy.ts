@@ -1,6 +1,10 @@
 export * from "./strategy-execution";
 export * from "./strategy-risk";
-import { fetchFreshQuotesCascade } from "./quotes-cascade";
+import {
+  STRATEGY_GATHER_TIMEOUT_MESSAGE,
+  gatherPolicySlice,
+  gatherStrategyMarket
+} from "./strategy-gather";
 import { isDelayedYahooFallbackQuote } from "./quote-delayed-fallback";
 import { TradingGraph, GraphContext } from "./orchestration/trading-graph";
 import { LANE_WAITS, withAccountMutation } from "./account-mutation";
@@ -42,7 +46,7 @@ import { accountEquity, recordAndEvaluateDrawdownBreaker } from "./risk-breaker"
 import { clearAccuracyDegradedMarker, evaluateAccuracyBreaker, getAccuracyDegradedMarker, setAccuracyDegradedMarker } from "./accuracy-breaker";
 import { refreshTradeLocksForRun } from "./apply-trade-locks";
 import { loadActiveOverlays } from "./apply-overlays";
-import { computeSignalAttribution, mergeQuoteData, pricePosition52w, scanMarket } from "./market";
+import { computeSignalAttribution, pricePosition52w } from "./market";
 import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
@@ -225,8 +229,9 @@ const MAX_SKIPPED_EVIDENCE = 25;
 /** Live Roth `9d71dda4` sat in gather from 00:58:57Z until sweep-failed 01:29:44Z
  *  (`stalled_no_progress`, llm=0).  Bound scan + quote cascade so a hung
  *  Robinhood/Yahoo/congress.trade pass cannot keep the claimed request
- *  `running` until the 30m sweep.  Green starts after this returns. */
-export const STRATEGY_GATHER_DEADLINE_MS = 8 * 60_000;
+ *  `running` until the 30m sweep.  Green starts after this returns.
+ *  The deadline now aborts the abandoned scan (see `gatherStrategyMarket`). */
+export { STRATEGY_GATHER_DEADLINE_MS, STRATEGY_GATHER_TIMEOUT_MESSAGE } from "./strategy-gather";
 
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
@@ -779,26 +784,30 @@ export async function runStrategyOnce(
     if (congressMultiplier === 0 && congressVerdict) {
       audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId, connectedAccountId);
     }
-    const { baseMarketScan, marketScan } = await withDeadline(
-      (async () => {
-        const scanned = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-          candidateLimit: policy.marketScanCandidateLimit,
-          outlierReserve: policy.marketScanOutlierReserve,
-          universeFloor: policy.universeFloor,
-          congressMultiplier
-        });
-        const quoteSymbols = uniqueSymbols(scanned.topCandidates.map((quote) => quote.symbol));
-        return {
-          baseMarketScan: scanned,
-          marketScan: mergeQuoteData(
-            scanned,
-            await fetchFreshQuotesCascade(quoteSymbols, userId, policy.accountNumber, connectedAccountId)
-          )
-        };
-      })(),
-      STRATEGY_GATHER_DEADLINE_MS,
-      "strategy gather timeout"
-    );
+    const gathered = await gatherStrategyMarket({
+      allowedSymbols,
+      positions,
+      scanWeights,
+      userId,
+      dynamicUniverses: dynamicIndexUniversesForPolicy(policy),
+      connectedAccountId,
+      congressMultiplier,
+      ...gatherPolicySlice(policy)
+    });
+    if (gathered.usedLastGood) {
+      audit(
+        "strategy_gather_used_last_good",
+        {
+          runId,
+          userId,
+          lastGoodAt: gathered.lastGoodAt,
+          reason: STRATEGY_GATHER_TIMEOUT_MESSAGE
+        },
+        userId,
+        connectedAccountId
+      );
+    }
+    const { baseMarketScan, marketScan } = gathered;
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
     // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.
@@ -5802,7 +5811,7 @@ async function proposeTrades(input: {
   const recordStep = (step: StrategyLlmStep, options: { includeInResult?: boolean } = {}) => {
     let provider = step.provider;
     if (provider === "openrouter" && step.model && step.model.includes("/")) {
-      const raw = step.model.split("/")[0];
+      const raw = step.model.replace(/^~/, "").split("/")[0];
       if (raw === "google") provider = "gemini";
       else if (raw === "mistralai") provider = "mistral";
       else provider = raw;
