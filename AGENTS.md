@@ -630,12 +630,12 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
   any rule the app enforces gets a user-controlled off-switch with honest annotation, never a scolding
   ritual or an immovable block. If the owner set it, follow their intent and let them change or
   override it.
-- **Clients are iOS + the website (desktop and mobile viewports).** Owner 2026-08-16: the PWA
-  (`/mobile`, `app/mobile/**`) is not a product they use. Do **not** spend design, features,
-  or verify time on PWA parity. Put ticker sheets, desk blotters, and new UI on
-  `ios/SocraticTrade/**` and the console website (`app/console/**`), and check the site at
-  both desktop and phone widths. Leave existing `/mobile` code alone unless it is broken for
-  a real user or blocks the site/iOS path.
+- **Clients are iOS + the website (desktop and mobile viewports).** The installable
+  PWA is removed.  `/mobile` and `mobile.socratictrade.com` redirect to `/console`.
+  Do **not** rebuild a PWA, service worker, or standalone web-app manifest.  Put
+  ticker sheets, desk blotters, and new UI on `ios/SocraticTrade/**` and the
+  console website (`app/console/**`), and check the site at both desktop and phone
+  widths.  `/api/mobile/*` is the native iOS gateway — leave it alone.
 
 ## Don't
 
@@ -643,10 +643,10 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
  deletion) without explicit user confirmation in the current conversation,
  even if a previous session was authorized to push.
 
-- **Don't invest in the PWA.** Owner 2026-08-16: effort goes to the native iOS app and
-  the website's desktop + mobile views. `/mobile` and `mobile.socratictrade.com` now
-  redirect to `/console`.  Do not add features, restyles, or "PWA parity" work under
-  `app/mobile/**` unless the owner asks.
+- **Don't rebuild the PWA.** Owner 2026-08-16/17: effort goes to the native iOS app
+  and the website's desktop + mobile views.  The standalone manifest, PWA client,
+  and install prompts are gone.  `/mobile` redirects to `/console`.  Do not add
+  `app/manifest.ts`, a service worker, or features under `app/mobile/**`.
 
 - **Don't grep a secrets handoff file for `KEY=` lines.** `grep '^[A-Z0-9_]+=' ~/.secrets/global-api-keys` prints every value into the transcript. Names only: `grep -oE '^[A-Z][A-Z0-9_]*'`. See AGENT-SYNC.md § Handoff-file grep trap.
 

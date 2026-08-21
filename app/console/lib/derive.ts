@@ -98,9 +98,9 @@ export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, 
 // ── Run-state / authority words ──────────────────────────────────────────────
 
 /** The one shared run-state vocabulary. Every surface that names the run state
- *  (console chrome StateChip, Guardrails Autonomy panel, PWA header) MUST render
+ *  (console chrome StateChip, Guardrails Autonomy panel, iOS) MUST render
  *  one of these words via deriveStateInfo — never a private systemState→label
- *  map, which is how the PWA once said "Running" while the console said
+ *  map, which is how the retired PWA once said "Running" while the console said
  *  "Paused · market closed" for the same account.
  *
  *  Autopilot is NOT a run-state word.  It is the auto-decide authority label
