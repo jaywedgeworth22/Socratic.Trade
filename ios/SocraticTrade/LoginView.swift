@@ -122,46 +122,40 @@ struct LoginView: View {
                 .background(AppPalette.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
-            // Order matches web login: Google → GitHub → Apple
-            webAuthButton(
-                provider: "google",
+            // Order matches web login: Google → GitHub → Apple.
+            providerButton(
                 title: "Sign in with Google",
-                style: .accent
+                ink: googleInk,
+                action: { beginWebAuth(provider: "google") }
             ) {
                 GoogleMark()
             }
+            .accessibilityHint("Opens the secure Socratic Trade sign-in page")
 
-            webAuthButton(
-                provider: "github",
+            providerButton(
                 title: "Sign in with GitHub",
-                style: .outline
+                ink: googleInk,
+                action: { beginWebAuth(provider: "github") }
             ) {
                 GitHubMark()
             }
+            .accessibilityHint("Opens the secure Socratic Trade sign-in page")
 
-            SignInWithAppleButton(
-                .signIn,
-                onRequest: configure,
-                onCompletion: complete
-            )
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: Self.buttonHeight)
-            // Apple's ASAuthorizationAppleIDButton hard-caps width at 375pt. Stretching the
-            // UIKit host wider (e.g. 392pt after horizontal padding) trips unsatisfiable
-            // NSAutoresizingMaskLayoutConstraints in the console. The content column is now
-            // 352pt, safely under the cap, so this frame fills rather than clamps. Do not
-            // follow it with another maxWidth:.infinity — that re-expands the UIKit host and
-            // revives the conflict.
-            .frame(maxWidth: Self.contentWidth)
-            .clipShape(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous))
-            .disabled(store.isSigningIn)
-            .overlay {
-                if store.isSigningIn {
-                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
-                        .fill(Color.black.opacity(0.35))
-                    ProgressView()
-                        .tint(.white)
-                }
+            // A CUSTOM Sign in with Apple button, not SignInWithAppleButton.  The HIG
+            // permits this and names this exact motivation — "you may want to align logos
+            // across multiple sign-in buttons" — and the native control cannot be aligned:
+            // its fill, font and metrics are the system's, and its documentation forbids
+            // restyling it beyond the corner radius.  Every attribute the HIG pins is
+            // honoured: the title is one of the three permitted strings, the background is
+            // white (black in dark mode), the logo and title are both the same pure black
+            // or white, the title is 43% of the button height, and the button is no smaller
+            // than the other two.
+            providerButton(
+                title: "Sign in with Apple",
+                ink: appleInk,
+                action: beginAppleSignIn
+            ) {
+                AppleMark()
             }
         }
     }
@@ -174,54 +168,107 @@ struct LoginView: View {
     /// How far the lock glyph hangs left of the content column, into its gutter.
     private static let lockOutdent: CGFloat = 12
     private static let lockGap: CGFloat = 6
-    private static let buttonHeight: CGFloat = 50
+    // 44, not 50.  Apple's HIG pins a CUSTOM Sign in with Apple button's title to 43% of
+    // the button height and works the example as "19 points for a 44-point tall button" —
+    // so 44/19 is the one pairing that is compliant by construction rather than by luck.
+    // 44 is also Apple's own recommended default height and the iOS minimum tap target.
+    private static let buttonHeight: CGFloat = 44
+    private static let buttonTitleSize: CGFloat = 19
     private static let buttonRadius: CGFloat = 10
+    /// Fixed logo column, so all three marks sit on one optical axis and all three titles
+    /// start at the same x down the stack.
+    private static let logoSlot: CGFloat = 20
+    /// Google's documented iOS padding for a custom Sign in with Google button: 16pt before
+    /// the logo, 12pt after it.  Adopted for all three rows — following Google's spec is
+    /// also what makes the stack line up.
+    private static let logoLeading: CGFloat = 16
+    private static let logoGap: CGFloat = 12
 
-    private enum WebAuthStyle {
-        case accent
-        case outline
-    }
-
-    private func webAuthButton<Icon: View>(
-        provider: String,
+    /// ONE button for all three providers.  The provider supplies a mark, a title, and an
+    /// ink colour; nothing else varies — same height, radius, fill, border, type ramp and
+    /// logo column.  That uniformity is the whole point, and it is also what each
+    /// provider's own guidelines happen to ask for:
+    ///
+    ///  * **Google** mandates one of three themes for a custom button.  This is their Light
+    ///    theme verbatim — fill #FFFFFF, 1px inside stroke #747775, title #1F1F1F — and
+    ///    their Dark theme (#131314 / #8E918F / #E3E3E3) in dark mode.  The teal button this
+    ///    replaces broke an explicit "Don't: put the standard color Google 'G' icon on a
+    ///    colored background other than light, dark, or neutral".  Google also asks that
+    ///    their button be "at least as prominently" displayed as other providers and of
+    ///    "approximately the same size and similar visual weight" — which a uniform row is.
+    ///  * **Apple** permits a custom button and names this exact motivation: "you may want
+    ///    to align logos across multiple sign-in buttons".  Its hard constraints are that
+    ///    the background stay black or white and the logo and title both be black or both
+    ///    white — hence `ink` is pure black/white on that row only, while Google keeps its
+    ///    specified #1F1F1F.  The difference is imperceptible and each row obeys its own
+    ///    provider.  Apple explicitly allows the bezel stroke and a non-system title font.
+    ///  * **GitHub** imposes no button rules at all.  Its only constraint is on the mark:
+    ///    the Invertocat, unmodified, in black or white.
+    private func providerButton<Mark: View>(
         title: String,
-        style: WebAuthStyle,
-        @ViewBuilder icon: () -> Icon
+        ink: Color,
+        action: @escaping () -> Void,
+        @ViewBuilder mark: () -> Mark
     ) -> some View {
-        Button {
-            beginWebAuth(provider: provider)
-        } label: {
-            HStack(spacing: 8) {
-                icon()
-                    .frame(width: 20, height: 20)
+        Button(action: action) {
+            HStack(spacing: Self.logoGap) {
+                mark()
+                    .frame(width: Self.logoSlot, height: Self.logoSlot)
                 Text(title)
-                    .font(.appBody.weight(.medium))
+                    .font(.custom(AppFont.regular, size: Self.buttonTitleSize, relativeTo: .body).weight(.medium))
+                    .foregroundStyle(ink)
+                Spacer(minLength: 0)
             }
+            .padding(.leading, Self.logoLeading)
+            .padding(.trailing, Self.logoLeading)
             .frame(maxWidth: .infinity)
             .frame(height: Self.buttonHeight)
-            .foregroundStyle(style == .accent ? Color.white : Color.primary)
-            .background {
-                switch style {
-                case .accent:
-                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
-                        .fill(AppPalette.accent)
-                case .outline:
-                    RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
-                        .fill(Color(uiColor: UIColor { traits in
-                            if traits.userInterfaceStyle == .dark {
-                                return UIColor(red: 22 / 255, green: 22 / 255, blue: 22 / 255, alpha: 0.78)
-                            }
-                            return UIColor(white: 1, alpha: 0.65)
-                        }))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
-                                .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.1), lineWidth: 1)
-                        }
-                }
-            }
+            .background(providerFill)
+            .contentShape(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous))
         }
+        // Without this the system's own bordered style paints a second, larger rounded
+        // rectangle BEHIND this one.  That was the "strange sides" — a grey ghost box
+        // around Google and GitHub that Apple's UIKit-hosted button never had, which is
+        // why only two of the three looked wrong.
+        .buttonStyle(.plain)
         .disabled(store.isSigningIn)
-        .accessibilityHint("Opens the secure Socratic Trade sign-in page")
+    }
+
+    /// Google's custom-button colour table, used for every row.
+    @ViewBuilder
+    private var providerFill: some View {
+        RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
+            .fill(Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 0x13 / 255, green: 0x13 / 255, blue: 0x14 / 255, alpha: 1)
+                    : UIColor.white
+            }))
+            .overlay {
+                RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
+                    .strokeBorder(
+                        Color(uiColor: UIColor { traits in
+                            traits.userInterfaceStyle == .dark
+                                ? UIColor(red: 0x8E / 255, green: 0x91 / 255, blue: 0x8F / 255, alpha: 1)
+                                : UIColor(red: 0x74 / 255, green: 0x77 / 255, blue: 0x75 / 255, alpha: 1)
+                        }),
+                        lineWidth: 1
+                    )
+            }
+    }
+
+    /// Google's specified title ink.  Deliberately NOT reused for the Apple row.
+    private var googleInk: Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0xE3 / 255, green: 0xE3 / 255, blue: 0xE3 / 255, alpha: 1)
+                : UIColor(red: 0x1F / 255, green: 0x1F / 255, blue: 0x1F / 255, alpha: 1)
+        })
+    }
+
+    /// Apple's rule is absolute: within the button, logo and title are both black or both
+    /// white, never a custom colour.
+    private var appleInk: Color {
+        colorScheme == .dark ? .white : .black
     }
 
     /// One paragraph, not three.  It used to be a centred `Label` plus a centred `Text`,
@@ -270,8 +317,25 @@ struct LoginView: View {
                 Link("Privacy", destination: URL(string: "https://socratictrade.com/privacy-policy")!)
             }
             .font(.appCaption)
+            // A Link is a Button underneath, so it picked up the same bordered system style
+            // that was ghosting the provider buttons — two grey pills under a paragraph of
+            // legal text.  These are text links.
+            .buttonStyle(.plain)
+            .foregroundStyle(AppPalette.accent)
         }
         .padding(.top, 4)
+    }
+
+    /// Drives the same ASAuthorization flow the native button used to drive, so the
+    /// credential handling below is untouched — only what starts it changed.  `configure`
+    /// and `complete` are still the request builder and the result handler; they are now
+    /// called by an ASAuthorizationController this view owns instead of by the system
+    /// button.
+    private func beginAppleSignIn() {
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        configure(request)
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        AppleSignInCoordinator.shared.start(controller: controller, completion: complete)
     }
 
     private func configure(_ request: ASAuthorizationAppleIDRequest) {
@@ -284,11 +348,8 @@ struct LoginView: View {
         case .success(let authorization):
             handleAuthorization(authorization)
         case .failure(let error):
-            if let authorizationError = error as? ASAuthorizationError,
-               authorizationError.code == .canceled {
-                return
-            }
-            store.error = error.localizedDescription
+            guard let message = AppleSignInFailure.message(for: error) else { return }
+            store.error = message
         }
     }
 
@@ -409,11 +470,137 @@ private struct GoogleMark: View {
     }
 }
 
+/// GitHub's official Invertocat, shipped as a vector PDF in Assets.xcassets from
+/// brand.github.com/GitHub_Logos.zip.
+///
+/// It replaces an SF Symbol chevron-slash, which was not a GitHub mark at all — it read as
+/// a generic "code" glyph and left the row looking unfinished.  GitHub's brand rules are
+/// short but real: use a permitted logo (the Invertocat, never Mona or any Octodex
+/// mascot), do not modify it, and show it only in black or white.  Rendered as a template
+/// so it resolves to exactly those two — black on the light button, white on the dark one.
+///
+/// The artwork is 98x96, NOT square.  `.scaledToFit` inside the square logo slot is what
+/// keeps GitHub's "don't compress, distort, skew, stretch" satisfied.
 private struct GitHubMark: View {
     var body: some View {
-        Image(systemName: "chevron.left.forwardslash.chevron.right")
-            .font(.system(size: 12, weight: .semibold))
+        // Optical, not nominal.  The Invertocat's artwork runs edge to edge in its 98x96
+        // box while the Google G and the Apple logo both carry internal padding, so at a
+        // shared 20pt slot GitHub read as the biggest of the three.
+        Image("GitHubMark")
+            .renderable(inset: 1)
             .accessibilityHidden(true)
+    }
+}
+
+/// Apple's own glyph, at an optical size that matches the other two marks rather than a
+/// nominal one — the Apple logo reads noticeably larger than the G or the Invertocat at
+/// the same box height.  The HIG explicitly allows this: logos ship in several sizes "so
+/// you can match logo sizes in all the sign-up buttons you display", and you may inset the
+/// logo "if you need to horizontally align the Apple logo with other authentication logos".
+private struct AppleMark: View {
+    var body: some View {
+        Image(systemName: "apple.logo")
+            .font(.system(size: 22))
+            .accessibilityHidden(true)
+    }
+}
+
+private extension Image {
+    /// Template-rendered, aspect-preserved, filling the shared logo slot.
+    func renderable(inset: CGFloat = 0) -> some View {
+        self.renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .padding(inset)
+    }
+}
+
+/// Plain language for an Apple sign-in failure.
+///
+/// `error.localizedDescription` on an `ASAuthorizationError` is framework-speak — the real
+/// string is "The operation couldn't be completed. (com.apple.AuthenticationServices.
+/// AuthorizationError error 1000.)", which this app put straight in front of the owner.
+/// It says nothing about what happened and nothing about what to do, and it is exactly the
+/// register `UserFacingCopyTests` exists to keep out of the UI.
+///
+/// Returns nil for the cases that are not failures at all — a cancel, or a request the
+/// person simply backed out of — so the screen stays quiet instead of accusing them of
+/// something.
+enum AppleSignInFailure {
+    static func message(for error: Error) -> String? {
+        guard let authorizationError = error as? ASAuthorizationError else {
+            return "Apple could not complete the sign-in.  Try again."
+        }
+        switch authorizationError.code {
+        case .canceled:
+            return nil
+        case .notHandled, .unknown:
+            // What a Mac or a device with no signed-in Apple Account reports, and by far
+            // the most likely one an owner will actually hit.
+            return "Apple could not complete the sign-in.  Check that you are signed in to "
+                + "your Apple Account on this device, then try again."
+        case .failed:
+            return "Apple could not verify that sign-in.  Try again."
+        case .invalidResponse:
+            return "Apple returned a sign-in this app could not read.  Try again."
+        case .credentialImport, .credentialExport:
+            return "Apple could not complete the sign-in.  Try again."
+        case .matchedExcludedCredential:
+            return "That Apple Account is already linked.  Sign in with Google or GitHub instead."
+        @unknown default:
+            return "Apple could not complete the sign-in.  Try again."
+        }
+    }
+}
+
+/// Holds the ASAuthorizationController and its delegate for the life of the request.
+///
+/// Necessary because `ASAuthorizationController` keeps only WEAK references to its delegate
+/// and presentation context provider: a coordinator created inside `beginAppleSignIn` would
+/// be deallocated the moment that function returned, and the sheet would never appear.  The
+/// native `SignInWithAppleButton` hid this because SwiftUI owned the lifetime for us.  Same
+/// reason `WebAuthSessionManager` below exists for the web flow.
+@MainActor
+private final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    static let shared = AppleSignInCoordinator()
+
+    private var completion: ((Result<ASAuthorization, Error>) -> Void)?
+    private var controller: ASAuthorizationController?
+
+    func start(
+        controller: ASAuthorizationController,
+        completion: @escaping (Result<ASAuthorization, Error>) -> Void
+    ) {
+        self.completion = completion
+        self.controller = controller
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        controller.performRequests()
+    }
+
+    private func finish(_ result: Result<ASAuthorization, Error>) {
+        let completion = self.completion
+        self.completion = nil
+        self.controller = nil
+        completion?(result)
+    }
+
+    nonisolated func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithAuthorization authorization: ASAuthorization
+    ) {
+        Task { @MainActor in finish(.success(authorization)) }
+    }
+
+    nonisolated func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithError error: Error
+    ) {
+        Task { @MainActor in finish(.failure(error)) }
+    }
+
+    nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        MainActor.assumeIsolated { WebAuthContextProvider.keyAnchor() }
     }
 }
 
@@ -431,7 +618,9 @@ private final class WebAuthSessionManager {
 }
 
 private final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+    /// Shared by the web flow and the Apple flow — both need the same window, and having
+    /// one copy means a scene-lookup fix can only ever be made in one place.
+    static func keyAnchor() -> ASPresentationAnchor {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         if let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) {
             return keyWindow
@@ -441,7 +630,11 @@ private final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresent
             return scene.windows.first ?? UIWindow(windowScene: scene)
         }
         // Running app should always have a scene; avoid deprecated UIWindow().
-        preconditionFailure("No UIWindowScene available for web auth presentation")
+        preconditionFailure("No UIWindowScene available for auth presentation")
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        Self.keyAnchor()
     }
 }
 

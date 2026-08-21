@@ -1,3 +1,4 @@
+import AuthenticationServices
 import XCTest
 @testable import SocraticTrade
 
@@ -328,5 +329,56 @@ final class UserFacingCopyTests: XCTestCase {
             XCTAssertFalse(lower.contains(token), "\(text) still contains \(token)", file: file, line: line)
         }
         XCTAssertFalse(text.contains("__"), "\(text) still contains a dunder token", file: file, line: line)
+    }
+}
+
+/// Apple sign-in failures must read as app language, not framework language.
+///
+/// The regression these guard: `complete(_:)` used to assign `error.localizedDescription`
+/// straight to `store.error`, which for an `ASAuthorizationError` renders as
+/// "The operation couldn't be completed. (com.apple.AuthenticationServices.
+/// AuthorizationError error 1000.)".  That was on screen in a real run.
+extension UserFacingCopyTests {
+    private func authorizationError(_ code: ASAuthorizationError.Code) -> Error {
+        ASAuthorizationError(_nsError: NSError(domain: ASAuthorizationError.errorDomain, code: code.rawValue))
+    }
+
+    func testAppleFailureCopyNeverLeaksFrameworkInternals() {
+        let codes: [ASAuthorizationError.Code] = [.unknown, .failed, .invalidResponse, .notHandled]
+        for code in codes {
+            guard let message = AppleSignInFailure.message(for: authorizationError(code)) else {
+                XCTFail("\(code) should surface something")
+                continue
+            }
+            for leak in ["com.apple", "AuthorizationError", "NSError", "error 1000", "couldn't be completed", "Domain"] {
+                XCTAssertFalse(
+                    message.localizedCaseInsensitiveContains(leak),
+                    "\(code) leaked \(leak): \(message)"
+                )
+            }
+            assertOrdinary(message)
+            XCTAssertTrue(message.hasSuffix("."), "\(code) should read as a sentence: \(message)")
+        }
+    }
+
+    func testCancellingAppleSignInSaysNothingAtAll() {
+        // Backing out is not a failure, and an error banner for it reads as an accusation.
+        XCTAssertNil(AppleSignInFailure.message(for: authorizationError(.canceled)))
+    }
+
+    func testAnUnrecognisedErrorStillGetsPlainLanguage() {
+        let message = AppleSignInFailure.message(for: NSError(domain: "SomeOtherDomain", code: 42))
+        XCTAssertNotNil(message)
+        XCTAssertFalse(message!.contains("SomeOtherDomain"))
+        assertOrdinary(message!)
+    }
+
+    func testAppleFailureCopyUsesTheTwoSpaceSentenceGap() {
+        for code in [ASAuthorizationError.Code.unknown, .failed, .invalidResponse] {
+            let message = AppleSignInFailure.message(for: authorizationError(code)) ?? ""
+            // Every internal sentence boundary carries the fleet's two-space gap.
+            let singleGap = message.range(of: #"\.\s[A-Z]"#, options: .regularExpression)
+            XCTAssertNil(singleGap, "\(code) has a single-space sentence gap: \(message)")
+        }
     }
 }
