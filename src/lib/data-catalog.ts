@@ -438,6 +438,21 @@ export const CATALOG_FIELDS: CatalogField[] = [
     provenanceRequired: true,
     llmKey: "peg",
     sources: [src("derived-metrics", "Needs peRatio + epsGrowth")]
+  },
+  {
+    id: "derived:weekly-screens",
+    label: "Weekly value + momentum screens",
+    category: "derived",
+    valueKind: "object",
+    description:
+      "Native large-cap value (trailing P/E ≤ 10, within 10% of the 52-week low) and 5-day momentum screens from the account scan tape.  Missing fields exclude the name.  Advisory only.",
+    provenanceRequired: true,
+    llmKey: "weeklyScreens",
+    sources: [
+      src("nasdaq-delayed-screener", "Universe + live price / volume / cap"),
+      src("symbol_field_latest", "P/E and 52-week low when the interactive scan skipped enrichment"),
+      src("derived-metrics", "ROC / RSI / SMA from daily bars")
+    ]
   }
 ];
 

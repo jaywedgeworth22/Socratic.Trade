@@ -47,6 +47,7 @@ import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
+import { compactWeeklyScreensForPrompt, weeklyMarketDigestForScan } from "./weekly-market-digest";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { applyEvidenceBudget } from "./evidence-budget";
@@ -5024,6 +5025,9 @@ async function proposeTrades(input: {
   // Market-wide regime/sentiment from free, no-key sources (Cboe tail-risk, CFTC positioning,
   // Fama-French factor regime). Cached 6h; failure-tolerant — never blocks a run.
   const marketSignals = await getMarketSignals(input.userId).catch(() => undefined);
+  const weeklyScreens = compactWeeklyScreensForPrompt(
+    weeklyMarketDigestForScan(input.userId, input.marketScan)
+  );
 
   // Forward economic-event awareness (handoff 3.5): the next ~5 calendar days of scheduled
   // HIGH-impact US events (CPI/FOMC/NFP class) from the daily-watermarked FMP calendar ingest.
@@ -5358,7 +5362,7 @@ async function proposeTrades(input: {
         retrievedAt: decisionAsOf,
         provenance: { provider: "macro-cascade", locator: null, upstreamHash: null, lineage: ["macro", "derived-metrics"] }
       },
-      content: JSON.stringify({ currentMarketRegime, macroeconomicData, macroDerived, marketInternals, marketSignals, regimeSeverity })
+      content: JSON.stringify({ currentMarketRegime, macroeconomicData, macroDerived, marketInternals, marketSignals, weeklyScreens, regimeSeverity })
     }),
     createEvidenceRef({
       kind: "account-performance-state",
@@ -5662,6 +5666,7 @@ async function proposeTrades(input: {
     ...(Object.keys(macroDerived).length > 0 ? { macroDerived } : {}),
     ...(marketInternals ? { marketInternals } : {}),
     ...(marketSignals && Object.keys(marketSignals).length > 0 ? { marketSignals } : {}),
+    ...(weeklyScreens ? { weeklyScreens } : {}),
     ...(kalshiMacro.lines.length > 0
       ? {
           eventMarkets: {

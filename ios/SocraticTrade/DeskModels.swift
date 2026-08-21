@@ -697,6 +697,10 @@ enum DeskCopy {
     static let scanEmptyUniverse =
         "The scan returned no ranked names.  Confirm the universe on Guardrails, then refresh."
     static let scanEmptyFilter = "Nothing in this scan matches that filter."
+    static let weeklyScreensNote =
+        "Native value and momentum screens from this account's scan tape.  Advisory data only — not a trade trigger."
+    static let weeklyScreensValueEmpty = "No names pass the value screen."
+    static let weeklyScreensMomentumEmpty = "Momentum is waiting on daily bars."
     static let equityWaitingOnBroker = "waiting on broker"
     static let portfolioSelectAccount =
         "Select a connected account or retry when the broker is reachable."
