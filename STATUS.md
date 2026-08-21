@@ -7,7 +7,7 @@ settings sheet on iPad/Mac, Admin Portal as an admin-only tab on all devices, de
 price alerts, bell top-left for notifications, and stop Admin "Back to Console" from loading
 the website inside the native webview.
 
-Branch `cursor/ios-wide-layout-admin-tab-0e2b`.  Regular width uses `.sidebarAdaptable` TabView
+PR #3028 (`cursor/ios-wide-layout-admin-tab-0e2b`).  Regular width uses `.sidebarAdaptable` TabView
 plus the existing card-column scaffold (reflows when a Mac window is dragged).  Compact keeps
 the phone bar.  Gear is `gearshape` on every tab; bell opens the same notification inbox as
 Activity.  Admin is a first-class `AppTab` gated on `currentUser.isAdmin`; native rail of the
@@ -15,6 +15,7 @@ eleven website admin pages with a fenced WKWebView that intercepts `/console`.  
 no xcodebuild — first Swift compile is CI.  iOS-only; no Coolify deploy.
 
 Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
+Next: wait for `ios-build` + `verify` on #3028.  Do not TestFlight from this PR.
 
 ## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
 

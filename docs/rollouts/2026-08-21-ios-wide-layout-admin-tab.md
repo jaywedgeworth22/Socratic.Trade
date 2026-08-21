@@ -77,6 +77,8 @@ Other decisions:
 - New Swift files were avoided (checked-in pbxproj is explicit file refs; no xcodegen
   here).  Chrome lives in `AppComponents.swift`.
 
+PR: [#3028](https://github.com/jaywedgeworth22/Socratic.Trade/pull/3028).
+
 ## 4. Verification State
 
 Commands run in this Linux cloud VM (no `xcodebuild` / `swiftc` / `xcodegen`):
@@ -90,7 +92,8 @@ npm run build
 
 iOS XCTest additions (`TabPreferencesTests`, `RunStateDerivationTests`, `DeskModelsTests`)
 are not executed here.  First Swift compile is `.github/workflows/ios-build.yml` on the
-Mac runner.
+Mac runner (`ios-build` on PR #3028).  JS gate receipts are filled in after those
+commands finish on this branch.
 
 ## 5. Next Steps & Blockers
 
