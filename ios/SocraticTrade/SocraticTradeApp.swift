@@ -69,23 +69,38 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            LoginView()
-                .opacity(store.hasInitialized && !store.isAuthenticated ? 1 : 0)
-                .allowsHitTesting(store.hasInitialized && !store.isAuthenticated)
-                .accessibilityHidden(!store.hasInitialized || store.isAuthenticated)
+            // BUILT conditionally, not held at opacity 0.
+            //
+            // Both screens used to sit here permanently with an opacity switch.  That is
+            // invisible on iOS, but not on Mac Catalyst: a TabView's bar and a
+            // NavigationStack's title are promoted into the WINDOW's own chrome, which an
+            // opacity modifier inside the scene never reaches.  So the Mac login screen
+            // shipped with a live "Home · Proposals · Assets · Activity · More" bar across
+            // the top of it and "Home" in the title bar, for an app you were not signed in
+            // to.  It also meant the login wordmark's TimelineView kept ticking behind the
+            // whole app for the entire session.
+            //
+            // The deep-link guarantee the opacity switch was protecting still holds:
+            // `pendingDeepLink` lives in THIS view, not in the shell, so a link that
+            // arrives before sign-in survives, and the shell applies it from `onAppear`
+            // the moment it is created.
+            if store.hasInitialized && !store.isAuthenticated {
+                LoginView()
+                    .transition(.opacity)
+            }
 
-            MobileControlView(pendingDeepLink: $pendingDeepLink)
-                .opacity(store.isAuthenticated ? 1 : 0)
-                .allowsHitTesting(store.isAuthenticated)
-                .accessibilityHidden(!store.isAuthenticated)
-                .storeTransientAlerts()
-                .fullScreenCover(isPresented: Binding(
-                    get: { store.isAuthenticated && store.needsAppConsent },
-                    set: { _ in }
-                )) {
-                    LegalConsentSheet()
-                        .environmentObject(store)
-                }
+            if store.isAuthenticated {
+                MobileControlView(pendingDeepLink: $pendingDeepLink)
+                    .transition(.opacity)
+                    .storeTransientAlerts()
+                    .fullScreenCover(isPresented: Binding(
+                        get: { store.needsAppConsent },
+                        set: { _ in }
+                    )) {
+                        LegalConsentSheet()
+                            .environmentObject(store)
+                    }
+            }
 
             if showSplash {
                 LaunchStateView()

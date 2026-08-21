@@ -335,21 +335,29 @@ export function latestCompletedTradingSessionEtKey(nowMs: number = Date.now()): 
   return etDateKey(parts);
 }
 
-/** The next US equity market-open instant strictly after `nowMs`, walking forward through ET
- *  calendar days. Bounded to 10 iterations, same bound as adjacentTradingDayStart above — a real
- *  holiday cluster never gets close to that, so a bug here can't spin into an infinite loop. */
-function nextMarketOpenStrictlyAfterMs(nowMs: number): number {
+/** The next US equity session-open instant strictly after `nowMs`.  Regular hours open at
+ *  9:30 ET; extended-hours accounts open at 4:00 ET.  Walks ET calendar days, bounded to 10
+ *  iterations — the same bound as adjacentTradingDayStart — so a holiday-cluster bug cannot
+ *  spin forever. */
+export function nextSessionOpenMs(nowMs: number, runDuringExtendedHours = false): number {
+  const openHour = runDuringExtendedHours ? 4 : MARKET_OPEN_HOUR_ET;
+  const openMinute = runDuringExtendedHours ? 0 : MARKET_OPEN_MINUTE_ET;
   let parts = etDateParts(new Date(nowMs));
   for (let i = 0; i < 10; i++) {
     if (isEtCalendarTradingDay(parts)) {
-      const openMs = etWallClockToUtcMs(parts, MARKET_OPEN_HOUR_ET, MARKET_OPEN_MINUTE_ET);
+      const openMs = etWallClockToUtcMs(parts, openHour, openMinute);
       if (openMs > nowMs) return openMs;
     }
     parts = addEtCalendarDays(parts, 1);
   }
   // Unreachable in practice (getMarketHolidays never clusters 10 consecutive non-trading days) —
   // fall back to whatever calendar day the loop ended on rather than looping forever.
-  return etWallClockToUtcMs(parts, MARKET_OPEN_HOUR_ET, MARKET_OPEN_MINUTE_ET);
+  return etWallClockToUtcMs(parts, openHour, openMinute);
+}
+
+/** The next US equity market-open instant strictly after `nowMs` (regular 9:30 ET). */
+function nextMarketOpenStrictlyAfterMs(nowMs: number): number {
+  return nextSessionOpenMs(nowMs, false);
 }
 
 /** True when `nowMs` is already inside, or about to enter, a weekend/holiday closed stretch —

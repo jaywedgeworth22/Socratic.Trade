@@ -543,6 +543,21 @@ function SymbolDrilldownTitle({ symbol, companyName }: { symbol: string; company
 
 // ── SymbolButton ─────────────────────────────────────────────────────────────
 
+/** Open the company drilldown for a scan/desk ticker.  Shared by SymbolButton
+ *  and the full-card scan hit target so both surfaces open the same sheet. */
+export function openSymbolDetails(
+  openDrawer: ReturnType<typeof useSymbolDrawer>["openDrawer"],
+  symbol: string,
+  quote?: MarketQuote
+): void {
+  const normalized = symbol.trim().toUpperCase();
+  openDrawer({
+    title: <SymbolDrilldownTitle symbol={normalized} companyName={quote?.companyName} />,
+    ariaLabel: `${normalized} details`,
+    body: <SymbolDrilldownSheet key={normalized} symbol={normalized} quote={quote} />
+  });
+}
+
 /** A ticker rendered as logo + text that opens the drilldown sheet. Drop this
  *  wherever a table shows a symbol. */
 export function SymbolButton({
@@ -568,7 +583,6 @@ export function SymbolButton({
 }) {
   const { openDrawer } = useSymbolDrawer();
   const normalized = symbol.trim().toUpperCase();
-  const companyName = quote?.companyName;
 
   return (
     <button
@@ -576,11 +590,7 @@ export function SymbolButton({
       title={title ?? `Open ${normalized} details`}
       onClick={(e) => {
         e.stopPropagation();
-        openDrawer({
-          title: <SymbolDrilldownTitle symbol={normalized} companyName={companyName} />,
-          ariaLabel: `${normalized} details`,
-          body: <SymbolDrilldownSheet key={normalized} symbol={normalized} quote={quote} />
-        });
+        openSymbolDetails(openDrawer, normalized, quote);
       }}
       className={cx(
         "inline-flex cursor-pointer items-center gap-1.5 font-semibold underline decoration-[color:var(--con-line-strong)] decoration-1 underline-offset-[3px] transition-colors hover:text-[color:var(--con-accent)] hover:decoration-[color:var(--con-accent)]",

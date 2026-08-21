@@ -273,12 +273,13 @@ struct ScanCandidate: Decodable, Identifiable {
     let score: Double?
     let intradayChangePct: Double?
     let sector: String?
+    let industry: String?
     let volume: Double?
     let bid: Double?
     let ask: Double?
 
     private enum CodingKeys: String, CodingKey {
-        case symbol, companyName, price, score, intradayChangePct, sector, volume, bid, ask
+        case symbol, companyName, price, score, intradayChangePct, sector, industry, volume, bid, ask
     }
 
     init(
@@ -288,6 +289,7 @@ struct ScanCandidate: Decodable, Identifiable {
         score: Double? = nil,
         intradayChangePct: Double? = nil,
         sector: String? = nil,
+        industry: String? = nil,
         volume: Double? = nil,
         bid: Double? = nil,
         ask: Double? = nil
@@ -298,6 +300,7 @@ struct ScanCandidate: Decodable, Identifiable {
         self.score = score
         self.intradayChangePct = intradayChangePct
         self.sector = sector
+        self.industry = industry
         self.volume = volume
         self.bid = bid
         self.ask = ask
@@ -311,6 +314,7 @@ struct ScanCandidate: Decodable, Identifiable {
         score = try values.decodeIfPresent(Double.self, forKey: .score)
         intradayChangePct = try values.decodeIfPresent(Double.self, forKey: .intradayChangePct)
         sector = try values.decodeIfPresent(String.self, forKey: .sector)
+        industry = try values.decodeIfPresent(String.self, forKey: .industry)
         volume = try values.decodeIfPresent(Double.self, forKey: .volume)
         bid = try values.decodeIfPresent(Double.self, forKey: .bid)
         ask = try values.decodeIfPresent(Double.self, forKey: .ask)

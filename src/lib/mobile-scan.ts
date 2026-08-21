@@ -20,6 +20,7 @@ export interface MobileMarketScan {
     score?: number;
     intradayChangePct?: number;
     sector?: string;
+    industry?: string;
     volume?: number;
     bid?: number;
     ask?: number;
@@ -34,6 +35,7 @@ function compactCandidate(quote: MarketQuote): MobileMarketScan["topCandidates"]
     score: quote.score,
     intradayChangePct: quote.intradayChangePct,
     sector: quote.sector,
+    industry: quote.industry,
     volume: quote.volume,
     bid: quote.bid,
     ask: quote.ask
