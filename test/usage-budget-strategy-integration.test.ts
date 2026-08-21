@@ -268,10 +268,10 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     expect(payload.before?.llmModel).toBe("openai/gpt-4o");
     expect(payload.after?.llmModel).toBe("openai/gpt-mini-latest");
 
-    // The model actually used for the Bull call was the downgraded one.
-    expect(bullModelUsed).toBe("openai/gpt-mini-latest");
+    // The model actually used for the Bull call was the downgraded one (OpenRouter wire slug).
+    expect(bullModelUsed).toBe("~openai/gpt-mini-latest");
     // Finding 6: the Bear (Red Team) request also carried the downgraded model.
-    expect(redTeamModelUsed).toBe("openai/gpt-mini-latest");
+    expect(redTeamModelUsed).toBe("~openai/gpt-mini-latest");
 
     // The persisted proposal reflects the served (downgraded) model.
     const proposals = listRecentProposals("TEST", 100, "local");

@@ -269,7 +269,7 @@ export function remapOpenRouterTelemetry(provider: string, model: string | undef
   if (provider === "openrouter" && model) {
     const slashIdx = model.indexOf("/");
     if (slashIdx !== -1) {
-      let p = model.slice(0, slashIdx);
+      let p = model.slice(0, slashIdx).replace(/^~/, "");
       if (p === "google") p = "gemini";
       if (p === "mistralai") p = "mistral";
       if (p === "x-ai") p = "xai";

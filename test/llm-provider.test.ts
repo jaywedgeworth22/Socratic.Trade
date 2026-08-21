@@ -33,7 +33,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("openrouter");
     expect(endpoint.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(endpoint.key).toBe("sk-or-test-key");
-    expect(endpoint.model).toBe("anthropic/claude-sonnet-latest");
+    expect(endpoint.model).toBe("~anthropic/claude-sonnet-latest");
     expect(endpoint.transport).toBe("chat-completions");
   });
 
@@ -96,34 +96,34 @@ describe("resolveLlmEndpoint", () => {
   it("emits owner OpenRouter wire slugs for catalog families and aliases", async () => {
     const { normalizeOpenRouterModelId } = await import("../src/lib/llm-provider");
     const cases: Array<[string, string]> = [
-      ["claude-sonnet-5", "anthropic/claude-sonnet-latest"],
-      ["claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
-      ["anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
-      ["~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
-      ["openrouter/~anthropic/claude-sonnet-latest", "anthropic/claude-sonnet-latest"],
-      ["claude-haiku-4.5", "anthropic/claude-haiku-latest"],
-      ["claude-haiku-latest", "anthropic/claude-haiku-latest"],
-      ["anthropic/claude-haiku-latest", "anthropic/claude-haiku-latest"],
-      ["~anthropic/claude-haiku-latest", "anthropic/claude-haiku-latest"],
-      ["claude-opus-5", "anthropic/claude-opus-latest"],
-      ["claude-opus-latest", "anthropic/claude-opus-latest"],
-      ["anthropic/claude-opus-latest", "anthropic/claude-opus-latest"],
-      ["~anthropic/claude-opus-latest", "anthropic/claude-opus-latest"],
-      ["claude-fable-5", "anthropic/claude-fable-latest"],
-      ["claude-fable-latest", "anthropic/claude-fable-latest"],
-      ["anthropic/claude-fable-latest", "anthropic/claude-fable-latest"],
-      ["~anthropic/claude-fable-latest", "anthropic/claude-fable-latest"],
-      ["grok-4.5", "x-ai/grok-latest"],
-      ["grok-latest", "x-ai/grok-latest"],
-      ["x-ai/grok-latest", "x-ai/grok-latest"],
-      ["~x-ai/grok-latest", "x-ai/grok-latest"],
-      ["gpt-5.4-mini", "openai/gpt-mini-latest"],
-      ["gpt-mini-latest", "openai/gpt-mini-latest"],
-      ["openai/gpt-mini-latest", "openai/gpt-mini-latest"],
-      ["~openai/gpt-mini-latest", "openai/gpt-mini-latest"],
-      ["kimi-latest", "moonshotai/kimi-latest"],
-      ["moonshotai/kimi-latest", "moonshotai/kimi-latest"],
-      ["~moonshotai/kimi-latest", "moonshotai/kimi-latest"],
+      ["claude-sonnet-5", "~anthropic/claude-sonnet-latest"],
+      ["claude-sonnet-latest", "~anthropic/claude-sonnet-latest"],
+      ["anthropic/claude-sonnet-latest", "~anthropic/claude-sonnet-latest"],
+      ["~anthropic/claude-sonnet-latest", "~anthropic/claude-sonnet-latest"],
+      ["openrouter/~anthropic/claude-sonnet-latest", "~anthropic/claude-sonnet-latest"],
+      ["claude-haiku-4.5", "~anthropic/claude-haiku-latest"],
+      ["claude-haiku-latest", "~anthropic/claude-haiku-latest"],
+      ["anthropic/claude-haiku-latest", "~anthropic/claude-haiku-latest"],
+      ["~anthropic/claude-haiku-latest", "~anthropic/claude-haiku-latest"],
+      ["claude-opus-5", "~anthropic/claude-opus-latest"],
+      ["claude-opus-latest", "~anthropic/claude-opus-latest"],
+      ["anthropic/claude-opus-latest", "~anthropic/claude-opus-latest"],
+      ["~anthropic/claude-opus-latest", "~anthropic/claude-opus-latest"],
+      ["claude-fable-5", "~anthropic/claude-fable-latest"],
+      ["claude-fable-latest", "~anthropic/claude-fable-latest"],
+      ["anthropic/claude-fable-latest", "~anthropic/claude-fable-latest"],
+      ["~anthropic/claude-fable-latest", "~anthropic/claude-fable-latest"],
+      ["grok-4.5", "~x-ai/grok-latest"],
+      ["grok-latest", "~x-ai/grok-latest"],
+      ["x-ai/grok-latest", "~x-ai/grok-latest"],
+      ["~x-ai/grok-latest", "~x-ai/grok-latest"],
+      ["gpt-5.4-mini", "~openai/gpt-mini-latest"],
+      ["gpt-mini-latest", "~openai/gpt-mini-latest"],
+      ["openai/gpt-mini-latest", "~openai/gpt-mini-latest"],
+      ["~openai/gpt-mini-latest", "~openai/gpt-mini-latest"],
+      ["kimi-latest", "~moonshotai/kimi-latest"],
+      ["moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
+      ["~moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
       ["deepseek-reasoner", "deepseek/deepseek-r1"],
       ["deepseek/deepseek-reasoner", "deepseek/deepseek-r1"],
       ["deepseek-r1", "deepseek/deepseek-r1"]
