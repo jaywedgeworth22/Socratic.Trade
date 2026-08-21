@@ -56,7 +56,7 @@ describe("CI queue safety", () => {
     expect(source).toMatch(/^  pull_request:\s*$/m);
     expect(source).not.toMatch(/^  pull_request:\n(?:^[ \t]+.*\n)*^[ \t]+paths:/m);
 
-    const nodeSetup = source.indexOf("uses: actions/setup-node@v4");
+    const nodeSetup = source.search(/uses: actions\/setup-node@/);
     const comparison = source.indexOf("Compare shared-package version against the peer consumer");
     expect(nodeSetup).toBeGreaterThan(-1);
     expect(nodeSetup).toBeLessThan(comparison);
