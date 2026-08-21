@@ -84,16 +84,19 @@ PR: [#3028](https://github.com/jaywedgeworth22/Socratic.Trade/pull/3028).
 Commands run in this Linux cloud VM (no `xcodebuild` / `swiftc` / `xcodegen`):
 
 ```bash
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint          # exit 0 — 0 errors, 774 grandfathered warnings
+npx tsc --noEmit      # exit 0
+npm run build         # exit 0 — Next.js 16.3.1 webpack, TypeScript finished, 41 static pages
 ```
 
-iOS XCTest additions (`TabPreferencesTests`, `RunStateDerivationTests`, `DeskModelsTests`)
-are not executed here.  First Swift compile is `.github/workflows/ios-build.yml` on the
-Mac runner (`ios-build` on PR #3028).  JS gate receipts are filled in after those
-commands finish on this branch.
+`npm test` (vitest) was started locally and aborted after ~15 minutes: a single
+vitest worker plus outbound 404s (Yahoo, SEC `company_tickers.json`, Finnhub,
+FRED) produced 30s timeouts in strategy/history tests that this iOS-only PR did
+not touch.  CI `verify` on PR #3028 is the JS test of record.
+
+iOS XCTest additions (`TabPreferencesTests`, `RunStateDerivationTests`,
+`DeskModelsTests`) are not executed here.  First Swift compile is
+`.github/workflows/ios-build.yml` on the Mac runner (`ios-build` on PR #3028).
 
 ## 5. Next Steps & Blockers
 

@@ -15,7 +15,9 @@ eleven website admin pages with a fenced WKWebView that intercepts `/console`.  
 no xcodebuild — first Swift compile is CI.  iOS-only; no Coolify deploy.
 
 Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
-Next: wait for `ios-build` + `verify` on #3028.  Do not TestFlight from this PR.
+Local receipts: `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm run build` ok.
+Local `npm test` aborted (network 404s / single worker); CI `verify` is the JS test of
+record.  Next: wait for `ios-build` + `verify` on #3028.  Do not TestFlight from this PR.
 
 ## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
 
