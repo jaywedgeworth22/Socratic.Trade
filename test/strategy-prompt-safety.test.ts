@@ -293,6 +293,25 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
     expect(bullManifest.greenRedParityHash).toMatch(/^[a-f0-9]{64}$/);
     expect(bullManifest.refs?.length).toBeGreaterThan(4);
     expect(redManifest).toEqual(bullManifest);
+
+    // ── Red Team payload is the DOCUMENTED subset, not the whole Green payload ──
+    // The reviewer judges ONE finalized proposal.  It used to receive `{...userContent}` — the
+    // full evidence budget, every scan candidate, the RAG pack, learned context and the reflection
+    // summary — re-sent per opening.  Parity is carried by `evidenceManifest` (hashes + ref
+    // provenance), which is why the bodies can go without weakening the audit.
+    for (const greenOnlyKey of ["marketScan", "retrievedFinancialContext", "learnedContext", "reflectionSummary", "recentOrders", "allowedSymbols", "evidenceBudgetReceipts"]) {
+      expect(redUser, `Red Team must not re-send the Green-only block "${greenOnlyKey}"`).not.toHaveProperty(greenOnlyKey);
+    }
+    // ...  while everything the reviewer's own contract documents still arrives.
+    for (const contractKey of ["currentDate", "currentMarketRegime", "limits", "portfolio", "positions", "socraticAuthority", "evidenceManifest", "candidatesUnderReview"]) {
+      expect(redUser, `Red Team lost documented context key "${contractKey}"`).toHaveProperty(contractKey);
+    }
+    // NOTE: no total-size assertion here.  The Red payload also carries the proposal, its quote,
+    // the policy block and the owner strategy prompt, so on a small fixture it can exceed the
+    // Green one outright — the saving is in what it no longer COPIES from Green, which the
+    // key-absence checks above pin exactly.  `test/red-team-context-projection.test.ts` measures
+    // the reduction on a realistic evidence payload.
+
     const reflectionField = String(bullUser.reflectionSummary ?? "");
     expect(reflectionField).toContain("<reflection_summary>");
     expect(reflectionField).toContain("Momentum-Breakout entries worked in Tech-Bull regimes.");

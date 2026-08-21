@@ -21,14 +21,16 @@ import { AlertCenter } from "../components/alert-center";
 import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
 import { destinationLabel } from "../components/nav";
+import { AuditLogPanel } from "./audit-log";
 
-type Tab = "all" | "runs" | "fills" | "alerts";
+type Tab = "all" | "runs" | "fills" | "alerts" | "audit";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "all", label: "All" },
   { id: "runs", label: "Runs" },
   { id: "fills", label: "Fills" },
-  { id: "alerts", label: "Alert center" }
+  { id: "alerts", label: "Alert center" },
+  { id: "audit", label: "Audit" }
 ];
 
 const TAB_IDS = TABS.map((t) => t.id);
@@ -113,6 +115,7 @@ function ActivityPageInner() {
             maxItems={100}
           />
         )}
+        {tab === "audit" && <AuditLogPanel />}
       </div>
     </div>
   );

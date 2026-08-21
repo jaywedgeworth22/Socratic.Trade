@@ -13,6 +13,7 @@ struct InsightsView: View {
     var body: some View {
         SnapshotScaffold { snapshot in
             InsightsBriefCard(snapshot: snapshot)
+                .cardSpansAllColumns()
             ForEach(insights(for: snapshot)) { insight in
                 InsightCard(insight: insight)
             }

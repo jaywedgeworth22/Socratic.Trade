@@ -1,5 +1,55 @@
 # Current Status
 
+## 2026-08-21 CLAUDE - the tab bar now knows how wide the window is
+
+Owner ask: more than four tabs on iPad and on a wide Mac window, Home required, and the slot
+before More swapped out by whatever you open from the More list.  All four are in, plus the
+iPad Air 11" layout pass they asked for on top.
+
+`TabBarCapacity` turns the live width into a slot count: compact width keeps four, iPad Air
+11" gets six portrait / eight landscape, and a Mac window recomputes as it is dragged.  Home
+can no longer be unpinned.  The slot before More is borrowed - opening a screen from More
+takes it, pinning that screen makes it permanent and gives the slot back - and More carries an
+aggregate badge so a displaced Activity's unread count never vanishes.  Too narrow for the
+chosen set falls back to the DEFAULTS and writes nothing, so widening restores the owner's
+picks exactly.
+
+One decision worth flagging because it is not literally in the ask: until the owner pins or
+unpins anything the bar AUTO-FILLS to what fits.  Without it a fresh iPad would still show
+four tabs and the feature would only exist for someone who went looking for it.
+
+Layout: `SnapshotScaffold` picks 1/2/3 card columns from its own measured width, and one
+column is the existing `LazyVStack` untouched - the iPhone is deliberately unchanged.  Cards
+drop into the shortest column; the freshness banner and each screen's hero span.  Six
+hardcoded two-column metric grids now widen with the CARD they sit in rather than the screen.
+Coach keeps a readable measure instead of stretching a chat to 1148pt.
+
+**The Swift compiles** - the Mac runner printed `** BUILD SUCCEEDED **` twice on this branch
+(05:22:30 and 06:21:48), and `verify` is green.  Nothing could be compiled locally: this is a
+Linux remote container with no xcodebuild, swiftc, xcodegen, or simulator, and the repo's
+four-command gate compiles no Swift anyway.
+
+**The `xcodebuild` CHECK still reads `cancelled`, and it is not this change.**  I got the
+reason wrong the first time and said a cold cache made the build overrun the 30-minute
+timeout; the second attempt built in 21 minutes with nine minutes to spare and was cancelled
+anyway.  The step never exits after xcodebuild returns - `SWBBuildService` outlives it,
+inherits the step's stdout pipe, and the runner waits on the pipe.  Raising the timeout would
+not fix it.  PR #2794 (someone else's iOS PR, merged to main at 04:35 the same day) has the
+identical `cancelled` outcome, so this is red on base too; it merges because `ios-build` is
+not a required check.  Proposed patch (redirect xcodebuild output to a file so the daemon
+inherits a file, not the pipe) is in the rollout note - NOT applied, it is CI infrastructure
+outside this ask and affects every iOS PR.
+
+**Still open, stated plainly:** the XCTests are compiled but have never been executed
+(`ios-build.yml` runs `xcodebuild build`, not `test`), there is no screenshot, and the
+`WrappingHStackTests.swift` -> `LayoutMathTests.swift` rename needs `xcodegen` on a Mac.
+
+Rollout: `docs/rollouts/2026-08-21-ios-adaptive-tabs-ipad-layout.md`.
+
+## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
+
+New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.
+
 ## 2026-08-20 MONET - iOS/web parity resolved case by case, not synced one way
 
 Owner instruction was explicit that neither platform is assumed superior, and the audit bore that out: of 21 divergences, 9 adopt web, 6 KEEP BOTH, 4 adopt iOS, and 2 needed a third wording because both sides were wrong.  A blanket sync would have been wrong on 12 of 21.
@@ -9,6 +59,17 @@ Web turned out to be the drifted side on Title Case -- the fleet copy doc names 
 Two of my own instructions were wrong and the implementer pushed back rather than complying: unhyphenated "Exit Only" is a consistent COMMAND name (parallel to "Wind Down"), not an orphan spelling, because the app deliberately runs Title Case commands alongside sentence-case state words -- and it then found the identical casing defect the audit had missed.  It also caught that renaming only the read-only Guardrails rows would have left the EDIT controls on the same screen calling one field by a different name.
 
 Known limit: every screen changed sits behind the OAuth login wall, so there is no visual proof of the changed screens -- only BUILD SUCCEEDED, 190 passing iOS tests, and a clean launch.
+## 2026-08-20 MONET - timed-out work is now cancelled, and slow lanes stop spawning duplicates
+
+`withDeadline` was a bare Promise.race: on timeout the caller proceeded while the underlying broker call kept running with its socket open for the life of the process.  That is the leading candidate for why an aged process degrades (fresh serves /api/health in 0.61s, a 5h-old one took 55s).  It now aborts on the timeout branch only.
+
+More serious: both scheduler in-flight guards released on the RACED promise rather than the real work, so any broker lane slower than the 15s deadline got a duplicate launched on top of it every 60s tick, forever -- on the stale-exit lane that means duplicate remediation attempts against LIVE ORDERS.
+
+Order placement, cancel and replace are deliberately NOT abortable, enforced structurally by never passing a signal on those paths -- an aborted placement may still have reached the broker.
+
+Honest scope: this removes a leaked-work accumulator and a duplicate-launch path.  It is NOT proven to be what stopped runs completing; that still needs one production query (see #2967).
+
+One premise from the investigation did not hold and was deliberately not implemented: the Alpaca gateway has no fetch to thread a signal into, and the obvious axios-interceptor workaround attaches to a different module instance than the bundled SDK uses.  Filed as #2970 rather than shipping something that silently does nothing in production.
 
 ## 2026-08-20 MONET - `realized-pnl-ledger` up for review
 
@@ -31,6 +92,15 @@ The defect was not missing gaps in source.  Two literal ASCII spaces typed into 
 Measured 698 real violations across 73 files (the review estimated ~600) and fixed 652.  The 46 remaining are entirely inside files held by peer PRs #2795 / #2793 / #2828.  `scripts/copy-rules-lint.mjs` ships with the fix and asserts on RENDERED output via a renderCollapse() implementation of the CSS whitespace rule, so this cannot silently regress.
 
 Worth knowing for anyone doing mass regex edits on TSX: building the fixer produced three bugs in the fixer, and only running the app's test suite caught them.  Two altered executable code, one corrupted numbered headings on the public legal pages.  Do not trust a non-AST regex pass on source without running the tests.
+## 2026-08-20 MONET - LLM cost is now the provider's number, not our price table
+
+The review told us to add `usage:{include:true}` to every OpenRouter request.  That parameter is deprecated and inert -- usage is always returned now -- so it was deliberately NOT added; adding it would also risk the endpoint-filtering 404 class, since `require_parameters:true` filters on advertised request fields.  The real defect was read-side: `usage.cost` was arriving on every response and being thrown away.
+
+The number that justifies the work: on 100k in / 20k out of claude-opus-5 the price table said $1.00 where the transport billed $0.25.  A 4x overstatement on a single call, and the whole Usage page was derived from that table.  Billed and estimated are now separate columns and separate sums, never added together and labelled billed.
+
+Also landed in the same change: late post-soft-timeout replies are metered rather than only audited, the approval receipt no longer claims "not a failover" when a fallback actually answered, rotation reads the live catalog instead of a hardcoded dead list, and the Red Team payload is compacted to its documented subset.
+
+Two defects found that the review did not have: migrations 2 and 14 use `PRAGMA table_info` as an existence check (returns empty, not an error, for a missing table -- filed #2964), and a test fixture matching on a substring of the entire payload caused genuine cross-test contamination.
 
 ## 2026-08-20 MONET - R2 is not storing one week; the B2 restore is proven
 
@@ -57,6 +127,13 @@ Fix: persist the tombstone on cancel throw when the order is a tracked / app-man
 ## 2026-08-20 CURSOR-BUGBOT — Alpaca MCP getEquityOrders hid just-filled orders
 
 #2886 scoped REST `getEquityOrders` to open + 24h closed, but the MCP success path still called `get_orders` with `status:"open"`.  `ordersListIncludesTerminal` stayed true, so `reconcilePlacementError` / `flagStalePlacingIntents` treat a missing refId as never-placed.  A market fill that leaves `open` before the place deadline returns is then safe-to-retry — a second submit.  REST-only Alpaca is fine.  MCP now requests `status:"all"` (bounded 500).  Rollout: `docs/rollouts/2026-08-20-alpaca-mcp-orders-include-terminal.md`.
+## 2026-08-20 MONET - console numeric fields commit on blur, and stop writing a fallback
+
+Two console numeric fields PATCHed on every keystroke and wrote a fallback value when cleared.  On a real-money app those are risk/strategy knobs, so the silent wrong write was the harm.  Fixed to local draft + commit on blur; blank or unparseable now commits nothing and reverts to the last saved value.  No confirmation ceremony added -- guardrail values stay the owner's adjustable preferences.
+
+Test strength is stated honestly rather than overclaimed: the commit decision is tested behaviorally through exported pure functions, but the blur wiring is asserted against source text, because the repo has no DOM test tooling and adding a harness is its own decision.
+
+Third site with the identical bug (`app/admin/operations/operations-client.tsx:208`) filed as #2958 and NOT fixed -- peer PRs hold that area.
 
 ## 2026-08-20 CURSOR-BUGBOT — #2953 peer quotes/intraday 401 at the edge
 
@@ -735,6 +812,28 @@ Report: `docs/audits/2026-08-17-trading-outcomes.md`.  Branch `cursor/trading-ou
 ## 2026-08-17 CURSOR — Architecture & backend audit (docs-only)
 
 Read-only audit of framework, API, queues, persistence, caching, concurrency, recovery, and durability against `main` `4980322b`.  No product fixes.  Report: `docs/audits/2026-08-17-architecture-backend.md`.  PR #2807, branch `cursor/architecture-backend-audit-6186`.  Headline: no active P0 in code; new gap is stale `strategy_run_requests` (F3); Litestream L2/L3 wedge remains owner-ops (F1, already tracked).  Rollout: `docs/rollouts/2026-08-17-architecture-backend-audit.md`.
+## 2026-08-20 CURSOR — RAG P0 follow-ups (parsed-text SEC, chat asOf, production eval)
+
+Implemented the audit P0s on `cursor/rag-learning-recall-audit-f94a` / PR #2803.  `buildSecDocument` is the one SEC writer (no raw HTML).  `getCikForTicker` uses ticker→CIK and refuses the sentinel.  Chat `searchKnowledge` always passes `asOf`.  Eval harness + contract test score `retrieveContextDetailed`.
+
+Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-20-rag-p0-followups.md`.
+
+Local gate: lint 0 errors, `tsc --noEmit` clean, touched-file vitest green, `npm run build` exit 0.  Full `npm test` in this Cloud VM had 37 unrelated env failures (Yahoo/SEC 404, Voyage-vs-SiliconFlow, notify/host-metrics).  Next: wait for `verify` on #2803.  P1 leftovers stay open (transcript FTS, 8-K feed dual-class, memory decay/lifecycle, learning vector retry).  Do not enable `SEC_INGEST_WORKER_ENABLED` until a staging ingest proves `buildSecDocument` text is tag-free.
+
+## 2026-08-17 CURSOR — RAG / learning / recall audit (report-only)
+
+Read-only audit of ingest, SEC/ROIC/transcripts/news, chunk/embed, retrieval, grounding, PIT, lineage, learning ledger, memory, evals, and failure recovery.  Highest gaps: worker embeds raw HTML; transcripts have no FTS backstop; golden harness scores a different retriever than Green/Red; memory decay/lifecycle unwired; chat/desk omit `asOf` so prod `VECTOR_ASOF_STRICT` is a no-op there.
+
+Branch `cursor/rag-learning-recall-audit-f94a`.  PR #2803.  Report: `docs/audits/2026-08-17-rag-learning-recall.md`.  Rollout: `docs/rollouts/2026-08-17-rag-learning-recall-audit.md`.
+## 2026-08-17 CURSOR — Security / reliability audit (report-only)
+
+Read-only audit of auth, secrets, tenant isolation, supply chain, PII, Litestream/DR,
+deploy, alerting, fail-open/closed, spend, and SLOs.  Live health 200 on sha `4980322b`;
+Litestream replicating; restore still unproven on B2.  No code changes.
+
+Branch `cursor/security-reliability-audit-d8f6`, PR #2806.  Report:
+`docs/audits/2026-08-17-security-reliability.md`.  Rollout:
+`docs/rollouts/2026-08-17-security-reliability-audit.md`.
 ## 2026-08-17 CURSOR — Brokers + data-cascade reliability audit (report-only)
 
 Read-only audit at `main` `4980322b`.  No broker mutations.  Report:
@@ -777,6 +876,28 @@ Branch `cursor/pinecone-wu-trial-alerts-c9a3`.  Rollout:
 `searchSettings` / `SETTINGS_FIELDS` existed but no UI imported them.  ⌘K now returns catalog hits that deep-link to live section hashes.  Phantom `defaultLandingAccount` (and its "for safety" copy) is gone.
 
 Branch `cursor/settings-search-palette-6e98`.  Rollout: `docs/rollouts/2026-08-17-settings-search-palette.md`.
+## 2026-08-17 CURSOR — iOS release-readiness leftovers (#2560)
+
+Close-only / Wind Down and APNs client+server already landed on main.  Remaining
+in-repo gaps: `PrivacyInfo.xcprivacy`, Safari handoffs from Home/Settings to
+`/console/connections` and `/console/strategy` (not AASA-claimed), honest
+price-alert copy, and a pin that `ITSAppUsesNonExemptEncryption=false` matches
+`project.yml`.  Do not invent APNS_* credentials — owner adds the Apple .p8 set
+in Infisical when ready.
+
+Branch `cursor/ios-release-readiness-2560-b532`.  Rollout:
+`docs/rollouts/2026-08-17-ios-release-readiness.md`.
+## 2026-08-17 CURSOR — P3 curl-only diagnostics get UI entry (#2563)
+
+Four existing routes were curl-only: tuning-dry-run, learning-ledger, backtest-ic, `/api/audit`.
+This branch adds console/admin paths and does not change server behavior.
+
+- Strategy: Weight Tuning Preview (`GET /api/admin/tuning-dry-run`)
+- Lessons: Learning Ledger (`GET/POST /api/admin/learning-ledger`)
+- Admin: Factor Backtest (`GET /api/admin/backtest-ic`)
+- Activity: Audit tab (`GET /api/audit`)
+
+Branch `cursor/p3-curl-only-ui-2563-814a`.  PR #2793.  Rollout: `docs/rollouts/2026-08-17-curl-only-ui-entry.md`.
 ## 2026-08-17 CURSOR — Console a11y batch (#2561)
 
 P1/P2 from the 2026-08-06 product review: light-theme chip text now meets WCAG AA on soft fills; Sheet and TabsSheet use the stack-aware focus trap so Escape closes only the topmost surface; tooltips are keyboard-reachable and announced; the scan Columns popover has aria-expanded/controls + Escape/focus; Meter can take an accessible name; dark `--con-faint` has AA headroom; Toggle `label` is required.

@@ -28,7 +28,10 @@ const mocks = vi.hoisted(() => ({
     async <T, R>(items: T[], _delay: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> =>
       Promise.all(items.map((item, idx) => fn(item, idx)))
   ),
-  loadCikMap: vi.fn<() => Promise<Record<string, string>>>(),
+  loadTickerCikMap: vi.fn<() => Promise<Record<string, string>>>(async () => ({
+    AAPL: "320193",
+    MSFT: "789019"
+  })),
   storeDocument: vi.fn(),
   storeContexts: vi.fn().mockResolvedValue({ attempted: 1, indexed: 1 }),
   getEnrichmentProvider: vi.fn(() => ({
@@ -64,7 +67,7 @@ vi.mock("../src/lib/web-sources/http", () => ({
 }));
 
 vi.mock("../src/lib/web-sources/sec8k", () => ({
-  loadCikMap: mocks.loadCikMap
+  loadTickerCikMap: mocks.loadTickerCikMap
 }));
 
 vi.mock("../src/lib/data-providers", async (importOriginal) => {
@@ -375,11 +378,14 @@ describe("ingestFiling", () => {
         ticker: "AAPL",
         doc_type: "10-k",
         source: "sec-edgar",
-        acceptance_datetime: ref.acceptanceDateTime
+        acceptance_datetime: ref.acceptanceDateTime,
+        text: expect.stringMatching(/substantial risks/i)
       }),
       "local",
       { parserRevision: "sec-edgar-filing-v2" }
     );
+    const stored = mocks.storeDocument.mock.calls.at(-1)?.[0] as { text?: string };
+    expect(stored.text).not.toMatch(/<h2|<p>/i);
   });
 
   it("defers ingest when strategy work is in flight during FTS mirror", async () => {
@@ -442,6 +448,23 @@ describe("ingestFiling", () => {
     );
   });
 
+  it("getCikForTicker pads a real CIK and refuses the sentinel 0000000000", async () => {
+    mocks.loadTickerCikMap.mockResolvedValueOnce({ AAPL: "320193", ZZZZ: "0000000000" });
+    const { getCikForTicker } = await import("../src/lib/web-sources/sec-filings");
+    expect(await getCikForTicker("AAPL")).toBe("0000320193");
+    expect(await getCikForTicker("ZZZZ")).toBeNull();
+  });
+
+  it("refuses ingest when the ticker has no CIK (no sentinel 0000000000)", async () => {
+    mocks.loadTickerCikMap.mockResolvedValueOnce({});
+    const ref = makeRef();
+    const { ingestFiling } = await import("../src/lib/web-sources/sec-filings");
+    const result = await ingestFiling("ZZZZ", ref);
+    expect(result.error).toMatch(/unknown CIK/);
+    expect(mocks.politeFetchText).not.toHaveBeenCalled();
+    expect(mocks.storeDocument).not.toHaveBeenCalled();
+  });
+
   it("returns error and does NOT record de-dup when fetch fails", async () => {
     const ref = makeRef();
     mocks.politeFetchText.mockRejectedValueOnce(new Error("HTTP 503 for url"));
@@ -502,7 +525,7 @@ describe("refreshFilingBodies free-tier cap", () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "21000";
 
     // CIK map: AAPL + MSFT
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193", MSFT: "789019" });
 
     // 2 filings per symbol, all unindexed (random accessions)
     mocks.politeFetchText
@@ -554,7 +577,7 @@ describe("refreshFilingBodies free-tier cap", () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "21000"; // free-tier-looking value, left over from Voyage
     mocks.activeEmbeddingProvider.mockReturnValue("openrouter");
 
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193", MSFT: "789019" });
     mocks.politeFetchText
       .mockResolvedValueOnce(
         JSON.stringify({
@@ -600,18 +623,18 @@ describe("refreshFilingBodies free-tier cap", () => {
     const { setInternalSetting } = await import("../src/lib/db");
     setInternalSetting("webSource:sec10k:lastAttempt", new Date().toISOString());
 
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193" });
 
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
     const result = await refreshFilingBodies(["AAPL"], Date.now());
 
     expect(result.attempted).toBe(0);
-    expect(mocks.loadCikMap).not.toHaveBeenCalled();
+    expect(mocks.loadTickerCikMap).not.toHaveBeenCalled();
   });
 
   it("does not issue a submissions request after fundamentals work loses the shared lease", async () => {
     const { deleteInternalSetting } = await import("../src/lib/db");
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193" });
     mocks.getEnrichmentProvider.mockReturnValue({
       name: "test",
       configured: true,
@@ -659,7 +682,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     const { setInternalSetting } = await import("../src/lib/db");
     setInternalSetting("webSource:sec10k:lastAttempt", new Date().toISOString());
 
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
@@ -668,13 +691,13 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
     const result = await refreshFilingBodies(["AAPL"], Date.now(), undefined, { force: true });
 
-    expect(mocks.loadCikMap).toHaveBeenCalled();
+    expect(mocks.loadTickerCikMap).toHaveBeenCalled();
     expect(result.attempted).toBeGreaterThanOrEqual(1);
   });
 
   it("an explicit limit overrides the free-tier 1-filing cap (operator decision wins)", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "21000"; // free tier
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193", MSFT: "789019" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValueOnce(mockSubmissions("789019", 2))
@@ -689,7 +712,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
 
   it("paid tier without env cap processes more than one filing per run (default raised from 1)", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0"; // paid tier
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193", MSFT: "789019" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValueOnce(mockSubmissions("789019", 2))
@@ -710,7 +733,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     // during an incident) was a complete no-op while the operator believed it was in effect.
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0"; // paid tier
     process.env.SEC_FILING_RAG_MAX_PER_RUN = "0";
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193" });
     mocks.politeFetchText.mockResolvedValueOnce(mockSubmissions("320193", 2));
 
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
@@ -723,7 +746,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
   it("stops the run when the embed budget is exhausted — no doomed body fetches, tail deferred", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0"; // paid tier, cap 25
     mocks.hasIngestTextBudget.mockReturnValue(false); // budget already spent
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193", MSFT: "789019" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValueOnce(mockSubmissions("789019", 2));
@@ -745,7 +768,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
   it("defers the tail when the budget runs out mid-run, keeping earlier ingests", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
     mocks.hasIngestTextBudget.mockReturnValueOnce(true).mockReturnValue(false); // 1 filing fits
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193", MSFT: "789019" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValueOnce(mockSubmissions("789019", 2))
@@ -767,7 +790,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     // A stale/legacy caller may still report dedupComplete without a per-occurrence vector. It is
     // not capacity exhaustion and must not halt the tail, but it also must not complete accession.
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
@@ -794,7 +817,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
 
   it("accepts an exact previously committed occurrence set as source completion", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
@@ -823,7 +846,7 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
 
   it("keys-unconfigured IS a capacity stop: the run defers the tail", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
-    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
+    mocks.loadTickerCikMap.mockResolvedValue({ AAPL: "320193", MSFT: "789019" });
     mocks.politeFetchText
       .mockResolvedValueOnce(mockSubmissions("320193", 2))
       .mockResolvedValueOnce(mockSubmissions("789019", 2))

@@ -393,12 +393,10 @@ private struct SymbolInfoHeaderCard: View {
 private struct SymbolInfoStatsCard: View {
     let info: SymbolQuoteInfo
 
-    private var columns: [GridItem] { [GridItem(.flexible()), GridItem(.flexible())] }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeading("Key Stats")
-            LazyVGrid(columns: columns, spacing: 10) {
+            AppMetricGrid {
                 MetricTile(title: "Volume", value: AppFormat.number(info.volume))
                 MetricTile(title: "P/E Ratio", value: AppFormat.peRatioDisplay(peRatio: info.peRatio, eps: info.eps))
                 MetricTile(title: "EPS", value: AppFormat.money(info.eps))

@@ -56,6 +56,7 @@ import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextA
 import { SaveStatus } from "../ui/save-status";
 import { Sheet } from "../ui/sheet";
 import { OverlaysPanel } from "./overlays-panel";
+import { TuningDryRunPanel } from "./tuning-dry-run";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -918,6 +919,10 @@ function AccountScopedStrategyPage() {
       </div>
 
       <OverlaysPanel policy={policy} onSaved={refresh} />
+
+      <div id="weight-tuning-preview" className="scroll-mt-28">
+        <TuningDryRunPanel />
+      </div>
 
       {/* AI review */}
       <AiReviewPanel policy={policy} strategyPrompt={snapshot.strategyPrompt} reality={reality} />

@@ -40,15 +40,29 @@ function cachedAvailability(cacheKey: string, allowStale: boolean): CachedAvaila
   return undefined;
 }
 
-export async function getOpenRouterUserModelAvailability(key: string, keyRef?: string): Promise<AvailabilityResult> {
-  if (process.env.NODE_ENV === "test") return { status: "not_checked" };
+/**
+ * `fetchImpl` is an injectable fetcher (defaults to the global `fetch`) so a test can drive the
+ * live catalog deterministically — with a fake 200/404/network-error response — without ever
+ * reaching the real OpenRouter API.  Passing an explicit `fetchImpl` also SKIPS the
+ * `NODE_ENV === "test"` short-circuit below: the short-circuit exists to keep the vitest suite
+ * network-free by default, and an injected fetcher already guarantees that, so a test that
+ * wants to exercise this function's real parsing/caching/error-handling logic can opt in
+ * explicitly instead of always getting the canned `{status:"not_checked"}` reply.
+ */
+export async function getOpenRouterUserModelAvailability(
+  key: string,
+  keyRef?: string,
+  fetchImpl?: typeof fetch
+): Promise<AvailabilityResult> {
+  if (process.env.NODE_ENV === "test" && !fetchImpl) return { status: "not_checked" };
+  const doFetch = fetchImpl ?? fetch;
   const cacheKey = keyRef || "anonymous-key";
   const fresh = cachedAvailability(cacheKey, false);
   if (fresh) return { status: "available", modelIds: fresh.modelIds };
 
   const timeout = abortAfter(AVAILABILITY_TIMEOUT_MS);
   try {
-    const response = await fetch(modelsUserUrl(), {
+    const response = await doFetch(modelsUserUrl(), {
       headers: { Authorization: `Bearer ${key}` },
       cache: "no-store",
       signal: timeout.signal

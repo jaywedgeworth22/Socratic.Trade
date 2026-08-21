@@ -1525,6 +1525,28 @@ export interface TradeProposal {
    */
   proposedByModel?: string;
   /**
+   * Set ONLY when the model named in `proposedByModel` is not the one the run set out to use — the
+   * configured primary (or, under rotation, this run's rotation pick) failed and a fallback
+   * answered instead.  Absent means the intended model served.
+   *
+   * This exists because the run-scoped failover facts (`bullFailoverNote`, the
+   * `strategy_llm_failover` audit) live on the run record, not the proposal, so the approval card
+   * had no way to tell a rotation PICK apart from a rotation FALLBACK and asserted the former for
+   * both — a receipt that read as reassurance while being wrong.  Under rotation with no
+   * owner-configured fallbacks the run still appends implicit pool fallbacks
+   * (`implicitGreenRotationFallbacks`), which is precisely the case the old copy denied.
+   */
+  greenServedByFallback?: {
+    /** The model the run intended to use — the configured primary, or the rotation pick. */
+    fromModel: string;
+    fromProvider?: string;
+    /** Why the intended model did not serve, e.g. "HTTP 400" or "malformed response". */
+    reason?: string;
+    /** 1-based position of the attempt that answered, and how many were planned. */
+    attempt?: number;
+    attempts?: number;
+  };
+  /**
    * The model that reviewed this proposal (Red Team). Persisted with the proposal JSON so Red
    * attribution joins outcome analytics symmetrically. Optional: legacy proposals predate it.
    */

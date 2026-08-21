@@ -26,6 +26,8 @@ struct CoachView: View {
                     CoachDraftCard(draft: lastDraft)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
+                        .frame(maxWidth: ContentColumns.readableWidth)
+                        .frame(maxWidth: .infinity)
                 }
                 composer
             }
@@ -103,6 +105,9 @@ struct CoachView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
+                .frame(maxWidth: ContentColumns.readableWidth)
+                // Second frame centres the clamped column on an iPad or a Mac window.
+                .frame(maxWidth: .infinity)
             }
             .onChange(of: turns.count) { _, _ in
                 scrollToEnd(proxy)
@@ -141,6 +146,9 @@ struct CoachView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .frame(maxWidth: ContentColumns.readableWidth)
+        // Composer stays under the transcript it belongs to, not stretched across the window.
+        .frame(maxWidth: .infinity)
         .background(AppPalette.background)
     }
 

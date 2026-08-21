@@ -41,11 +41,29 @@ export function equityOrdersDefaultSinceIso(nowMs = Date.now()): string {
 }
 
 /** Race a broker promise against a hard timeout.  Lives here (not safety-maintenance) so
- *  alpaca/tradier can import it without a circular broker-gateway load. */
-export async function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+ *  alpaca/tradier can import it without a circular broker-gateway load.
+ *
+ *  Pass `controller` to CANCEL the work on the timeout branch.  Without it this is a pure
+ *  `Promise.race`: the caller walks away but the underlying call keeps running and its
+ *  socket stays open for the life of the process.  The controller is aborted ONLY when the
+ *  deadline wins — a promise that settles in time is never aborted.
+ *
+ *  MONEY PATH: only pass a controller for idempotent reads.  An aborted order PLACEMENT may
+ *  still have reached the broker, and cancelling it destroys the refId reconcile that
+ *  `reconcilePlacementError` depends on to tell "never placed" from "placed and live". */
+export async function withDeadline<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+  options?: { controller?: AbortController }
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer = setTimeout(() => {
+      const error = new Error(message);
+      options?.controller?.abort(error);
+      reject(error);
+    }, ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -123,8 +141,23 @@ function assertNever(value: never): never {
   throw new Error(`unhandled settle kind: ${String(value)}`);
 }
 
+/** Handed to each `start()` attempt so the attempt can cancel its own transport work once
+ *  this wrapper has stopped waiting on it. */
+export type BrokerCallAttempt = { signal: AbortSignal };
+
+/** Attach settle-tracking without changing the promise.  The handlers also mark the promise
+ *  as handled, so aborting a loser can never surface as an unhandled rejection. */
+function trackSettled<T>(promise: Promise<T>): () => boolean {
+  let settled = false;
+  const mark = () => {
+    settled = true;
+  };
+  promise.then(mark, mark);
+  return () => settled;
+}
+
 export async function awaitWithFirstCallRetry<T>(
-  start: () => Promise<T>,
+  start: (attempt: BrokerCallAttempt) => Promise<T>,
   options: {
     firstMs: number;
     retryMs: number;
@@ -133,7 +166,13 @@ export async function awaitWithFirstCallRetry<T>(
     timedOutSections?: string[];
   }
 ): Promise<T> {
-  const first = start();
+  // One controller per start() attempt so the LOSER of the race can be cancelled.  Before this,
+  // a pending first call was never aborted when the retry was issued at firstMs, so every slow
+  // poll doubled the outstanding broker calls and left BOTH running for the life of the process.
+  // The first attempt is deliberately NOT aborted when the retry starts — either may still win.
+  const firstController = new AbortController();
+  const first = start({ signal: firstController.signal });
+  const firstIsSettled = trackSettled(first);
   const firstOutcome = await outcomeOrTimeout(first, options.firstMs);
   switch (firstOutcome.kind) {
     case "fulfilled":
@@ -146,14 +185,25 @@ export async function awaitWithFirstCallRetry<T>(
       return assertNever(firstOutcome);
   }
 
-  const retry = start();
+  const retryController = new AbortController();
+  const retry = start({ signal: retryController.signal });
+  const retryIsSettled = trackSettled(retry);
   const raced = await firstOutcomeOf([first, retry], options.retryMs);
+  const abortLosers = (reason: Error) => {
+    if (!firstIsSettled()) firstController.abort(reason);
+    if (!retryIsSettled()) retryController.abort(reason);
+  };
   switch (raced.kind) {
     case "fulfilled":
+      abortLosers(new Error(`${options.label ?? "broker call"} superseded by the winning attempt`));
       return raced.value;
     case "rejected":
+      abortLosers(new Error(`${options.label ?? "broker call"} superseded by a rejected sibling`));
       throw raced.reason;
     case "pending":
+      // Nobody won.  Both attempts are abandoned, so both get cancelled rather than left
+      // running behind a caller that has already moved on.
+      abortLosers(new Error(`${options.label ?? "broker call"} timed out after ${options.firstMs}+${options.retryMs}ms`));
       if (options.label) {
         console.warn(
           `[dashboard] ${options.label} timed out after ${options.firstMs}+${options.retryMs}ms — serving degraded snapshot section`

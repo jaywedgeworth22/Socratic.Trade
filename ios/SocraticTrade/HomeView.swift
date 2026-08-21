@@ -12,6 +12,7 @@ struct HomeView: View {
                     snapshot: snapshot,
                     openSettings: { presentedSheet = .settings }
                 )
+                .cardSpansAllColumns()
                 // Agent overview only during setup — once ready, ReadyHomeHero already
                 // shows account, state, and authority (duplicate card was pure noise).
                 AgentOverviewCard(snapshot: snapshot, showInlineReadiness: true)
@@ -19,6 +20,7 @@ struct HomeView: View {
                 ReadyHomeHero(snapshot: snapshot) {
                     selectedTab = .proposals
                 }
+                .cardSpansAllColumns()
             }
             StrategyControlsCard(snapshot: snapshot)
             PortfolioOverviewCard(snapshot: snapshot)
@@ -105,14 +107,47 @@ private struct ReadinessChecklistHero: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(AppPalette.accent)
+                    ConsoleHandoffButton(
+                        title: "Open Connections",
+                        systemImage: "link",
+                        url: ConsoleHandoff.connections
+                    )
                 } else if needsUniverse {
                     Text(DeskCopy.universeRefreshAfterGuardrails)
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    ConsoleHandoffButton(
+                        title: "Open Strategy",
+                        systemImage: "safari",
+                        url: ConsoleHandoff.strategy
+                    )
                 }
             }
         }
+    }
+}
+
+/// Opens a website console page that the phone cannot edit.  Those URLs are not AASA-claimed,
+/// so the tap leaves the app instead of looping back to a missing screen.
+private struct ConsoleHandoffButton: View {
+    @Environment(\.openURL) private var openURL
+    let title: String
+    let systemImage: String
+    let url: URL
+
+    var body: some View {
+        Button {
+            openURL(url)
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.appBody.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .tint(AppPalette.accent)
+        .accessibilityHint("Opens the website in Safari")
     }
 }
 
@@ -232,8 +267,18 @@ private struct ReadyHomeHero: View {
         }
     }
 
+    /// The hero spans every column, so its action would otherwise be drawn a full window wide.
+    /// The cap never binds on a phone — 520pt is wider than any phone card — so nothing about
+    /// the iPhone layout moves.
     @ViewBuilder
     private var primaryCTA: some View {
+        cta
+            .frame(maxWidth: ContentColumns.maximumActionWidth)
+            .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var cta: some View {
         if pendingCount > 0 {
             Button(action: onReviewProposals) {
                 Label(
@@ -512,7 +557,7 @@ private struct PortfolioOverviewCard: View {
         VStack(spacing: 10) {
             SectionHeading("Portfolio")
             if let portfolio = snapshot.portfolio {
-                LazyVGrid(columns: columns, spacing: 10) {
+                AppMetricGrid {
                     MetricTile(title: "Equity", value: AppFormat.money(portfolio.totalMarketValue))
                     MetricTile(title: "Buying Power", value: AppFormat.money(portfolio.buyingPower))
                     MetricTile(title: "Cash", value: AppFormat.money(portfolio.cash))
@@ -536,9 +581,6 @@ private struct PortfolioOverviewCard: View {
         }
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.flexible()), GridItem(.flexible())]
-    }
 }
 
 private struct DeskShortcutsCard: View {
@@ -548,7 +590,7 @@ private struct DeskShortcutsCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeading("Desk")
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                AppMetricGrid(minimumTileWidth: 150) {
                     shortcut("Coach", systemImage: "bubble.left.and.bubble.right.fill", tab: .coach)
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)
                     shortcut("Guardrails", systemImage: "shield.checkered", tab: .guardrails)
@@ -619,7 +661,7 @@ private struct PerformanceOverviewCard: View {
                     .font(.appCaption.weight(.semibold))
             }
             if let performance = snapshot.performance {
-                LazyVGrid(columns: columns, spacing: 10) {
+                AppMetricGrid {
                     MetricTile(
                         title: "Realized P&L",
                         value: AppFormat.money(realized),
@@ -679,10 +721,6 @@ private struct PerformanceOverviewCard: View {
                 )
             }
         }
-    }
-
-    private var columns: [GridItem] {
-        [GridItem(.flexible()), GridItem(.flexible())]
     }
 
     private func pnlColor(_ value: Double?) -> Color {
@@ -879,6 +917,12 @@ private struct AccountSettingsView: View {
             } else {
                 Text("No connected accounts.  Connect one on the website, then return here to select it.")
                     .foregroundStyle(.secondary)
+                Button {
+                    openURL(ConsoleHandoff.connections)
+                } label: {
+                    Label("Open Connections", systemImage: "link")
+                }
+                .accessibilityHint("Opens the website in Safari")
             }
             Link("Open Connections", destination: URL(string: "https://socratictrade.com/console/connections")!)
         }
