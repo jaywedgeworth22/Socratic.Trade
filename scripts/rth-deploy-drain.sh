@@ -10,11 +10,13 @@
 # RTH_DEPLOY_OVERRIDE=1 is already in THIS process environment.  A mid-session
 # redeliver of a non-hotfix commit would only fail the Coolify build again.
 #
-# Trigger attempts, in order, all fail-soft:
+# Trigger attempts, in order:
 #   1. Redeliver the latest GitHub push webhook to Coolify (GitHub webhook IPs
-#      are allowlisted at the Cloudflare edge; Actions IPs are not).
+#      are allowlisted at the Cloudflare edge; Actions IPs are not).  Needs
+#      GH_PAT with admin:repo_hooks; GITHUB_TOKEN cannot do this.
 #   2. POST COOLIFY_DEPLOY_WEBHOOK_URL when that secret is set.
-# Neither path is required for the latch itself to work.
+#   3. POST Coolify /api/v1/deploy with COOLIFY_DEPLOY (deploy-only token).
+# If none of them nudge, this script exits 1 so the 21:20 UTC job is red.
 #
 # Keep this file ASCII (AGENTS.md operator-script rule).
 set -euo pipefail
@@ -133,9 +135,28 @@ if [ "$nudge_ok" -eq 0 ] && [ -n "${COOLIFY_DEPLOY_WEBHOOK_URL:-}" ]; then
   fi
 fi
 
+# Coolify 4.x deploy API.  Bearer lives in the environment, never in the URL,
+# never logged.  UUID defaults to the live ST application on host.jays.services.
+if [ "$nudge_ok" -eq 0 ] && [ -n "${COOLIFY_DEPLOY:-}" ]; then
+  APP_UUID="${COOLIFY_ST_APP_UUID:-d83b1aykr03uwr32yhgzaiay}"
+  DEPLOY_HOST="${COOLIFY_API_HOST:-https://host.jays.services}"
+  http_code="$(curl -sS --max-time 20 -o /tmp/rth-drain-deploy.out -w '%{http_code}' \
+    -X POST \
+    -H "Authorization: Bearer ${COOLIFY_DEPLOY}" \
+    -H "Accept: application/json" \
+    "${DEPLOY_HOST%/}/api/v1/deploy?uuid=${APP_UUID}" || true)"
+  if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
+    log "posted Coolify deploy API for ${APP_UUID} (http ${http_code})"
+    nudge_ok=1
+  else
+    log "warn: Coolify deploy API failed (http ${http_code:-curl-error})"
+  fi
+  rm -f /tmp/rth-drain-deploy.out
+fi
+
 if [ "$nudge_ok" -eq 0 ]; then
-  log "could not nudge Coolify.  Next non-RTH push to main still auto-deploys HEAD, or the owner can click Deploy after the cash close."
-  exit 0
+  log "error: could not nudge Coolify.  Need GH_PAT hook redeliver, COOLIFY_DEPLOY_WEBHOOK_URL, or COOLIFY_DEPLOY.  Failing the drain job so Sentry pages instead of a silent-green freeze."
+  exit 1
 fi
 log "nudge sent; verify with bash scripts/verify-deploy-sha.sh"
 exit 0

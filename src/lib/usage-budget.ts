@@ -32,6 +32,11 @@ import type { TradingPolicy } from "./types";
 import { resolveOpenAiModel } from "./llm-request";
 import { usageMonitorBaseUrl, usageMonitorToken, usageMonitorEnabled } from "./usage-monitor-push";
 import { alertUsageLimitHit } from "./usage-limit-alerts";
+import {
+  PEER_LANE_USAGE_MONITOR,
+  recordPeerLaneSample,
+  shouldDeferPeerRefresh,
+} from "./peer-lane-backoff";
 
 // ── Contract (subset of the monitor's GET /api/budget-status response) ──────────
 
@@ -204,10 +209,12 @@ async function fetchBudgetStatus(fetchImpl: typeof fetch = fetch): Promise<Budge
       signal: controller.signal,
       cache: "no-store",
     });
+    const latencyMs = Date.now() - start;
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, latencyMs);
     logApiHealth({
       service: "usage-monitor",
       ok: res.ok,
-      latencyMs: Date.now() - start,
+      latencyMs,
       errorText: res.ok ? undefined : `budget-status HTTP ${res.status}`,
     });
     if (!res.ok) return null;
@@ -217,10 +224,12 @@ async function fetchBudgetStatus(fetchImpl: typeof fetch = fetch): Promise<Budge
     // Soft: this read is explicitly FAIL-OPEN (the catch returns null and the caller does not
     // enforce), so an abort/network blip changes no behavior and must not page at level=error.
     // The row is still stored ok=0, so Admin Connections shows the lane honestly.
+    const latencyMs = Date.now() - start;
+    recordPeerLaneSample(PEER_LANE_USAGE_MONITOR, latencyMs);
     logApiHealth({
       service: "usage-monitor",
       ok: false,
-      latencyMs: Date.now() - start,
+      latencyMs,
       errorText: err instanceof Error ? err.message : String(err),
       soft: true,
     });
@@ -239,9 +248,19 @@ export async function getBudgetStatusCached(opts: { force?: boolean; fetchImpl?:
   const now = Date.now();
   const cached = cacheHost.__usageBudgetCache;
   if (!opts.force && cached && now - cached.fetchedAt < ttlMs()) return cached.status;
+  // #2550: a 7s UM must not stall a strategy run. Serve stale cache (or fail-open
+  // null) and skip the network while the peer-lane p50 is slow.
+  if (!opts.force && shouldDeferPeerRefresh(PEER_LANE_USAGE_MONITOR, now)) {
+    return cached?.status ?? null;
+  }
   const status = await fetchBudgetStatus(opts.fetchImpl);
   if (status) cacheHost.__usageBudgetCache = { status, fetchedAt: now };
   return status; // null on failure → fail-open
+}
+
+/** Test-only: drop the in-process budget cache so tests do not leak across files. */
+export function resetUsageBudgetCacheForTests(): void {
+  delete cacheHost.__usageBudgetCache;
 }
 
 // ── Forecast-aware alert level ───────────────────────────────────────────────────

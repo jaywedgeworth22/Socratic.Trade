@@ -61,8 +61,9 @@ export default [
   {
     // Client/server bundle boundary (2026-08-01).
     //
-    // `app/console/**` and `app/mobile/**` are client trees: nearly every module under them is
-    // reachable from a "use client" component, so a single value-import of a server module drags
+    // `app/console/**` is a client tree (`app/mobile/**` is a redirect-only leftover):
+    // nearly every module under the console is reachable from a "use client" component, so a
+    // single value-import of a server module drags
     // its whole transitive graph into the browser bundle. That is not hypothetical — importing
     // `inferExternalCashFlows` from `@/lib/benchmark` pulled `history.ts` → the `db` barrel →
     // migrations and API-key crypto into a client chunk, which is why the browser console was

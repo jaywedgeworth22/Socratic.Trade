@@ -234,9 +234,7 @@ struct LoginView: View {
     /// Written as explicit concatenation, NOT a `"""` literal with `\` continuations.
     /// The continuation form shipped this string with NINE-space runs baked into it — the
     /// stripped indentation of each continued line survived — and justification then
-    /// stretched those runs into visible rivers mid-sentence ("your account _________ at
-    /// SocraticTrade.com").  With `+` there is no indentation to strip and no way for the
-    /// source layout to leak into the rendered text.
+    /// stretched those runs into visible rivers mid-sentence.
     ///
     /// Two spaces between sentences, per the fleet copy rule.
     private static let legalNotice =
