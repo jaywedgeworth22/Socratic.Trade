@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-08-21 Native weekly screens (advisory DATA)
+
+Green may see `weeklyScreens`: native large-cap value (trailing P/E ≤ 10, within 10% of the 52-week low) and 5-day momentum names from THIS account's scan tape.  Compacted next to `marketSignals`.  Named in the DATA-NOT-COMMAND boundary.  Never a standalone trigger and never a reason to change risk limits or sizing.  Prompt `agentic-strategy@2.15.0`.  Engine: `src/lib/weekly-market-digest.ts`.  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+
 ## 2026-08-19 Gather must not inventory Pinecone or latch on 502/429
 
 Same Roth `9d71dda4` terminal.  Robinhood `too many symbols (max 10, got 250)` at +18s remains the first hard fail (#2852 `c7b775c5`, folded in, not replaced).  The same window also listed/fetched the whole Pinecone index, 502'd congress.trade, and 429'd Massive.  There was no OpenRouter strategy/completion call — only run-scoped `usage_budget_status` at +10s, then the crash.  Gather retrieval stays query/id scoped.  `managed-vector-reconcile` and `inventoryVectorRecordsByMetadata` skip whole-index list/fetch while any strategy run/request is queued or running (account deletion still inventories).  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Do not prune the live index.  Do not reopen #2840.  congress.trade 502 and Massive 429 fail-open so Green can start.  Rebased onto `52add2ae` after #2856/#2857/#2858.  GitHub `DIRTY` was docs-union (`STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md`); `git merge-tree` was clean; no iOS overlap.  Rollout: `docs/rollouts/2026-08-19-gather-no-pinecone-inventory.md`.

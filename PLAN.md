@@ -2198,6 +2198,8 @@ filling the missing pieces.
 
 ## Current Status
 
+2026-08-21 (Cursor): native weekly value + momentum screens now sit on Macro/Scan (and a thin iOS Scan card) as advisory DATA from the account scan tape.  They do not change scoring weights, policy, or sizing.  Prompt `agentic-strategy@2.15.0`.  Rollout: `docs/rollouts/2026-08-21-weekly-market-screens.md`.
+
 Hosting topology: production is **[socratictrade.com](https://socratictrade.com)**
 on Coolify app `socratic-app` (Hetzner fleet box).  Mac `~/apps/trading-live` /
 pm2 `trading` / port `4000` and every `*.jays.services` preview hostname
