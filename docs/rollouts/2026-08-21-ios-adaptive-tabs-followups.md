@@ -67,14 +67,13 @@ Then check, specifically:
 - Drag a Mac Catalyst window narrow and confirm the bar falls back to the **default** tabs, and
   that widening restores the chosen set.
 
-### B. Rename `WrappingHStackTests.swift`  *(needs a Mac, because it needs `xcodegen`)*
+### B. Rename `WrappingHStackTests.swift`  *(CLOSED on this PR — Mac CI generates)*
 
-That file now holds every pure layout helper, not just the wrapping stack.  It could not be
-split in the originating session: the checked-in `.xcodeproj` uses explicit
-`PBXFileReference` entries (no synchronized folder group), so a new `.swift` file simply never
-compiles until `xcodegen generate` runs.  Rename to `LayoutMathTests.swift`, run
-`xcodegen generate`, then restore `objectVersion = 100` / `preferredProjectObjectVersion = 100`
-in `project.pbxproj` per `ios/CLAUDE.md`.
+**Status 2026-08-21 night (CURSOR):** file is `ios/SocraticTradeTests/LayoutMathTests.swift`.
+XCTest class names stay.  Linux cannot hand-edit `project.pbxproj` (Cursor hook) and has no
+`xcodegen`, so `.github/workflows/ios-build.yml` now runs XcodeGen 2.46.0 on the Mac runner
+before build/test, restores objectVersion 100, and uploads the generated pbxproj.  Rollout:
+`docs/rollouts/2026-08-21-ios-layout-math-tests-rename.md`.
 
 ### C. The `xcodebuild` CI check hangs on EVERY iOS PR  *(any seat; own PR)*
 
@@ -162,7 +161,9 @@ All in two places, both pure math with tests attached:
 | `ContentColumns.readableWidth` / `.maximumActionWidth` | `AppComponents.swift` | 760 / 520 |
 | `AppMetricGrid.minimumTileWidth` | `AppComponents.swift` | 178 (150 for Desk shortcuts) |
 
-Changing any of them should change a test in `TabPreferencesTests` or `WrappingHStackTests`.
+Changing any of them should change a test in `TabPreferencesTests` or `LayoutMathTests.swift`
+(`WrappingHStackTests` / `ContentColumnsTests` / `CardColumnsLayoutTests` /
+`AppMetricGridColumnsTests` class names).
 
 ## 4. Decisions & Trade-offs already made (do not re-litigate without reading these)
 
@@ -185,12 +186,13 @@ Changing any of them should change a test in `TabPreferencesTests` or `WrappingH
 - `main` `9298c29` carries the tab-bar change.  `verify` green on that merge.
 - Item C hang: PR #3023 Mac job run 32529663287 concluded `success` in ~2 minutes
   (file-redirect + test lane).  232 XCTests / 0 failures, iPhone 17 Pro.
-- Item D closed on `main` by #3012.  Item A screenshots, item B rename, item E auto-fill
-  decision, item F knobs: still open.
+- Item D closed on `main` by #3012.  Item B rename is this PR (`LayoutMathTests.swift` +
+  Mac CI `xcodegen generate`).  Item A screenshots, item E auto-fill decision, item F
+  knobs: still open.
 
 ## 6. Blockers
 
-- Item B still needs a Mac with XcodeGen.  Do not hand-edit `project.pbxproj`.
+- Item B no longer needs a laptop `xcodegen`: the Mac `ios-build` job generates.
 - Item A screenshots still need a Mac + simulator (iPad Air 11" both orientations, borrowed
   slot, Mac window drag).  A cloud Linux session cannot do them.
 - Making `ios-build` a required check is owner/ruleset work.  PR #3023's Mac job concluded

@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-21 CURSOR — adaptive-tabs leftover B: LayoutMathTests.swift + Mac xcodegen
+
+Independent re-check of `docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`: items C, D, and the XCTest half of A were already on `main` (#3023 `7ba178e1`, #3012 `c614391c`, Mac job 32529663287 `success`, 232/0).  Item B was still open.  File is now `ios/SocraticTradeTests/LayoutMathTests.swift` (class names unchanged).  Linux cannot hand-edit `project.pbxproj`, so `ios-build.yml` runs XcodeGen 2.46.0 on the Mac runner before build/test and uploads the generated pbxproj.  Screenshots / auto-fill veto / knobs still need a Mac or the owner.  Rollout: `docs/rollouts/2026-08-21-ios-layout-math-tests-rename.md`.
+
 ## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
 
 Owner asked to drop the daytime deploy ban and instead cut over only when nothing is mid-flight.

@@ -141,6 +141,7 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
+      # Folder glob.  Layout math lives in LayoutMathTests.swift (was WrappingHStackTests.swift).
       - path: SocraticTradeTests
     dependencies:
       - target: SocraticTrade

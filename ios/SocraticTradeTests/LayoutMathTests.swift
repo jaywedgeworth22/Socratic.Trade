@@ -5,8 +5,9 @@ import XCTest
 /// `WrappingHStackLayout` (watchlist chip wrap), `ContentColumns` + `CardColumnsLayout` (the
 /// iPad / Mac dashboard card flow), and `AppMetricGridColumns` (metric tiles per card).
 ///
-/// New files cannot be added to the checked-in `.xcodeproj` from a machine without XcodeGen,
-/// so the newer helpers live here rather than in a file the CI build would never compile.
+/// File is `LayoutMathTests.swift` (renamed from `WrappingHStackTests.swift`).  XCTest class
+/// names stay so `-only-testing:SocraticTradeTests/WrappingHStackTests` (and the sibling
+/// classes in this file) keep working.
 final class WrappingHStackTests: XCTestCase {
     func testKeepsItemsOnOneLineWhenTheyFit() {
         let result = WrappingHStackLayout.place(
