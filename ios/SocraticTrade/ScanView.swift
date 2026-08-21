@@ -121,7 +121,7 @@ struct ScanView: View {
         title: String,
         names: [WeeklyDigestName],
         empty: String,
-        detail: (WeeklyDigestName) -> String
+        detail: @escaping (WeeklyDigestName) -> String
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
