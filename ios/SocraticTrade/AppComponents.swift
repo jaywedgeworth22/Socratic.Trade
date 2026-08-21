@@ -309,6 +309,302 @@ private extension ISO8601DateFormatter {
     }()
 }
 
+// MARK: - Layout measures
+
+/// The app's one answer to "how wide should this be?".
+///
+/// Everything here was phone-first: `SnapshotScaffold` padded a flat 16pt and let its
+/// LazyVStack take whatever it was given, which is correct at 393pt and absurd at 1180pt.
+/// On an iPad Air 11" in landscape every card became a 1148pt letterbox — a one-line
+/// "Open P&L  $1,286.49" stretched a full foot across, and body copy ran past 150
+/// characters a line, roughly twice the width type stops being readable at.  The same
+/// happens in a maximised Mac Catalyst window.
+///
+/// Three rules decide which tool a layout uses.  Pick the weakest one that works:
+///
+///  * **R1 — a plain `maxWidth` ceiling, with NO size-class gate.**  `maxWidth` resolves to
+///    `min(ceiling, proposal)`, and the widest content an iPhone in this app ever proposes
+///    is ~408pt (440pt Pro Max less 32pt of gutters).  Every ceiling here is above that, so
+///    on iPhone the frame is not "a branch to the same value" — it never binds at all.
+///  * **R2 — a structural branch on `horizontalSizeClass`**, for grid-vs-stack and title
+///    mode.  Provably unreachable on iPhone: the phone is portrait-locked
+///    (`project.yml` `UISupportedInterfaceOrientations`), so its horizontal size class is
+///    always `.compact`.
+///  * **R3 — measure the view's own width** (`onGeometryChange`), for anything that must
+///    track a RESIZED Mac Catalyst window or content inside a sheet.  Catalyst reports
+///    `.regular` at every window size and a sheet inherits the WINDOW's traits, so a size
+///    class would simply lie in both cases.
+enum AppLayout {
+    /// How wide a scrolling content column may grow before it stops being a column.
+    enum Column {
+        /// Prose-led screens.
+        case reading
+        /// Card screens that still run a single column.
+        case standard
+        /// Only for a screen that actually places a multi-column grid inside.  A `.wide`
+        /// column wrapped around a single stack of cards is the original defect, not a fix.
+        case wide
+
+        var maxWidth: CGFloat {
+            switch self {
+            case .reading: return 720
+            case .standard: return 820
+            case .wide: return 1120
+            }
+        }
+    }
+
+    /// Running prose.  ~78 characters at `.appSubheadline`.  The column cap alone cannot
+    /// reach this: an 820pt column still leaves ~756pt of in-card text, ~105 characters.
+    /// Structure and typography are two separate ceilings and one screen needs both.
+    static let prose: CGFloat = 560
+    /// A centred message block — empty states, consent copy.
+    static let message: CGFloat = 420
+    /// One action control that owns its row.
+    static let action: CGFloat = 360
+    /// A paired action row, capped as a ROW so the pair still splits it evenly.
+    static let actionRow: CGFloat = 520
+    /// Label + value pair.
+    static let pair: CGFloat = 520
+    /// A short entry row: field plus its button.
+    static let entryRow: CGFloat = 420
+    /// Chat bubble body, and the row carrying it (bubble + the opposite gutter).
+    static let chatBubble: CGFloat = 620
+    static let chatRow: CGFloat = chatBubble + 36
+
+    /// Screen-edge gutter.  16 is the phone constant that ships today.  Catalyst is always
+    /// `.regular`, so it takes 24 at every window size — intentional: it has a real title
+    /// bar and no bezel-hugging convention.
+    static func gutter(_ sizeClass: UserInterfaceSizeClass?) -> CGFloat {
+        sizeClass == .regular ? 24 : 16
+    }
+}
+
+// MARK: - Measure modifiers (R1)
+
+extension View {
+    /// Plain ceiling, leading-aligned.  Prose, label/value pairs, entry rows.
+    func appMeasure(_ maxWidth: CGFloat, alignment: Alignment = .leading) -> some View {
+        frame(maxWidth: maxWidth, alignment: alignment)
+    }
+
+    /// Ceiling, then re-expand so the capped block CENTRES in its slot.  Order matters:
+    /// cap first, expand second.  Reversed, the background and hit region stay full width
+    /// with a small block floating inside them.
+    func appCenteredMeasure(_ maxWidth: CGFloat) -> some View {
+        frame(maxWidth: maxWidth).frame(maxWidth: .infinity)
+    }
+
+    /// Running-prose ceiling.  Apply AFTER `.fixedSize(horizontal: false, vertical: true)`
+    /// — the frame has to be outside it, or the text takes its unwrapped ideal width first
+    /// and runs straight past the cap.
+    func appProseMeasure(
+        _ maxWidth: CGFloat = AppLayout.prose,
+        alignment: Alignment = .leading
+    ) -> some View {
+        appMeasure(maxWidth, alignment: alignment)
+    }
+
+    /// A single call to action that owns its row.
+    func appActionWidth() -> some View { appMeasure(AppLayout.action) }
+}
+
+// MARK: - Content column (R1 + R2 gutter)
+
+private struct ContentColumn: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    let column: AppLayout.Column
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, AppLayout.gutter(sizeClass))
+            .appCenteredMeasure(column.maxWidth)
+    }
+}
+
+extension View {
+    /// The one content column for scrolling screens: gutters plus a centred ceiling.
+    func appContentColumn(_ column: AppLayout.Column = .standard) -> some View {
+        modifier(ContentColumn(column: column))
+    }
+}
+
+// MARK: - Screen title (R2)
+
+/// One title rule for every tab ROOT.  iPad and Catalyst draw the iOS 26 `Tab` bar as a
+/// floating top pill, and an `.inline` title under it leaves a 1180pt bar holding one
+/// centred 17pt word the pill already says.  A large title collapses on scroll, so it
+/// costs nothing after the first flick and gives the content column a left-anchored start.
+///
+/// Only for scroll-rooted tab roots.  A large title in a non-scrolling root never collapses
+/// and permanently eats height — which is why Coach keeps `.inline`.
+private struct ScreenTitle: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    let title: LocalizedStringKey
+
+    func body(content: Content) -> some View {
+        content
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(sizeClass == .regular ? .large : .inline)
+    }
+}
+
+extension View {
+    /// `LocalizedStringKey`, not `String`: routing through a `String` silently rebinds
+    /// `navigationTitle` to the non-localizing `StringProtocol` overload.
+    func appScreenTitle(_ title: LocalizedStringKey) -> some View {
+        modifier(ScreenTitle(title: title))
+    }
+}
+
+// MARK: - Width measurement (R3)
+
+private struct MeasuredWidth: ViewModifier {
+    @Binding var width: CGFloat
+    func body(content: Content) -> some View {
+        content.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+}
+
+extension View {
+    /// Publishes this view's own width, for the two places a size class lies: a resized
+    /// Catalyst window (always `.regular`) and content inside a sheet (which inherits the
+    /// window's traits, not the sheet's).
+    func appMeasuredWidth(_ width: Binding<CGFloat>) -> some View {
+        modifier(MeasuredWidth(width: width))
+    }
+}
+
+// MARK: - Metric grid (R3)
+
+/// Column arithmetic for `MetricTile` grids.  Pure, so tests cover the breakpoints without
+/// hosting SwiftUI — the same split `WrappingHStackLayout` uses further down this file.
+enum AppMetricGridLayout {
+    /// Narrowest a `MetricTile` gets before its 20pt value and 11pt detail start wrapping.
+    static let minimumTileWidth: CGFloat = 170
+
+    static func columnCount(itemCount: Int, availableWidth: CGFloat, isRegularWidth: Bool) -> Int {
+        guard itemCount > 1 else { return 1 }
+        // Compact is exactly what ships today: two columns at every phone width.  This
+        // returns before any width math, which is what makes iPhone byte-identical.
+        guard isRegularWidth else { return 2 }
+        // First layout pass, width not yet measured: assume roomy, so a regular-width grid
+        // does not visibly reflow 2 -> 4 on appear.
+        guard availableWidth > 0 else { return min(itemCount, 4) }
+        // A short row fits on one line whenever each tile still clears the minimum.
+        if itemCount <= 4, availableWidth / CGFloat(itemCount) >= minimumTileWidth {
+            return itemCount
+        }
+        return max(2, min(itemCount, Int(availableWidth / minimumTileWidth)))
+    }
+}
+
+/// A `MetricTile` row that packs to the width it actually has.
+struct AppMetricGrid<Content: View>: View {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var measuredWidth: CGFloat = 0
+
+    private let itemCount: Int
+    private let rowSpacing: CGFloat
+    private let content: Content
+
+    /// Column spacing is left to SwiftUI's default so a swapped call site is identical to
+    /// the `GridItem(.flexible())` array it replaces, including on iPhone.
+    init(itemCount: Int, rowSpacing: CGFloat = 10, @ViewBuilder content: () -> Content) {
+        self.itemCount = itemCount
+        self.rowSpacing = rowSpacing
+        self.content = content()
+    }
+
+    private var columns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible()),
+            count: AppMetricGridLayout.columnCount(
+                itemCount: itemCount,
+                availableWidth: measuredWidth,
+                isRegularWidth: sizeClass == .regular
+            )
+        )
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: rowSpacing) { content }
+            .appMeasuredWidth($measuredWidth)
+    }
+}
+
+// MARK: - Card list grid (R2)
+
+/// Chronological and queue card lists: the single lazy column unchanged on phone, 2-3 up at
+/// regular width.  Compact stays a `LazyVStack` rather than a one-column `LazyVGrid` so row
+/// realization, per-row `@State` (swipe offset, confirmation flags) and `scrollTo` targets
+/// behave exactly as they do before this type exists.
+struct AppCardGrid<Data: RandomAccessCollection, Content: View>: View
+where Data.Element: Identifiable {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    let data: Data
+    var minimum: CGFloat = 340
+    var spacing: CGFloat = 10
+    @ViewBuilder let content: (Data.Element) -> Content
+
+    var body: some View {
+        if sizeClass == .regular {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: minimum), spacing: spacing, alignment: .top)],
+                alignment: .leading,
+                spacing: spacing
+            ) {
+                ForEach(data) { element in
+                    // LazyVGrid does not stretch its cells; without this a short card beside
+                    // a tall one leaves a ragged half-height row.
+                    content(element)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+            }
+        } else {
+            LazyVStack(spacing: spacing) {
+                ForEach(data) { content($0) }
+            }
+        }
+    }
+}
+
+// MARK: - Two-column card split (R3)
+
+/// Two columns of cards at wide widths, today's single column otherwise.
+///
+/// Measured, NOT `ViewThatFits`: every `AppCard` is `maxWidth: .infinity` and its body text
+/// reports a full unwrapped ideal line, so card ideal widths are effectively unbounded and
+/// `ViewThatFits` would always pick the first branch.  Both branches here occupy the full
+/// proposed width, so the measurement never depends on the branch and cannot oscillate.
+struct AppSplitColumns<Left: View, Right: View, Narrow: View>: View {
+    var spacing: CGFloat = 14
+    /// Below this, two columns would each be narrower than a comfortable card.
+    var minTwoColumnWidth: CGFloat = 900
+    @ViewBuilder var left: () -> Left
+    @ViewBuilder var right: () -> Right
+    /// Explicit narrow ordering — never `left()` then `right()`, which would silently
+    /// reorder the iPhone reading order.
+    @ViewBuilder var narrow: () -> Narrow
+
+    @State private var width: CGFloat = 0
+
+    var body: some View {
+        Group {
+            if width >= minTwoColumnWidth {
+                HStack(alignment: .top, spacing: spacing) {
+                    VStack(spacing: spacing) { left() }.frame(maxWidth: .infinity)
+                    VStack(spacing: spacing) { right() }.frame(maxWidth: .infinity)
+                }
+            } else {
+                VStack(spacing: spacing) { narrow() }
+            }
+        }
+        .appMeasuredWidth($width)
+    }
+}
+
 struct AppCard<Content: View>: View {
     private let content: Content
     private let padding: CGFloat
@@ -594,7 +890,11 @@ struct EmptyStateCard: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity)
+            // Centred message block, not a full-card stretch.  "No proposals waiting" is
+            // the NORMAL state of the Proposals tab, and centred text spread across a
+            // 1116pt card reads as a rendering fault rather than a calm empty state.
+            // 420 is never reached inside an iPhone card (~326pt of interior).
+            .appCenteredMeasure(AppLayout.message)
             .padding(.vertical, 8)
         }
     }
@@ -622,6 +922,11 @@ struct InlineErrorBanner: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                // Ceiling on the message column, not on the row: a long error wraps at a
+                // readable measure instead of running a 1084pt line.  The Spacer below is
+                // what keeps this block leading-aligned under the glyph — do not remove it
+                // in favour of the frame; they do different jobs.
+                .appMeasure(AppLayout.prose)
                 Spacer(minLength: 0)
             }
         }
@@ -669,6 +974,8 @@ extension View {
 
 struct SnapshotScaffold<Content: View>: View {
     @EnvironmentObject private var store: MobileStore
+    /// Fixed once, so the 30s refresh schedule below counts from first appearance.
+    @State private var scheduleAnchor = Date()
 
     let content: (MobileSnapshot) -> Content
     /// Optional `.id(_:)` value inside `content` to scroll into view — used by deep links that
@@ -677,14 +984,19 @@ struct SnapshotScaffold<Content: View>: View {
     /// Scan (and any other screen with its own Retry) must not stack a second
     /// workspace banner that reloads the snapshot instead of this screen's data.
     private let hidesWorkspaceError: Bool
+    /// Content column for this screen.  Defaulted, so every adopter compiles untouched; a
+    /// screen only moves to `.wide` in the same change that puts a real grid inside it.
+    private let column: AppLayout.Column
 
     init(
         scrollTarget: String? = nil,
         hidesWorkspaceError: Bool = false,
+        column: AppLayout.Column = .standard,
         @ViewBuilder content: @escaping (MobileSnapshot) -> Content
     ) {
         self.scrollTarget = scrollTarget
         self.hidesWorkspaceError = hidesWorkspaceError
+        self.column = column
         self.content = content
     }
 
@@ -694,14 +1006,22 @@ struct SnapshotScaffold<Content: View>: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                    // `from: scheduleAnchor`, not `from: .now`: `.now` is re-read every time
+                    // this body is re-evaluated, which inside a ScrollView is constantly, and
+                    // each rebuild pushes the next entry a fresh 30s into the future — so the
+                    // banner's "updated N seconds ago" could sit frozen on whatever it first
+                    // rendered.  Same defect the login wordmark had (see CandleWordmarkView);
+                    // a `@State` anchor is what makes the schedule actually periodic.
+                    TimelineView(.periodic(from: scheduleAnchor, by: 30)) { context in
                         LazyVStack(spacing: 14) {
                             if let snapshot = store.snapshot {
                                 SnapshotStatusBanner(snapshot: snapshot, now: context.date)
                                 content(snapshot)
                             }
                         }
-                        .padding(.horizontal, 16)
+                        // THE keystone: one content column, inherited by every screen that
+                        // renders through this scaffold rather than re-derived nine times.
+                        .appContentColumn(column)
                         .padding(.vertical, 12)
                     }
                 }
@@ -780,7 +1100,13 @@ private struct SnapshotStatusBanner: View {
             Text("\(AppFormat.relative(store.lastUpdatedAt))")
                 .font(.appCaption)
                 .foregroundStyle(.secondary)
-            Spacer()
+            // Bounded, not greedy.  Even inside an 820pt column a plain `Spacer()` throws
+            // "Updated · 2 minutes ago" and "Market Closed" ~780pt apart, and the row stops
+            // reading as one status line and starts reading as two unrelated widgets.
+            // On iPhone it still squeezes toward 12pt exactly as today — 420 is never
+            // reached at phone widths.
+            Spacer(minLength: 12)
+                .frame(maxWidth: 420)
             if store.isRefreshing {
                 ProgressView()
                     .controlSize(.small)
@@ -1064,6 +1390,11 @@ struct CommandButton: View {
             .frame(minHeight: 44)
         }
         .disabled(isBusy || isDisabled)
+        // NO width cap here, deliberately.  ProposalsView puts Reject and Review & Approve
+        // in a `ViewThatFits` HStack that depends on both buttons filling their share
+        // equally; a per-button ceiling would break the 50/50 split AND change which
+        // ViewThatFits branch is chosen.  Solitary CTAs cap at their call site with
+        // `.appActionWidth()` instead.
     }
 }
 
