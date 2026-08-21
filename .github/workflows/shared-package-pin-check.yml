@@ -29,9 +29,10 @@ name: Shared package pin check
 # (The shared package repo itself, congress-trading-shared, is PUBLIC, so ref-resolution calls
 # against it succeed regardless of GH_PACKAGES_TOKEN's scopes -- verified 2026-07-12.)
 #
-# NOTE: this workflow is intentionally NOT part of the branch-protection ruleset, so a red result
-# flags divergence loudly without hard-blocking a coordinated two-repo bump (bump one repo, open
-# its PR, then the other). Promote it to a required check once bumps always land as a matched pair.
+# Required check name: `check-pin` (ruleset main-protection). Both consumers pin a public
+# git dependency, so this job must RUN on fork PRs too — a skipped required check is
+# treated as satisfied. Peer compare uses GITHUB_TOKEN against the public Congress.Trade
+# repo; GH_PACKAGES_TOKEN remains an optional override.
 #
 # Keep this file ASCII-only (AGENTS.md) -- no em dashes / arrows near shell $VARs.
 
@@ -56,12 +57,8 @@ env:
 
 jobs:
   check-pin:
-    # This job receives a private-repo token. Reject fork PRs before checkout or
-    # runner assignment; push/schedule/manual events remain admitted.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    # Self-hosted only: GitHub-hosted ubuntu-latest does not assign jobs for this repo
-    # (runner_id=0 / empty steps, 2026-07-18). Job still avoids disk races by reading
-    # package.json via the GitHub API when possible (see compare step).
+    # Must run on fork PRs. GitHub treats a skipped required check as satisfied.
+    # Congress.Trade is public, so GITHUB_TOKEN can read the peer package.json.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
