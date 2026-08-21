@@ -27,14 +27,56 @@ struct ActivityView: View {
     }
 }
 
-private enum NotificationHistoryFilter: String, CaseIterable, Identifiable {
+enum NotificationHistoryFilter: String, CaseIterable, Identifiable {
     case unread = "Unread"
     case all = "All"
 
     var id: String { rawValue }
 }
 
-private struct NotificationHistorySection: View {
+/// Header-inbox counterpart of the website `NotificationInbox`.  Same persisted rows as
+/// the Activity Notifications card, presented from the bell on every tab.
+struct NotificationsInboxView: View {
+    @EnvironmentObject private var store: MobileStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var notificationFilter: NotificationHistoryFilter = .unread
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let snapshot = store.snapshot {
+                    ScrollView {
+                        NotificationHistorySection(
+                            snapshot: snapshot,
+                            filter: $notificationFilter,
+                            markRead: { ids in
+                                await store.acknowledgeNotifications(ids: ids)
+                            }
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+                    .background(AppPalette.background)
+                } else {
+                    ContentUnavailableView(
+                        "Notifications",
+                        systemImage: "bell",
+                        description: Text("Alerts you can open later will appear here after they are sent.")
+                    )
+                }
+            }
+            .navigationTitle("Notifications")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct NotificationHistorySection: View {
     let snapshot: MobileSnapshot
     @Binding var filter: NotificationHistoryFilter
     let markRead: ([String]) async -> Void

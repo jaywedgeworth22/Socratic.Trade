@@ -717,7 +717,7 @@ struct SnapshotScaffold<Content: View>: View {
     }
 
     private var columns: Int {
-        ContentColumns.count(width: cardAreaWidth, isRegularWidth: horizontalSizeClass == .regular)
+        ContentColumns.count(width: cardAreaWidth, isRegularWidth: AppLayout.isRegularWidth(horizontalSizeClass))
     }
 
     /// Fixed once, so the 30s refresh schedule counts from first appearance.
@@ -1444,5 +1444,106 @@ struct JustifiedText: UIViewRepresentable {
                 .paragraphStyle: paragraph
             ]
         )
+    }
+}
+
+/// Shared layout truth for iPad / Mac Catalyst vs iPhone.
+enum AppLayout {
+    /// Regular horizontal size class AND not a phone.  A Max-class iPhone in landscape can
+    /// report `.regular`; those windows keep the compact chrome.
+    static func isRegularWidth(_ sizeClass: UserInterfaceSizeClass?) -> Bool {
+        sizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
+    }
+}
+
+private enum AppChromeSheet: String, Identifiable {
+    case settings
+    case notifications
+
+    var id: String { rawValue }
+}
+
+/// Bell (leading) and settings gear (trailing) on every tab, including Admin and More.
+///
+/// The website console puts the inbox and the account control in the header on every
+/// screen; this is the native counterpart.  Per-tab trailing items (Scan refresh, Coach
+/// options) still appear — the gear is added as an additional trailing item so it stays
+/// top-right on every tab.
+struct AppChromeModifier: ViewModifier {
+    @EnvironmentObject private var store: MobileStore
+    @State private var sheet: AppChromeSheet?
+
+    private var unreadCount: Int {
+        store.snapshot?.unreadNotificationCount ?? 0
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        sheet = .notifications
+                    } label: {
+                        Image(systemName: unreadCount > 0 ? "bell.badge.fill" : "bell")
+                    }
+                    .accessibilityLabel(
+                        unreadCount > 0
+                            ? "Notifications, \(unreadCount) unread"
+                            : "Notifications"
+                    )
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        sheet = .settings
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Account and Settings")
+                }
+            }
+            .sheet(item: $sheet) { item in
+                switch item {
+                case .settings:
+                    AccountSettingsView()
+                        .adaptiveWideSheet(phoneDetents: [.large])
+                case .notifications:
+                    NotificationsInboxView()
+                        .adaptiveWideSheet(phoneDetents: [.medium, .large])
+                }
+            }
+    }
+}
+
+/// Larger sheet on iPad and wide Mac windows so Account & Settings is not a tiny card.
+/// Compact (iPhone, narrow Mac window) keeps a standard phone sheet.
+struct AdaptiveWideSheet: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    var phoneDetents: Set<PresentationDetent>
+
+    private var isWide: Bool { AppLayout.isRegularWidth(horizontalSizeClass) }
+
+    func body(content: Content) -> some View {
+        if isWide {
+            content
+                .presentationSizing(.form)
+                .frame(minWidth: 560, idealWidth: 640, minHeight: 680, idealHeight: 760)
+                .presentationDragIndicator(.visible)
+        } else {
+            content
+                .presentationDetents(phoneDetents)
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+extension View {
+    func appChrome() -> some View {
+        modifier(AppChromeModifier())
+    }
+
+    func adaptiveWideSheet(
+        phoneDetents: Set<PresentationDetent> = [.large]
+    ) -> some View {
+        modifier(AdaptiveWideSheet(phoneDetents: phoneDetents))
     }
 }

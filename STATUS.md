@@ -1,5 +1,21 @@
 # Current Status
 
+## 2026-08-21 CURSOR — iOS wide layout, Admin tab, gear/bell chrome
+
+Owner ask: iPad Air 11" / variable Mac windows, settings gear top-right on every tab, larger
+settings sheet on iPad/Mac, Admin Portal as an admin-only tab on all devices, delete Assets
+price alerts, bell top-left for notifications, and stop Admin "Back to Console" from loading
+the website inside the native webview.
+
+Branch `cursor/ios-wide-layout-admin-tab-0e2b`.  Regular width uses `.sidebarAdaptable` TabView
+plus the existing card-column scaffold (reflows when a Mac window is dragged).  Compact keeps
+the phone bar.  Gear is `gearshape` on every tab; bell opens the same notification inbox as
+Activity.  Admin is a first-class `AppTab` gated on `currentUser.isAdmin`; native rail of the
+eleven website admin pages with a fenced WKWebView that intercepts `/console`.  Linux VM has
+no xcodebuild — first Swift compile is CI.  iOS-only; no Coolify deploy.
+
+Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
+
 ## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
 
 Owner asked to drop the daytime deploy ban and instead cut over only when nothing is mid-flight.

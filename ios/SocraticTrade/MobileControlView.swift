@@ -17,14 +17,30 @@ enum AppTab: String, CaseIterable, Identifiable {
     case guardrails
     /// Read-only P&L and tax-relevant fill receipts.
     case results
+    /// Operator portal.  Shown only when the session's `currentUser.isAdmin` is true.
+    case admin
     /// Every screen + tab customization. Always present, always last — the iOS
     /// counterpart of the web mobile bar's "More" sheet (app/console/components/nav.tsx).
     case more
 
     var id: String { rawValue }
 
-    /// Screens the owner can pin/unpin. `.more` is fixed chrome, not a destination.
-    static var customizable: [AppTab] { allCases.filter { $0 != .more } }
+    /// Screens a non-admin can pin.  `.admin` is added only through `customizable(isAdmin:)`.
+    static var customizable: [AppTab] { customizable(isAdmin: false) }
+
+    /// Screens the owner can pin/unpin.  `.more` is fixed chrome.  `.admin` is offered
+    /// only when the server marked this login as an operator — hiding-by-obscurity is not
+    /// the gate; the tab is simply not in the list.
+    static func customizable(isAdmin: Bool) -> [AppTab] {
+        allCases.filter { tab in
+            switch tab {
+            case .more: return false
+            case .admin: return isAdmin
+            case .home, .proposals, .markets, .activity, .insights, .coach, .scan, .guardrails, .results:
+                return true
+            }
+        }
+    }
 
     var title: String {
         switch self {
@@ -37,6 +53,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .scan: return "Scan"
         case .guardrails: return "Guardrails"
         case .results: return "Results"
+        case .admin: return "Admin"
         case .more: return "More"
         }
     }
@@ -52,6 +69,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .scan: return "tablecells"
         case .guardrails: return "shield.checkered"
         case .results: return "chart.xyaxis.line"
+        case .admin: return "wrench.and.screwdriver"
         case .more: return "square.grid.2x2"
         }
     }
@@ -61,8 +79,8 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Live thesis, actions, and agent controls."
         case .proposals: return "Trade proposals awaiting your judgment."
-        case .markets: return "Holdings, orders, watchlist, and price alerts."
-        case .activity: return "Notifications, fills, and what the agent did."
+        case .markets: return "Holdings, orders, and watchlist."
+        case .activity: return "Fills, scheduler, and what the agent did."
         case .insights: return "Status brief and attention items."
         case .coach: return "Ask the desk — a real Coach conversation."
         case .scan: return "Ranked names with watchlist actions."
@@ -70,6 +88,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         // says ("Caps can go up or down").  Web's enumeration is the accurate line.
         case .guardrails: return "Autonomy, spending caps, protective stops, schedule, and the trading rulebook."
         case .results: return "P&L, benchmark, and fill receipts."
+        case .admin: return "Operator tools: connections, spend, corpus, host, and transcripts."
         case .more: return "All screens and tab customization."
         }
     }
@@ -146,10 +165,17 @@ final class TabPreferences: ObservableObject {
     /// How many customizable tabs the current window fits.  Set by the shell from the live
     /// width — see `TabBarCapacity.fits`.
     @Published private(set) var capacity: Int
+    /// Mirrors `currentUser.isAdmin`.  Admin is a first-class tab on every device size, but
+    /// it is not offered (and cannot occupy a slot) when the session is not an operator.
+    @Published private(set) var showsAdminTab: Bool
 
     private let userDefaults: UserDefaults
 
-    init(userDefaults: UserDefaults = .standard, capacity: Int = TabBarCapacity.compact) {
+    init(
+        userDefaults: UserDefaults = .standard,
+        capacity: Int = TabBarCapacity.compact,
+        showsAdminTab: Bool = false
+    ) {
         let slots = max(TabBarCapacity.minimum, min(TabBarCapacity.maximum, capacity))
         // Unknown/stale raw values (a screen renamed or removed since the value was saved) and
         // duplicates are dropped silently; a selection that fell below the minimum is treated
@@ -166,8 +192,11 @@ final class TabPreferences: ObservableObject {
 
         self.userDefaults = userDefaults
         self.capacity = slots
+        self.showsAdminTab = showsAdminTab
         self.hasCustomSelection = isCustom
-        self.pinned = isCustom ? Array(restored.prefix(Self.maxTabs)) : Self.autoFill(capacity: slots)
+        self.pinned = isCustom
+            ? Array(restored.prefix(Self.maxTabs))
+            : Self.autoFill(capacity: slots, isAdmin: showsAdminTab)
         if let raw = userDefaults.string(forKey: Self.dynamicStorageKey),
            let tab = AppTab(rawValue: raw), tab != .more {
             self.dynamicTab = tab
@@ -176,9 +205,14 @@ final class TabPreferences: ObservableObject {
 
     /// The bar a window gets before the owner has expressed any preference: the owner-decided
     /// defaults first, then the remaining screens in canonical order, cut to what fits.
-    static func autoFill(capacity: Int) -> [AppTab] {
+    /// Admin, when this login is an operator, takes the first extra slot so an iPad Air 11"
+    /// portrait bar (six slots) shows it without anyone pinning it.
+    static func autoFill(capacity: Int, isAdmin: Bool = false) -> [AppTab] {
         let slots = max(minTabs, min(maxTabs, capacity))
-        let rest = AppTab.customizable.filter { !defaultTabs.contains($0) }
+        var rest = AppTab.customizable(isAdmin: false).filter { !defaultTabs.contains($0) }
+        if isAdmin {
+            rest.insert(.admin, at: 0)
+        }
         return Array((defaultTabs + rest).prefix(slots))
     }
 
@@ -196,12 +230,15 @@ final class TabPreferences: ObservableObject {
     /// Pinned tabs in canonical order — the owner's chosen membership, before the window's
     /// width or the borrowed slot have any say.  (The bar renders declaration order, not the
     /// order tabs happened to be pinned in.)
-    var barTabs: [AppTab] { AppTab.customizable.filter { pinned.contains($0) } }
+    var barTabs: [AppTab] {
+        AppTab.customizable(isAdmin: showsAdminTab).filter { pinned.contains($0) }
+    }
 
     /// What the bar actually renders right now, in render order.  The borrowed occupant, when
     /// there is one, is always the last entry — the slot immediately before More.
     var visibleTabs: [AppTab] {
-        Self.resolve(barTabs: barTabs, dynamicTab: dynamicTab, capacity: capacity)
+        let borrowed = (dynamicTab == .admin && !showsAdminTab) ? nil : dynamicTab
+        return Self.resolve(barTabs: barTabs, dynamicTab: borrowed, capacity: capacity)
     }
 
     /// Pure resolution of (chosen membership, borrowed slot, available slots) -> rendered bar.
@@ -227,6 +264,7 @@ final class TabPreferences: ObservableObject {
     /// the bar would immediately have to fall back from.
     func canToggle(_ tab: AppTab) -> Bool {
         guard tab != .more, tab != Self.requiredTab else { return false }
+        if tab == .admin && !showsAdminTab { return false }
         if pinned.contains(tab) { return pinned.count > Self.minTabs }
         return pinned.count < pinLimit
     }
@@ -254,6 +292,7 @@ final class TabPreferences: ObservableObject {
     /// visible, so tapping a real tab never disturbs the borrowed one.
     func promote(_ tab: AppTab) {
         guard tab != .more, !visibleTabs.contains(tab) else { return }
+        if tab == .admin && !showsAdminTab { return }
         setDynamicTab(tab)
     }
 
@@ -267,7 +306,21 @@ final class TabPreferences: ObservableObject {
         // Nothing is written to storage here — an auto-filled bar is still "no choice made",
         // so rotating an iPad or resizing a Mac window never counts as customizing it.
         if !hasCustomSelection {
-            pinned = Self.autoFill(capacity: clamped)
+            pinned = Self.autoFill(capacity: clamped, isAdmin: showsAdminTab)
+        }
+    }
+
+    /// Called when the snapshot's `currentUser.isAdmin` flips.  An auto-filled bar re-fills
+    /// so a freshly signed-in operator sees Admin on iPad without pinning; a customized bar
+    /// keeps its membership and `barTabs` simply omits Admin when the flag is false.
+    func setShowsAdminTab(_ value: Bool) {
+        guard showsAdminTab != value else { return }
+        showsAdminTab = value
+        if dynamicTab == .admin && !value {
+            setDynamicTab(nil)
+        }
+        if !hasCustomSelection {
+            pinned = Self.autoFill(capacity: capacity, isAdmin: value)
         }
     }
 
@@ -314,7 +367,7 @@ struct MobileControlView: View {
     /// An iPhone keeps the four-tab bar even if it ever reported regular width in landscape;
     /// only an iPad or a Mac window earns extra slots.
     private var isRegularWidth: Bool {
-        horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
+        AppLayout.isRegularWidth(horizontalSizeClass)
     }
 
     private func badgeCount(for tab: AppTab) -> Int {
@@ -328,7 +381,7 @@ struct MobileControlView: View {
     /// More carries what the bar cannot show, so a displaced Activity's unread count is never
     /// invisible just because something borrowed its slot.
     private var moreBadgeCount: Int {
-        AppTab.customizable
+        AppTab.customizable(isAdmin: tabPreferences.showsAdminTab)
             .filter { !bar.contains($0) }
             .reduce(0) { $0 + badgeCount(for: $1) }
     }
@@ -344,6 +397,7 @@ struct MobileControlView: View {
                 // behind.  `apply` sets the focus AFTER moving the selection, so a link's own
                 // jump is not the change that clears it.
                 clearFocus()
+                if target == .admin && !tabPreferences.showsAdminTab { return }
                 if target != .more { tabPreferences.promote(target) }
                 selectedTab = target
             }
@@ -363,63 +417,63 @@ struct MobileControlView: View {
             if bar.count > 0 {
                 let tab = bar[0]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 1 {
                 let tab = bar[1]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 2 {
                 let tab = bar[2]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 3 {
                 let tab = bar[3]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 4 {
                 let tab = bar[4]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 5 {
                 let tab = bar[5]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 6 {
                 let tab = bar[6]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 7 {
                 let tab = bar[7]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
             if bar.count > 8 {
                 let tab = bar[8]
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack { destination(for: tab) }
+                    NavigationStack { destination(for: tab).appChrome() }
                 }
                 .badge(badgeCount(for: tab))
             }
@@ -432,11 +486,17 @@ struct MobileControlView: View {
                         unreadNotificationCount: unreadNotificationCount,
                         open: { selection.wrappedValue = $0 }
                     )
+                    .appChrome()
                 }
             }
             .badge(moreBadgeCount)
         }
         .tint(AppPalette.accent)
+        // Regular width (iPad, wide Mac window) can convert the bar into a sidebar; compact
+        // width keeps the phone tab bar.  The conversion follows horizontalSizeClass, so a
+        // Mac window dragged across the compact/regular boundary reflows instead of staying
+        // stuck on one idiom.
+        .tabViewStyle(.sidebarAdaptable)
         // The window decides how many slots exist.  A Mac window dragged narrower, or an iPad
         // rotated to portrait, re-runs this and the bar re-resolves live.
         .onGeometryChange(for: CGFloat.self) { proxy in
@@ -457,8 +517,15 @@ struct MobileControlView: View {
         .onAppear {
             // A link or notification tap that launched the app can arrive before this view
             // exists, and one that arrives while signed out waits here until it does.
+            tabPreferences.setShowsAdminTab(store.snapshot?.currentUser?.isAdmin == true)
             if selectedTab != .more { tabPreferences.promote(selectedTab) }
             apply(pendingDeepLink)
+        }
+        .onChange(of: store.snapshot?.currentUser?.isAdmin) { _, isAdmin in
+            tabPreferences.setShowsAdminTab(isAdmin == true)
+            if isAdmin != true, selectedTab == .admin {
+                selection.wrappedValue = .home
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .ascSelectTab)) { note in
             if let raw = note.object as? String, let tab = AppTab(rawValue: raw) {
@@ -529,6 +596,8 @@ struct MobileControlView: View {
         case .scan: ScanView()
         case .guardrails: GuardrailsView()
         case .results: ResultsView()
+        case .admin:
+            AdminPortalView(onBackToConsole: { selection.wrappedValue = .home })
         case .more: EmptyView()
         }
     }
@@ -549,8 +618,15 @@ private struct MoreView: View {
 
     var body: some View {
         List {
+            if tabPreferences.showsAdminTab {
+                Section {
+                    row(for: .admin)
+                } header: {
+                    Text("Admin")
+                }
+            }
             Section {
-                ForEach(AppTab.customizable) { tab in
+                ForEach(AppTab.customizable(isAdmin: false)) { tab in
                     row(for: tab)
                 }
             } header: {
