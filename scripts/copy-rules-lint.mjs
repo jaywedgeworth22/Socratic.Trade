@@ -293,7 +293,11 @@ const ABBREVIATION_SUFFIXES = [
   "sec.",
   "std.",
   "art.",
-  "ch."
+  "ch.",
+  // "Ann. Return" (annualized) -- a finance abbreviation this app uses as a Stat label.
+  // Flagged app/admin/backtest-ic/backtest-ic-client.tsx:175 as a sentence boundary; it is not.
+  // Left unguarded, the "fix" would have produced "Ann.  Return", which is wrong.
+  "ann."
 ];
 
 function isAbbreviationBoundary(text, punctuationStart, punctuationEnd) {

@@ -105,7 +105,7 @@ const COST_BASIS_LABEL: Record<CostBasis, string> = {
 
 const COST_BASIS_TITLE: Record<CostBasis, string> = {
   billed: "Charged amount reported by OpenRouter for these calls.",
-  estimated: "Estimated from the app's model price table.  Not a billed amount.",
+  estimated: "Estimated from the app's model price table.  Not a billed amount.",
   mixed: "Some calls report a charged amount; the rest are priced from the app's model price table.",
   none: ""
 };

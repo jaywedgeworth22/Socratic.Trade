@@ -52,6 +52,14 @@ An independent sweep of the final diff for doubled spaces adjacent to operators 
 - But a **real** cross-platform mismatch survives and is not fixed here: web's `field-defs.ts` says "Max per order" while `ios/SocraticTrade/GuardrailsView.swift:69` says "Max Order".  That belongs to the iOS↔web parity work, not to a web lint.
 - Defect 4 had **more sites than cited**: the review named `drilldown-data.ts:674`; two more were found and fixed (`scan/columns.tsx`, `scan/smart-money.tsx`).
 
+## A fourth fixer bug, found when main moved under the branch
+
+Merging 12 commits of main into this branch made the lint fail its own test.  The cause was a **false positive**, not drift: `app/admin/backtest-ic/backtest-ic-client.tsx:175` has the Stat label `"Ann. Return"`, and the lint read `. R` as a sentence boundary.
+
+That matters more than the count.  Left unguarded, the "fix" would have produced `"Ann.  Return"` — the lint would have corrupted a correct label, which is the same failure class as the three bugs above.  `"ann."` joins `ABBREVIATION_SUFFIXES` alongside `"rev."`/`"rul."`, with a comment naming the site so it is not removed later.
+
+Two other test failures in the same run (`task-journal`, `redteam-failure-routing`) were **load timeouts**, not regressions — they ran 65s and 32s while the shared machine was at load ~600, and both pass in isolation.  Recorded so a future reader does not chase them.
+
 ## Verification State
 `tsc --noEmit` clean.  `test/copy-rules-lint.test.ts` 17/17.  Full suite **7208 passed, 51 skipped, 0 failed**.
 
