@@ -24,12 +24,25 @@ drop into the shortest column; the freshness banner and each screen's hero span.
 hardcoded two-column metric grids now widen with the CARD they sit in rather than the screen.
 Coach keeps a readable measure instead of stretching a chat to 1148pt.
 
-**Honest verification limit: no Swift in this change has been compiled and there is no
-screenshot.**  This is a Linux remote container - no xcodebuild, no swiftc, no xcodegen, no
-simulator - and the repo's four-command gate compiles no Swift, so running it would have
-proved nothing.  `ios-build.yml` on the Mac runner is the verification of record and I am
-driving it to green.  Screenshots and a `WrappingHStackTests.swift` -> `LayoutMathTests.swift`
-rename (needs `xcodegen`) are the two follow-ups that need a Mac.
+**The Swift compiles** - the Mac runner printed `** BUILD SUCCEEDED **` twice on this branch
+(05:22:30 and 06:21:48), and `verify` is green.  Nothing could be compiled locally: this is a
+Linux remote container with no xcodebuild, swiftc, xcodegen, or simulator, and the repo's
+four-command gate compiles no Swift anyway.
+
+**The `xcodebuild` CHECK still reads `cancelled`, and it is not this change.**  I got the
+reason wrong the first time and said a cold cache made the build overrun the 30-minute
+timeout; the second attempt built in 21 minutes with nine minutes to spare and was cancelled
+anyway.  The step never exits after xcodebuild returns - `SWBBuildService` outlives it,
+inherits the step's stdout pipe, and the runner waits on the pipe.  Raising the timeout would
+not fix it.  PR #2794 (someone else's iOS PR, merged to main at 04:35 the same day) has the
+identical `cancelled` outcome, so this is red on base too; it merges because `ios-build` is
+not a required check.  Proposed patch (redirect xcodebuild output to a file so the daemon
+inherits a file, not the pipe) is in the rollout note - NOT applied, it is CI infrastructure
+outside this ask and affects every iOS PR.
+
+**Still open, stated plainly:** the XCTests are compiled but have never been executed
+(`ios-build.yml` runs `xcodebuild build`, not `test`), there is no screenshot, and the
+`WrappingHStackTests.swift` -> `LayoutMathTests.swift` rename needs `xcodegen` on a Mac.
 
 Rollout: `docs/rollouts/2026-08-21-ios-adaptive-tabs-ipad-layout.md`.
 

@@ -148,26 +148,76 @@ it, which is precisely the owner's "swapped out … whenever a tab from More lis
 
 ## 4. Verification State
 
-```
-python3  brace/paren/bracket balance scan over ios/**/*.swift   -> clean
+**The Swift compiles.**  `.github/workflows/ios-build.yml` on the Mac runner printed
+`** BUILD SUCCEEDED **` on this branch twice:
+
+| Attempt | Job started | `** BUILD SUCCEEDED **` | Job cancelled | Idle after the build |
+|---|---|---|---|---|
+| 1 (job 96672503491) | 04:54:23 | **05:22:30** | 05:24:37 | ~2 min |
+| 2 (job 96678554410, re-run) | 06:00:37 | **06:21:48** | 06:30:50 | **~9 min** |
+
+`verify` (lint -> tsc -> vitest -> next build) is also green.  Locally, only a brace / paren /
+bracket balance scan over `ios/**/*.swift` could be run — this is a Claude Code remote Linux
+container with no `xcodebuild`, no `swiftc`, no `xcodegen`, and no simulator, and the repo's
+four-command gate compiles no Swift anyway.
+
+### The `xcodebuild` check still reports `cancelled`, and it is NOT this change
+
+> **Correction.**  An earlier version of this note, and the first PR comment, blamed a cold
+> DerivedData cache and a build slower than the 30-minute `timeout-minutes`.  **That was
+> wrong.**  Attempt 2 built in 21 minutes with nine minutes of headroom and was cancelled
+> anyway.  Build duration was never the problem, and raising the timeout would not fix it —
+> the job would simply hang longer.
+
+The step does not exit after `xcodebuild` returns.  Both attempts log
+`Terminate orphan process: pid (SWBBuildService)` during post-job cleanup: Xcode's build
+service daemon outlives `xcodebuild`, inherits the step's stdout pipe, and the Actions runner
+waits on that pipe rather than on the process — so the step hangs until `timeout-minutes`
+kills it, whatever the build did.
+
+**This predates this branch and affects every iOS PR on this runner.**  PR #2794
+(`fix(ios): #2560 release-readiness leftovers`), authored by someone else and merged to `main`
+at 04:35 on the same day, has the identical outcome: `xcodebuild (unsigned)` `cancelled` after
+04:16:13 -> 04:51:13.  It merged regardless, because `ios-build` is not a required check —
+only `verify` is (see the DEEPSEEK review of 2026-08-20, board finding 830c892f).
+
+Proposed one-line-ish fix, NOT applied here because it is CI infrastructure outside the scope
+of this change and it affects every iOS PR in the repo — redirect the build output so the
+lingering daemon inherits a FILE rather than the runner's pipe:
+
+```yaml
+      - name: Build SocraticTrade (generic iOS device, unsigned)
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/xcodebuild.log"
+          # SWBBuildService outlives xcodebuild and inherits its stdout.  Left on the runner's
+          # own pipe it holds the step open until timeout-minutes kills it, even on a build
+          # that already printed BUILD SUCCEEDED.  A file breaks that inheritance.
+          set +e
+          xcodebuild build \
+            -project 'ios/Socratic Trade.xcodeproj' \
+            -scheme SocraticTrade \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            > "$log" 2>&1 < /dev/null
+          status=$?
+          set -e
+          tail -300 "$log"
+          exit $status
 ```
 
-**Nothing else could be run here, and this is the important caveat.**  This is a Claude Code
-remote Linux container: there is no `xcodebuild`, no `swiftc`, no `xcodegen`, and no
-simulator, so **no Swift in this change has been compiled and no screenshot exists.**  The
-repo's own four-command gate (`lint` / `tsc` / `vitest` / `next build`) compiles no Swift
-either and is irrelevant to a change that touches only `ios/**` — running it would prove
-nothing, which is exactly the trap `AGENTS.md` warns about.
-
-The first real compile is `.github/workflows/ios-build.yml` on the Mac runner
-(`mac-xcode26-socratic`), which runs on every PR touching `ios/**`.  Treat its result as the
-verification of record for this change and drive it to green.
+Two follow-ups belong with it, and both are owner calls: making `ios-build` a required check
+in the `main-protection` ruleset (today a broken or absent iOS build cannot block a merge),
+and adding an `xcodebuild test` lane, because the current workflow only ever runs
+`xcodebuild build` — **the XCTests in this change are compiled but have never been executed.**
 
 ## 5. Next Steps & Blockers
 
-1. **Watch `iOS build (Mac runner)` on the PR** and fix whatever it reports.  Highest-risk
-   spots, in order: the `let tab = bar[i]` declaration inside the `TabContentBuilder` `if`
-   blocks; `CardColumns`' `Layout` conformance; `onGeometryChange` on the `TabView`.
+1. **DONE — the Mac runner compiled it.**  The three constructs flagged as highest-risk all
+   hold: the `let tab = bar[i]` declaration inside the `TabContentBuilder` `if` blocks,
+   `CardColumns`' `Layout` conformance, and `onGeometryChange` on the `TabView`.  What remains
+   on CI is the runner-side hang described above, which is not this change's.
 2. **On a Mac session:** take the screenshots this container cannot.  iPad Air 11" simulator
    in both orientations, plus a Mac window dragged from wide to narrow, per the fleet rule
    that `BUILD SUCCEEDED` is not visual QA.
@@ -183,8 +233,10 @@ verification of record for this change and drive it to green.
 
 ## 6. Blockers
 
-- No Swift toolchain in this environment (see Verification State).  Not a blocker on landing
-  the branch, but it is a blocker on claiming the change builds.
+- No Swift toolchain in this environment.  That blocked claiming the change builds until the
+  Mac runner said so; it has now said so twice (see Verification State).
+- The `xcodebuild (unsigned)` check cannot go green on ANY iOS PR until the runner-side
+  `SWBBuildService` hang is fixed.  Not this change's, and not required for merge.
 - `/Users/jay/apps/TRADING-EFFORT-LOG.md` (the branch-neutral live board) does not exist in
   this container.  Only the repo mirror `docs/EFFORT-LOG.md` could be updated; the live board
   needs the same row added from a Mac session.
