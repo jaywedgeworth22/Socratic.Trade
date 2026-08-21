@@ -11,14 +11,27 @@ struct InsightsView: View {
     }
 
     var body: some View {
-        SnapshotScaffold { snapshot in
+        SnapshotScaffold(column: .wide) { snapshot in
+            // The brief reads as the lead paragraph for everything below it, so it keeps the
+            // whole column; only the items it summarises pack into columns.
             InsightsBriefCard(snapshot: snapshot)
-            ForEach(insights(for: snapshot)) { insight in
-                InsightCard(insight: insight)
+            // A `LazyVGrid` directly rather than `AppCardGrid`: these cells are four
+            // different card types, not one `Identifiable` collection, so there is no
+            // element type for `AppCardGrid` to iterate.  `maximum: 520` keeps a two-up
+            // row from stretching each insight back into a letterbox.  Compact width fits
+            // exactly one column, which lays out identically to the `LazyVStack` this
+            // replaces.
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: 14, alignment: .top)],
+                spacing: 14
+            ) {
+                ForEach(insights(for: snapshot)) { insight in
+                    InsightCard(insight: insight)
+                }
+                InsightsCoachCard { selectedTab = .coach }
+                InsightsActionCard(snapshot: snapshot, selectedTab: $selectedTab)
+                InsightsAuthorityCard()
             }
-            InsightsCoachCard { selectedTab = .coach }
-            InsightsActionCard(snapshot: snapshot, selectedTab: $selectedTab)
-            InsightsAuthorityCard()
         }
         .appScreenTitle("Insights")
     }

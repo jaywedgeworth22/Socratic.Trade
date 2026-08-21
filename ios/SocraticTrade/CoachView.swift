@@ -24,6 +24,11 @@ struct CoachView: View {
                 transcript
                 if let lastDraft {
                     CoachDraftCard(draft: lastDraft)
+                        // Capped and re-anchored leading, so the draft, the composer and the
+                        // transcript above them share one column edge instead of each
+                        // picking its own width inside a centred VStack.
+                        .appMeasure(AppLayout.chatRow)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
                 }
@@ -139,6 +144,10 @@ struct CoachView: View {
                 .accessibilityLabel("Send")
             }
         }
+        // Inside the padding and background, so the bar still spans the window while the
+        // field it carries stops at the same edge as the transcript and the draft card.
+        .appMeasure(AppLayout.chatRow)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(AppPalette.background)
@@ -298,8 +307,18 @@ private struct CoachBubble: View {
                 turn.isUser ? AppPalette.accent : AppPalette.card,
                 in: RoundedRectangle(cornerRadius: 16, style: .continuous)
             )
+            // AFTER the background, never inside it: `maxWidth` resolves to the proposal
+            // when the child is smaller, so a cap between the padding and the background
+            // would blow a two-word "ok" up into a 620pt slab of accent colour.  Outside,
+            // the background still hugs the text and only the empty gutter is 620 wide.
+            .appMeasure(AppLayout.chatBubble, alignment: turn.isUser ? .trailing : .leading)
             if !turn.isUser { Spacer(minLength: 36) }
         }
+        // The row, not just the bubble: `Spacer(minLength: 36)` yields all its slack, so an
+        // uncapped row let an assistant reply run the full ~1090pt of an iPad transcript.
+        // Same alignment the Spacer already gives the row, so the pair still sits on
+        // opposite edges of the conversation column.
+        .appMeasure(AppLayout.chatRow, alignment: turn.isUser ? .trailing : .leading)
     }
 }
 

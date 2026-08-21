@@ -106,6 +106,12 @@ struct SymbolInfoSheet: View {
                 }
             }
         }
+        // On iPad and Catalyst a plain sheet is a ~540pt form sheet, which is a keyhole for
+        // a nine-card symbol screen — the Key Stats grid alone wants three columns.  `.page`
+        // is documented as having no effect in compact width, so the iPhone keeps exactly
+        // the edge-to-edge bottom sheet it has today.  Applied in the sheet's OWN body so
+        // every presenter (Markets, Activity) inherits it rather than each remembering.
+        .presentationSizing(.page)
         .task { await load() }
     }
 

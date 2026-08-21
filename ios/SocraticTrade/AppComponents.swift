@@ -361,7 +361,15 @@ enum AppLayout {
     /// A centred message block — empty states, consent copy.
     static let message: CGFloat = 420
     /// One action control that owns its row.
-    static let action: CGFloat = 360
+    ///
+    /// 420, NOT the 360 this started at.  Solitary CTAs live inside an `AppCard`, whose
+    /// interior on the widest iPhone is ~376pt (440pt Pro Max, less 2x16pt of screen
+    /// gutter, less 2x16pt of card padding) — so a 360 ceiling BOUND there and quietly
+    /// narrowed Run Once / Start / Stop by 16pt on Pro Max phones.  That is exactly the
+    /// "iPhone is byte-identical" claim failing, and `AppLayoutTests` caught it.  Any
+    /// ceiling meant to be inert on iPhone has to clear the CARD INTERIOR, not the screen.
+    /// 420 still takes a 1090pt capsule down to a button.
+    static let action: CGFloat = 420
     /// A paired action row, capped as a ROW so the pair still splits it evenly.
     static let actionRow: CGFloat = 520
     /// Label + value pair.
@@ -1166,11 +1174,25 @@ struct SwipeRevealAction: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .accessibilityAction(named: Text(title)) {
-                guard isEnabled else { return }
-                perform()
+            // Both of these are gated on `isEnabled`, not just the closure inside the
+            // action.  They used to be attached unconditionally with a `guard isEnabled
+            // else { return }` inside — which meant a disabled row still ADVERTISED the
+            // rotor action (doing nothing when invoked) and still promised a swipe
+            // gesture that was switched off.  That was invisible while `isEnabled` only
+            // tracked "is this order cancellable", and became a real VoiceOver bug the
+            // moment regular width started disabling the swipe itself: an iPad user got a
+            // dead "Cancel Order" rotor entry and a hint describing a gesture that no
+            // longer exists.  Nothing is lost when it is off — the in-row Cancel and
+            // trash buttons are separately labelled and still there.
+            // `accessibilityActions`, not `accessibilityAction(named:)`: the latter has no
+            // conditional form, so the entry was always advertised and a `guard` inside it
+            // only made it silently do nothing — which is worse than absent.
+            .accessibilityActions {
+                if isEnabled {
+                    Button(title) { perform() }
+                }
             }
-            .accessibilityHint("Swipe left to \(title.lowercased()), or use this action.")
+            .accessibilityHint(isEnabled ? "Swipe left to \(title.lowercased()), or use this action." : "")
             .offset(x: offset)
             .background(alignment: .trailing) {
                 if offset < 0 {

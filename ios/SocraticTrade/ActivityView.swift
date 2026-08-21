@@ -6,7 +6,7 @@ struct ActivityView: View {
     @State private var notificationFilter: NotificationHistoryFilter = .unread
 
     var body: some View {
-        SnapshotScaffold { snapshot in
+        SnapshotScaffold(column: .wide) { snapshot in
             NotificationHistorySection(
                 snapshot: snapshot,
                 filter: $notificationFilter,
@@ -73,7 +73,7 @@ private struct NotificationHistorySection: View {
                     systemImage: "bell"
                 )
             } else {
-                ForEach(visible) { item in
+                AppCardGrid(data: visible, minimum: 340) { item in
                     NotificationHistoryRow(
                         item: item,
                         acking: ackingIds.contains(item.id),
@@ -266,7 +266,7 @@ private struct FillActivitySection: View {
                     systemImage: "tray"
                 )
             } else {
-                ForEach(recentFills) { fill in
+                AppCardGrid(data: recentFills, minimum: 340) { fill in
                     FillActivityRow(fill: fill, presentedItem: $presentedItem)
                 }
             }
@@ -338,7 +338,7 @@ private struct CommandActivitySection: View {
                     systemImage: "list.bullet"
                 )
             } else {
-                ForEach(commands) { command in
+                AppCardGrid(data: commands, minimum: 340) { command in
                     CommandActivityRow(command: command)
                 }
             }

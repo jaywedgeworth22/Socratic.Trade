@@ -6,7 +6,7 @@ struct ResultsView: View {
     @State private var presentedSymbol: PresentedSymbol?
 
     var body: some View {
-        SnapshotScaffold { snapshot in
+        SnapshotScaffold(column: .wide) { snapshot in
             headline(snapshot)
             metrics(snapshot)
             benchmark(snapshot)
@@ -158,7 +158,7 @@ struct ResultsView: View {
                     systemImage: "doc.text"
                 )
             } else {
-                ForEach(fills) { fill in
+                AppCardGrid(data: fills, minimum: 340) { fill in
                     FillReceiptRow(fill: fill, presentedSymbol: $presentedSymbol)
                 }
             }

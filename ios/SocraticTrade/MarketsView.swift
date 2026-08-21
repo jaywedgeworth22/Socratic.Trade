@@ -18,7 +18,7 @@ struct MarketsView: View {
     @State private var presentedItem: PresentedMarketItem?
 
     var body: some View {
-        SnapshotScaffold(scrollTarget: focusedSymbol) { snapshot in
+        SnapshotScaffold(scrollTarget: focusedSymbol, column: .wide) { snapshot in
             ScanShortcutCard { selectedTab = .scan }
             PositionsSection(positions: snapshot.positions, presentedItem: $presentedItem)
             OrdersSection(
@@ -78,6 +78,8 @@ private enum MarketsSheet: String, Identifiable {
 }
 
 private struct ScanShortcutCard: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     let openScan: () -> Void
 
     var body: some View {
@@ -91,13 +93,21 @@ private struct ScanShortcutCard: View {
                 Button(action: openScan) {
                     Label("Open Scan", systemImage: "tablecells")
                         .font(.appBody.weight(.semibold))
-                        .frame(maxWidth: .infinity)
+                        // One CTA owning its row: still full width on the phone, capped at the
+                        // action width once the card itself is 820pt across.
+                        .frame(maxWidth: horizontalSizeClass == .regular ? AppLayout.action : .infinity)
                         .frame(minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(AppPalette.accent)
             }
         }
+        // This screen's column is `.wide` (1120) for the grids below, which leaves this single
+        // card stretching the full width.  Cap it to the standard column, then re-expand
+        // leading: the scaffold's stack is centre-aligned, so the cap alone would float the
+        // card in the middle instead of starting it on the grids' leading edge.
+        .appMeasure(AppLayout.Column.standard.maxWidth)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -115,7 +125,7 @@ private struct PositionsSection: View {
                     systemImage: "square.stack.3d.up"
                 )
             } else {
-                ForEach(positions) { position in
+                AppCardGrid(data: positions, minimum: 320) { position in
                     PositionRow(position: position, presentedItem: $presentedItem)
                 }
             }
@@ -191,7 +201,7 @@ private struct OrdersSection: View {
                     systemImage: "doc.text.magnifyingglass"
                 )
             } else {
-                ForEach(orders) { order in
+                AppCardGrid(data: orders, minimum: 380) { order in
                     OrderRow(
                         order: order,
                         accountNumber: accountNumber,
@@ -213,6 +223,7 @@ private struct OrdersSection: View {
 
 private struct OrderRow: View {
     @EnvironmentObject private var store: MobileStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var confirmingCancel = false
 
     let order: EquityOrder
@@ -280,6 +291,21 @@ private struct OrderRow: View {
                         .buttonStyle(.bordered)
                         .disabled(!canCancel)
                         .accessibilityLabel("Cancel \(order.symbol) \(order.side.lowercased()) order")
+                        // Anchored to the Cancel button, not the row root.  On iPad and Mac
+                        // Catalyst a confirmationDialog presents as a POPOVER: from the row it
+                        // pointed at the middle of a wide card, and now that the cards sit side
+                        // by side in a grid there was no way to tell WHICH order was about to be
+                        // cancelled.  In compact width this is a bottom sheet either way.
+                        .confirmationDialog(
+                            OrderCancellation.confirmationTitle(order),
+                            isPresented: $confirmingCancel,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Cancel Order", role: .destructive, action: cancelOrder)
+                            Button("Keep It Working", role: .cancel) {}
+                        } message: {
+                            Text(OrderCancellation.confirmationMessage(order))
+                        }
                     }
                 }
             }
@@ -290,19 +316,16 @@ private struct OrderRow: View {
             title: "Cancel",
             systemImage: "xmark.circle",
             tint: AppPalette.negative,
-            isEnabled: showsCancel && canCancel
+            isEnabled: showsCancel && canCancel && horizontalSizeClass == .compact
         ) {
             confirmingCancel = true
         }
-        .confirmationDialog(
-            OrderCancellation.confirmationTitle(order),
-            isPresented: $confirmingCancel,
-            titleVisibility: .visible
-        ) {
-            Button("Cancel Order", role: .destructive, action: cancelOrder)
-            Button("Keep It Working", role: .cancel) {}
-        } message: {
-            Text(OrderCancellation.confirmationMessage(order))
+        // The dialog now lives inside `if showsCancel`, and that flag carries a server
+        // capability check that can flip false and back on reconnect.  Tearing a presentation
+        // down does not write the binding back, so clear it here — otherwise the dialog
+        // re-presents itself the moment the capability returns.
+        .onChange(of: showsCancel) { _, shows in
+            if !shows { confirmingCancel = false }
         }
     }
 
@@ -357,6 +380,11 @@ private struct WatchlistSection: View {
                                 !store.canSubmit("watchlist.add")
                             )
                     }
+                    // Field plus its button is an entry row, not a banner.  The second frame is
+                    // required: this VStack is centre-aligned, so the cap alone would centre the
+                    // row while the chips below it stay leading.
+                    .appMeasure(AppLayout.entryRow)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if items.isEmpty {
                         Text("No symbols watched yet.")
@@ -493,7 +521,7 @@ private struct AlertsSection: View {
                     systemImage: "bell"
                 )
             } else {
-                ForEach(alerts) { alert in
+                AppCardGrid(data: alerts, minimum: 300) { alert in
                     AlertRow(alert: alert, presentedSymbol: $presentedSymbol)
                 }
             }
@@ -503,6 +531,7 @@ private struct AlertsSection: View {
 
 private struct AlertRow: View {
     @EnvironmentObject private var store: MobileStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var confirmingDeletion = false
 
     let alert: PriceAlert
@@ -556,6 +585,20 @@ private struct AlertRow: View {
                 }
                 .disabled(store.isBusy(operationID) || !store.canSubmit("alert.delete"))
                 .accessibilityLabel("Delete \(alert.symbol) alert")
+                // Anchored to the trash button, not the row root: the iPad/Catalyst popover has
+                // to point at the control that fires it, or a grid of alert cards gives no clue
+                // which alert is about to be deleted.  No `showsCancel`-style guard is needed —
+                // this button is unconditional.
+                .confirmationDialog(
+                    "Delete \(alert.symbol) price alert?",
+                    isPresented: $confirmingDeletion,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete Alert", role: .destructive, action: deleteAlert)
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This removes a monitoring safeguard.  You can create it again later.")
+                }
             }
         }
         // Same ceremony as the trash button: the swipe opens the existing confirmation dialog.
@@ -564,18 +607,9 @@ private struct AlertRow: View {
             systemImage: "trash",
             tint: AppPalette.negative,
             isEnabled: !store.isBusy(operationID) && store.canSubmit("alert.delete")
+                && horizontalSizeClass == .compact
         ) {
             confirmingDeletion = true
-        }
-        .confirmationDialog(
-            "Delete \(alert.symbol) price alert?",
-            isPresented: $confirmingDeletion,
-            titleVisibility: .visible
-        ) {
-            Button("Delete Alert", role: .destructive, action: deleteAlert)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This removes a monitoring safeguard.  You can create it again later.")
         }
     }
 
