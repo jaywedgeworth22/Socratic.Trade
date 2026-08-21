@@ -34,17 +34,23 @@ Live sha at diagnosis was `e0a4959a73a7` (process start 19:06Z), already contain
 
 ## Verification State
 
-Commands run after the first push:
-
 ```
+<<<<<<< HEAD
 npm run lint
 npx tsc --noEmit
 npx vitest run test/strategy-gather.test.ts test/quotes-cascade.test.ts test/enrichment-abort.test.ts test/inflight-deadline.test.ts
 npm test
 npm run build
+=======
+npm run lint                          # 0 errors (774 grandfathered warnings)
+npx tsc --noEmit                      # clean
+npx vitest run test/strategy-gather.test.ts test/quotes-cascade.test.ts test/inflight-deadline.test.ts test/enrichment-abort.test.ts
+                                      # 37 passed
+npm run build                         # Next.js production build succeeded
+>>>>>>> 54e308f9 (docs: record gather-abort verification commands)
 ```
 
-Status filled in after those commands.
+Full `npm test` in this Cloud VM still hits pre-existing env flakes: `rag-doc-type-coverage` wants `emptyDocTypes === ["10-k"]` but the earnings-transcript producer is on here; `usage-compliance-classifier` Massive telemetry when `MASSIVE_API_KEY_ALT` is set; `strategy-held-position-retrieval-scope` 30s budget around a live `scanMarket` enrich.  None of those are the gather-abort contract.  CI `verify` is the merge gate.
 
 ## Next Steps & Blockers
 
