@@ -356,6 +356,17 @@ describe("assert-rth-deploy-latch CLI", () => {
   });
 });
 
+describe("rth-deploy-drain.sh", () => {
+  it("fails the scheduled job when Coolify cannot be nudged", () => {
+    const drain = readFileSync(join(repoRoot, "scripts/rth-deploy-drain.sh"), "utf8");
+    expect(drain).toMatch(/could not nudge Coolify/);
+    expect(drain).toMatch(/exit 1/);
+    expect(drain).not.toMatch(/could not nudge Coolify[\s\S]{0,200}exit 0/);
+    expect(drain).toMatch(/COOLIFY_DEPLOY/);
+    expect(drain).toMatch(/\/api\/v1\/deploy\?uuid=/);
+  });
+});
+
 describe("Coolify build-time latch wiring", () => {
   it("fails the image build, not the running container", () => {
     const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");

@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-08-21 GROK — RTH drain actually nudges Coolify
+
+Live sha e0a4959a73a7 is 39 commits behind main.  Weekday Coolify builds are RTH-latched on purpose (keep last healthy container).  The 21:20 UTC drain then exited 0 without a nudge because GITHUB_TOKEN cannot redeliver hooks and COOLIFY_DEPLOY_WEBHOOK_URL was unset.
+
+Drain now uses GH_PAT for redeliver, Coolify /api/v1/deploy with COOLIFY_DEPLOY as fallback, and fails the job when neither works.  Do not HOTFIX during cash hours.  Next after-close drain (or workflow_dispatch after 16:00 ET) should advance live sha.
+
+Rollout: docs/rollouts/2026-08-21-rth-drain-nudge.md.  Board 99ab01c7.
+
+# Current Status
+
 ## 2026-08-21 CURSOR — native weekly value + momentum screens
 
 Option 3 of the Perplexity-ritual ask: ST now builds those weekly screens from its own tape.  Value = large-cap ≥ $10b, price > $5, volume ≥ 500k, trailing P/E > 0 and ≤ 10, within 10% of the 52-week low.  Momentum = the same floor ranked by 5-day return, with ROC/RSI/MAs when bars exist.  Full `quotesBySymbol` universe (not the ranked cut).  Missing fields exclude the name.  Dashboard is cache/value-only; scheduler + `GET /api/scan/weekly-digest?refresh=1` do the bar work.  Cards on Macro + Scan; thin iOS Scan card; Green gets `weeklyScreens` as advisory DATA (`agentic-strategy@2.15.0`).  No Perplexity scrape/key, no auto-trade, no scoring/policy change.
