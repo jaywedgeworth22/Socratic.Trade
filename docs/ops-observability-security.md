@@ -1,5 +1,8 @@
 # Ops Observability, Secrets, and Backup
 
+Cross-cutting security and reliability audit (auth, isolation, Litestream DR, alerting, spend):
+`docs/audits/2026-08-17-security-reliability.md` (2026-08-17, report-only).
+
 This app now has opt-in scaffolding for the seven selected tools:
 
 - **Infisical**: use `npm run dev:secrets`, `npm run build:secrets`, or
