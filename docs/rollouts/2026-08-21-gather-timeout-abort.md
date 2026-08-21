@@ -10,12 +10,16 @@ The 8-minute gather deadline was a pure `Promise.race`.  When it fired, `runStra
 
 `gatherStrategyMarket` now passes an `AbortController` into `withDeadline`, threads that signal through `scanMarket` enrichment and `fetchFreshQuotesCascade` levels, and if the live scan still times out reuses `newestPersistedMarketScan` (real last tape) plus a 45s quote refresh.  No last-good row still fails the run.  The run audits `strategy_gather_used_last_good`.
 
+The first revision dropped the signal on the keyed/scarce enrichment waves (`paidContext` / `scarceContext` were `{ coveredFields }` only).  That is the Finnhub wave — 5 paced free-tier calls per symbol at ~1.2s — so an 8-minute abort left the queue running and the next account stacked another scan.  Keyed/scarce now keep `signal`, Finnhub `getJson` combines it with the 6s per-call timeout, and `scanMarket` rethrows an aborted enrich instead of swallowing it as "Enrichment failed."  Wave B is keyed (has an API key).  Owner has no paid Finnhub account; Finnhub stays on the free 60/min key, paced at 50/min.
+
 - `src/lib/strategy-gather.ts` (new)
 - `src/lib/strategy.ts`
 - `src/lib/quotes-cascade.ts`
 - `src/lib/market.ts`
 - `src/lib/data-providers.ts`
 - `test/strategy-gather.test.ts` (new)
+- `test/enrichment-abort.test.ts` (new — keyed-wave signal)
+- `src/lib/data-catalog.ts` (Finnhub notes: keyed Wave B, not a paid plan)
 - `test/quotes-cascade.test.ts`
 - `STATUS.md`
 - `PLAN.md`
@@ -25,23 +29,23 @@ The 8-minute gather deadline was a pure `Promise.race`.  When it fired, `runStra
 
 ## Decisions & Trade-offs
 
-Did not raise the 8-minute cap.  A longer deadline would let zombies run even longer.  Did not skip connected brokers in cascade 1b (Robinhood/Tradier/Public still contribute market data).  Last-good is yesterday's completed scan, not a fabricated book; the scan warning names the seed timestamp.  Did not HOTFIX during regular hours — Coolify stays on the RTH latch; this lands after the cash close with the rest of `main`.
+Did not raise the 8-minute cap.  A longer deadline would let zombies run even longer.  Did not skip connected brokers in cascade 1b (Robinhood/Tradier/Public still contribute market data).  Last-good is yesterday's completed scan, not a fabricated book; the scan warning names the seed timestamp.  Did not HOTFIX during regular hours — Coolify stays on the RTH latch; this lands after the cash close with the rest of `main`.  Did not rename the `costTier: "paid"` enum (that still means "has an API key"); owner-facing copy for Wave B is now "keyed".
 
 Live sha at diagnosis was `e0a4959a73a7` (process start 19:06Z), already containing #2852 and #2854.  Those fixes were not the miss.  Weekly screens (#3009) are on `main` and not live yet.
 
 ## Verification State
 
-Commands run after the first push:
-
 ```
-npm run lint
-npx tsc --noEmit
-npx vitest run test/strategy-gather.test.ts test/quotes-cascade.test.ts test/inflight-deadline.test.ts
-npm test
-npm run build
+npm run lint                          # 0 errors (774 grandfathered warnings)
+npx tsc --noEmit                      # clean
+npx vitest run test/strategy-gather.test.ts test/quotes-cascade.test.ts test/inflight-deadline.test.ts test/enrichment-abort.test.ts
+                                      # 37 passed
+npm run build                         # Next.js production build succeeded
 ```
 
-Status filled in after those commands.
+Full `npm test` in this Cloud VM still hits pre-existing env flakes: `rag-doc-type-coverage` wants `emptyDocTypes === ["10-k"]` but the earnings-transcript producer is on here; `usage-compliance-classifier` Massive telemetry when `MASSIVE_API_KEY_ALT` is set; `strategy-held-position-retrieval-scope` 30s budget around a live `scanMarket` enrich.  None of those are the gather-abort contract.  CI `verify` is the merge gate.
+
+Owner rematch of `origin/main` (`2e2c3286`, #3008 / #3019) committed leftover `<<<<<<< HEAD` markers in this Verification block.  Resolved to the recorded local-gate commands (no fabricated `npm test` pass).
 
 ## Next Steps & Blockers
 
