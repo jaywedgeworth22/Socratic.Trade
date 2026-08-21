@@ -117,6 +117,10 @@ describe("estimateLlmCostUsd — cache-aware pricing", () => {
 
 describe("remapOpenRouterTelemetry — family identity", () => {
   it("maps OpenRouter Gemini Flash wire slugs onto gemini-flash-latest", () => {
+    expect(remapOpenRouterTelemetry("openrouter", "~google/gemini-flash-latest")).toEqual({
+      provider: "gemini",
+      model: "gemini-flash-latest"
+    });
     expect(remapOpenRouterTelemetry("openrouter", "google/gemini-3.7-flash")).toEqual({
       provider: "gemini",
       model: "gemini-flash-latest"

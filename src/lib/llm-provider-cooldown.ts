@@ -67,7 +67,7 @@ const exhaustionAlerts = createDurableMap<number>("llm-provider-cooldown-alert")
 
 function cooldownProvider(provider: string, model?: string | null): string {
   if (provider === "openrouter" && model && model.includes("/")) {
-    const raw = model.split("/")[0];
+    const raw = model.replace(/^~/, "").split("/")[0];
     if (raw === "google") return "gemini";
     if (raw === "mistralai") return "mistral";
     return raw;

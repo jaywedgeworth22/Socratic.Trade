@@ -157,12 +157,21 @@ export function policyStubForConnectedAccount(account: ConnectedAccount): Tradin
  * Market data is USER-scoped (all connected brokers share one cascade), not duplicated
  * per trading account.
  */
+function throwIfCascadeAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error("Quote cascade cancelled.");
+}
+
 export async function fetchFreshQuotesCascade(
   symbols: string[],
   userId: string,
   accountNumber?: string,
-  connectedAccountId?: string
+  connectedAccountId?: string,
+  options?: { signal?: AbortSignal }
 ): Promise<Record<string, BrokerQuote>> {
+  const signal = options?.signal;
+  throwIfCascadeAborted(signal);
   const nowMs = Date.now();
   const fetchedAtIso = new Date(nowMs).toISOString();
   const normalizedSymbols = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
@@ -228,6 +237,7 @@ export async function fetchFreshQuotesCascade(
   };
 
   // --- LEVEL 1a: Active Broker Gateway ---
+  throwIfCascadeAborted(signal);
   let venueMode: VenueQuoteMode = "realtime";
   let activeConnectedId: string | undefined;
   try {
@@ -249,6 +259,7 @@ export async function fetchFreshQuotesCascade(
   }
 
   // --- LEVEL 1b: ALL other connected brokers for this user (market-data only) ---
+  throwIfCascadeAborted(signal);
   if (pendingSymbols.length > 0) {
     try {
       for (const account of listConnectedAccounts(userId)) {
@@ -257,6 +268,7 @@ export async function fetchFreshQuotesCascade(
         if (accountNumber && account.accountNumber && account.accountNumber === accountNumber) continue;
         if (!account.accountNumber) continue;
         try {
+          throwIfCascadeAborted(signal);
           const stub = policyStubForConnectedAccount(account);
           const gateway = getBrokerGateway(stub, userId);
           const brokerQuotes = await gateway.getEquityQuotes(account.accountNumber, pendingSymbols);
@@ -280,6 +292,7 @@ export async function fetchFreshQuotesCascade(
   // Fresher external quotes would mis-price paper fills against a delayed OMS.
 
   // --- LEVEL 2: Alpaca Snapshots API ---
+  throwIfCascadeAborted(signal);
   if (pendingSymbols.length > 0 && allowExternal) {
     try {
       const alpacaData = resolveAlpacaMarketData(userId);
@@ -315,6 +328,7 @@ export async function fetchFreshQuotesCascade(
   }
 
   // --- LEVEL 3: Yahoo Finance Batch API ---
+  throwIfCascadeAborted(signal);
   if (pendingSymbols.length > 0 && allowExternal) {
     try {
       const yahooBatch = await fetchYahooFinanceQuotesBatch(pendingSymbols);
@@ -349,6 +363,7 @@ export async function fetchFreshQuotesCascade(
   }
 
   // --- LEVEL 4: Yahoo Finance Single Quote API ---
+  throwIfCascadeAborted(signal);
   if (pendingSymbols.length > 0 && allowExternal) {
     try {
       const singleResults = await Promise.all(
@@ -384,6 +399,7 @@ export async function fetchFreshQuotesCascade(
   }
 
   // --- LEVEL 5: ROIC.ai Profile API ---
+  throwIfCascadeAborted(signal);
   if (pendingSymbols.length > 0 && allowExternal) {
     try {
       const roic = resolveApiKeyWithSource("roic", userId);

@@ -300,6 +300,9 @@ export interface EnrichmentContext {
    *  analyst actually came from it — otherwise its independent vote must still be fetched
    *  and blended. Absent/unknown source → don't skip (treat as a distinct vote). */
   analystSource?: Record<string, string>;
+  /** Strategy gather / interactive scan deadline.  Checked between enrichment waves
+   *  so an abandoned 8-minute gather stops starting paid RapidAPI work. */
+  signal?: AbortSignal;
 }
 
 export interface MarketEnrichmentProvider {
@@ -1327,16 +1330,26 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     return this.lastCoverageReport;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
+    if (context?.signal?.aborted) {
+      throw context.signal.reason instanceof Error
+        ? context.signal.reason
+        : new Error("Enrichment cancelled.");
+    }
     this.contributingNames = new Set();
     this.lastCoverageReport = null;
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
     // Each provider's result set, paired with its name, kept in REGISTRATION order
     // so the first-wins merge below is unchanged regardless of how we fetched.
     type ProviderRun = { name: string; data: Record<string, SymbolEnrichment>; failure?: ProviderFailureReceipt };
-    const run = (p: MarketEnrichmentProvider, syms: string[], context?: EnrichmentContext): Promise<ProviderRun> =>
-      p
-        .enrich(syms, context)
+    const run = (p: MarketEnrichmentProvider, syms: string[], runContext: EnrichmentContext | undefined = context): Promise<ProviderRun> => {
+      if (runContext?.signal?.aborted) {
+        throw runContext.signal.reason instanceof Error
+          ? runContext.signal.reason
+          : new Error("Enrichment cancelled.");
+      }
+      return p
+        .enrich(syms, runContext)
         .then((data) => ({ name: p.name, data }))
         .catch((error) => ({
           name: p.name,
@@ -1349,6 +1362,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
             errorKind: error instanceof Error ? error.name : "unknown"
           }
         }));
+    };
 
     // ── Wave split ────────────────────────────────────────────────────────────
     // FREE-FIRST (default ON):
@@ -1447,6 +1461,11 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       }
 
       // ── Wave B: paid non-scarce, gap-only ───────────────────────────────────
+      if (context?.signal?.aborted) {
+        throw context.signal.reason instanceof Error
+          ? context.signal.reason
+          : new Error("Enrichment cancelled.");
+      }
       if (paidIndexes.length > 0) {
         const filledAfterFree = buildFilledBySymbol(freeIndexes);
         const gapSymbols = normalized.filter((symbol) =>
@@ -1520,6 +1539,11 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       });
     }
 
+    if (context?.signal?.aborted) {
+      throw context.signal.reason instanceof Error
+        ? context.signal.reason
+        : new Error("Enrichment cancelled.");
+    }
     if (scarceIndexes.length > 0) {
       // Prior waves' actual fills. A provider that threw contributed `{}`, so its fields read as
       // NOT covered and the scarce tier can still step in — failure must never suppress failover.
