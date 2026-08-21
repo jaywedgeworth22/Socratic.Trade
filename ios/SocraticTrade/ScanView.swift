@@ -247,49 +247,70 @@ private struct ScanRow: View {
         "\(isWatched ? "watchlist.remove" : "watchlist.add"):\(candidate.symbol)"
     }
 
+    private var industryLine: String? {
+        let raw = [candidate.industry, candidate.sector]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+        return raw?.lowercased()
+    }
+
     var body: some View {
         AppCard(padding: 12) {
             HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        SymbolTapButton(symbol: candidate.symbol, logoSize: 22, font: .appHeadline) {
-                            presentedSymbol = PresentedSymbol(symbol: candidate.symbol)
+                Button {
+                    presentedSymbol = PresentedSymbol(symbol: candidate.symbol)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                TickerLogo(symbol: candidate.symbol, size: 22)
+                                Text(candidate.symbol)
+                                    .font(.appHeadline)
+                                    .foregroundStyle(Color.primary)
+                            }
+                            if let companyName = candidate.companyName, !companyName.isEmpty {
+                                Text(companyName)
+                                    .font(.appCaption.weight(.semibold))
+                                    .foregroundStyle(Color.primary)
+                                    .lineLimit(1)
+                            }
+                            if let industryLine {
+                                Text(industryLine)
+                                    .font(.appCaption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        Button {
-                            toggleWatch()
-                        } label: {
-                            Image(systemName: isWatched ? "star.fill" : "star")
-                                .font(.appBody)
-                                .foregroundStyle(isWatched ? AppPalette.warning : .secondary)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
+                        Spacer(minLength: 0)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(scoreLabel)
+                                .font(.appHeadline)
+                                .foregroundStyle(Color.primary)
+                            Text(AppFormat.money(candidate.price))
+                                .font(.appSubheadline)
+                                .foregroundStyle(Color.primary)
+                            Text(AppFormat.percent(candidate.intradayChangePct, signed: true))
+                                .font(.appCaption)
+                                .foregroundStyle(changeColor)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(store.isBusy(watchOperation) || !store.canSubmit(isWatched ? "watchlist.remove" : "watchlist.add"))
-                        .accessibilityLabel(isWatched ? "Remove \(candidate.symbol) from Watchlist" : "Add \(candidate.symbol) to Watchlist")
                     }
-                    if let companyName = candidate.companyName, !companyName.isEmpty {
-                        Text(companyName)
-                            .font(.appCaption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    if let sector = candidate.sector, !sector.isEmpty {
-                        Text(sector.lowercased())
-                            .font(.appCaption2)
-                            .foregroundStyle(.secondary)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(scoreLabel)
-                        .font(.appHeadline)
-                    Text(AppFormat.money(candidate.price))
-                        .font(.appSubheadline)
-                    Text(AppFormat.percent(candidate.intradayChangePct, signed: true))
-                        .font(.appCaption)
-                        .foregroundStyle(changeColor)
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(candidate.symbol) company info")
+
+                Button {
+                    toggleWatch()
+                } label: {
+                    Image(systemName: isWatched ? "star.fill" : "star")
+                        .font(.appBody)
+                        .foregroundStyle(isWatched ? AppPalette.warning : .secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(store.isBusy(watchOperation) || !store.canSubmit(isWatched ? "watchlist.remove" : "watchlist.add"))
+                .accessibilityLabel(isWatched ? "Remove \(candidate.symbol) from Watchlist" : "Add \(candidate.symbol) to Watchlist")
             }
         }
     }

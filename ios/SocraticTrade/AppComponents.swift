@@ -94,6 +94,22 @@ enum AppFormat {
         return date.formatted(.relative(presentation: .named))
     }
 
+    /// Last strategy start.  Never talks about the cadence clock — a missing
+    /// stamp is "never", not "not scheduled".
+    static func lastRun(_ value: String?) -> String {
+        guard let date = date(value) else { return "never" }
+        return date.formatted(.relative(presentation: .named))
+    }
+
+    /// Next cadence fire.  "not scheduled" only when autonomy is off.  An
+    /// Autopilot account with a missing stamp is due at the next session.
+    static func nextRun(_ value: String?, autonomyActive: Bool) -> String {
+        if let date = date(value) {
+            return date.formatted(.relative(presentation: .named))
+        }
+        return autonomyActive ? "due at next session" : "not scheduled"
+    }
+
     /// Authority glossary: never show raw propose/decide — Ask-first / Autopilot (console parity).
     /// This renders mid-sentence and inside status pills — both VALUE contexts, so it is
     /// sentence case, matching web `labels.ts` and its siblings "Exit-only" / "Winding down".

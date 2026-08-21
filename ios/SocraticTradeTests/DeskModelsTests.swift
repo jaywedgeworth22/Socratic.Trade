@@ -41,7 +41,7 @@ final class DeskModelsTests: XCTestCase {
         let json = Data(#"""
         {
           "topCandidates": [
-            {"symbol":"AAPL","price":210.5,"score":81.2,"intradayChangePct":1.4,"sector":"Technology"},
+            {"symbol":"AAPL","price":210.5,"score":81.2,"intradayChangePct":1.4,"sector":"Technology","industry":"Consumer Electronics","companyName":"Apple Inc."},
             {"symbol":"MSFT"}
           ],
           "asOf":"2026-08-13T15:00:00.000Z",
@@ -53,6 +53,8 @@ final class DeskModelsTests: XCTestCase {
         let scan = try JSONDecoder().decode(MarketScanResponse.self, from: json)
         XCTAssertEqual(scan.topCandidates.count, 2)
         XCTAssertEqual(scan.topCandidates[0].symbol, "AAPL")
+        XCTAssertEqual(scan.topCandidates[0].companyName, "Apple Inc.")
+        XCTAssertEqual(scan.topCandidates[0].industry, "Consumer Electronics")
         XCTAssertEqual(scan.topCandidates[0].price, 210.5)
         XCTAssertEqual(scan.topCandidates[1].symbol, "MSFT")
         XCTAssertNil(scan.topCandidates[1].price)

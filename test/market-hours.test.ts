@@ -5,6 +5,7 @@ import {
   isRunAllowedNow,
   isTradingDay,
   nextMarketOpenHint,
+  nextSessionOpenMs,
   nextTradingDayStart,
   previousTradingDayStart
 } from "../src/lib/market-hours";
@@ -182,6 +183,20 @@ describe("nextMarketOpenHint (item 29: cheap next-open hint for the paused/marke
 
   it("skips the weekend for a Friday-evening check", () => {
     expect(nextMarketOpenHint(etDate("2026-06-12", 18, 0), false)).toBe("Mon, Jun 15, 9:30 AM ET");
+  });
+});
+
+describe("nextSessionOpenMs", () => {
+  it("returns Thursday 9:30 ET after Wednesday post-market for regular hours", () => {
+    expect(nextSessionOpenMs(etDate("2026-06-10", 18, 0).getTime(), false)).toBe(
+      etDate("2026-06-11", 9, 30).getTime()
+    );
+  });
+
+  it("returns Thursday 4:00 ET after Wednesday post-market when extended hours are on", () => {
+    expect(nextSessionOpenMs(etDate("2026-06-10", 18, 0).getTime(), true)).toBe(
+      etDate("2026-06-11", 4, 0).getTime()
+    );
   });
 });
 
