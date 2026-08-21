@@ -7,6 +7,10 @@ enum AppTab: String, CaseIterable, Identifiable {
     /// Holdings, orders, and watchlist (tab label "Assets"; same chart symbol).
     case markets
     case activity
+    /// Operator portal.  Declared here so canonical bar order matches auto-fill:
+    /// the first extra slot after the four defaults, not after Results.  Shown
+    /// only when the session's `currentUser.isAdmin` is true.
+    case admin
     /// Snapshot brief + rule-based attention items — not the web console Coach chat.
     case insights
     /// Live Coach conversation (POST /api/chat).
@@ -17,8 +21,6 @@ enum AppTab: String, CaseIterable, Identifiable {
     case guardrails
     /// Read-only P&L and tax-relevant fill receipts.
     case results
-    /// Operator portal.  Shown only when the session's `currentUser.isAdmin` is true.
-    case admin
     /// Every screen + tab customization. Always present, always last — the iOS
     /// counterpart of the web mobile bar's "More" sheet (app/console/components/nav.tsx).
     case more

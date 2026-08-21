@@ -98,9 +98,20 @@ iOS XCTest additions (`TabPreferencesTests`, `RunStateDerivationTests`,
 `DeskModelsTests`) are not executed here.  First Swift compile is
 `.github/workflows/ios-build.yml` on the Mac runner (`ios-build` on PR #3028).
 
+`ios-build` run 32535072344 (head `cb44aeecef`, later docs-only commits did not
+re-run the Mac job): BUILD SUCCEEDED, 237 XCTests, 1 failure.
+`TabPreferencesTests.testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin`
+expected `[home, proposals, markets, activity, admin, insights]` and got
+`[..., insights, admin]`.  Cause: `barTabs` filters `AppTab.allCases`, and
+`.admin` was declared after `.results`, so canonical order buried it.  Fix:
+declare `.admin` immediately after `.activity` so the first extra iPad slot
+matches `autoFill`.  The follow-up commit is on this same PR.
+
 ## 5. Next Steps & Blockers
 
-- Run `xcodebuild` test on the Mac runner; confirm Admin rail SF Symbols render.
+- Re-run `ios-build` after the Admin enum-order fix; confirm
+  `testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin` passes.
+- Confirm Admin rail SF Symbols render on device/simulator.
 - Screenshot iPad Air 11" portrait/landscape and a dragged Mac window (still open from
   the adaptive-tabs follow-ups).
 - TestFlight ship is separate (`scripts/ios-ship-testflight.sh`); this PR does not ship.

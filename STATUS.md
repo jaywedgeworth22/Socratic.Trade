@@ -14,10 +14,17 @@ Activity.  Admin is a first-class `AppTab` gated on `currentUser.isAdmin`; nativ
 eleven website admin pages with a fenced WKWebView that intercepts `/console`.  Linux VM has
 no xcodebuild — first Swift compile is CI.  iOS-only; no Coolify deploy.
 
+`ios-build` run 32535072344 compiled and ran 237 XCTests; one failure:
+`TabPreferencesTests.testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin` — `barTabs`
+uses `AppTab` declaration order, so Admin (declared after Results) sorted after Insights
+instead of the first extra slot auto-fill promised.  Fix: declare `.admin` after
+`.activity` so canonical order matches auto-fill.  Next: re-run `ios-build` + `verify`.
+Do not TestFlight from this PR.
+
 Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
 Local receipts: `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm run build` ok.
 Local `npm test` aborted (network 404s / single worker); CI `verify` is the JS test of
-record.  Next: wait for `ios-build` + `verify` on #3028.  Do not TestFlight from this PR.
+record.
 
 ## 2026-08-21 MONET - handoff written: quiescent-cutover deploy (design only, unclaimed)
 
