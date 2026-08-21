@@ -8,23 +8,23 @@ const OWNER_ROWS: Array<[string, string, string]> = [
   ["gpt-5.6-sol", "openai/gpt-5.6-sol", "gpt-5.6-sol"],
   ["gpt-5.6-terra", "openai/gpt-5.6-terra", "gpt-5.6-terra"],
   ["gpt-5.6-luna", "openai/gpt-5.6-luna", "gpt-5.6-luna"],
-  ["gpt-mini-latest", "openai/gpt-mini-latest", "gpt-5.4-mini"],
+  ["gpt-mini-latest", "~openai/gpt-mini-latest", "gpt-5.4-mini"],
   ["gpt-5.4-nano", "openai/gpt-5.4-nano", "gpt-5.4-nano"],
   ["gpt-4o", "openai/gpt-4o", "gpt-4o"],
   ["gpt-4o-mini", "openai/gpt-4o-mini", "gpt-4o-mini"],
-  ["claude-sonnet-latest", "anthropic/claude-sonnet-latest", "claude-sonnet-5"],
-  ["claude-haiku-latest", "anthropic/claude-haiku-latest", "claude-haiku-4.5"],
-  ["claude-opus-latest", "anthropic/claude-opus-latest", "claude-opus-5"],
-  ["claude-fable-latest", "anthropic/claude-fable-latest", "claude-fable-5"],
+  ["claude-sonnet-latest", "~anthropic/claude-sonnet-latest", "claude-sonnet-5"],
+  ["claude-haiku-latest", "~anthropic/claude-haiku-latest", "claude-haiku-4.5"],
+  ["claude-opus-latest", "~anthropic/claude-opus-latest", "claude-opus-5"],
+  ["claude-fable-latest", "~anthropic/claude-fable-latest", "claude-fable-5"],
   ["grok-build-0.1", "x-ai/grok-build-0.1", "grok-build-0.1"],
-  ["grok-latest", "x-ai/grok-latest", "grok-4.5"],
+  ["grok-latest", "~x-ai/grok-latest", "grok-4.5"],
   ["gemini-flash-lite-latest", "google/gemini-3.5-flash-lite", "gemini-flash-lite-latest"],
-  ["gemini-flash-latest", "google/gemini-flash-latest", "gemini-flash-latest"],
-  ["gemini-pro-latest", "google/gemini-pro-latest", "gemini-pro-latest"],
+  ["gemini-flash-latest", "~google/gemini-flash-latest", "gemini-flash-latest"],
+  ["gemini-pro-latest", "~google/gemini-pro-latest", "gemini-pro-latest"],
   ["mistral-large-latest", "mistralai/mistral-large", "mistral-large-latest"],
   ["mistral-medium-latest", "mistralai/mistral-medium-3.5", "mistral-medium-latest"],
   ["mistral-small-latest", "mistralai/mistral-small-2603", "mistral-small-latest"],
-  ["kimi-latest", "moonshotai/kimi-latest", "kimi-latest"],
+  ["kimi-latest", "~moonshotai/kimi-latest", "kimi-latest"],
   ["deepseek-flash-latest", "deepseek/deepseek-v4-flash", "deepseek-v4-flash"],
   ["deepseek-pro-latest", "deepseek/deepseek-v4-pro", "deepseek-v4-pro"],
   ["deepseek-r1", "deepseek/deepseek-r1", "deepseek-reasoner"],
@@ -105,7 +105,7 @@ describe("three-column LLM catalog", () => {
   });
 
   it("never sends a display slug to OpenRouter when the wire slug differs", () => {
-    expect(normalizeOpenRouterModelId("gpt-mini-latest")).toBe("openai/gpt-mini-latest");
+    expect(normalizeOpenRouterModelId("gpt-mini-latest")).toBe("~openai/gpt-mini-latest");
     expect(normalizeOpenRouterModelId("gemini-flash-lite-latest")).toBe("google/gemini-3.5-flash-lite");
     expect(normalizeOpenRouterModelId("deepseek-flash-latest")).toBe("deepseek/deepseek-v4-flash");
     expect(normalizeOpenRouterModelId("deepseek-r1")).toBe("deepseek/deepseek-r1");
@@ -119,8 +119,20 @@ describe("three-column LLM catalog", () => {
     upsertUserApiKey("catalog-or-user", "openrouter", "sk-or-catalog-test");
     const endpoint = resolveLlmEndpoint({ llmModel: "gpt-mini-latest" }, "catalog-or-user");
     expect(endpoint.provider).toBe("openrouter");
-    expect(endpoint.model).toBe("openai/gpt-mini-latest");
+    expect(endpoint.model).toBe("~openai/gpt-mini-latest");
     const aliased = resolveLlmEndpoint({ llmModel: "claude-sonnet-5" }, "catalog-or-user");
-    expect(aliased.model).toBe("anthropic/claude-sonnet-latest");
+    expect(aliased.model).toBe("~anthropic/claude-sonnet-latest");
+  });
+
+  it("sends OpenRouter family-latest aliases with the required ~ prefix", () => {
+    const latestWire = OWNER_ROWS
+      .map(([, openRouter]) => openRouter)
+      .filter((slug) => /-(?:latest)$/.test(slug.replace(/^~/, "").split("/")[1] ?? ""));
+    expect(latestWire.length).toBeGreaterThan(0);
+    for (const slug of latestWire) {
+      expect(slug.startsWith("~"), slug).toBe(true);
+    }
+    expect(openRouterSlugFor("gemini-flash-latest:batch")).toBe("google/gemini-3.7-flash:batch");
+    expect(normalizeOpenRouterModelId("google/gemini-3.6-flash:batch")).toBe("google/gemini-3.7-flash:batch");
   });
 });

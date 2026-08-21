@@ -15,9 +15,12 @@ import {
   type ProviderUsageOutboxRow,
 } from "./db";
 import {
+  ackCallVolumeWindows,
+  createCallVolumeUsageMonitorEvent,
   createLlmUsageMonitorEvent,
   createProviderDispatchUsageMonitorEvent,
   createRagUsageMonitorEvent,
+  loadPersistedCallVolumeWindows,
   sendUsageMonitorBatch,
   usageMonitorEnabled,
   usageMonitorV2IdempotencyKey,
@@ -84,6 +87,8 @@ export interface UsageMonitorReplayResult {
   llm: LedgerReplayResult;
   rag: LedgerReplayResult;
   provider: LedgerReplayResult;
+  /** Settings-backed call-volume windows drained after a crash (not a ledger watermark). */
+  callVolume: LedgerReplayResult;
 }
 
 export interface UsageMonitorReplayOptions {
@@ -590,6 +595,7 @@ async function executeUsageMonitorReplay(
       llm: emptyLedgerResult(),
       rag: emptyLedgerResult(),
       provider: emptyLedgerResult(),
+      callVolume: emptyLedgerResult(),
     };
   }
 
@@ -600,7 +606,7 @@ async function executeUsageMonitorReplay(
     cutovers = prepareV2ReplayCutovers();
   } catch {
     const failed = { sent: 0, complete: false, failed: true };
-    return { configured: true, llm: failed, rag: failed, provider: failed };
+    return { configured: true, llm: failed, rag: failed, provider: failed, callVolume: failed };
   }
 
   // A prior process may have died after dispatch but before observing the provider outcome. Keep
@@ -636,7 +642,22 @@ async function executeUsageMonitorReplay(
     readRows: readProviderRows,
     toEvents: providerEvents,
   });
-  return { configured: true, llm, rag, provider };
+  const callVolume = await replayCallVolume();
+  return { configured: true, llm, rag, provider, callVolume };
+}
+
+async function replayCallVolume(): Promise<LedgerReplayResult> {
+  const windows = loadPersistedCallVolumeWindows();
+  if (windows.length === 0) return emptyLedgerResult();
+  try {
+    const events = await Promise.all(windows.map((window) => createCallVolumeUsageMonitorEvent(window)));
+    const ok = await sendUsageMonitorBatch(events);
+    if (!ok) return { sent: 0, complete: false, failed: true };
+    ackCallVolumeWindows(windows.map((window) => window.windowId));
+    return { sent: windows.length, complete: true, failed: false };
+  } catch {
+    return { sent: 0, complete: false, failed: true };
+  }
 }
 
 /** Run one bounded replay pass. Concurrent callers share the same in-process promise. */

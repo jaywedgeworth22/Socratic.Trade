@@ -5,6 +5,15 @@
 Owner: whole scan card opens company info; iOS company name darker than industry; Roth IRA Home said "not scheduled" for Last Run and Next Run on Autopilot.  Last run now comes from `strategy_runs` (never cadence copy).  Next run is filled for an active account even after restart / cash close.
 
 PR on `cursor/ios-scan-card-schedule-e224`.  iOS ships via TestFlight only.  API half needs a post-close (or HOTFIX) deploy for live Home stamps.  Rollout: `docs/rollouts/2026-08-21-ios-scan-card-schedule.md`.
+## 2026-08-21 CURSOR — strategy gather timeout all day (Roth + Paper)
+
+Ops snapshot 19:18Z: scheduler ticking, LLM keys present, last completed runs 2026-08-20 20:16Z (Roth) and 20:22Z (Paper).  Today every recent run is `failed · strategy gather timeout` (Paper 27 consecutive, Roth 12) plus a few stale-run sweeps on process restart.  Live sha `e0a4959a73a7` (started 19:06Z) is still the RTH-latched image — #2852/#2854 are already in that sha.
+
+Root cause is the 8-minute gather `withDeadline` racing without an AbortController.  Timed-out Nasdaq/enrichment/broker walks keep running; the next account starts another full scan; the pile-up makes every later gather miss 8 minutes.  `market-scan-freshness` avg 115s / max 66m is the same scan competing on the event loop.
+
+Fix: abort the abandoned gather, stop cascade/enrichment waves on that signal, and if a last completed tape exists continue the run with that real scan plus a 45s quote refresh so Green can start.  Do not HOTFIX during cash hours — merge waits for the after-close drain.
+
+Rollout: `docs/rollouts/2026-08-21-gather-timeout-abort.md`.
 
 # Current Status
 
@@ -414,6 +423,19 @@ Branch `cursor/deploy-freshness-ocr-isolate-d4cf`.  PR #2796.  Rollout:
 ## 2026-08-20 CURSOR — Web / iOS parity P1+P2 fixes (`cursor/web-ios-parity-fixes-e83a`)
 
 Implements the 2026-08-17 audit gaps the owner asked to fix.  Website honors `?proposal=` / `?symbol=`.  iOS Assets honors `?symbol=` and Activity lists snapshot alerts (`run_failed` / `kill_switch` visible).  Exit-only copy, Lessons width, Watchlist cards, skip link, assertive error toasts, TypedConfirm `htmlFor`, More `aria-expanded`, 44pt scan star, swipe VO action, offline banner, PWA UI tree deleted (redirect + `/api/mobile` kept), Playwright iPhone-13 project + landmark smoke.  iOS More Postures when Stop is primary; Connections Safari handoff.  Next: verify gate + review.  Rollout: `docs/rollouts/2026-08-20-web-ios-parity-fixes.md`.
+## 2026-08-20 CURSOR — Cross-app coordination follow-ups (ST slice)
+
+Audit #2802 follow-ups.  ST pin-check now understands vendor-era CT + the UM
+triangle and fails closed when CT is unreadable or reintroduces the npm dep
+(still not a required merge check).  Call-volume windows persist to settings
+on drain and replay after a crash.  Peer-serving OHLC misses tag
+`congress-read`.  Infisical merge-order + congress/Quiver docs refreshed.
+Peer PRs: Congress.Trade #2064, Usage-Monitor #1245, FLEET #44, CTS #278,
+DealDex #93 (pointer only).
+Did not mint a Massive key.  Did not collapse STATUS/PLAN.
+
+Branch `cursor/cross-app-coordination-followups-1212`.  ST PR **#2941**.
+Rollout: `docs/rollouts/2026-08-20-cross-app-coordination-followups.md`.
 
 ## 2026-08-19 MONET — `run-scoped-account` landed for review (tranche-1 cluster)
 

@@ -79,7 +79,10 @@ describe("two-stage market enrichment", () => {
     });
 
     expect(mocks.enrich).toHaveBeenCalledTimes(1);
-    expect(mocks.enrich).toHaveBeenCalledWith(expect.arrayContaining(["BOOST"]));
+    expect(mocks.enrich).toHaveBeenCalledWith(
+      expect.arrayContaining(["BOOST"]),
+      expect.objectContaining({ signal: undefined })
+    );
     expect(scan.topCandidates).toHaveLength(10);
     expect(scan.topCandidates.map((quote) => quote.symbol)).toContain("BOOST");
     expect(scan.source).toContain("test-enrichment");
