@@ -83,8 +83,13 @@ jobs:
           node-version: "22"
       - name: Drain latched main onto Coolify
         env:
-          GH_TOKEN: ${{ github.token }}
+          # github.token cannot redeliver hooks (needs admin:repo_hooks).
+          # GH_PAT is the existing repo secret with that scope.  Coolify
+          # deploy-only token is the reliable fallback when redeliver fails.
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           COOLIFY_DEPLOY_WEBHOOK_URL: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK_URL }}
+          COOLIFY_DEPLOY: ${{ secrets.COOLIFY_DEPLOY }}
+          COOLIFY_ST_APP_UUID: ${{ secrets.COOLIFY_ST_APP_UUID }}
           DEPLOY_VERIFY_NO_FETCH: "1"
         run: bash scripts/rth-deploy-drain.sh origin/main
