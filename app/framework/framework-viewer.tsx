@@ -73,7 +73,7 @@ export function FrameworkViewer() {
   if (state.phase === "unavailable") {
     return (
       <div className="py-24 text-center text-sm text-muted">
-        This page is available to human readers in a standard web browser. If you are seeing this
+        This page is available to human readers in a standard web browser.  If you are seeing this
         message in one, please reload the page.
       </div>
     );

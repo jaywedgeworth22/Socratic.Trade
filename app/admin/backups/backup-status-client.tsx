@@ -215,9 +215,9 @@ const TIER_ICON: Record<TierId, React.ComponentType<{ size?: number | string; cl
 };
 
 const TIER_DESCRIPTION: Record<TierId, string> = {
-  "0": "Raw WAL pages streamed to Backblaze B2 continuously (litestream.coolify.yml syncs every 60s).  The fastest-moving signal — it proves the app is writing and Litestream is alive, but a healthy level 0 does NOT prove compaction or snapshots are working.  This is the only level Litestream keeps on local disk, so it is measured in real time.",
-  "1": "Periodic compaction merges level-0 segments into a denser replica.  Runs on Litestream's own internal cadence, not continuously — quiet gaps between runs are normal, a gap past the threshold below while level 0 keeps advancing is not.  A stuck compactor here ran undetected in production for 27+ hours on 2026-08-11.",
-  "2": "Second-stage compaction merging level-1 output into larger segments (5-minute monitor; output only appears when enough level-1 input has accumulated, so quiet stretches are normal).  The 2026-08-12 production wedge lived exactly here — a byte-identical \"non-contiguous transaction ids\" retry that no local-file monitor could ever have seen.",
+  "0": "Raw WAL pages streamed to Backblaze B2 continuously (litestream.coolify.yml syncs every 60s).  The fastest-moving signal — it proves the app is writing and Litestream is alive, but a healthy level 0 does NOT prove compaction or snapshots are working.  This is the only level Litestream keeps on local disk, so it is measured in real time.",
+  "1": "Periodic compaction merges level-0 segments into a denser replica.  Runs on Litestream's own internal cadence, not continuously — quiet gaps between runs are normal, a gap past the threshold below while level 0 keeps advancing is not.  A stuck compactor here ran undetected in production for 27+ hours on 2026-08-11.",
+  "2": "Second-stage compaction merging level-1 output into larger segments (5-minute monitor; output only appears when enough level-1 input has accumulated, so quiet stretches are normal).  The 2026-08-12 production wedge lived exactly here — a byte-identical \"non-contiguous transaction ids\" retry that no local-file monitor could ever have seen.",
   "3": "Third-stage rollup on an hourly monitor — same accumulation caveat as level 2, watched for the same reason: any level can wedge independently while every other level stays green.",
   "9": "Full daily snapshot (`snapshot.interval: 24h` in litestream.coolify.yml) — the point-in-time restore floor if every incremental LTX file were lost."
 };
@@ -229,7 +229,7 @@ const TIER_SOURCE_LABEL: Record<TierSource, string> = {
 
 const REMOTE_INVENTORY_NOTE: Record<RemoteInventoryState, string> = {
   ok: "All remote compaction levels were listed successfully.",
-  partial: "Some remote compaction levels could not be listed.  The levels marked below are not being watched.",
+  partial: "Some remote compaction levels could not be listed.  The levels marked below are not being watched.",
   failed: "The replica inventory could not list any remote compaction level, so levels 1, 2, 3 and 9 are unwatched.",
   skipped: "The replica inventory does not run in this environment (no Litestream binary, config, or replica credentials), so only level 0 is watched.",
   missing: "The replica inventory has not run yet in this process, so levels 1, 2, 3 and 9 are not being watched yet.",

@@ -90,7 +90,7 @@ export const PositionsCard = memo(function PositionsCard({ snapshot }: { snapsho
                   <th className="num" title="Shares held; negative means a short position.">Qty</th>
                   <th className="num" title="Average price paid per share.">Avg cost</th>
                   <th className="num" title="Current market value of the position.">Value</th>
-                  <th className="num" title="Share of gross exposure (absolute): this position's |market value| as a percent of the sum of |market value| across all open positions. Direction is carried by the SHORT tag, so shorts never show a negative weight.">Weight</th>
+                  <th className="num" title="Share of gross exposure (absolute): this position's |market value| as a percent of the sum of |market value| across all open positions.  Direction is carried by the SHORT tag, so shorts never show a negative weight.">Weight</th>
                   <th className="num" title="Market value minus cost basis — the gain or loss if you closed now.">Unrealized</th>
                   <th title="What protects this position: a resting broker stop order, an app-managed stop rule, or nothing (—).">Protection</th>
                 </tr>

@@ -7,7 +7,7 @@ import { landingPageEnabled } from "@/lib/landing-page";
 export const metadata: Metadata = {
   title: { absolute: "Socratic Trade" },
   description:
-    "Socratic Trade is an autonomous market-reasoning desk for inspecting live theses, delegated actions, RAG evidence, dissent, and outcome learning. Not investment advice.",
+    "Socratic Trade is an autonomous market-reasoning desk for inspecting live theses, delegated actions, RAG evidence, dissent, and outcome learning.  Not investment advice.",
   alternates: { canonical: "/welcome" },
   openGraph: {
     type: "website",
@@ -15,12 +15,12 @@ export const metadata: Metadata = {
     url: "/welcome",
     title: "Socratic Trade",
     description:
-      "Autonomous market reasoning with visible theses, evidence, dissent, actions, coaching, and outcome learning. Not investment advice."
+      "Autonomous market reasoning with visible theses, evidence, dissent, actions, coaching, and outcome learning.  Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
     title: "Socratic Trade",
-    description: "Autonomous market reasoning with visible decisions and outcome learning. Not investment advice."
+    description: "Autonomous market reasoning with visible decisions and outcome learning.  Not investment advice."
   },
   robots:
     process.env.NEXT_PUBLIC_ALLOW_INDEXING === "true"
@@ -54,7 +54,7 @@ const FEATURES: Array<{ title: string; body: string }> = [
   },
   {
     title: "Dissent by design",
-    body: "Bull case, bear case, gate output, and objections stay visible. Disagreement is a first-class part of the interface, not a buried log line."
+    body: "Bull case, bear case, gate output, and objections stay visible.  Disagreement is a first-class part of the interface, not a buried log line."
   },
   {
     title: "Outcome learning",
@@ -207,16 +207,16 @@ export default function WelcomePage() {
               <h2 className="text-base font-semibold text-fg">Important disclosures</h2>
               <p className="text-sm text-muted leading-relaxed">
                 Socratic Trade is software for market research, autonomous reasoning, and trade
-                execution when connected to accounts you configure. It is not investment advice, a
+                execution when connected to accounts you configure.  It is not investment advice, a
                 broker-dealer, or a registered investment adviser.
               </p>
               <p className="text-sm text-muted leading-relaxed">
-                Trading and investing involve substantial risk of loss. Simulated or hypothetical
+                Trading and investing involve substantial risk of loss.  Simulated or hypothetical
                 performance has inherent limitations and is not a guarantee of future results.
                 Nothing here is a recommendation to buy or sell any security.
               </p>
               <p className="text-sm text-muted leading-relaxed">
-                You are solely responsible for your own investment decisions. Consult a licensed
+                You are solely responsible for your own investment decisions.  Consult a licensed
                 financial professional before trading.
               </p>
             </Card>

@@ -64,7 +64,7 @@ const DEADLINE_REASON = Symbol("dashboard-fetch-deadline");
 // freshness strip flip to "delayed" — without it, a request that keeps hanging past
 // FETCH_DEADLINE_MS would retry every ~35s forever with `error` still null, so the console would
 // keep labeling an old snapshot "fresh" even though no refresh has actually landed.
-const DEADLINE_ERROR_MESSAGE = "The dashboard is taking too long to respond. Retrying…";
+const DEADLINE_ERROR_MESSAGE = "The dashboard is taking too long to respond.  Retrying…";
 
 export type ConsoleStreamStatus = "unsupported" | "connecting" | "live" | "reconnecting";
 
