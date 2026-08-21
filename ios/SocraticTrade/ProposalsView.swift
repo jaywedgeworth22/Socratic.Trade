@@ -16,6 +16,7 @@ struct ProposalsView: View {
     var body: some View {
         SnapshotScaffold(scrollTarget: focusedProposalId) { snapshot in
             ProposalQueueSummary(snapshot: snapshot)
+                .cardSpansAllColumns()
             if snapshot.pendingProposals.isEmpty {
                 EmptyStateCard(
                     title: "No proposals waiting",
