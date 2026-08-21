@@ -262,6 +262,10 @@ struct CandleWordmarkView: View {
     var fillsWidth: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Fixed once per instance, so the tick counts from first appearance and never
+    /// re-anchors when the body is re-evaluated.
+    @State private var start = Date()
+
     private var aspectRatio: CGFloat {
         max(0.01, CandleWordmarkModel.shared.wm.ar)
     }
@@ -271,10 +275,23 @@ struct CandleWordmarkView: View {
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: reduceMotion ? 86_400 : 1.0)) { context in
+        // `.animation(minimumInterval:paused:)`, NOT `.periodic(from:by:)`.  Both nominally
+        // fire once a second, but `.periodic` anchors its phase to the `.now` captured when
+        // the schedule is built, and SwiftUI rebuilds it on every re-evaluation of this
+        // body — inside a ScrollView that re-lays out on scroll/keyboard/size changes the
+        // anchor kept moving, the next entry kept being pushed ~1s into the future, and the
+        // mark sat on one frame indefinitely.  That is the "logo doesn't move on the app but
+        // moves on the website" report: the web `HeaderLogo` drives the same integer tick off
+        // requestAnimationFrame (app/console/ui/header-logo.tsx), which has no such anchor.
+        // The `.animation` schedule is the display-link-backed one and is what Canvas
+        // animation is meant to use; `paused` is the documented reduced-motion switch.
+        TimelineView(.animation(minimumInterval: 1.0, paused: reduceMotion)) { context in
+            // Elapsed whole seconds since this view appeared — the native twin of the web
+            // loop's `Math.floor((now - start) / 1000)`.  One column of the ticker marches
+            // left per tick.
             let tick = reduceMotion
                 ? 0
-                : Int(context.date.timeIntervalSinceReferenceDate)
+                : Int(context.date.timeIntervalSince(start))
             let canvas = Canvas { ctx, size in
                 drawTicker(context: ctx, size: size, tick: tick)
             }

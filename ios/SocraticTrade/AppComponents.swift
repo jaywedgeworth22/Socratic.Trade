@@ -1066,3 +1066,86 @@ struct CommandButton: View {
         .disabled(isBusy || isDisabled)
     }
 }
+
+// MARK: - Justified paragraph
+
+/// A paragraph set with `NSTextAlignment.justified`: every line but the last stretches to
+/// the same right edge, and the last line is left alone (no stretched final row).
+///
+/// SwiftUI has no justified case — `TextAlignment` is leading/center/trailing only, and
+/// `Text` ignores an `NSParagraphStyle` carried on an `AttributedString` — so this is the
+/// one place the app drops to UIKit for type.  Used for the login legal block, where a
+/// ragged right edge under three equal-width buttons reads as sloppy.
+///
+/// Sizes itself against the width SwiftUI proposes, scales with Dynamic Type (explicitly,
+/// via `UIFontMetrics` — `adjustsFontForContentSizeCategory` on top of an already-scaled
+/// font double-scales), and hands VoiceOver the plain string.
+struct JustifiedText: UIViewRepresentable {
+    private let text: String
+    private let font: UIFont
+    private let textStyle: UIFont.TextStyle
+    private let color: UIColor
+    private let lineSpacing: CGFloat
+
+    /// Reading the environment here is what makes SwiftUI re-run `sizeThatFits` when the
+    /// user changes text size; the label alone would resize without the layout following.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        _ text: String,
+        font: UIFont = AppFont.uiFont(12),
+        textStyle: UIFont.TextStyle = .caption1,
+        color: UIColor = .secondaryLabel,
+        lineSpacing: CGFloat = 1.5
+    ) {
+        self.text = text
+        self.font = font
+        self.textStyle = textStyle
+        self.color = color
+        self.lineSpacing = lineSpacing
+    }
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        // SwiftUI owns the width; the label must not argue for a wider intrinsic one.
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.required, for: .vertical)
+        return label
+    }
+
+    func updateUIView(_ label: UILabel, context: Context) {
+        label.attributedText = attributed()
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView label: UILabel, context: Context) -> CGSize? {
+        guard let width = proposal.width, width > 0, width < .greatestFiniteMagnitude else {
+            return nil
+        }
+        // Measure off a throwaway label rather than the live one: `updateUIView` has not
+        // necessarily run for this pass yet, so the on-screen label can still be holding the
+        // previous string and would measure the wrong height.
+        let probe = UILabel()
+        probe.numberOfLines = 0
+        probe.lineBreakMode = .byWordWrapping
+        probe.attributedText = attributed()
+        let fitted = probe.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: ceil(fitted.height))
+    }
+
+    private func attributed() -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .justified
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = lineSpacing
+        return NSAttributedString(
+            string: text,
+            attributes: [
+                .font: UIFontMetrics(forTextStyle: textStyle).scaledFont(for: font),
+                .foregroundColor: color,
+                .paragraphStyle: paragraph
+            ]
+        )
+    }
+}
