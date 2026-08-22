@@ -83,9 +83,35 @@ describe("/api/quote", () => {
     });
   });
 
+  it("returns the Yahoo chart floor without waiting the 6s cascade budget", async () => {
+    const enrich = vi.fn((_symbols: string[], context?: { signal?: AbortSignal }) => {
+      void context;
+      return new Promise<Record<string, never>>(() => undefined);
+    });
+    vi.mocked(getEnrichmentProvider).mockReturnValue({ name: "slow-test", configured: true, enrich });
+    const { GET } = await import("../app/api/quote/route");
+
+    const response = await GET(new Request("http://localhost/api/quote?symbol=LRCX"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      symbol: "LRCX",
+      companyName: "Lam Research Corporation",
+      price: 77.5,
+      volume: 2_500_000
+    });
+    expect(enrich).toHaveBeenCalledTimes(1);
+    expect(enrich.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
   it("returns the fast company identity and current quote when the rich cascade exceeds its budget", async () => {
     vi.useFakeTimers();
-    const enrich = vi.fn(() => new Promise<Record<string, never>>(() => undefined));
+    let seenSignal: AbortSignal | undefined;
+    const enrich = vi.fn((_symbols: string[], context?: { signal?: AbortSignal }) => {
+      seenSignal = context?.signal;
+      return new Promise<Record<string, never>>(() => undefined);
+    });
     vi.mocked(getEnrichmentProvider).mockReturnValue({
       name: "slow-test",
       configured: true,
@@ -106,6 +132,60 @@ describe("/api/quote", () => {
       volume: 2_500_000
     });
     expect(enrich).toHaveBeenCalledTimes(1);
+    expect(enrich.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    // Budget timer + post-response abort both flip the signal so Wave C stops spending.
+    expect(seenSignal?.aborted).toBe(true);
+  });
+
+  it("passes AbortSignal into enrich and aborts when the cascade budget elapses", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchYahooFinanceQuote).mockResolvedValue(undefined);
+    vi.mocked(enrichYahooFinanceSymbol).mockResolvedValue({});
+    vi.mocked(loadDurableQuoteSeed).mockResolvedValue({});
+    let seenSignal: AbortSignal | undefined;
+    const enrich = vi.fn((_symbols: string[], context?: { signal?: AbortSignal }) => {
+      seenSignal = context?.signal;
+      return new Promise<Record<string, never>>(() => undefined);
+    });
+    vi.mocked(getEnrichmentProvider).mockReturnValue({
+      name: "slow-test",
+      configured: true,
+      enrich
+    });
+    const { GET } = await import("../app/api/quote/route");
+    const { startCascadeBudget, withinBudget } = await import("../src/lib/quote-cascade-budget");
+
+    const pending = GET(new Request("http://localhost/api/quote?symbol=LRCX"));
+    await vi.advanceTimersByTimeAsync(6_000);
+    const response = await pending;
+    expect(response.status).toBe(502);
+    expect(enrich.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(seenSignal?.aborted).toBe(true);
+
+    // Helper contract: budget abort cancels withinBudget immediately (does not wait the waitMs).
+    const budget = startCascadeBudget(1_000);
+    const hung = withinBudget(new Promise<never>(() => undefined), 30_000, budget.signal);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(hung).resolves.toEqual({ status: "timed-out" });
+    expect(budget.signal.aborted).toBe(true);
+    budget.clear();
+  });
+
+  it("aborts a still-running cascade once Yahoo floor is returnable after enrich settles or times out", async () => {
+    vi.useFakeTimers();
+    let seenSignal: AbortSignal | undefined;
+    const enrich = vi.fn((_symbols: string[], context?: { signal?: AbortSignal }) => {
+      seenSignal = context?.signal;
+      return new Promise<Record<string, never>>(() => undefined);
+    });
+    vi.mocked(getEnrichmentProvider).mockReturnValue({ name: "slow-test", configured: true, enrich });
+    const { GET } = await import("../app/api/quote/route");
+
+    const pending = GET(new Request("http://localhost/api/quote?symbol=LRCX"));
+    expect(seenSignal?.aborted).toBeFalsy();
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(pending).resolves.toMatchObject({ status: 200 });
+    expect(seenSignal?.aborted).toBe(true);
   });
 
   it("accepts a richer current quote when its timestamp is newer than the fast floor", async () => {

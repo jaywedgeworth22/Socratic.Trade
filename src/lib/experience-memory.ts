@@ -22,6 +22,10 @@
  *     stamped as-of (retrieval passes `asOf` so nothing dated after the stamp is admitted — no
  *     lookahead on replay). Nearest priors with OPPOSITE realized sign are labeled
  *     COUNTEREXAMPLE rather than filtered — feeding the dissent habit, not curating a winner reel.
+ *     Analog prompt lines are packed at retrieve time via `formatAnalogCard` (situation +
+ *     return_pct / holding_days / risk_exit + short rationale). Full SocraticDecisionCase JSON
+ *     never enters the prompt. One COUNTEREXAMPLE slot is reserved from the over-ask set when
+ *     any opposite-sign neighbor exists.
  *
  * Product philosophy: everything here is ADVISORY evidence for the Bull AND Bear prompts
  * (evidence parity). Nothing in this module gates, blocks, or sizes anything, and every failure
@@ -503,8 +507,297 @@ function chunkMeta(chunk: RetrievedChunk, key: string): unknown {
   return chunk.metadata?.[key];
 }
 
+const ANALOG_CARD_MAX_CHARS = 1500;
+const ANALOG_CARD_MAX_LINES = 12;
+const ANALOG_CARD_CAP = 8;
+const ANALOG_BLOCK_MAX_CHARS = 6000;
+
+function analogMeta(chunk: RetrievedChunk, keys: string[]): unknown {
+  const md = chunk.metadata ?? {};
+  for (const key of keys) {
+    const value = md[key];
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return undefined;
+}
+
+function analogStr(chunk: RetrievedChunk, keys: string[]): string | undefined {
+  const value = analogMeta(chunk, keys);
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed && trimmed !== "n/a" ? trimmed : undefined;
+}
+
+function analogNum(chunk: RetrievedChunk, keys: string[]): number | undefined {
+  const value = analogMeta(chunk, keys);
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function analogBool(chunk: RetrievedChunk, keys: string[]): boolean | undefined {
+  const value = analogMeta(chunk, keys);
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === "1" || value === "true" || value === "yes") return true;
+  if (value === 0 || value === "0" || value === "false" || value === "no") return false;
+  return undefined;
+}
+
+function analogFmt(value: number): string {
+  const n = round2(value);
+  return Number.isInteger(n) ? String(n) : String(n);
+}
+
+function analogTextField(text: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = text.match(new RegExp(`(?:^|\\n)${escaped}:\\s*(.+)`, "i"));
+  const value = match?.[1]?.replace(/\s+/g, " ").trim();
+  if (!value || value === "n/a") return undefined;
+  return value;
+}
+
+function analogOutcomeScalar(text: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = text.match(new RegExp(`\\b${escaped}\\s*[=:]\\s*([^;\\n]+)`, "i"));
+  const value = match?.[1]?.replace(/\s+/g, " ").trim();
+  return value && value !== "n/a" ? value : undefined;
+}
+
+function looksLikeJsonDump(text: string): boolean {
+  const trimmed = text.trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return false;
+  if (trimmed.length < 80) return false;
+  if (/"greenTeamRationale"|"redTeamVerdict"|"ragAttributions"|"policyDecision"|"evidenceRefs"/.test(trimmed)) {
+    return true;
+  }
+  const quotes = trimmed.match(/"/g);
+  return trimmed.startsWith("{") && (quotes?.length ?? 0) > 24;
+}
+
+function tryParseCaseObject(text: string): Record<string, unknown> | undefined {
+  if (!looksLikeJsonDump(text)) return undefined;
+  try {
+    const parsed = JSON.parse(text.trim()) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function analogSideLabel(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const s = raw.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!s || s === "n/a") return undefined;
+  if (s === "buy" || s === "long") return "long";
+  if (s === "short" || s === "cover") return "short";
+  return s;
+}
+
+function analogTicker(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const t = raw.replace(/\s+/g, " ").trim();
+  if (!t || t === "n/a") return undefined;
+  if (t.toUpperCase() === "PORTFOLIO") return "PORTFOLIO";
+  return normalizeSymbol(t);
+}
+
+const ANALOG_BOILERPLATE_LINE =
+  /^(Experience memory:|Socratic institutional memory case|Durable lesson from a Socratic decision case)\b/i;
+const ANALOG_SKIP_LABELED_LINE =
+  /^(ticker|side|thesis_tag|entry_market_regime|sector|entry_factor_scores|macro_snapshot_at_entry|entry_confidence|exit_reason|realized_outcome|entry_at|exit_at|timestamp|final_action|authority|broker_argument|critic_counter_argument|policy_outcome|autonomy_override|rag_contribution|evidence|outcome|lessons|coach_notes|decision_id|entry_rationale|lesson):/i;
+
+function unstructuredRationale(text: string): string | undefined {
+  if (looksLikeJsonDump(text)) return undefined;
+  const cleaned = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !ANALOG_BOILERPLATE_LINE.test(line) && !ANALOG_SKIP_LABELED_LINE.test(line))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || undefined;
+}
+
+function caseString(obj: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  if (!obj) return undefined;
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string") {
+      const trimmed = value.replace(/\s+/g, " ").trim();
+      if (trimmed && trimmed !== "n/a") return trimmed;
+    }
+  }
+  return undefined;
+}
+
+function caseReturnPct(obj: Record<string, unknown> | undefined): number | undefined {
+  if (!obj) return undefined;
+  const direct = obj.returnPct ?? obj.return_pct ?? obj.realizedReturnPct;
+  if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+  const outcome = obj.outcome;
+  if (outcome && typeof outcome === "object" && !Array.isArray(outcome)) {
+    const rp = (outcome as Record<string, unknown>).returnPct ?? (outcome as Record<string, unknown>).return_pct;
+    if (typeof rp === "number" && Number.isFinite(rp)) return rp;
+  }
+  return undefined;
+}
+
+function analogNumFromText(text: string, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const raw = analogOutcomeScalar(text, key);
+    if (!raw) continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function analogBoolFromText(text: string, keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const raw = analogOutcomeScalar(text, key)?.toLowerCase();
+    if (!raw) continue;
+    if (raw === "true" || raw === "yes" || raw === "1") return true;
+    if (raw === "false" || raw === "no" || raw === "0") return false;
+  }
+  return undefined;
+}
+
+/**
+ * Retrieve-side analog card (~400–1500 chars, 6–12 lines max). Packs situation + realized
+ * scalars + a short rationale. Never dumps a SocraticDecisionCase JSON blob into the prompt.
+ */
+export function formatAnalogCard(chunk: RetrievedChunk): string {
+  const text = typeof chunk.text === "string" ? chunk.text : "";
+  const parsed = tryParseCaseObject(text);
+
+  const symbol =
+    analogTicker(analogStr(chunk, ["symbol"])) ??
+    analogTicker(analogTextField(text, "ticker")) ??
+    analogTicker(caseString(parsed, ["symbol"]));
+  const side =
+    analogSideLabel(analogStr(chunk, ["side"])) ??
+    analogSideLabel(analogTextField(text, "side")) ??
+    analogSideLabel(caseString(parsed, ["side"]));
+  const thesis =
+    analogStr(chunk, ["thesis_tag", "thesis", "tradeThesisTag"]) ??
+    analogTextField(text, "thesis_tag") ??
+    caseString(parsed, ["thesisTag", "thesis", "tradeThesisTag"]);
+  const regime =
+    analogStr(chunk, ["entry_market_regime", "regime"]) ??
+    analogTextField(text, "entry_market_regime") ??
+    caseString(parsed, ["regime", "entryMarketRegime"]);
+  const returnPct =
+    analogNum(chunk, ["return_pct", "realizedReturnPct"]) ??
+    analogNumFromText(text, ["return_pct", "realizedReturnPct"]) ??
+    caseReturnPct(parsed);
+  const holdingDays =
+    analogNum(chunk, ["holding_days", "holdingDays"]) ??
+    analogNumFromText(text, ["holding_days", "holdingDays"]);
+  const riskExit =
+    analogBool(chunk, ["risk_exit", "riskExit"]) ??
+    analogBoolFromText(text, ["risk_exit", "riskExit"]);
+
+  const headerBits = [`ANALOG ${symbol ?? "n/a"}${side ? ` ${side}` : ""}`];
+  if (thesis) headerBits.push(`thesis ${thesis}`);
+  if (returnPct !== undefined) headerBits.push(`return_pct ${analogFmt(returnPct)}`);
+  if (holdingDays !== undefined) headerBits.push(`holding_days ${analogFmt(holdingDays)}`);
+  if (riskExit !== undefined) headerBits.push(`risk_exit ${riskExit ? "yes" : "no"}`);
+  if (regime) headerBits.push(`regime ${regime}`);
+
+  const situationParts: string[] = [];
+  const sector = analogStr(chunk, ["sector"]) ?? analogTextField(text, "sector");
+  if (sector) situationParts.push(sector);
+  const factors = analogTextField(text, "entry_factor_scores");
+  if (factors) situationParts.push(factors);
+  const macro = analogTextField(text, "macro_snapshot_at_entry");
+  if (macro) situationParts.push(macro);
+  const evidence = analogTextField(text, "evidence");
+  if (evidence && !/^No structured evidence/i.test(evidence)) {
+    situationParts.push(compact(evidence, 220));
+  }
+  const situation = situationParts.length > 0 ? compact(situationParts.join("; "), 400) : undefined;
+
+  const rationaleSource =
+    analogTextField(text, "entry_rationale") ??
+    analogTextField(text, "broker_argument") ??
+    analogTextField(text, "lesson") ??
+    analogTextField(text, "rationale") ??
+    caseString(parsed, ["greenTeamRationale", "rationale", "thesis", "lesson"]) ??
+    unstructuredRationale(text);
+  const rationale = rationaleSource ? compact(rationaleSource, 400) : undefined;
+
+  const lines = [
+    headerBits.join(" | "),
+    situation ? `situation: ${situation}` : undefined,
+    rationale && rationale !== "n/a" ? `rationale: ${rationale}` : undefined
+  ].filter((line): line is string => Boolean(line));
+
+  let kept = lines.slice(0, ANALOG_CARD_MAX_LINES);
+  let card = kept.join("\n");
+  if (card.length <= ANALOG_CARD_MAX_CHARS) return card;
+  while (card.length > ANALOG_CARD_MAX_CHARS && kept.length > 1) {
+    const last = kept[kept.length - 1]!;
+    const overflow = card.length - ANALOG_CARD_MAX_CHARS;
+    if (last.length > 80) {
+      kept[kept.length - 1] = compact(last, Math.max(48, last.length - overflow - 1));
+    } else {
+      kept = kept.slice(0, -1);
+    }
+    card = kept.join("\n");
+  }
+  if (card.length > ANALOG_CARD_MAX_CHARS) {
+    return `${card.slice(0, ANALOG_CARD_MAX_CHARS).trimEnd()}…`;
+  }
+  return card;
+}
+
+function selectAnalogChunks(ordered: RetrievedChunk[], window: RetrievedChunk[]): RetrievedChunk[] {
+  const analogWindow = window.filter((chunk) => chunk.doc_type !== "coach-note").slice(0, ANALOG_CARD_CAP);
+  const analogPool = ordered.filter((chunk) => chunk.doc_type !== "coach-note");
+  if (analogWindow.some((chunk) => realizedSign(chunk) === -1)) return analogWindow;
+  const reserved = analogPool.find((chunk) => realizedSign(chunk) === -1);
+  if (!reserved) return analogWindow;
+  if (analogWindow.some((chunk) => chunk.id === reserved.id)) return analogWindow;
+  if (analogWindow.length === 0) return [reserved];
+  return [...analogWindow.slice(0, -1), reserved];
+}
+
+function packAnalogsBlock(
+  asOf: string,
+  topAnalogSimilarity: number | undefined,
+  analogChunks: RetrievedChunk[]
+): string | undefined {
+  if (analogChunks.length === 0) return undefined;
+  const header = `CLOSEST HISTORICAL ANALOGS (episodic memory, advisory; as of ${asOf}${
+    typeof topAnalogSimilarity === "number" ? `; top-analog similarity ${topAnalogSimilarity.toFixed(2)}` : ""
+  }). Entries labeled COUNTEREXAMPLE had the OPPOSITE realized sign — weigh them as dissent, not noise.`;
+  const cards = analogChunks.map((chunk) => {
+    const formatted = formatAnalogCard(chunk);
+    return realizedSign(chunk) === -1 ? `[COUNTEREXAMPLE — opposite realized sign]\n${formatted}` : formatted;
+  });
+  const kept: string[] = [];
+  for (const card of cards) {
+    const next = [header, ...kept, card].join("\n\n");
+    if (kept.length > 0 && next.length > ANALOG_BLOCK_MAX_CHARS) break;
+    kept.push(card);
+    if (kept.length >= ANALOG_CARD_CAP) break;
+  }
+  const counter = cards.find((card) => card.startsWith("[COUNTEREXAMPLE"));
+  if (counter && !kept.some((card) => card.startsWith("[COUNTEREXAMPLE"))) {
+    if (kept.length === 0) kept.push(counter);
+    else kept[kept.length - 1] = counter;
+  }
+  return [header, ...kept].join("\n\n");
+}
+
 function realizedSign(chunk: RetrievedChunk): number | undefined {
-  const value = chunkMeta(chunk, "return_pct");
+  const value = analogNum(chunk, ["return_pct", "realizedReturnPct"]);
   if (typeof value !== "number" || !Number.isFinite(value) || value === 0) return undefined;
   return value > 0 ? 1 : -1;
 }
@@ -595,7 +888,7 @@ export async function retrieveDecisionExperiences(
     chunks = ordered.slice(0, k);
 
     const coachingChunks = chunks.filter((chunk) => chunk.doc_type === "coach-note");
-    const analogChunks = chunks.filter((chunk) => chunk.doc_type !== "coach-note");
+    const analogChunks = selectAnalogChunks(ordered, chunks);
 
     const injected: InjectedMemoryRef[] = [
       ...analogChunks.map((chunk) => ({
@@ -619,19 +912,7 @@ export async function retrieveDecisionExperiences(
     const topAnalogSimilarity =
       typeof top?.relevanceScore === "number" ? top.relevanceScore : typeof top?.score === "number" ? top.score : undefined;
 
-    const analogsBlock =
-      analogChunks.length > 0
-        ? [
-            `CLOSEST HISTORICAL ANALOGS (episodic memory, advisory; as of ${asOf}${
-              typeof topAnalogSimilarity === "number" ? `; top-analog similarity ${topAnalogSimilarity.toFixed(2)}` : ""
-            }). Entries labeled COUNTEREXAMPLE had the OPPOSITE realized sign — weigh them as dissent, not noise.`,
-            ...analogChunks.map((chunk) => {
-              const symbol = typeof chunkMeta(chunk, "symbol") === "string" ? String(chunkMeta(chunk, "symbol")) : undefined;
-              const formatted = formatChunkWithProvenance(chunk, symbol);
-              return realizedSign(chunk) === -1 ? `[COUNTEREXAMPLE — opposite realized sign]\n${formatted}` : formatted;
-            })
-          ].join("\n\n")
-        : undefined;
+    const analogsBlock = packAnalogsBlock(asOf, topAnalogSimilarity, analogChunks);
 
     const coachingBlock =
       coachingChunks.length > 0

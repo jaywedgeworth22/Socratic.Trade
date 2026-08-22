@@ -40,8 +40,27 @@ import {
 import { retryBackoffMs } from "./congress";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { extractFilingText } from "./sec-filings";
+import { eightKWritePath, writeCorpusFile } from "../rag/corpus-layout";
+import { bareSecAccession } from "../rag/pinecone-write-class";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
 import type { VectorStoreLeaseGuard } from "../vector-db";
+
+/** Best-effort moveable corpus sidecar under data/corpus/eight-k/{accession}/. */
+async function writeEightKCorpusSidecar(accession: string, text: string, html?: string): Promise<void> {
+  const bare = bareSecAccession(accession) ?? String(accession ?? "").trim();
+  if (!bare || !text.trim()) return;
+  try {
+    await writeCorpusFile(eightKWritePath(bare, "main.txt"), text);
+    if (html && html.length > 0) {
+      await writeCorpusFile(eightKWritePath(bare, "main.html"), html);
+    }
+  } catch (err) {
+    console.warn(
+      `[sec8k] eight-k corpus sidecar write failed for ${bare}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
 
 /**
  * R10 (2026-07-01 RAG backlog): content_hash dedup for the always-on 8-K SUMMARY ingest
@@ -779,6 +798,9 @@ async function drainEightKRagBacklogs(
           if (summaryComplete) {
             const completed = new Set(ragEvents.map((event) => event.accession));
             persistEightKSummaryBacklog(summaryBacklog.filter((event) => !completed.has(event.accession)));
+            for (const event of ragEvents) {
+              await writeEightKCorpusSidecar(event.accession, buildEightKContext(event));
+            }
             assertRagOwnership();
           } else {
             warnings.push(`8-K summary RAG deferred${summaryResult.error ? `: ${summaryResult.error}` : " by RAG capacity"}`);
@@ -897,6 +919,7 @@ export async function ingestEightKBody(
           });
           const bodyText = extractFilingText(html);
           if (bodyText.length >= 100) {
+            await writeEightKCorpusSidecar(event.accession, bodyText, html);
             const itemsHint = (event.items ?? []).slice(0, 6).join(", ");
             await generateAndStoreDocumentAbstract({
               ticker: event.symbol,
@@ -950,6 +973,8 @@ export async function ingestEightKBody(
   if (text.length < 100) {
     return { skipped: false, chunks: 0, error: "extracted text too short", retryable: true };
   }
+
+  await writeEightKCorpusSidecar(event.accession, text, html);
 
   // Insert into sec_artifacts
   try {

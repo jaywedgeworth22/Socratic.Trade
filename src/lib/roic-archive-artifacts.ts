@@ -4,13 +4,18 @@
 // survive a DB restore mismatch the same way `data/sec-artifacts` does for EDGAR:
 // a later walk hydrates SQLite from disk and never re-hits ROIC for that call.
 //
-// Layout (under DATA_DIR, default `data`):
-//   roic-artifacts/{SYM}/index.json          cached v3 call list + winning identifier
-//   roic-artifacts/{SYM}/{year}Q{quarter}.json  full transcript body + provenance
+// Layout: writes go to CORPUS_DIR/roic (default DATA_DIR/corpus/roic) so the
+// corpus tree can bind-mount later.  Reads try that path first, then the
+// legacy DATA_DIR/roic-artifacts tree so production files are not stranded.
 
 import fs from "fs";
 import path from "path";
 import { normalizeSymbol } from "./money";
+import {
+  firstExistingPath,
+  roicArtifactLegacyRoot,
+  roicArtifactWriteRoot
+} from "./rag/corpus-layout";
 
 export const ROIC_ARTIFACT_DIRNAME = "roic-artifacts";
 const TRANSCRIPT_FILE_RE = /^(\d{4})Q([1-4])\.json$/;
@@ -44,12 +49,17 @@ function dataRoot(): string {
   return process.env.DATA_DIR ?? "data";
 }
 
+/** Write root: CORPUS_DIR/roic or DATA_DIR/corpus/roic. */
 export function roicArtifactRoot(root: string = dataRoot()): string {
-  return path.join(root, ROIC_ARTIFACT_DIRNAME);
+  return roicArtifactWriteRoot(root);
 }
 
 export function roicSymbolArtifactDir(symbol: string, root: string = dataRoot()): string {
   return path.join(roicArtifactRoot(root), normalizeSymbol(symbol));
+}
+
+function roicSymbolLegacyDir(symbol: string, root: string = dataRoot()): string {
+  return path.join(roicArtifactLegacyRoot(root), normalizeSymbol(symbol));
 }
 
 export function roicTranscriptArtifactPath(
@@ -61,8 +71,28 @@ export function roicTranscriptArtifactPath(
   return path.join(roicSymbolArtifactDir(symbol, root), `${year}Q${quarter}.json`);
 }
 
+function roicTranscriptArtifactReadPaths(
+  symbol: string,
+  year: number,
+  quarter: number,
+  root: string = dataRoot()
+): string[] {
+  const name = `${year}Q${quarter}.json`;
+  return [
+    path.join(roicSymbolArtifactDir(symbol, root), name),
+    path.join(roicSymbolLegacyDir(symbol, root), name)
+  ];
+}
+
 export function roicCallIndexArtifactPath(symbol: string, root: string = dataRoot()): string {
   return path.join(roicSymbolArtifactDir(symbol, root), "index.json");
+}
+
+function roicCallIndexReadPaths(symbol: string, root: string = dataRoot()): string[] {
+  return [
+    roicCallIndexArtifactPath(symbol, root),
+    path.join(roicSymbolLegacyDir(symbol, root), "index.json")
+  ];
 }
 
 function readJsonFile(filePath: string): unknown | null {
@@ -108,7 +138,8 @@ export function readRoicTranscriptArtifact(
   year: number,
   quarter: number
 ): RoicTranscriptArtifact | null {
-  const raw = readJsonFile(roicTranscriptArtifactPath(symbol, year, quarter));
+  const hit = firstExistingPath(roicTranscriptArtifactReadPaths(symbol, year, quarter));
+  const raw = hit ? readJsonFile(hit) : null;
   if (!raw || typeof raw !== "object") return null;
   const row = raw as Record<string, unknown>;
   const content = typeof row.content === "string" ? row.content : "";
@@ -131,23 +162,29 @@ export function readRoicTranscriptArtifact(
 }
 
 export function listRoicTranscriptArtifacts(symbol: string): RoicArtifactPeriod[] {
-  const dir = roicSymbolArtifactDir(symbol);
-  try {
-    if (!fs.existsSync(dir)) return [];
-    const out: RoicArtifactPeriod[] = [];
-    for (const name of fs.readdirSync(dir)) {
-      const match = TRANSCRIPT_FILE_RE.exec(name);
-      if (!match) continue;
-      const year = Number(match[1]);
-      const quarter = Number(match[2]);
-      const artifact = readRoicTranscriptArtifact(symbol, year, quarter);
-      if (!artifact) continue;
-      out.push({ year: artifact.year, quarter: artifact.quarter, date: artifact.date });
+  const dirs = [roicSymbolArtifactDir(symbol), roicSymbolLegacyDir(symbol)];
+  const seen = new Set<string>();
+  const out: RoicArtifactPeriod[] = [];
+  for (const dir of dirs) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      for (const name of fs.readdirSync(dir)) {
+        const match = TRANSCRIPT_FILE_RE.exec(name);
+        if (!match) continue;
+        const year = Number(match[1]);
+        const quarter = Number(match[2]);
+        const key = `${year}Q${quarter}`;
+        if (seen.has(key)) continue;
+        const artifact = readRoicTranscriptArtifact(symbol, year, quarter);
+        if (!artifact) continue;
+        seen.add(key);
+        out.push({ year: artifact.year, quarter: artifact.quarter, date: artifact.date });
+      }
+    } catch {
+      // skip unreadable symbol dir
     }
-    return out;
-  } catch {
-    return [];
   }
+  return out;
 }
 
 export function writeRoicCallIndexArtifact(artifact: RoicCallIndexArtifact): boolean {
@@ -161,7 +198,8 @@ export function writeRoicCallIndexArtifact(artifact: RoicCallIndexArtifact): boo
 }
 
 export function readRoicCallIndexArtifact(symbol: string): RoicCallIndexArtifact | null {
-  const raw = readJsonFile(roicCallIndexArtifactPath(symbol));
+  const hit = firstExistingPath(roicCallIndexReadPaths(symbol));
+  const raw = hit ? readJsonFile(hit) : null;
   if (!raw || typeof raw !== "object") return null;
   const row = raw as Record<string, unknown>;
   if (!Array.isArray(row.calls)) return null;
@@ -190,25 +228,36 @@ export function readRoicCallIndexArtifact(symbol: string): RoicCallIndexArtifact
   };
 }
 
-/** Count transcript JSON files (not index.json) under the artifact root. */
-export function countRoicTranscriptArtifactFiles(root: string = dataRoot()): number {
-  const base = roicArtifactRoot(root);
-  try {
-    if (!fs.existsSync(base)) return 0;
-    let count = 0;
-    for (const symbolDir of fs.readdirSync(base)) {
-      const full = path.join(base, symbolDir);
-      try {
-        if (!fs.statSync(full).isDirectory()) continue;
-        for (const name of fs.readdirSync(full)) {
-          if (TRANSCRIPT_FILE_RE.test(name)) count += 1;
-        }
-      } catch {
-        // skip unreadable symbol dir
+function countTranscriptFilesUnder(base: string, seen: Set<string>): number {
+  if (!fs.existsSync(base)) return 0;
+  let count = 0;
+  for (const symbolDir of fs.readdirSync(base)) {
+    const full = path.join(base, symbolDir);
+    try {
+      if (!fs.statSync(full).isDirectory()) continue;
+      for (const name of fs.readdirSync(full)) {
+        if (!TRANSCRIPT_FILE_RE.test(name)) continue;
+        const key = `${symbolDir}/${name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        count += 1;
       }
+    } catch {
+      // skip unreadable symbol dir
     }
-    return count;
+  }
+  return count;
+}
+
+/** Count transcript JSON files (not index.json) under the corpus root, then legacy. */
+export function countRoicTranscriptArtifactFiles(root: string = dataRoot()): number {
+  const seen = new Set<string>();
+  try {
+    return (
+      countTranscriptFilesUnder(roicArtifactWriteRoot(root), seen) +
+      countTranscriptFilesUnder(roicArtifactLegacyRoot(root), seen)
+    );
   } catch {
-    return 0;
+    return seen.size;
   }
 }

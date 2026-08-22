@@ -15,6 +15,7 @@ import { getSymbolWebSignals } from "../src/lib/web-sources";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-sec-${randomUUID()}.db`)}`;
+  process.env.DATA_DIR = join(tmpdir(), `agentic-sec-data-${randomUUID()}`);
 });
 
 beforeEach(async () => {
@@ -145,6 +146,9 @@ describe("refreshInsider (live flow, mocked fetch)", () => {
       .get("0001234567-26-000001") as { n: number };
     // Fixture omits acquired/disposed so structured persist may be 0; table must exist.
     expect(stored.n).toBeGreaterThanOrEqual(0);
+    const { form4WritePath, readFirstExistingSync } = await import("../src/lib/rag/corpus-layout");
+    const xml = readFirstExistingSync( [form4WritePath("0001234567-26-000001", "ownership.xml")] );
+    expect(xml).toContain("issuerTradingSymbol");
   });
 
   it("does not advance fetchedAt (or wipe data) when the scrape fails", async () => {

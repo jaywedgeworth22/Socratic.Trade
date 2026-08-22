@@ -370,6 +370,10 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
     expect(result.topAnalogSimilarity).toBeCloseTo(0.77, 5);
     expect(result.analogsBlock).toContain("top-analog similarity 0.77");
     expect(result.analogsBlock).toContain("[COUNTEREXAMPLE — opposite realized sign]");
+    expect(result.analogsBlock).toContain("ANALOG MSFT");
+    expect(result.analogsBlock).toContain("return_pct 8.2");
+    expect(result.analogsBlock).toContain("ANALOG AMD");
+    expect(result.analogsBlock).not.toContain("[SOCRATIC-DECISION");
     expect(result.injected.find((ref) => ref.id === "prior-loser")?.counterexample).toBe(true);
     expect(result.injected.find((ref) => ref.id === "prior-winner")?.counterexample).toBeUndefined();
 
@@ -391,5 +395,131 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
     expect(result.coachingBlock).toBeUndefined();
     expect(result.injected).toEqual([]);
     expect(typeof result.asOf).toBe("string");
+  });
+
+  it("reserves one COUNTEREXAMPLE analog from the over-ask set when the top-k are all winners", async () => {
+    const winners = Array.from({ length: 6 }, (_, i) => ({
+      ...baseChunk,
+      id: `win-${i}`,
+      score: 0.9 - i * 0.01,
+      metadata: { run_id: "run-old", return_pct: 4 + i, symbol: "MSFT", side: "long" }
+    }));
+    const loser = {
+      ...baseChunk,
+      id: "reserved-loser",
+      score: 0.51,
+      text: "Similar setup reversed after a risk-off tape.",
+      metadata: { run_id: "run-old-2", return_pct: -6.1, symbol: "AMD", side: "long", holding_days: 9, risk_exit: true }
+    };
+    mocks.retrieveContextDetailed.mockResolvedValue([...winners, loser]);
+
+    const { retrieveDecisionExperiences } = await import("../src/lib/experience-memory");
+    const result = await retrieveDecisionExperiences({
+      userId: "local",
+      runId: "run-current",
+      regime: "Risk-On",
+      candidates: [{ symbol: "NVDA" }],
+      k: 5
+    });
+
+    expect(result.injected.find((ref) => ref.id === "reserved-loser")?.counterexample).toBe(true);
+    expect(result.injected.some((ref) => ref.id === "win-4")).toBe(false);
+    expect(result.analogsBlock).toContain("[COUNTEREXAMPLE — opposite realized sign]");
+    expect(result.analogsBlock).toContain("ANALOG AMD long");
+    expect(result.analogsBlock).toContain("return_pct -6.1");
+    expect(result.analogsBlock).toContain("risk_exit yes");
+  });
+});
+
+describe("formatAnalogCard", () => {
+  it("packs situation + outcome scalars without dumping SocraticDecisionCase JSON", async () => {
+    const { formatAnalogCard } = await import("../src/lib/experience-memory");
+    const dump = JSON.stringify({
+      id: "case-1",
+      symbol: "AAPL",
+      side: "buy",
+      thesisTag: "Momentum-Breakout",
+      regime: "risk-off",
+      greenTeamRationale: "Breakout versus weak breadth; size was 1.2% NAV.",
+      redTeamVerdict: { verdict: "approve", reason: "ok" },
+      ragAttributions: Array.from({ length: 12 }, (_, i) => ({
+        source: "10-k",
+        text: `filing blob ${i} ${"x".repeat(80)}`
+      })),
+      evidence: Array.from({ length: 8 }, (_, i) => ({ title: `e${i}`, summary: "y".repeat(60) })),
+      policyDecision: { approved: true, reasons: [] },
+      outcome: { returnPct: -4.2, status: "closed" }
+    });
+    const card = formatAnalogCard({
+      id: "c1",
+      text: dump,
+      score: 0.81,
+      doc_type: "socratic-decision",
+      metadata: {
+        symbol: "AAPL",
+        side: "long",
+        return_pct: -4.2,
+        holding_days: 11,
+        risk_exit: true,
+        entry_market_regime: "risk-off",
+        thesis_tag: "Momentum-Breakout",
+        sector: "Technology"
+      }
+    });
+    expect(card).toMatch(/^ANALOG AAPL long \|/);
+    expect(card).toContain("return_pct -4.2");
+    expect(card).toContain("holding_days 11");
+    expect(card).toContain("risk_exit yes");
+    expect(card).toContain("regime risk-off");
+    expect(card).toContain("situation: Technology");
+    expect(card).toContain("rationale: Breakout versus weak breadth");
+    expect(card).not.toContain("ragAttributions");
+    expect(card).not.toContain("redTeamVerdict");
+    expect(card).not.toContain("policyDecision");
+    expect(card).not.toContain(dump.slice(0, 80));
+    expect(card.length).toBeLessThanOrEqual(1500);
+    expect(card.split("\n").length).toBeLessThanOrEqual(12);
+  });
+
+  it("compacts closed-lot experience text and prefers camelCase metadata aliases", async () => {
+    const { formatAnalogCard } = await import("../src/lib/experience-memory");
+    const longRationale = `Momentum breakout with congress accumulation. ${"edge ".repeat(120)}`;
+    const card = formatAnalogCard({
+      id: "e1",
+      score: 0.7,
+      doc_type: "socratic-decision",
+      text: [
+        "Experience memory: closed lot with realized outcome",
+        "ticker: NVDA",
+        "side: long",
+        "thesis_tag: Momentum-Breakout",
+        "entry_market_regime: Risk-On",
+        "sector: Technology",
+        "entry_factor_scores: momentum=90 value=20",
+        "macro_snapshot_at_entry: market_breadth_pct=62.5",
+        `entry_rationale: ${longRationale}`,
+        "realized_outcome: return_pct=10; holding_days=3.2; risk_exit=true"
+      ].join("\n"),
+      metadata: {
+        symbol: "NVDA",
+        side: "long",
+        realizedReturnPct: 10,
+        holdingDays: 3.2,
+        riskExit: true,
+        thesis: "Momentum-Breakout",
+        regime: "Risk-On"
+      }
+    });
+    expect(card).toContain("ANALOG NVDA long");
+    expect(card).toContain("return_pct 10");
+    expect(card).toContain("holding_days 3.2");
+    expect(card).toContain("risk_exit yes");
+    expect(card).toContain("situation: Technology; momentum=90 value=20");
+    expect(card).toContain("rationale: Momentum breakout with congress accumulation");
+    expect(card).not.toContain("Experience memory: closed lot");
+    expect(card.length).toBeLessThanOrEqual(1500);
+    const rationaleLine = card.split("\n").find((line) => line.startsWith("rationale:"));
+    expect(rationaleLine).toBeDefined();
+    expect(rationaleLine!.length).toBeLessThanOrEqual("rationale: ".length + 400 + 1);
   });
 });
