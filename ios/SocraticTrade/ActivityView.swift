@@ -72,164 +72,6 @@ struct ActivityView: View {
     }
 }
 
-enum NotificationHistoryFilter: String, CaseIterable, Identifiable {
-    case unread = "Unread"
-    case all = "All"
-
-    var id: String { rawValue }
-}
-
-/// Header-inbox counterpart of the website `NotificationInbox`.  Same persisted rows as
-/// Activity Notifications, presented from the bell on every tab.
-struct NotificationsInboxView: View {
-    @EnvironmentObject private var store: MobileStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var notificationFilter: NotificationHistoryFilter = .unread
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if let snapshot = store.snapshot {
-                    ScrollView {
-                        InboxHistorySection(
-                            snapshot: snapshot,
-                            filter: $notificationFilter,
-                            markRead: { ids in
-                                await store.acknowledgeNotifications(ids: ids)
-                            }
-                        )
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                    }
-                    .background(AppPalette.background)
-                } else {
-                    ContentUnavailableView(
-                        "Notifications",
-                        systemImage: "bell",
-                        description: Text("Alerts you can open later will appear here after they are sent.")
-                    )
-                }
-            }
-            .navigationTitle("Notifications")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-private struct InboxHistorySection: View {
-    let snapshot: MobileSnapshot
-    @Binding var filter: NotificationHistoryFilter
-    let markRead: ([String]) async -> Void
-
-    @State private var ackingIds: Set<String> = []
-
-    private var activeAccountId: String? {
-        snapshot.readiness.activeConnectedAccount?.id ?? snapshot.policy.connectedAccountId
-    }
-
-    private var scoped: [NotificationHistoryItem] {
-        snapshot.inScopeNotifications(activeAccountId: activeAccountId)
-    }
-
-    private var visible: [NotificationHistoryItem] {
-        let rows: [NotificationHistoryItem]
-        switch filter {
-        case .unread:
-            rows = scoped.filter { !$0.read }
-        case .all:
-            rows = scoped
-        }
-        return Array(rows.prefix(40))
-    }
-
-    private var unreadCount: Int {
-        scoped.filter { !$0.read }.count
-    }
-
-    var body: some View {
-        VStack(spacing: 10) {
-            SectionHeading(
-                "Notifications",
-                subtitle: "Alerts you can open later.  Refresh still shows them."
-            )
-            filterRow
-            if visible.isEmpty {
-                EmptyStateCard(
-                    title: filter == .unread ? "No Unread Notifications" : "No Notifications Yet",
-                    message: filter == .unread
-                        ? "Nothing unread for this account.  Switch to All to see earlier alerts."
-                        : "Fills, blocks, and run alerts will appear here after they are sent.",
-                    systemImage: "bell"
-                )
-            } else {
-                ForEach(visible) { item in
-                    NotificationHistoryRow(
-                        item: item,
-                        acking: ackingIds.contains(item.id),
-                        markRead: { await markOne(item) }
-                    )
-                }
-            }
-        }
-    }
-
-    private var filterRow: some View {
-        HStack(spacing: 8) {
-            ForEach(NotificationHistoryFilter.allCases) { option in
-                Button {
-                    filter = option
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(option.rawValue)
-                        if option == .unread {
-                            Text("\(unreadCount)")
-                                .font(.appCaption2.weight(.bold))
-                        }
-                    }
-                    .font(.appCaption.weight(filter == option ? .bold : .semibold))
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 36)
-                    .background(
-                        filter == option ? AppPalette.accent.opacity(0.14) : Color.clear,
-                        in: Capsule()
-                    )
-                    .foregroundStyle(filter == option ? AppPalette.accent : .secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(filter == option ? .isSelected : [])
-            }
-            Spacer()
-            if unreadCount > 0 {
-                Button("Mark All Read") {
-                    Task { await markAllVisibleUnread() }
-                }
-                .font(.appCaption.weight(.semibold))
-                .disabled(!ackingIds.isEmpty)
-            }
-        }
-    }
-
-    private func markOne(_ item: NotificationHistoryItem) async {
-        guard !item.read else { return }
-        ackingIds.insert(item.id)
-        defer { ackingIds.remove(item.id) }
-        await markRead([item.id])
-    }
-
-    private func markAllVisibleUnread() async {
-        let ids = visible.filter { !$0.read }.map(\.id)
-        guard !ids.isEmpty else { return }
-        ackingIds.formUnion(ids)
-        defer { ackingIds.subtract(ids) }
-        await markRead(ids)
-    }
-}
-
 private struct ActivitySectionChips: View {
     @Binding var selection: ActivitySection
 
@@ -837,3 +679,214 @@ private struct AuditLogRow: View {
         .accessibilityLabel(item.title)
     }
 }
+
+enum NotificationHistoryFilter: String, CaseIterable, Identifiable {
+    case unread = "Unread"
+    case all = "All"
+
+    var id: String { rawValue }
+}
+
+/// Header-inbox counterpart of the website `NotificationInbox`.  Same persisted rows as
+/// the Activity Notifications card, presented from the bell on every tab.
+struct NotificationsInboxView: View {
+    @EnvironmentObject private var store: MobileStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var notificationFilter: NotificationHistoryFilter = .unread
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let snapshot = store.snapshot {
+                    ScrollView {
+                        NotificationHistorySection(
+                            snapshot: snapshot,
+                            filter: $notificationFilter,
+                            markRead: { ids in
+                                await store.acknowledgeNotifications(ids: ids)
+                            }
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+                    .background(AppPalette.background)
+                } else {
+                    ContentUnavailableView(
+                        "Notifications",
+                        systemImage: "bell",
+                        description: Text("Alerts you can open later will appear here after they are sent.")
+                    )
+                }
+            }
+            .navigationTitle("Notifications")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct NotificationHistorySection: View {
+    let snapshot: MobileSnapshot
+    @Binding var filter: NotificationHistoryFilter
+    let markRead: ([String]) async -> Void
+
+    @State private var ackingIds: Set<String> = []
+
+    private var activeAccountId: String? {
+        snapshot.readiness.activeConnectedAccount?.id ?? snapshot.policy.connectedAccountId
+    }
+
+    private var scoped: [NotificationHistoryItem] {
+        snapshot.inScopeNotifications(activeAccountId: activeAccountId)
+    }
+
+    private var visible: [NotificationHistoryItem] {
+        let rows = filter == .unread ? scoped.filter { !$0.read } : scoped
+        return Array(rows.prefix(40))
+    }
+
+    private var unreadCount: Int {
+        scoped.filter { !$0.read }.count
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            SectionHeading(
+                "Notifications",
+                subtitle: "Alerts you can open later.  Refresh still shows them."
+            )
+            filterRow
+            if visible.isEmpty {
+                EmptyStateCard(
+                    title: filter == .unread ? "No Unread Notifications" : "No Notifications Yet",
+                    message: filter == .unread
+                        ? "Nothing unread for this account.  Switch to All to see earlier alerts."
+                        : "Fills, blocks, and run alerts will appear here after they are sent.",
+                    systemImage: "bell"
+                )
+            } else {
+                ForEach(visible) { item in
+                    NotificationHistoryRow(
+                        item: item,
+                        acking: ackingIds.contains(item.id),
+                        markRead: { await markOne(item) }
+                    )
+                }
+            }
+        }
+    }
+
+    private var filterRow: some View {
+        HStack(spacing: 8) {
+            ForEach(NotificationHistoryFilter.allCases) { option in
+                Button {
+                    filter = option
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(option.rawValue)
+                        if option == .unread {
+                            Text("\(unreadCount)")
+                                .font(.appCaption2.weight(.bold))
+                        }
+                    }
+                    .font(.appCaption.weight(filter == option ? .bold : .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 36)
+                    .background(
+                        filter == option ? AppPalette.accent.opacity(0.14) : Color.clear,
+                        in: Capsule()
+                    )
+                    .foregroundStyle(filter == option ? AppPalette.accent : .secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(filter == option ? .isSelected : [])
+            }
+            Spacer()
+            if unreadCount > 0 {
+                Button("Mark All Read") {
+                    Task { await markAllVisibleUnread() }
+                }
+                .font(.appCaption.weight(.semibold))
+                .disabled(!ackingIds.isEmpty)
+            }
+        }
+    }
+
+    private func markOne(_ item: NotificationHistoryItem) async {
+        guard !item.read else { return }
+        ackingIds.insert(item.id)
+        defer { ackingIds.remove(item.id) }
+        await markRead([item.id])
+    }
+
+    private func markAllVisibleUnread() async {
+        let ids = visible.filter { !$0.read }.map(\.id)
+        guard !ids.isEmpty else { return }
+        ackingIds.formUnion(ids)
+        defer { ackingIds.subtract(ids) }
+        await markRead(ids)
+    }
+}
+
+private struct NotificationHistoryRow: View {
+    let item: NotificationHistoryItem
+    let acking: Bool
+    let markRead: () async -> Void
+
+    var body: some View {
+        AppCard(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.appHeadline)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    StatusPill(
+                        item.readLabel,
+                        color: item.read ? .secondary : AppPalette.accent,
+                        systemImage: item.read ? "envelope.open" : "envelope.badge"
+                    )
+                }
+                if !item.body.isEmpty {
+                    Text(item.body)
+                        .font(.appSubheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Text(AppFormat.dateTime(item.createdAt))
+                        .font(.appFootnote)
+                        .foregroundStyle(.secondary)
+                    if let account = item.accountLabel, !account.isEmpty {
+                        Text(account)
+                            .font(.appFootnote)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    if !item.read {
+                        Button {
+                            Task { await markRead() }
+                        } label: {
+                            if acking {
+                                ProgressView()
+                            } else {
+                                Text("Mark as Read")
+                            }
+                        }
+                        .font(.appCaption.weight(.semibold))
+                        .disabled(acking)
+                        .accessibilityLabel("Mark as Read")
+                    }
+                }
+            }
+        }
+        .opacity(item.read ? 0.72 : 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.title), \(item.readLabel), \(AppFormat.dateTime(item.createdAt))")
+    }
+}
+
