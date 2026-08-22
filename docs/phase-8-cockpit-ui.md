@@ -15,6 +15,16 @@
 > `docs/rollouts/2026-06-18-glassmorphism-ui.md`. The sections below describe
 > the prior panel-based cockpit and current semantics that still matter.
 >
+> 2026-08-21: Native iOS / Mac Catalyst chrome now follows the website header on
+> every tab: bell (notifications inbox) leading, settings gear trailing.  Regular
+> width uses `tabViewStyle(.sidebarAdaptable)` plus the existing card-column
+> scaffold so an iPad Air 11" and a resized Mac window reflow; compact keeps the
+> phone tab bar.  Admin Portal is a first-class tab gated on `currentUser.isAdmin`,
+> with a native rail of the eleven website admin pages and a fenced WKWebView that
+> intercepts "Back to Console" instead of loading `/console` inside the app.
+> The Assets price-alert composer is removed.  PR #3028.  Rollout:
+> `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
+>
 > 2026-06-28: The SSR first-paint dashboard shell now uses a thin boot strip
 > instead of repeated visible loading labels or quiet skeleton tiles. The loader
 > keeps one screen-reader status and still renders an explicit alert card when

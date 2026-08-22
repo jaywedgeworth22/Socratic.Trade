@@ -374,10 +374,15 @@ final class DeskModelsTests: XCTestCase {
             XCTAssertTrue(AppTab.customizable.contains(tab), "\(tab)")
         }
         XCTAssertFalse(AppTab.customizable.contains(.more))
+        XCTAssertFalse(AppTab.customizable.contains(.admin), "Admin is not a pin for a non-operator")
+        XCTAssertTrue(AppTab.customizable(isAdmin: true).contains(.admin))
+        XCTAssertEqual(AppTab.admin.title, "Admin")
         XCTAssertEqual(AppTab.coach.title, "Coach")
         XCTAssertEqual(AppTab.scan.title, "Scan")
         XCTAssertEqual(AppTab.guardrails.title, "Guardrails")
         XCTAssertEqual(AppTab.results.title, "Results")
+        XCTAssertFalse(AppTab.markets.detail.lowercased().contains("price alert"))
+        XCTAssertFalse(AppTab.customizable(isAdmin: true).contains(.more))
     }
 }
 

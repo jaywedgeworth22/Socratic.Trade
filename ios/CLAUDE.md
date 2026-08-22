@@ -45,13 +45,13 @@ ios/
     ├── ActivityView.swift              # Activity tab
     ├── ProposalsView.swift             # Approvals / proposals
     ├── InsightsView.swift              # Insights
-    ├── AdminPortalView.swift           # Admin fence
+    ├── AdminPortalView.swift           # Admin tab: native rail + fenced WKWebView
     ├── LoginView.swift                 # Sign-in
     ├── DeepLink.swift                  # Universal-link + push tap routing
     ├── PushNotifications.swift         # APNs register / tap
     ├── OrderCancel.swift               # Working-order cancel helpers
     ├── PolicyTightening.swift          # Ask-First ↔ Autopilot + raise/lower caps
-    ├── AppComponents.swift             # Shared rows / chrome
+    ├── AppComponents.swift             # Shared rows / chrome (bell, gear, wide sheets)
     ├── AppTypography.swift             # Type ramp
     ├── CandleWordmarkView.swift        # Brand wordmark
     ├── SymbolInfoSheet.swift           # Ticker sheet
