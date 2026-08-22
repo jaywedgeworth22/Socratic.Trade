@@ -270,6 +270,42 @@ export function compareLitestreamTxid(a: string, b: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/** Normalize a hex txid to lowercase 16-char zero-padded form when possible. */
+export function normalizeLitestreamTxid(raw: string): string {
+  const hex = raw.trim().toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]+$/.test(hex)) return raw.trim().toLowerCase();
+  return hex.padStart(16, "0");
+}
+
+/** max_txid + 1 as a 16-char hex txid (for contiguity checks). */
+export function litestreamTxidSuccessor(txid: string): string {
+  const n = BigInt(`0x${normalizeLitestreamTxid(txid).replace(/^0+/, "") || "0"}`) + 1n;
+  return n.toString(16).padStart(16, "0");
+}
+
+/**
+ * L1 tip minus L2 tip in transaction count when both are parseable hex txids.
+ * Used to flag mega-file L2 catch-up risk (multi-day L1 backlog compacted as one object).
+ */
+export function litestreamCatchUpSpanTxids(l1NewestTxid: string, l2NewestTxid: string): number | null {
+  try {
+    const a = BigInt(`0x${normalizeLitestreamTxid(l1NewestTxid).replace(/^0+/, "") || "0"}`);
+    const b = BigInt(`0x${normalizeLitestreamTxid(l2NewestTxid).replace(/^0+/, "") || "0"}`);
+    const delta = a - b;
+    if (delta < 0n) return null;
+    if (delta > BigInt(Number.MAX_SAFE_INTEGER)) return Number.MAX_SAFE_INTEGER;
+    return Number(delta);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How many txids behind L2 may lag L1 before health copy calls out mega-file catch-up.
+ * Live incident: L2 stuck at ~8323f while L1 kept advancing across days.
+ */
+export const LITESTREAM_CATCH_UP_SPAN_HUGE_TXIDS = 10_000;
+
 interface LocalLtxObservation {
   newestMs: number;
   newestTxid: string | null;
@@ -584,11 +620,33 @@ export interface LitestreamTierFreshnessReport {
  * src/lib/litestream-remote-inventory.ts. Declared here (rather than imported) so this module
  * stays dependency-light and unit-testable without a database or a child process.
  */
+/** First LTX sequence gap found after sorting by min_txid (exclusive of twin overlaps). */
+export interface LitestreamLtxFirstHole {
+  prevMaxTxid: string;
+  nextMinTxid: string;
+}
+
+/**
+ * One compaction level's newest LTX file in the REMOTE replica, plus additive LTX-sequence
+ * shape fields used to spot mega-file catch-up / hole wedges before age alone fires.
+ */
 export interface LitestreamRemoteLevelSummary {
   level: number;
   newestAt: string;
   newestTxid: string | null;
   fileCount: number;
+  /** Gaps where next.min_txid != prev.max_txid + 1 (twins excluded). */
+  holeCount?: number;
+  /** Surplus files sharing a max_txid with a different min_txid (dual-writer overlaps). */
+  twinCount?: number;
+  firstHole?: LitestreamLtxFirstHole | null;
+  /** min_txid at the start of the newest contiguous suffix ending at the tip. */
+  suffixMinTxid?: string | null;
+  /**
+   * L1 newest max_txid minus L2 newest max_txid when both tips are known (tx count).
+   * Attached on level 2 by the collector; null on other levels / when either tip is missing.
+   */
+  catchUpSpanTxids?: number | null;
 }
 
 export interface LitestreamRemoteInventorySnapshot {
@@ -1082,9 +1140,44 @@ export function assessLitestreamTierFreshness(
       : `Level ${tier.tier} ("${tier.label}") last produced ${describeDuration((tier as Extract<LitestreamTierFreshness, { state: "known" }>).ageSeconds)} ago, past its ${describeDuration(tier.thresholdSeconds)} threshold, while level 0 kept advancing.`
   );
 
+  // Contiguity / mega-file catch-up signals from the remote inventory (additive to age grading).
+  const l1Summary = inventoryUsable ? inventory?.levels?.["1"] : undefined;
+  const l2Summary = inventoryUsable ? inventory?.levels?.["2"] : undefined;
+  const catchUpSpan =
+    l2Summary?.catchUpSpanTxids
+    ?? (
+      l1Summary?.newestTxid && l2Summary?.newestTxid
+        ? litestreamCatchUpSpanTxids(l1Summary.newestTxid, l2Summary.newestTxid)
+        : null
+    );
+  const l2Degraded = tiers.some((tier) => tier.tier === "2" && isLitestreamTierDegraded(tier));
+  if (l2Degraded && catchUpSpan != null && catchUpSpan > LITESTREAM_CATCH_UP_SPAN_HUGE_TXIDS) {
+    degradedReasons.push(
+      `Level 2 is stale while level 1 is ahead by ${catchUpSpan.toLocaleString("en-US")} transactions — Compact is attempting a mega-file L1-to-L2 catch-up that tends to fail on B2 with connection reset / LTX header EOF, not merely an empty L2.`
+    );
+  } else if (l2Degraded && l2Summary && l2Summary.fileCount <= 0 && (l1Summary?.fileCount ?? 0) > 0) {
+    // Empty L2 with live L1 input: name the mega-file failure mode even without a numeric span.
+    degradedReasons.push(
+      `Level 2 holds no objects while level 1 still has ${l1Summary!.fileCount} file(s) — Compact may be stuck on a mega-file L1-to-L2 catch-up (B2 connection reset / LTX header EOF), not only "L2 empty".`
+    );
+  }
+  const l1HoleCount = l1Summary?.holeCount ?? 0;
+  if (l1Summary && l1HoleCount > 0) {
+    const holeHint = l1Summary.firstHole
+      ? ` First hole after ${l1Summary.firstHole.prevMaxTxid} before ${l1Summary.firstHole.nextMinTxid}.`
+      : "";
+    degradedReasons.push(
+      `Level 1 LTX sequence has ${l1HoleCount} hole(s); Compact cannot walk a non-contiguous L1 prefix into L2.${holeHint}`
+    );
+  }
+
+  const degraded =
+    tiers.some(isLitestreamTierDegraded)
+    || l1HoleCount > 0;
+
   return {
     tiers,
-    degraded: tiers.some(isLitestreamTierDegraded),
+    degraded,
     degradedReasons,
     // A level we successfully listed IS covered, whether or not it had contents. Counting an
     // empty level as "not observable" would understate coverage in exactly the direction that
@@ -1255,10 +1348,26 @@ export async function getLitestreamRuntimeHealth(options: {
 export const LITESTREAM_RUNTIME_LOG_FAILURE_MARKERS = ["compaction failed", "validation error detected"] as const;
 export type LitestreamRuntimeLogMarker = (typeof LITESTREAM_RUNTIME_LOG_FAILURE_MARKERS)[number];
 
+/** Optional subclass of a `compaction failed` line for the mega-L2 / B2 failure modes. */
+export type LitestreamRuntimeLogClassification =
+  | "storage-class-unsupported"
+  | "ltx-header-eof"
+  | "connection-reset"
+  | null;
+
 export interface LitestreamRuntimeLogFinding {
   marker: LitestreamRuntimeLogMarker;
   /** Trimmed, length-capped log line for a human-readable alert -- never the raw unbounded text. */
   line: string;
+  /** Set when a compaction-failed line matches a known B2/mega-L2 failure substring. */
+  classification?: LitestreamRuntimeLogClassification;
+}
+
+function classifyLitestreamCompactionFailure(line: string): LitestreamRuntimeLogClassification {
+  if (line.includes("Storage class not supported")) return "storage-class-unsupported";
+  if (line.includes("extract timestamp from LTX header: EOF")) return "ltx-header-eof";
+  if (line.includes("connection reset by peer")) return "connection-reset";
+  return null;
 }
 
 const LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS = 500;
@@ -1313,12 +1422,21 @@ export function scanLitestreamRuntimeLogText(text: string): LitestreamRuntimeLog
     // A later successful compaction for that level (or any level, if we cannot parse one)
     // means the hole was healed. Keep paging only on failures that are still the newest signal.
     if (at != null && recoveredAt > at) continue;
-    findings.push({
-      marker,
-      line: line.length > LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS
+    const classification =
+      marker === "compaction failed" ? classifyLitestreamCompactionFailure(line) : null;
+    const capped =
+      line.length > LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS
         ? `${line.slice(0, LITESTREAM_RUNTIME_LOG_MAX_LINE_CHARS)}…`
-        : line
-    });
+        : line;
+    // Keep counting as failure via the existing "compaction failed" marker; optionally label
+    // the known mega-L2 / B2 substrings in the finding line for operators.
+    const annotated =
+      classification != null ? `[${classification}] ${capped}` : capped;
+    findings.push(
+      classification != null
+        ? { marker, line: annotated, classification }
+        : { marker, line: annotated }
+    );
     if (findings.length >= LITESTREAM_RUNTIME_LOG_MAX_FINDINGS) break;
   }
   return findings;

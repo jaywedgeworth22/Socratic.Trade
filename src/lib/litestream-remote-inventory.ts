@@ -44,9 +44,14 @@
 import { accessSync, constants } from "fs";
 import { dirname, join } from "path";
 import { deleteDurableStateValue, getDurableStateValue, setDurableStateValue } from "./db-durable-state";
-import type {
-  LitestreamRemoteInventorySnapshot,
-  LitestreamRemoteLevelSummary
+import {
+  compareLitestreamTxid,
+  litestreamCatchUpSpanTxids,
+  litestreamTxidSuccessor,
+  normalizeLitestreamTxid,
+  type LitestreamLtxFirstHole,
+  type LitestreamRemoteInventorySnapshot,
+  type LitestreamRemoteLevelSummary
 } from "./runtime-health";
 
 type ExecFileFn = (
@@ -141,11 +146,105 @@ export function resolveLitestreamRemoteInventoryConfig(options: {
   return { ok: true, config: { binPath, configPath, dbPath: options.dbPath, levels: LITESTREAM_REMOTE_LEVELS } };
 }
 
+export interface LitestreamLtxContiguity {
+  holeCount: number;
+  twinCount: number;
+  firstHole: LitestreamLtxFirstHole | null;
+  suffixMinTxid: string | null;
+  suffixFileCount: number;
+}
+
+interface LitestreamLtxRange {
+  minTxid: string;
+  maxTxid: string;
+}
+
+function emptyContiguity(): LitestreamLtxContiguity {
+  return { holeCount: 0, twinCount: 0, firstHole: null, suffixMinTxid: null, suffixFileCount: 0 };
+}
+
+/**
+ * Pure LTX-sequence shape analysis for one remote compaction level.
+ *
+ * Parses min_txid/max_txid, sorts by min, counts holes (next.min != prev.max+1) and twins
+ * (same max, different min), and finds the newest contiguous suffix. Never intended for
+ * level 0 (local-only); callers should not list level 0 here.
+ */
+export function analyzeLitestreamLtxContiguity(payload: unknown, level: number): LitestreamLtxContiguity {
+  if (level === 0) return emptyContiguity();
+
+  const entries = Array.isArray(payload) ? payload : [];
+  const ranges: LitestreamLtxRange[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as { level?: unknown; min_txid?: unknown; max_txid?: unknown };
+    if (typeof record.level === "number" && record.level !== level) continue;
+    if (typeof record.min_txid !== "string" || typeof record.max_txid !== "string") continue;
+    ranges.push({
+      minTxid: normalizeLitestreamTxid(record.min_txid),
+      maxTxid: normalizeLitestreamTxid(record.max_txid)
+    });
+  }
+  if (ranges.length === 0) return emptyContiguity();
+
+  ranges.sort((a, b) => {
+    const byMin = compareLitestreamTxid(a.minTxid, b.minTxid);
+    if (byMin !== 0) return byMin;
+    return compareLitestreamTxid(a.maxTxid, b.maxTxid);
+  });
+
+  let holeCount = 0;
+  let twinCount = 0;
+  let firstHole: LitestreamLtxFirstHole | null = null;
+  for (let i = 1; i < ranges.length; i += 1) {
+    const prev = ranges[i - 1]!;
+    const cur = ranges[i]!;
+    if (cur.maxTxid === prev.maxTxid && cur.minTxid !== prev.minTxid) {
+      twinCount += 1;
+      continue;
+    }
+    if (cur.minTxid !== litestreamTxidSuccessor(prev.maxTxid)) {
+      holeCount += 1;
+      if (!firstHole) {
+        firstHole = { prevMaxTxid: prev.maxTxid, nextMinTxid: cur.minTxid };
+      }
+    }
+  }
+
+  // Newest contiguous suffix: walk backward from the tip, skipping twin peers.
+  let suffixStart = ranges.length - 1;
+  for (let i = ranges.length - 1; i > 0; i -= 1) {
+    const cur = ranges[i]!;
+    const prev = ranges[i - 1]!;
+    if (cur.maxTxid === prev.maxTxid && cur.minTxid !== prev.minTxid) {
+      suffixStart = i - 1;
+      continue;
+    }
+    if (cur.minTxid === litestreamTxidSuccessor(prev.maxTxid)) {
+      suffixStart = i - 1;
+      continue;
+    }
+    break;
+  }
+  const suffix = ranges.slice(suffixStart);
+  const suffixMinTxid = suffix[0]?.minTxid ?? null;
+
+  return {
+    holeCount,
+    twinCount,
+    firstHole,
+    suffixMinTxid,
+    suffixFileCount: suffix.length
+  };
+}
+
 /**
  * Reduce one `litestream ltx -level N -json` payload to the newest file at that level.
  *
  * Pure and defensive: the JSON shape is Litestream's, not ours, so every field is re-validated
  * rather than trusted. Entries for other levels are ignored rather than silently merged.
+ * Contiguity fields are additive (hole/twin/suffix); catchUpSpanTxids stays null here and is
+ * attached on level 2 by collectLitestreamRemoteInventory when both tips are known.
  */
 export function summarizeLitestreamLtxPayload(payload: unknown, level: number): LitestreamRemoteLevelSummary {
   const entries = Array.isArray(payload) ? payload : [];
@@ -172,13 +271,25 @@ export function summarizeLitestreamLtxPayload(payload: unknown, level: number): 
     }
   }
 
+  const contiguity = analyzeLitestreamLtxContiguity(payload, level);
+
   // `fileCount` reports the entries actually counted, even when none carried a readable
   // timestamp. It used to be zeroed in that case (`newestAt ? fileCount : 0`), which let the
   // COLLECTOR manufacture the empty state out of a parse problem — and as of 2026-08-14
   // "successfully listed and empty" is a load-bearing measurement that
   // assessLitestreamTierFreshness draws a wedge verdict from. The count-without-timestamp shape
   // is now visible to it and classified as `remote-inventory-inconsistent`, not as emptiness.
-  return { level, newestAt: newestAt ?? "", newestTxid, fileCount };
+  return {
+    level,
+    newestAt: newestAt ?? "",
+    newestTxid,
+    fileCount,
+    holeCount: contiguity.holeCount,
+    twinCount: contiguity.twinCount,
+    firstHole: contiguity.firstHole,
+    suffixMinTxid: contiguity.suffixMinTxid,
+    catchUpSpanTxids: null
+  };
 }
 
 function runLitestreamLtx(config: LitestreamRemoteInventoryConfig, level: number): Promise<unknown> {
@@ -232,6 +343,15 @@ export async function collectLitestreamRemoteInventory(options: {
     } catch (error) {
       levelErrors[String(level)] = error instanceof Error ? error.message : String(error);
     }
+  }
+
+  const l1 = levels["1"];
+  const l2 = levels["2"];
+  if (l1?.newestTxid && l2?.newestTxid) {
+    levels["2"] = {
+      ...l2,
+      catchUpSpanTxids: litestreamCatchUpSpanTxids(l1.newestTxid, l2.newestTxid)
+    };
   }
 
   const failed = Object.keys(levelErrors).length;
