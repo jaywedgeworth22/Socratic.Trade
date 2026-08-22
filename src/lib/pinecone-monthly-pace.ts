@@ -85,10 +85,16 @@ export function pineconeMonthWindow(nowMs: number = Date.now()): PineconeMonthWi
  * non-numeric, or <= 0 — and 0 means the throttle is OFF (accounting still runs).
  */
 export function pineconeMonthlyWuBudget(nowMs: number = Date.now()): number {
-  // Standard trial is usage-billed against the $300 credit, not the Starter 2M monthly wall.
-  // A leftover PINECONE_MONTHLY_WU_BUDGET=2000000 must not park ingest or page while the
-  // trial is still open.  After the trial, 0 stays off — do not invent a 1.6M Starter cap.
-  if (isPineconeTrialActive(nowMs)) return 0;
+  // During the remaining trial window, honor an explicit monthly budget (owner 5M
+  // Builder week).  0 stays off.  After the calendar, the trial-window snap to
+  // free-tier 1.6M wins even if Infisical still holds 5M.
+  if (isPineconeTrialActive(nowMs)) {
+    const raw = process.env.PINECONE_MONTHLY_WU_BUDGET;
+    if (raw == null || String(raw).trim() === "") return 0;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 5_000_000) return 0;
+    return Math.floor(parsed);
+  }
   const raw = process.env.PINECONE_MONTHLY_WU_BUDGET;
   let configured = 0;
   if (raw != null && String(raw).trim() !== "") {

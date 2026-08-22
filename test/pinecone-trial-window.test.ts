@@ -137,22 +137,37 @@ describe("pinecone trial window", () => {
     expect(state.effectiveDailyWriteUnits).toBeLessThan(2_500_000);
   });
 
-  it("keeps Infisical knobs after the trial calendar — does not invent a Starter 2M monthly wall", async () => {
-    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
-    process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "250000";
+  it("honors a 5M Builder monthly budget while the trial is still open", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "5000000";
     const { assessPineconeTrialWindow } = await load();
+    const state = assessPineconeTrialWindow({
+      now: AUG_16,
+      mtdWriteUnits: 1_000_000,
+      configuredDailyWriteUnits: 5_000_000,
+      configuredTextsPerDay: 250_000,
+      configuredMonthlyWriteUnits: 5_000_000
+    });
+    expect(state.active).toBe(true);
+    expect(state.mode).toBe("trial");
+    expect(state.effectiveMonthlyWriteUnits).toBe(5_000_000);
+  });
+
+  it("snaps leftover trial Infisical knobs to free-tier when the calendar ends", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "5000000";
+    process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "250000";
+    const { assessPineconeTrialWindow, PINECONE_FREE_TIER_WU_PER_DAY, PINECONE_FREE_TIER_TEXTS_PER_DAY, PINECONE_FREE_TIER_MONTHLY_WU } = await load();
     const state = assessPineconeTrialWindow({
       now: AUG_30,
       mtdWriteUnits: 20_000_000,
-      configuredDailyWriteUnits: 2_500_000,
+      configuredDailyWriteUnits: 5_000_000,
       configuredTextsPerDay: 250_000,
-      configuredMonthlyWriteUnits: 0
+      configuredMonthlyWriteUnits: 5_000_000
     });
     expect(state.active).toBe(false);
-    expect(state.mode).toBe("configured");
-    expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
-    expect(state.effectiveTextsPerDay).toBe(250_000);
-    expect(state.effectiveMonthlyWriteUnits).toBe(0);
+    expect(state.mode).toBe("free");
+    expect(state.effectiveDailyWriteUnits).toBe(PINECONE_FREE_TIER_WU_PER_DAY);
+    expect(state.effectiveTextsPerDay).toBe(PINECONE_FREE_TIER_TEXTS_PER_DAY);
+    expect(state.effectiveMonthlyWriteUnits).toBe(PINECONE_FREE_TIER_MONTHLY_WU);
   });
 
   it("honors PINECONE_TRIAL_ENDS_AT=off", async () => {
@@ -193,10 +208,12 @@ describe("pinecone trial window", () => {
     expect(state.effectiveMonthlyWriteUnits).toBe(0);
   });
 
-  it("does not page a Starter 2M rollback when Infisical still holds trial-sized knobs", async () => {
-    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
+  it("advises the free-tier rollback once when the calendar ends", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "5000000";
     const { maybeAdvisePineconeTrialRollback } = await load();
+    expect(await maybeAdvisePineconeTrialRollback(AUG_30, 1)).toBe(true);
+    expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
     expect(await maybeAdvisePineconeTrialRollback(AUG_30, 1)).toBe(false);
-    expect(mocks.alertStorageWarning).not.toHaveBeenCalled();
+    expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
   });
 });
