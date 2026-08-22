@@ -462,7 +462,7 @@ private struct StrategyControlsCard: View {
                     }
                 }
 
-                Text("Exit Only stops new buys while protective exits keep working.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
+                Text("Exit Only stops the agent from opening new risk.  Protective exits keep working.  Approving an opening places it anyway.  Wind Down submits only sell orders until the account is in cash.  Stop Agent turns scheduled autonomy off without selling anything.")
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -1214,7 +1214,8 @@ export async function executeProposal(
         const protectiveStateBlock = freshPlacementBlockReason({
           userId,
           connectedAccountId: policy.connectedAccountId,
-          side: proposal.side
+          side: proposal.side,
+          source: "owner_approval"
         });
         if (protectiveStateBlock) {
           const blockedDecision: PolicyDecision = {

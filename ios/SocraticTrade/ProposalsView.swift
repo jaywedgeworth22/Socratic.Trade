@@ -36,6 +36,7 @@ struct ProposalsView: View {
                         rejectDisabled: !store.canSubmit("proposal.reject"),
                         retryDisabled: !store.canSubmit("proposal.retry_red_team"),
                         requiresTypedConfirmation: requiresLiveConfirmation(proposal, snapshot: snapshot),
+                        openingInExitOnly: openingInExitOnly(proposal, snapshot: snapshot),
                         approve: { approve(proposal, snapshot: snapshot) },
                         reject: { reject(proposal) },
                         retryRedTeam: { retryRedTeam(proposal) },
@@ -107,6 +108,12 @@ struct ProposalsView: View {
 
     private func requiresLiveConfirmation(_ proposal: PendingProposal, snapshot: MobileSnapshot) -> Bool {
         proposal.executionMode == "broker/live" && (snapshot.policy.requireTypedConfirmation ?? true)
+    }
+
+    private func openingInExitOnly(_ proposal: PendingProposal, snapshot: MobileSnapshot) -> Bool {
+        let state = snapshot.policy.systemState ?? snapshot.readiness.systemState
+        let side = proposal.proposal.side.lowercased()
+        return state == "close_only" && (side == "buy" || side == "short")
     }
 
     private func approve(_ proposal: PendingProposal, snapshot: MobileSnapshot) {
@@ -226,6 +233,7 @@ private struct ProposalCard: View {
     let rejectDisabled: Bool
     let retryDisabled: Bool
     let requiresTypedConfirmation: Bool
+    let openingInExitOnly: Bool
     let approve: () -> Void
     let reject: () -> Void
     let retryRedTeam: () -> Void
@@ -317,6 +325,13 @@ private struct ProposalCard: View {
                     if let revalidated = proposal.lastRevalidatedAt {
                         DetailLine(label: "Checked", value: AppFormat.dateTime(revalidated))
                     }
+                }
+
+                if openingInExitOnly {
+                    Text(DeskCopy.exitOnlyOwnerApproveNote)
+                        .font(.appCaption)
+                        .foregroundStyle(AppPalette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let rationale = proposal.proposal.greenTeamRationale ?? proposal.proposal.rationale,

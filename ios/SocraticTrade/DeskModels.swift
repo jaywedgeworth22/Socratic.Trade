@@ -740,7 +740,7 @@ enum DeskCopy {
         case .pausedMarketClosed:
             return "\(authorityWord) is the decision style.  Run state is Paused · market closed — scheduled cycles wait for the next regular session."
         case .exitOnly:
-            return "\(authorityWord) is the decision style.  Run state is Exit-only — new buys are blocked."
+            return "\(authorityWord) is the decision style.  Run state is Exit-only — the agent will not open new risk on its own.  Approving an opening places it anyway."
         case .windingDown:
             return "\(authorityWord) is the decision style.  Run state is Winding down — only sells are submitted."
         case .stopped:
@@ -782,6 +782,8 @@ enum DeskCopy {
     static let proposalConfirmOrderTitle = "Confirm Order"
     static let proposalApproveOrderButton = "Approve Order"
     static let proposalTypedConfirmHint = "Typed confirmation required for this order"
+    static let exitOnlyOwnerApproveNote =
+        "This account is Exit-only, so the agent will not open new risk on its own.  Approving this opening places it anyway."
 
     /// Same destination as web readiness (`/console/guardrails`).  iOS has no Strategy tab.
     /// "always-include symbols" tracks the row label — those names are exempt from the
