@@ -1,5 +1,27 @@
 # Current Status
 
+## 2026-08-22 — Litestream L2/L3 empty wedge RESOLVED (ops heal)
+
+The `litestream tier 2 empty wedged` alert was cleared by the L1-suffix heal.
+Live root cause: B2 L1 had **4 non-contiguous TXID holes** (`85fd4->92b5`,
+`92b7->ad55b`, `ad572->b08a1`, `b08e7->ca40b`), so Compact could not walk L1 into
+L2 and L2/L3 sat empty (0 objects) while L1 kept advancing (~560 files).
+
+Heal (ops, no product code, no Coolify bounce): kept the newest **48 contiguous
+L1** files, deleted **514 stale L1** files (~1.5 GB) via the **S3 API** using the
+container's own `AWS_*` env (the repo heal script's native-B2 key `401`'d — it is
+stale).  Never touched L0/L9/cold-snapshots.  Verified from `litestream-runtime.log`:
+L2 produced its first object since 2026-08-18 at 17:02:43Z, then kept compacting
+every 5m; L3 followed at 17:10:23Z.  L1 post-heal: 0 holes.
+
+`/api/health` clears on the next 30-min remote-inventory collection (the stale
+snapshot still said `litestreamTiersDegraded: true` immediately after).
+
+Follow-ups: (1) owner refresh native B2 master key OR accept S3 backend for
+`scripts/litestream-l1-suffix-heal.py`; (2) watch L1 stays contiguous (closed
+while Coolify stays stop-old-first/no-rolling).  Rollout:
+`docs/rollouts/2026-08-22-litestream-l2l3-unwedge.md`.
+
 ## 2026-08-22 ANTIGRAVITY — Full system fixes & native iOS website parity (PR pending)
 
 - Pruned dead dependencies (`@xyflow/react`, `lightweight-charts`) from `package.json`.
