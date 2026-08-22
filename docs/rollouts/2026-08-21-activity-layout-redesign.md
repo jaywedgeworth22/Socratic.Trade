@@ -105,9 +105,8 @@ A full local `npm test` pass was started earlier and then stopped after ~15m: un
 
 ## 5. Next Steps & Blockers
 
-- Rematched onto `origin/main` `ffb4ea1b` (PR #3030 login family + PR #2990 DeepSeek handoff).  GitHub reported `DIRTY`; `git merge-tree --write-tree origin/main origin/cursor/activity-layout-redesign-085b` exited 0 (phantom).  Overlap was `STATUS.md` + `docs/EFFORT-LOG.md` (`merge=union`).
-- Cloud-proxy pushes generated no `pull_request` event, so the first two SHAs never got `verify` or `ios-build`.  Dispatch both on the rematch SHA.
-- `ios-build` must go green on the Mac runner (ActivityView rewrite + new models + contract URL query strings).
+- Rematched onto `origin/main` `cd4c700d` (PR #3018 keyed Finnhub abort), after an earlier rematch onto `ffb4ea1b` (#3030 + #2990).  Both GitHub `DIRTY` reports were phantoms (`git merge-tree --write-tree` exit 0).  Overlap was `STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md` (`merge=union`).
+- Cloud-proxy pushes often skip `pull_request`.  `ios-build` already green on `9abde5cd` (233/0).  Re-dispatch `verify` after each rematch SHA.
 - TestFlight after merge if the owner wants the iOS Activity rail on devices.  Website half ships with the after-close auto-deploy (or HOTFIX).
 - Other agent's notification deep-link pairing can keep adding destinations; catch-all remains Notifications.
 - Pushover remains available as an extra channel in Settings.  It is no longer the primary system-alert path when APNs can reach an admin.
