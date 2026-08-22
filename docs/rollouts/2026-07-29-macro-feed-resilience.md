@@ -162,7 +162,7 @@ Independent verifier reviewed the first commit (`6698052c`) and live-probed the 
 
 ## 6. Next Steps & Blockers
 
-- **Prod verification requires SSH to the NEW Oracle host `141.148.182.224`** (hosting migrated off
+- **Prod verification requires SSH to the NEW Oracle host `<ORACLE_IP_RETIRED>`** (hosting migrated off
   Hetzner `135.181.192.190` — the old box's SSH now times out; see AGENTS.md hosting section). After
   this lands and auto-deploys: confirm the `regime_flip` flap stops (no Unknown-side rows), confirm
   `macro_feed_unavailable` rows appear at most hourly during any real outage, and check

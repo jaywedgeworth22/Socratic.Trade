@@ -13,11 +13,11 @@ Owner: shut down all Oracle GitHub Actions runners and run every repo on GitHub-
 
 ### Congress.Trade
 - `ci.yml`, `security.yml` → `ubuntu-latest`.
-- `deploy-oracle.yml` → `ubuntu-latest` + SSH deploy to `ubuntu@141.148.182.224` (requires `ORACLE_SSH_PRIVATE_KEY` secret).
+- `deploy-oracle.yml` → `ubuntu-latest` + SSH deploy to `ubuntu@<ORACLE_IP_RETIRED>` (requires `ORACLE_SSH_PRIVATE_KEY` secret).
 - `scripts/check-actions-runner-policy.mjs` allows only `ubuntu-latest`.
 
 ### Host ops
-- Stop/disable `oracle-runner-*` Docker containers on `141.148.182.224`.
+- Stop/disable `oracle-runner-*` Docker containers on `<ORACLE_IP_RETIRED>`.
 - Delete offline/online self-hosted runner registrations from GitHub.
 
 ## Decisions & Trade-offs
