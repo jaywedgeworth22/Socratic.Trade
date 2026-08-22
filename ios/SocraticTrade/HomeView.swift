@@ -543,7 +543,20 @@ private struct StrategyControlsCard: View {
 }
 
 private struct PortfolioOverviewCard: View {
+    @EnvironmentObject private var store: MobileStore
     let snapshot: MobileSnapshot
+
+    private var isLive: Bool {
+        AccountMetrics.usesLiveMetrics(environment: store.displayedActiveAccount(in: snapshot)?.environment)
+    }
+
+    private var equityPoints: [EquityCurvePoint] {
+        if isLive {
+            return snapshot.performance?.liveEquityCurve ?? []
+        } else {
+            return snapshot.performance?.paperEquityCurve ?? []
+        }
+    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -560,6 +573,11 @@ private struct PortfolioOverviewCard: View {
                         detailPlacement: .trailing
                     )
                 }
+
+                if !equityPoints.isEmpty {
+                    EquityChartView(points: equityPoints, title: "Performance Trend", isLive: isLive)
+                        .padding(.top, 4)
+                }
             } else {
                 EmptyStateCard(
                     title: "No portfolio available",
@@ -572,7 +590,6 @@ private struct PortfolioOverviewCard: View {
             }
         }
     }
-
 }
 
 private struct DeskShortcutsCard: View {

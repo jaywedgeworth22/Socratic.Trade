@@ -111,9 +111,11 @@ struct ProposalsView: View {
 
     private func approve(_ proposal: PendingProposal, snapshot: MobileSnapshot) {
         if requiresLiveConfirmation(proposal, snapshot: snapshot) {
+            AppHaptics.warning()
             confirmationText = ""
             confirmingProposal = proposal
         } else {
+            AppHaptics.success()
             Task {
                 await store.submit(
                     "proposal.approve",
@@ -125,6 +127,7 @@ struct ProposalsView: View {
     }
 
     private func reject(_ proposal: PendingProposal) {
+        AppHaptics.light()
         Task {
             await store.submit(
                 "proposal.reject",
@@ -135,6 +138,7 @@ struct ProposalsView: View {
     }
 
     private func retryRedTeam(_ proposal: PendingProposal) {
+        AppHaptics.medium()
         Task {
             await store.submit(
                 "proposal.retry_red_team",
@@ -145,6 +149,7 @@ struct ProposalsView: View {
     }
 
     private func approveConfirmedLiveProposal(_ proposal: PendingProposal) {
+        AppHaptics.heavy()
         let confirmation = LiveApprovalConfirmation(
             proposalId: proposal.id,
             accountNumber: proposal.accountNumber,
