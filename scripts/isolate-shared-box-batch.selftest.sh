@@ -23,7 +23,7 @@ eee555	congress-app-live
 fff666	ocr-batch-1
 ggg777	unrelated-redis
 hhh888	socratic-ocr-hypothetical
-iii999	d83b1aykr03uwr32yhgzaiay
+iii999	mock-st-app-uuid
 EOF
 
 PASSES=0
@@ -68,7 +68,7 @@ assert_contains "caps ocr-named container" "cap  fff666  ocr-batch-1  worker" "$
 assert_contains "skips ST app" "skip  aaa111  socratic-app-live  protected" "$OUT"
 assert_contains "skips Coolify" "skip  bbb222  coolify  protected" "$OUT"
 assert_contains "skips UM" "skip  ccc333  usage-monitor  protected" "$OUT"
-assert_contains "skips ST uuid" "skip  iii999  d83b1aykr03uwr32yhgzaiay  protected" "$OUT"
+assert_contains "skips ST uuid" "skip  iii999  mock-st-app-uuid  protected" "$OUT"
 assert_contains "protected wins over ocr in the name" "skip  hhh888  socratic-ocr-hypothetical  protected" "$OUT"
 assert_contains "congress app skipped without --include-app" "skip  eee555  congress-app-live  app" "$OUT"
 assert_contains "unrelated skipped" "skip  ggg777  unrelated-redis  other" "$OUT"
