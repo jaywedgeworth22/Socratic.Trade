@@ -118,5 +118,14 @@ watermark only after a `sent` user delivery or a successful operator fallback.
 - The same alert fingerprint is not delivered more than once per 60s
   (`price_alert` by id; other lock types by stable payload identity).
 - Users can reopen later notifications (time, title/body, read) on the website
-  header inbox + Activity Alert Center, and on iOS Activity.  Same
-  `notification_events` rows; last 100; mark-as-read uses `/api/notifications/ack`.
+  header inbox + Activity Alerts Center, and on iOS Activity → Alerts Center.
+  Same `notification_events` rows; last 100; mark-as-read uses `/api/notifications/ack`.
+- Activity tabs (website and iOS, 2026-08-21) are Alerts Center, Notifications,
+  Strategy Runs, Order Fills, Audit Log.  Default is Alerts Center.  The former
+  All unified feed is Audit Log (`?tab=all` still opens it).  Failed strategy
+  runs show a wrapping plain-English reason, not the delivery chip ("Sent") and
+  not raw JSON.
+- Native iOS push is included whenever APNs is configured and the user has a
+  live device token, even if `prefs.channels` omitted `apns`.  System-wide
+  connection and storage alerts fan out to every administrator; Pushover/email
+  remain last-resort extra delivery when no admin has a live device.

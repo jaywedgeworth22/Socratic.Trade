@@ -56,14 +56,14 @@ describe("notification history", () => {
       read: false,
       accountLabel: "Alpaca Paper"
     });
-    expect(items[0]?.body).toMatch(/Sent/i);
+    expect(items[0]?.body).toMatch(/Green Team could not finish/);
+    expect(items[0]?.channel).toBe("Push");
     expect(items[1]).toMatchObject({
       id: "read-1",
       title: "Bought AAPL",
       read: true
     });
     expect(JSON.stringify(items)).not.toContain("webhook");
-    expect(JSON.stringify(items)).not.toContain("Green Team could not finish");
   });
 
   it("keeps other-account rows out of the unread badge for the active account", () => {

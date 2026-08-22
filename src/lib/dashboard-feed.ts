@@ -1,5 +1,6 @@
 import type { EquityOrder, EquityPosition, FillEvent, NotificationEvent, PendingProposal, TradeProposal } from "./types";
 import { formatQuantity } from "./money";
+import { humanizeFailureText } from "./strategy-run-failure";
 import { isWorkingOrderState } from "./broker-held-orders";
 import { shortOrderLabel } from "./order-labels";
 
@@ -116,9 +117,11 @@ function formatAuditEvent(
   if (kind === "strategy_run") {
     const llm = formatLlmSteps(payload.llmSteps);
     const summary = stringValue(payload.summary) ?? "No summary";
+    const failed = payload.status === "failed";
+    const detail = failed ? humanizeFailureText(summary) ?? summary : summary;
     return {
-      title: payload.status === "failed" ? "Strategy run failed" : "Strategy run completed",
-      detail: joinDetail([summary, llm]) ?? summary
+      title: failed ? "Strategy Run Failed" : "Strategy Run Completed",
+      detail: joinDetail([detail, llm]) ?? detail
     };
   }
 

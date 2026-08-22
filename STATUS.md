@@ -25,6 +25,13 @@ Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
 Local receipts: `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm run build` ok.
 Local `npm test` aborted (network 404s / single worker); CI `verify` is the JS test of
 record.
+## 2026-08-21 CURSOR — Activity layout redesign (Alerts Center first)
+
+Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now five Title Case tabs in this order: Alerts Center, Notifications, Strategy Runs, Order Fills, Audit Log.  Default Alerts Center.  Former All unified feed is Audit Log.  Failed runs show wrapping English.  APNs is auto-included when the user has a live device.  Admins get system alerts.  Alpaca session close is no longer stamped Delayed Quote.  Push `?tab=` is additive so another agent's deep-link pairing is not smashed.
+
+PR #3031 on `cursor/activity-layout-redesign-085b`, rematched onto `origin/main` `cd4c700d` (#3018 keyed Finnhub abort).  `ios-build` green (233/0).  Tooltip sentence-gap + AuditLogPanel wiring marker fixed; re-dispatching `verify`.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
+
+# Current Status
 ## 2026-08-21 GROK — Stop paging Starter 2M Pinecone write units
 
 Owner: the 2M monthly write-unit pages keep firing and ingest should continue.  Live Pinecone is a Standard trial (unlimited WUs, $300, 21 days from 2026-08-09).  Infisical daily fuse is already 5M; monthly budget was unset (off).  #2799 ignored 2M only when the error body contained `429`; Pinecone's official monthly-quota text often does not, so hourly `Pinecone connection failed` still went out.

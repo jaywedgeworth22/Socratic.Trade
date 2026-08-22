@@ -679,8 +679,8 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
     return {
       title: "A run is already in progress",
       detail: `${message} Wait for it to finish — Activity shows it as it happens.`,
-      fixHref: "/console/activity",
-      fixLabel: "Open Activity"
+      fixHref: "/console/activity?tab=runs",
+      fixLabel: "Open Strategy Runs"
     };
   }
   if (m.includes("budget")) {
@@ -703,8 +703,8 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   return {
     title: "The run failed",
     detail: message,
-    fixHref: "/console/activity",
-    fixLabel: "See the full story in Activity"
+    fixHref: "/console/activity?tab=alerts",
+    fixLabel: "See the full story in Alerts Center"
   };
 }
 

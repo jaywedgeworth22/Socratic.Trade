@@ -8,6 +8,9 @@
  * fail-closed openings.  Do not skip Green/Red.
  */
 
+/** Last regular-session close used to size an unquoted symbol.  Not Yahoo delayed tape. */
+export const SESSION_CLOSE_PROVIDER = "session-close";
+
 /** User-facing approval-card stamp (Title Case chip). */
 export const DELAYED_QUOTE_STAMP = "Delayed Quote";
 
