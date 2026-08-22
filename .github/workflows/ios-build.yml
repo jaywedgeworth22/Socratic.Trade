@@ -177,6 +177,7 @@ jobs:
             exit 1
           fi
           echo "Using simulator ID: $sim_id"
+          xcrun simctl boot "$sim_id" 2>/dev/null || true
           log="$RUNNER_TEMP/xcodebuild-test.log"
           set +e
           xcodebuild test \
