@@ -137,10 +137,10 @@ describe("pinecone trial window", () => {
     expect(state.effectiveDailyWriteUnits).toBeLessThan(2_500_000);
   });
 
-  it("snaps leftover trial Infisical knobs to free-tier on the morning the trial ends", async () => {
+  it("keeps Infisical knobs after the trial calendar — does not invent a Starter 2M monthly wall", async () => {
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "250000";
-    const { assessPineconeTrialWindow, PINECONE_FREE_TIER_WU_PER_DAY, PINECONE_FREE_TIER_TEXTS_PER_DAY, PINECONE_FREE_TIER_MONTHLY_WU } = await load();
+    const { assessPineconeTrialWindow } = await load();
     const state = assessPineconeTrialWindow({
       now: AUG_30,
       mtdWriteUnits: 20_000_000,
@@ -149,10 +149,10 @@ describe("pinecone trial window", () => {
       configuredMonthlyWriteUnits: 0
     });
     expect(state.active).toBe(false);
-    expect(state.mode).toBe("free");
-    expect(state.effectiveDailyWriteUnits).toBe(PINECONE_FREE_TIER_WU_PER_DAY);
-    expect(state.effectiveTextsPerDay).toBe(PINECONE_FREE_TIER_TEXTS_PER_DAY);
-    expect(state.effectiveMonthlyWriteUnits).toBe(PINECONE_FREE_TIER_MONTHLY_WU);
+    expect(state.mode).toBe("configured");
+    expect(state.effectiveDailyWriteUnits).toBe(2_500_000);
+    expect(state.effectiveTextsPerDay).toBe(250_000);
+    expect(state.effectiveMonthlyWriteUnits).toBe(0);
   });
 
   it("honors PINECONE_TRIAL_ENDS_AT=off", async () => {
@@ -193,12 +193,10 @@ describe("pinecone trial window", () => {
     expect(state.effectiveMonthlyWriteUnits).toBe(0);
   });
 
-  it("advises the free-tier rollback once", async () => {
+  it("does not page a Starter 2M rollback when Infisical still holds trial-sized knobs", async () => {
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     const { maybeAdvisePineconeTrialRollback } = await load();
-    expect(await maybeAdvisePineconeTrialRollback(AUG_30, 1)).toBe(true);
-    expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
     expect(await maybeAdvisePineconeTrialRollback(AUG_30, 1)).toBe(false);
-    expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
+    expect(mocks.alertStorageWarning).not.toHaveBeenCalled();
   });
 });
