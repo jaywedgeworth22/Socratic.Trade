@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-22 CURSOR — Owner ST favicon + ASC listing + Android master
+
+Website tab icon is the owner transparent candlestick ST.  ASC listing PNG is opaque black (`graphics/asc-app-icon-1024.png`).  Android launcher master is the same transparent 1024.  iOS home-screen App Icon is unchanged.  GitHub login callback remains `https://socratictrade.com/api/auth/callback/github` on an OAuth App.  Branch `cursor/favicon-asc-android`.  Rollout: `docs/rollouts/2026-08-22-favicon-asc-android.md`.
+
 ## 2026-08-22 GROK — Kimi leftover: CT peer intraday uses stored operator token
 
 Re-landed the only unique slice from retired-KIMI ST #3044.  CI/pin-check/lockfile/png deletes from that PR are already on main or harmful.  Peer `/api/market/intraday` now passes `operatorPeerRead` and uses the operator (`local`) *stored* MCP token, not a live `ROBINHOOD_MCP_AUTH_TOKEN` env bypass.  Board `6a7fbecc`.  Branch `grok/kimi-integrate`.
