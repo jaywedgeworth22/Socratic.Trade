@@ -7,7 +7,7 @@ transparent canvas, and the App Store Connect tile is a stale white centered
 ST unlike the iOS App Icon.  `graphics/st-mark-transparent.png` is the RGBA
 source.  Generator never flattens and never writes `AppIcon-1024.png`.
 `public/favicon.ico` added.  ASC listing icon updates on the next TestFlight
-of the current opaque offset ST.  Branch `cursor/st-transparent-favicon-android-4f1a`.
+of the current opaque offset ST.  PR #3050 on `cursor/st-transparent-favicon-android-4f1a`.
 Rollout: `docs/rollouts/2026-08-22-transparent-st-favicon-android.md`.
 
 ## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
