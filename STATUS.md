@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
+
+- Isolated test SQLite DB in `test/api-keys-tombstone.test.ts` per repo convention (`agentic-api-keys-tombstone-${randomUUID()}.db`).
+- Added `afterAll` hook in `test/encryption-key-guard.test.ts` to unstub envs and reset modules cleanly.
+- Resolved React gradient ID collision in `ServerMetricsClient` sparkline chart by switching static `chartGrad` to dynamic `useId()`.
+- Rollout: `docs/rollouts/2026-08-22-test-isolation-and-ui-cleanup.md`.
+
 ## 2026-08-22 GROK — 5M WU snap + RAG panel MERGED (#3037 `f5500b610`)
 
 Honor 5M monthly until 2026-08-27, then snap 60k/20k/1.6M.  Cursor #3038 stacked (numberless monthly-WU 429s ignored during trial).  Live `/api/health` still `a84ce0bed` — not Deployed yet.

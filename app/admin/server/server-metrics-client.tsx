@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useId } from "react";
 import Link from "next/link";
 import { Btn, Card, Chip, Dot, Meter, Toggle } from "../../console/ui/primitives";
 import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield, HardDrive, GitBranch } from "lucide-react";
@@ -1017,6 +1017,7 @@ export function ServerMetricsClient() {
 
 // ── SVG Sparkline Chart ───────────────────────────────────────────────────────
 function SparklineChart({ points, yMax, stroke, fill }: { points: MetricPoint[]; yMax?: number; stroke: string; fill: string }) {
+  const gradId = useId();
   if (points.length < 2) return null;
   const values = points.map(p => p.value);
   const minVal = 0;
@@ -1042,7 +1043,7 @@ function SparklineChart({ points, yMax, stroke, fill }: { points: MetricPoint[];
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
       <defs>
-        <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={fill} stopOpacity="0.25" />
           <stop offset="100%" stopColor={fill} stopOpacity="0.00" />
         </linearGradient>
@@ -1052,7 +1053,7 @@ function SparklineChart({ points, yMax, stroke, fill }: { points: MetricPoint[];
       <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="var(--con-line)" strokeWidth={0.5} strokeDasharray="3" />
       <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="var(--con-line)" strokeWidth={0.5} />
       {/* Area */}
-      <path d={areaD} fill="url(#chartGrad)" />
+      <path d={areaD} fill={`url(#${gradId})`} />
       {/* Line */}
       <path d={pathD} fill="none" stroke={stroke} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
       {/* Max reference line */}
