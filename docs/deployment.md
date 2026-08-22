@@ -3,10 +3,8 @@
 Production is **[socratictrade.com](https://socratictrade.com)** on Coolify app
 **uuid `socratic-app`** (name "Socratic.Trade", branch `main`, dockerfile build pack).
 
-**Host (current):** Coolify on Hetzner (`167.233.254.55`; dashboard/API
-`https://host.jays.services`). Oracle Cloud (`141.148.182.224`) was the prior
-prod host until the 2026-08 fleet cutover — treat Oracle IPs and old app uuids
-in historical rollouts as archival, not live targets.
+**Host (current):** Coolify on the production fleet box (see private
+`jaywedgeworth22/fleet-ops:ATTACK-MAP.md`; dashboard/API `https://host.jays.services`).
 
 **Auto-deploy:** every push to `main` triggers Coolify via the repo webhook to
 Coolify's **manual** GitHub webhook endpoint
@@ -16,7 +14,7 @@ GitHub-App integration alone.  HMAC must match the app's
 trigger deploys (ANNOUNCE-THEN-DEPLOY is retired).
 
 **Coolify `watch_paths` (already live, 2026-08-18):** ASC applied the list
-on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`).  App stayed healthy.  No
+on `socratic-app` (see `fleet-ops:ATTACK-MAP.md`).  App stayed healthy.  No
 bounce.  Do **not** re-apply from a PR.  Watched: `Dockerfile`,
 `.dockerignore`, `package.json`, `package-lock.json`, `next.config.mjs`,
 `postcss.config.mjs`, `tsconfig.json`, `middleware.ts`,

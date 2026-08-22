@@ -2,7 +2,7 @@
 
 ## Context & Objective
 
-After the Oracle Cloud migration (prod host `141.148.182.224`), **no merge to
+After the Oracle Cloud migration (prod host `<ORACLE_IP_RETIRED>`), **no merge to
 `main` reached production for ~30 hours**. Prod ran an image built 2026-07-28
 22:58 UTC (= PR #2249 only). PRs #2252, #2268, and all subsequent merges
 (including other agents' #2265/#2266/#2267/#2272–#2288) were merged but never

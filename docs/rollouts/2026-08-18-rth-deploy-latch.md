@@ -49,7 +49,7 @@ stop-old-first** for real runtime commits (one writer).  Do not add rolling.
 ## Live Coolify `watch_paths` (ASC applied 2026-08-18 — do not re-apply)
 
 ASC set `watch_paths` on Coolify app **socratic-app**
-(`d83b1aykr03uwr32yhgzaiay`) while the app stayed healthy.  No bounce.
+(`<ST_COOLIFY_APP_UUID>`) while the app stayed healthy.  No bounce.
 Auto-deploy is still on.  Stop-old-first is kept.  `health_check_start_period`
 is still **60**.  This PR must **not** PATCH or re-apply that list.
 
@@ -203,7 +203,7 @@ before these follow-ups (run `32087609316`).  Re-run after this push.
 - `processStartedAt` 00:49:27Z is #2811 completing, not a hung #2810.
 - 7:22–7:43pm CT is unhealthy-while-up, not a missing process.
   `litestream-runtime.log` has only the two SIGTERMs, no ERROR.
-- ASC applied `watch_paths` live on `socratic-app` (`d83b1aykr03uwr32yhgzaiay`).
+- ASC applied `watch_paths` live on `socratic-app` (`<ST_COOLIFY_APP_UUID>`).
   App stayed healthy.  No bounce.  Auto-deploy still on.
 - Repo hook still POSTs every `push`; Coolify now ignores unwatched paths.
 - `scripts/coolify-prod-start.sh` has no market-hours gate and must not gain

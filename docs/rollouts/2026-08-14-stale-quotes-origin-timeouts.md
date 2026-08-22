@@ -98,5 +98,5 @@ Full `lint` / `tsc` / `npm test` / `npm run build` run via `scripts/land.sh`.
   `https://socratictrade.com/api/health`.  Every origin timeout still pairs
   with that incident even after the 2026-08-13 4xx/5xx-as-success tweak,
   because a Connection Timeout is not an HTTP status.
-- Coolify app uuid is `d83b1aykr03uwr32yhgzaiay` (name `socratic-app`).
+- Coolify app uuid is `<ST_COOLIFY_APP_UUID>` (name `socratic-app`).
 - Live sha at investigation: `f218f7e3`, process started 2026-08-14T09:15:15Z.

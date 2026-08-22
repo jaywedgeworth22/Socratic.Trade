@@ -326,7 +326,7 @@ That hygiene problem is itself a finding (F-DOC-2).
 #### F-VEN-3 — ROIC Individual window + one Hetzner box + SQLite writer
 
 **Severity:** Medium  
-**Evidence:** STATUS 2026-08-16: “couple of weeks left” on ROIC Individual; harvest persists to `earningscalls_transcripts` first.  Single host `167.233.254.55` runs ST + CT + UM + Coolify (AGENTS.md).  `src/lib/db.ts` WAL + 60s busy_timeout; dispatch requires `BEGIN IMMEDIATE`.  Litestream L2/L3 wedge from dual-writer rolling deploys is an owner residual.
+**Evidence:** STATUS 2026-08-16: “couple of weeks left” on ROIC Individual; harvest persists to `earningscalls_transcripts` first.  Single host `<PROD_ORIGIN_IP>` runs ST + CT + UM + Coolify (AGENTS.md).  `src/lib/db.ts` WAL + 60s busy_timeout; dispatch requires `BEGIN IMMEDIATE`.  Litestream L2/L3 wedge from dual-writer rolling deploys is an owner residual.
 
 **User / outcome impact:** Individual expiry ends transcript *depth* if the local archive is incomplete.  One box failure takes trading, peer apps, and the control plane.  SQLite write storms still get mislabeled as vendor outages when classification regresses.
 

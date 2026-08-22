@@ -3,7 +3,7 @@
 ## Context & Objective
 
 The owner deleted **both Hetzner servers** on 2026-07-31: the CI build box
-`ci-cpx32` (`77.42.35.209`, Coolify server uuid `cantpgkbuwe71n1iqzu4qel6`) and
+`ci-cpx32` (`77.42.35.209`, Coolify server uuid `<CI_COOLIFY_SERVER_UUID>`) and
 the original prod host (`135.181.192.190`, already retired in the July Oracle
 migration). This note is the formal in-repo retirement so no agent wastes time
 SSHing into, monitoring, or referencing dead boxes.
@@ -19,7 +19,7 @@ SSHing into, monitoring, or referencing dead boxes.
   indirectly papered over is now handled on the Oracle box by
   `/usr/local/bin/socratic-caddy-alias.sh` + cron — see
   `docs/rollouts/2026-07-30-oracle-deploy-path-repair.md` follow-ups.)
-- **`scripts/sync-provider-knobs.sh`** — defaults now `ubuntu@141.148.182.224`
+- **`scripts/sync-provider-knobs.sh`** — defaults now `ubuntu@<ORACLE_IP_RETIRED>`
   + `~/.ssh/id_ed25519`, with an explicit NOTE that the remote read/apply path
   needs rework: on Oracle there is no `/data/coolify` tree; the app env lives
   encrypted in Coolify's Postgres (`environment_variables`) — use the
