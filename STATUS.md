@@ -1,5 +1,30 @@
 # Current Status
 
+## 2026-08-22 CURSOR — PR #3028 merged to `main` (iOS wide layout / Admin tab / gear-bell)
+
+Squash `a851a68d` (`a851a68da16b9c7ec722897a3ab4f378e0117111`) at 2026-08-22 01:14:36Z.
+https://github.com/jaywedgeworth22/Socratic.Trade/pull/3028
+
+Shipped on `main`: regular-width `.sidebarAdaptable` TabView plus the existing card-column
+scaffold; compact keeps the phone bar; `gearshape` trailing on every tab; bell leading
+opens the Activity notification inbox; Assets price-alert composer removed; Admin Portal
+is an `isAdmin`-gated `AppTab` with a native rail and a fenced WKWebView that intercepts
+`/console`.
+
+iOS-only.  `ios/**` is outside Coolify `watch_paths`.  No Coolify bounce.  Do not label
+this Deployed to production.  TestFlight is separate and only if the owner wants it
+(`scripts/ios-ship-testflight.sh`); this close-out did not ship.
+
+Confirmed CI (`gh pr view 3028` + `gh run list` / `gh run view`): `ios-build` 32536626553
+on earlier SHA `b747872d` was 237 XCTests / 0 failures.  Later rematch head `8471509c`
+failed `ios-build` 32541612565 (`invalid redeclaration of 'NotificationHistoryRow'`).
+Owner fix `ac9bafd5`.  PR head `04300371`: CI 32541767856 success (`verify` +
+`verify-hosted`); `ios-build` 32541767843 success.  Squash-push `ios-build` 32542852732
+success (unsigned xcodebuild job; XCTest count not re-read from that log).  Merge-push
+CI 32542852729 cancelled.  TestFlight ship workflow 32542852734 failed; not retried.
+
+Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
+
 ## 2026-08-21 CURSOR — iOS wide layout, Admin tab, gear/bell chrome
 
 Owner ask: iPad Air 11" / variable Mac windows, settings gear top-right on every tab, larger
