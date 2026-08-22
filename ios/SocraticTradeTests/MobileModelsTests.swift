@@ -189,7 +189,11 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertFalse(store.canSubmit("strategy.start"))
         XCTAssertTrue(store.canSubmit("strategy.stop"))
         XCTAssertTrue(store.canSubmit("proposal.reject"))
-        XCTAssertFalse(store.canSubmit("proposal.approve", at: Date(timeIntervalSinceNow: 181)))
+        // Owner Approve stays available on a stale snapshot — Retry Red Team is a long
+        // LLM, then `load()` can miss the 30s timeout and grey the button.  The server
+        // re-validates the claim.
+        XCTAssertTrue(store.canSubmit("proposal.approve", at: Date(timeIntervalSinceNow: 181)))
+        XCTAssertTrue(store.canSubmit("proposal.approve"))
         // Account switch stays available even when the snapshot is stale — it is metadata-only
         // and the server executes it immediately outside the strategy.run_once queue.
         XCTAssertTrue(store.canSubmit("account.activate", at: Date(timeIntervalSinceNow: 181)))

@@ -243,6 +243,14 @@ final class UserFacingCopyTests: XCTestCase {
             DeskCopy.authorityVersusRunState(authority: "propose", runState: .exitOnly)
                 .contains(RunStateWord.exitOnly.rawValue)
         )
+        XCTAssertTrue(
+            DeskCopy.authorityVersusRunState(authority: "propose", runState: .exitOnly)
+                .contains("Approving an opening places it anyway")
+        )
+        XCTAssertEqual(
+            DeskCopy.exitOnlyOwnerApproveNote,
+            "This account is Exit-only, so the agent will not open new risk on its own.  Approving this opening places it anyway."
+        )
         for title in [exitOnly.statusTitle, windingDown.statusTitle] {
             XCTAssertFalse(title.contains("Exit-Only"), title)
             XCTAssertFalse(title.contains("Winding Down"), title)

@@ -38,6 +38,7 @@ import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, timeUntil, EM_DAS
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { modelDisplayName } from "../lib/models";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
+import { EXIT_ONLY_OWNER_APPROVE_NOTE } from "@/lib/proposal-actions";
 import { ProposalScorecardBlock } from "./proposal-scorecard";
 import { proposalGreenRationale, proposalHumanReviewReasons } from "../lib/thesis";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -261,6 +262,7 @@ export const ApprovalCard = memo(function ApprovalCard({
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState<"approve" | "reject" | "retry" | null>(null);
+  const actionBusy = busy === "approve" || busy === "reject";
   const [liveOpen, setLiveOpen] = useState(false);
   // PR-A2: default collapsed so Approve/Reject stay reachable; expand for the full receipt.
   const [expanded, setExpanded] = useState(false);
@@ -277,6 +279,8 @@ export const ApprovalCard = memo(function ApprovalCard({
   // Owner preference: when typed confirmation is off, approving a broker order is one-click like any
   // other — no "APPROVE LIVE <SYMBOL>" phrase. The server honors the same flag (assertLiveApprovalConfirmation).
   const willPromptTyped = live && policy?.requireTypedConfirmation !== false;
+  const openingInExitOnly =
+    policy?.systemState === "close_only" && (p.side === "buy" || p.side === "short");
   const dailyUsed = finite(pending.decision.dailyNotionalUsed) ? pending.decision.dailyNotionalUsed : snapshot?.dailyStats.notional;
   const dailyCap = policy ? resolveDailyOpeningCap(policy, snapshot?.portfolio?.totalMarketValue) : undefined;
   const dailyRemaining = dailyCap && finite(dailyUsed) ? Math.max(0, dailyCap.notional - dailyUsed) : undefined;
@@ -548,6 +552,11 @@ export const ApprovalCard = memo(function ApprovalCard({
                 </Btn>
               </div>
             )}
+            {openingInExitOnly ? (
+              <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-warn)]">
+                {EXIT_ONLY_OWNER_APPROVE_NOTE}
+              </p>
+            ) : null}
             {greenRationale ? (
               <p className="line-clamp-3 leading-relaxed text-[color:var(--con-muted)]">{greenRationale}</p>
             ) : (
@@ -712,6 +721,11 @@ export const ApprovalCard = memo(function ApprovalCard({
             </div>
           </div>
         )}
+        {expanded && openingInExitOnly ? (
+          <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-warn)]">
+            {EXIT_ONLY_OWNER_APPROVE_NOTE}
+          </p>
+        ) : null}
         {redCard === "no-review" && (
           <p
             className="cursor-default text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
@@ -1003,14 +1017,15 @@ export const ApprovalCard = memo(function ApprovalCard({
 
       {/* Actions — sticky above mobile tab bar (PR-A2); static on desktop. API/confirm unchanged. */}
       <footer className="ac-actions flex items-center justify-end gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
-        <Btn variant="ghost" disabled={busy !== null} onClick={() => void reject()}>
+        <Btn variant="ghost" disabled={actionBusy} onClick={() => void reject()}>
           {busy === "reject" ? "Rejecting…" : "Reject"}
         </Btn>
         {/* Approving a broker-connected order stays visually primary; the typed
-            ritual in the sheet is the real friction. */}
+            ritual in the sheet is the real friction. Retry Red Team must not grey
+            Approve — that hang is why Paper cards looked stuck after yesterday. */}
         <Btn
           variant={live ? "primary" : "pos"}
-          disabled={busy !== null}
+          disabled={actionBusy}
           onClick={() => void approve()}
           aria-label={
             live
