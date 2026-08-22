@@ -60,7 +60,7 @@ export const CATALOG_SOURCES: CatalogSource[] = [
   { id: "nasdaq-quote", label: "Nasdaq.com public quote API", status: "keyless", notes: "Free-wave redundancy beside Yahoo." },
   { id: "nasdaq-calendar", label: "Nasdaq earnings calendar", status: "keyless", notes: "daysToEarnings market-wide." },
   { id: "nasdaq-delayed-screener", label: "NASDAQ delayed screener", status: "keyless", notes: "Universe scan price/change; not full fundamentals." },
-  { id: "finnhub", label: "Finnhub", status: "active", notes: "Paid tier in free-first Wave B; ~60/min free." },
+  { id: "finnhub", label: "Finnhub", status: "active", notes: "Keyed Wave B (free-tier key, ~60/min). Not a paid Finnhub plan." },
   { id: "roic", label: "ROIC.ai", status: "active", notes: "Profile reliable; some ratios paths 404; 10k/day paid quota; also history + transcripts + multiyear financials RAG." },
   { id: "tiingo", label: "Tiingo", status: "active", notes: "Hourly/day quotas tight — admit top-N only." },
   { id: "twelvedata", label: "Twelve Data", status: "scarce", notes: "Credits/min; batch quote." },
