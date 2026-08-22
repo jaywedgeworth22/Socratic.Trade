@@ -4,7 +4,7 @@
 
 The owner deleted **both Hetzner servers** on 2026-07-31: the CI build box
 `ci-cpx32` (`77.42.35.209`, Coolify server uuid `<CI_COOLIFY_SERVER_UUID>`) and
-the original prod host (`135.181.192.190`, already retired in the July Oracle
+the original prod host (`<HETZNER_OLD_IP_RETIRED>`, already retired in the July Oracle
 migration). This note is the formal in-repo retirement so no agent wastes time
 SSHing into, monitoring, or referencing dead boxes.
 

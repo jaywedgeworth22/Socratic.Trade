@@ -18,7 +18,7 @@ was deleted" claim back to the owner before being corrected.
 - `HETZNER_SERVER_ID`: `149429403` (stale, an older/different box) → `<HETZNER_SERVER_ID>` (verified via
   `hostnamectl`/DMI on the live box: `Hardware Serial: <HETZNER_SERVER_ID>`, matches UM's own hardcoded
   fallback default in `src/lib/server-metrics.ts` exactly).
-- `COOLIFY_SERVER_UUID`: `qjil3u7uyektxzvn7alym82r` (stale) → `jxzqcs3h6g1wiipnnblhismp`
+- `COOLIFY_SERVER_UUID`: `qjil3u7uyektxzvn7alym82r` (stale) → `<HETZNER_COOLIFY_SERVER_UUID>`
   (verified: `GET /api/v1/servers` on the live Coolify instance returns exactly one server, this
   UUID).
 - `COOLIFY_SERVER_STATS`: the token stored in Infisical returned `401` when tested directly
