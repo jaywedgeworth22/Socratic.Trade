@@ -90,7 +90,7 @@ describe("isQuoteFresh / cascadeFreshMaxAgeMs", () => {
     expect(isUsableBrokerQuote(quietName, now, cascadeFreshMaxAgeMs(120))).toBe(true);
   });
 
-  it("keeps a priced session-close quote usable without calling it a delayed Yahoo fallback", () => {
+  it("does not treat last-session close as cascade-fresh — later levels still run", () => {
     const now = Date.now();
     const close = {
       price: 95.25,
@@ -99,7 +99,7 @@ describe("isQuoteFresh / cascadeFreshMaxAgeMs", () => {
       provider: "session-close"
     };
     expect(isQuoteFresh(close, now, cascadeFreshMaxAgeMs(120))).toBe(false);
-    expect(isUsableBrokerQuote(close, now, cascadeFreshMaxAgeMs(120))).toBe(true);
+    expect(isUsableBrokerQuote(close, now, cascadeFreshMaxAgeMs(120))).toBe(false);
   });
 
   it("never treats missing asOf as fresh (unless venue-authoritative)", () => {
@@ -237,6 +237,32 @@ describe("fetchFreshQuotesCascade", () => {
     expect(mockFetchYahooFinanceQuote).not.toHaveBeenCalled();
 
     expect(result.AAPL).toEqual(brokerQuotes.AAPL);
+  });
+
+  it("on realtime venues, does NOT stop on a session-close IEX fill — continues to Alpaca snapshot", async () => {
+    const now = Date.now();
+    const liveIso = new Date(now - 20 * 1000).toISOString();
+
+    mockGetEquityQuotes.mockResolvedValue({
+      XOM: {
+        symbol: "XOM",
+        price: 110.5,
+        asOf: "2026-06-24",
+        fetchedAt: new Date(now).toISOString(),
+        provider: "session-close"
+      }
+    });
+    mockEnrich.mockResolvedValue({
+      XOM: { price: 112.4, asOf: liveIso, bid: 112.3, ask: 112.5, volume: 1000 }
+    });
+
+    const result = await fetchFreshQuotesCascade(["XOM"], "local", "ACC123");
+
+    expect(mockGetEquityQuotes).toHaveBeenCalled();
+    expect(mockEnrich).toHaveBeenCalledWith(["XOM"]);
+    expect(result.XOM.price).toBe(112.4);
+    expect(result.XOM.provider).toBe("alpaca-snapshot");
+    expect(result.XOM.asOf).toBe(liveIso);
   });
 
   it("on realtime venues, does NOT stop on a ~15-minute delayed broker quote — continues to Alpaca snapshot", async () => {
