@@ -17,7 +17,7 @@ The money-path and tenant-isolation story is substantially stronger than the 202
 The residual risk that still matters is **operational, not an open internet IDOR**:
 
 1. **Disaster recovery is unrehearsed on the current topology.**  Litestream writes to Backblaze B2.  The in-repo restore drill still targets Mac paths and historic R2.  `docs/litestream.md` still says restore has never been exercised.  A restored DB is useless if `ENCRYPTION_KEY` no longer decrypts broker/LLM rows — that check is not in any recorded drill.
-2. **Single-host SPOF.**  ST + CT + UM + Coolify share `167.233.254.55`.  Oracle suspension (2026-08-06) already produced fleet-wide 522s.  There is no hot standby.
+2. **Single-host SPOF.**  ST + CT + UM + Coolify share `<PROD_ORIGIN_IP>`.  Oracle suspension (2026-08-06) already produced fleet-wide 522s.  There is no hot standby.
 3. **Rolling-deploy dual Litestream writer** remains the structural cause of L2/L3 wedges.  Detection is live and currently green (`litestreamTiersDegraded: false`, five tiers observed).  The next rolling deploy can re-break compaction.
 4. **Shared static tokens have a wide blast radius.**  Ops snapshot falls back to `ADMIN_REINDEX_TOKEN` when `OPS_DIAGNOSTIC_TOKEN` is unset.  One leaked value is both a paid-admin bypass and a cross-tenant diagnostic dump (includes account numbers).
 5. **Health 200 is not a trading SLO.**  Scheduler staleness, storage degradation, OpenRouter credits, and trading-liveness never flip `/api/health` to 503 (by design, to avoid restart-halt loops).  External monitors that only watch HTTP 200 will miss a silent autonomy stop.
@@ -622,7 +622,7 @@ Recommended next chaos **tests** (code, not prod): broker 429 storm, mid-approve
 
 - Did not print, log, or commit any secret, token, account number, or email.
 - Did not open `~/.secrets/`, Infisical, or Coolify env dumps.
-- Did not SSH to `167.233.254.55` or run a restore.
+- Did not SSH to `<PROD_ORIGIN_IP>` or run a restore.
 - Did not change application code, flags, or monitors.
 - Did not claim Paper/Test-mode safety — there is none; an account is an account.
 

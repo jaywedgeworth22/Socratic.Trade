@@ -279,7 +279,7 @@ swap.  That is product noise, not a coupling that stops trading.
 ### 4.7 CI and deploy interactions — P1
 
 **Shared fate on the Hetzner box.**  ST, CT, and UM Coolify apps share
-`fleet-hetzner-nbg1` (`167.233.254.55`) with `concurrent_builds=1`.  A ST
+`fleet-hetzner-nbg1` (`<PROD_ORIGIN_IP>`) with `concurrent_builds=1`.  A ST
 merge queues behind a UM or CT build.  A box OOM or disk fill takes all three
 offline.  DealDex is on Vercel — it does **not** share this fate.
 
