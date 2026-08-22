@@ -93,6 +93,10 @@ function shouldIgnoreMonthlyWuWall(nowMs: number, message?: string): boolean {
   if (message) {
     const limit = pineconeWuLimitFromMessage(message);
     if (limit != null && limit < budget) return true;
+    // isPineconeWuExhaustedError also matches official text with no "(N)" count.
+    // That shape is the leftover Starter wall, not a Builder 5M exhaustion.
+    // After the calendar snap the budget is 1.6M — honor the numberless 429.
+    if (limit == null && isPineconeTrialActive(nowMs)) return true;
   }
   return false;
 }
