@@ -321,7 +321,7 @@ consistency gaps (three error envelopes, uncaught broker errors, a few unthrottl
   coolify-prod-start.sh,fetch-prod-ops-snapshot.sh}.
 - Greps: `grep -nP '[^\x00-\x7F]'` (via LC_ALL=C `[^ -~]`) over scripts/*.sh → 7 files, none $VAR-adjacent
   (adjacency pattern 0 hits); `process.kill(process.pid` → 0 hits; stale IPs/UUIDs
-  (141.148.182.224/135.181.192.190/77.42.35.209/m1os7ijf31bg3fanil152e4b) → only archival framing;
+  (<ORACLE_IP_RETIRED>/135.181.192.190/77.42.35.209/m1os7ijf31bg3fanil152e4b) → only archival framing;
   `runs-on` in ios-build.yml:45 + ios-ship.yml:51 → `[self-hosted, macOS, ARM64, xcode26]`;
   `enforceRateLimit|Cache-Control` over app/api → gap map; requireAdmin loop over all 26 admin routes → 0 gaps.
 - Subagent reports (independently re-verified where noted): /tmp/deepseek-review-api-routes.md,

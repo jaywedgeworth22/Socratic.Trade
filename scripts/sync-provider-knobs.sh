@@ -42,17 +42,17 @@
 #   USAGE_MONITOR_ENV    [~/.secrets/usage-monitor.env]   USAGE_READ_TOKEN (preferred)
 #                                                     or USAGE_INGEST_TOKEN (legacy)
 #   KNOB_SYNC_SSH_KEY    [~/.ssh/hetzner]
-#   KNOB_SYNC_SSH_HOST   [coolify]   (Hetzner fleet-hetzner-nbg1 / 167.233.254.55)
-#   KNOB_SYNC_BOX_ENV    [/data/coolify/applications/d83b1aykr03uwr32yhgzaiay/.env]
-#     Socratic.Trade Coolify UUID. Infisical ST machine identity lives in that
-#     host .env (verified 2026-08-12). Oracle 141.148.182.224 is decommissioned.
+#   KNOB_SYNC_SSH_HOST   [coolify]   (see private fleet-ops:ATTACK-MAP.md)
+#   KNOB_SYNC_BOX_ENV    [/data/coolify/applications/${COOLIFY_APP_UUID:-socratic-trade}/.env]
+#     Infisical ST machine identity lives in that host .env.
 set -u
 
 USAGE_API="${USAGE_API:-https://usage.jays.services/api/subscriptions}"
 USAGE_MONITOR_ENV="${USAGE_MONITOR_ENV:-$HOME/.secrets/usage-monitor.env}"
 SSH_KEY="${KNOB_SYNC_SSH_KEY:-$HOME/.ssh/hetzner}"
 SSH_HOST="${KNOB_SYNC_SSH_HOST:-coolify}"
-BOX_ENV="${KNOB_SYNC_BOX_ENV:-/data/coolify/applications/d83b1aykr03uwr32yhgzaiay/.env}"
+COOLIFY_APP_UUID="${COOLIFY_APP_UUID:-socratic-trade}"
+BOX_ENV="${KNOB_SYNC_BOX_ENV:-/data/coolify/applications/${COOLIFY_APP_UUID}/.env}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HELPER="$SCRIPT_DIR/provider-knob-diff.mjs"

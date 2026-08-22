@@ -18,7 +18,7 @@ ASC (live writes via `ios-fleet/asc-api.mjs`, no repo code path):
   `PREPARE_FOR_SUBMISSION`).
 - Beta App Review was already filled (Jay Wedgeworth, OAuth-only notes).
 
-Coolify app `socratic-app` (`d83b1aykr03uwr32yhgzaiay`):
+Coolify app `socratic-app` (`<ST_COOLIFY_APP_UUID>`):
 
 - `settings.is_consistent_container_name_enabled` is already `true`.
 - `health_check_start_period` is already `60`.
@@ -42,7 +42,7 @@ Touched (this docs PR):
 ## 4. Verification State
 
 ```
-coolify get_application d83b1aykr03uwr32yhgzaiay
+coolify get_application <ST_COOLIFY_APP_UUID>
   is_consistent_container_name_enabled=true
   health_check_start_period=60
 
