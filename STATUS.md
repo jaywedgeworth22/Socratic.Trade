@@ -14,13 +14,12 @@ Activity.  Admin is a first-class `AppTab` gated on `currentUser.isAdmin`; nativ
 eleven website admin pages with a fenced WKWebView that intercepts `/console`.  Linux VM has
 no xcodebuild — first Swift compile is CI.  iOS-only; no Coolify deploy.
 
-Head after owner `origin/main` merges: `472f3cfe` (pulled in #3032).  CI on that SHA was green:
-`verify`/`verify-hosted` run 32540455277 success; `ios-build` run 32540455303 success (unsigned
-xcodebuild + simulator tests).  Auto-merge is armed.  While that CI ran, #3031 landed on
-`main` (`d588387b`) and GitHub went CONFLICTING.  Real conflicts in `ActivityView.swift` and
-`MobileControlView.swift`.  Resolution: keep #3031's five Activity sections; keep this PR's
-`NotificationsInboxView` (Unread/All bell sheet); Assets More copy stays without price alerts.
-Do not TestFlight from this PR.
+Head squash-merged to `main` as `a851a68d` at 2026-08-22 01:14:36Z (PR #3028).
+CI on merge head `04300371`: `verify`/`verify-hosted` run 32541767856 success;
+`ios-build` run 32541767843 success (unsigned xcodebuild + simulator tests).
+Earlier `472f3cfe` was also green; #3031 rematch needed `ac9bafd5` (drop duplicate
+`NotificationHistoryRow`).  Auto-merge landed.  iOS-only; no Coolify deploy.
+TestFlight is separate.
 
 Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
 Local receipts: `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm run build` ok.

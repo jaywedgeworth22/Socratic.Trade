@@ -117,14 +117,18 @@ Activity sections and this PR's `NotificationsInboxView` (Unread/All bell
 sheet).  Assets More copy stays "Holdings, orders, and watchlist." (no price
 alerts).  Activity More copy takes #3031's five-section line.
 
+`ac9bafd5` dropped a duplicate `NotificationHistoryRow` after the #3031 rematch
+(`ios-build` 32541612565 failed with `invalid redeclaration of 'NotificationHistoryRow'`).
+Final merge head `04300371`: `verify`/`verify-hosted` run 32541767856 success;
+`ios-build` run 32541767843 success.  Squash-merged to `main` as `a851a68d` at
+2026-08-22 01:14:36Z.
+
 ## 5. Next Steps & Blockers
 
-- Re-run `verify` + `ios-build` on the #3031 merge head; confirm
-  `testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin` still passes.
 - Confirm Admin rail SF Symbols render on device/simulator.
 - Screenshot iPad Air 11" portrait/landscape and a dragged Mac window (still open from
   the adaptive-tabs follow-ups).
-- TestFlight ship is separate (`scripts/ios-ship-testflight.sh`); this PR does not ship.
+- TestFlight ship is separate (`scripts/ios-ship-testflight.sh`); this PR did not ship.
 - Website Watchlist still has price alerts; delete there only if the owner wants parity
   the other way.
 
