@@ -379,7 +379,7 @@ export interface ValidatedDocumentEmbeddingBatch {
   /** Number of malformed/unaccounted response entries; any positive value rejects the whole batch. */
   rejected: number;
   /** Bounded diagnostic code; never contains provider content or document text. */
-  reason?: "missing-data" | "cardinality" | "malformed-item" | "mixed-index" | "invalid-index" | "duplicate-index" | "invalid-embedding" | "embed-api-failed";
+  reason?: "missing-data" | "cardinality" | "malformed-item" | "mixed-index" | "invalid-index" | "duplicate-index" | "invalid-embedding" | "embed-api-failed" | "embed-api-skipped";
 }
 
 /**
@@ -1352,14 +1352,13 @@ export async function getClients(userId: string = "local", leaseGuard?: VectorSt
   const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);
   const pineconeKey = pinecone.key;
 
-  let voyageKey: string | undefined;
-  let voyageSource: ApiKeySource = "none";
+  const activeEmbed = activeEmbeddingProvider(lookupUserId);
+  const voyageRes = resolveRagKeyWithSource(activeEmbed, lookupUserId);
+  const voyageKey: string | undefined = voyageRes.key;
+  const voyageSource: ApiKeySource = voyageRes.source;
   let voyage: any = null;
 
   if (process.env.NODE_ENV === "test") {
-    const voyageRes = resolveRagKeyWithSource("voyage", lookupUserId);
-    voyageKey = voyageRes.key;
-    voyageSource = voyageRes.source;
     if (voyageKey) {
       try {
         const mod = await import("voyageai" as any);
@@ -1435,7 +1434,7 @@ export type RagLimitStatus = "rate_limited" | "billing" | "quota" | "transient";
  * Engine-overloaded 429s are transient capacity, not our usage cap — check that before generic 429.
  */
 export function ragLimitStatus(message: string): RagLimitStatus | undefined {
-  if (/overloaded|engine is currently/i.test(message)) return "transient";
+  if (/overloaded|engine is currently|terminated|fetch failed|UND_ERR_SOCKET/i.test(message)) return "transient";
   if (/\b429\b|rate limit|too many requests|RPM|TPM/i.test(message)) return "rate_limited";
   if (/billing|payment|invoice|past due|upgrade|plan/i.test(message)) return "billing";
   if (/quota|write units?|read units?|usage limit|capacity|exceeded|paused/i.test(message)) return "quota";
@@ -1827,6 +1826,8 @@ async function withRagApiHealth<T>(
     // "Pinecone connection failed" alert — one storage_warning notification per episode, and the
     // early write-gate in storeContexts/storeDocument stops the paid re-embed churn.
     const wuExhausted = service === "pinecone" && isPineconeWuExhaustedError(rawMessage);
+    const limitStatus = ragLimitStatus(rawMessage);
+    const isTransient = limitStatus === "transient";
     assertVectorStoreLease(leaseGuard);
     logApiHealth({
       service: loggedService,
@@ -1835,7 +1836,7 @@ async function withRagApiHealth<T>(
       errorText: message,
       keySource: source,
       userId: targetUserId,
-      ...(wuExhausted ? { soft: true } : {})
+      ...(wuExhausted || isTransient ? { soft: true } : {})
     });
     markRagSentryCaptured(error);
     const alert = wuExhausted
@@ -3308,6 +3309,7 @@ async function storeContextsImpl(
 
   let indexed = 0;
   let rejectedInvalidEmbeddings = 0;
+  let malformedEmbeddingCount = 0;
   const managedRecordBatches: Array<PineconeRecord<RecordMetadata>[]> = [];
   // Managed two-phase commits keep their embed_stage rows until the committed re-upsert AND
   // markCommitted() succeed: a mid-commit failure aborts and re-runs the whole document, and
@@ -3530,7 +3532,11 @@ async function storeContextsImpl(
       }
       const failedCount = batch.length - records.length;
       if (failedCount > 0) {
-        rejectedInvalidEmbeddings += rejected > 0 ? rejected : Math.max(1, failedCount);
+        const batchRejects = rejected > 0 ? rejected : Math.max(1, failedCount);
+        rejectedInvalidEmbeddings += batchRejects;
+        if (rejectionReason !== "embed-api-failed" && rejectionReason !== "embed-api-skipped") {
+          malformedEmbeddingCount += batchRejects;
+        }
         assertVectorStoreLease(options?.leaseGuard);
         if (records.length === 0) {
           console.warn(
@@ -3644,19 +3650,19 @@ async function storeContextsImpl(
       assertVectorStoreLease(options.leaseGuard);
     }
 
-    if (rejectedInvalidEmbeddings > 0) {
+    if (malformedEmbeddingCount > 0) {
       assertVectorStoreLease(options?.leaseGuard);
-      audit("vector_embedding_integrity", { rejected: rejectedInvalidEmbeddings, attempted: validDocuments.length }, userId);
+      audit("vector_embedding_integrity", { rejected: malformedEmbeddingCount, attempted: validDocuments.length }, userId);
       await captureRagSentryMessage("warning", "RAG document embedding integrity rejection", {
         provider: activeEmbeddingProvider(userId),
         operation: "embed documents",
         source: voyageSource,
         attempted: validDocuments.length,
-        rejected: rejectedInvalidEmbeddings
+        rejected: malformedEmbeddingCount
       }, options?.leaseGuard);
     }
     assertVectorStoreLease(options?.leaseGuard);
-    console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).${rejectedInvalidEmbeddings > 0 ? ` (${rejectedInvalidEmbeddings} rejected: malformed embedding)` : ""}`);
+    console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).${rejectedInvalidEmbeddings > 0 ? ` (${rejectedInvalidEmbeddings} rejected/failed)` : ""}`);
 
     // Receipt for the embed-once guarantee: how many provider embed calls this call avoided by
     // replaying previously-paid vectors from the durable stage. One audit row per store call

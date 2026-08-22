@@ -180,8 +180,8 @@ jobs:
         if: needs.classify.outputs.docs-only != 'true'
         shell: bash
         run: |
-          # GitHub-hosted ubuntu-latest: install Chromium + OS deps.
-          npx playwright install --with-deps chromium
+          # GitHub-hosted ubuntu-latest: install Chromium and WebKit + OS deps.
+          npx playwright install --with-deps chromium webkit
       # Restore Next.js's incremental build cache so the playwright webServer's
       # `npm run build` reuses prior compilation output instead of a cold build.
       - name: Restore Next.js build cache
