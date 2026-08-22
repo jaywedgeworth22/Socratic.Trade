@@ -52,7 +52,9 @@ Ops snapshot 19:18Z: scheduler ticking, LLM keys present, last completed runs 20
 
 Root cause is the 8-minute gather `withDeadline` racing without an AbortController.  Timed-out Nasdaq/enrichment/broker walks keep running; the next account starts another full scan; the pile-up makes every later gather miss 8 minutes.  `market-scan-freshness` avg 115s / max 66m is the same scan competing on the event loop.
 
-Fix: abort the abandoned gather, stop cascade/enrichment waves on that signal, and if a last completed tape exists continue the run with that real scan plus a 45s quote refresh so Green can start.  Do not HOTFIX during cash hours — merge waits for the after-close drain.
+Fix: abort the abandoned gather, stop cascade/enrichment waves on that signal (including the keyed Finnhub wave — Wave B, free-tier key, not a paid Finnhub plan; the first revision dropped `signal` on `paidContext`), and if a last completed tape exists continue the run with that real scan plus a 45s quote refresh so Green can start.  Do not HOTFIX during cash hours — merge waits for the after-close drain.
+
+Owner rematch of `origin/main` (#3008 / #3019) left `<<<<<<<` markers in the rollout Verification block.  Those are resolved on this branch.  Required `verify` must be green on the current head before squash-merge.  Parent owns Coolify.
 
 Rollout: `docs/rollouts/2026-08-21-gather-timeout-abort.md`.
 
