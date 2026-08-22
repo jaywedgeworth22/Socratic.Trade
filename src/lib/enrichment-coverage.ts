@@ -175,6 +175,10 @@ export function scarceProviderUsefulFields(
     // FilingAPI trial key on the same gap.
     return pick(["companyName", "sector", "industry", "daysToEarnings"]);
   }
+  if (providerName === "marketaux") {
+    // News specialist, not a RapidAPI quote last-resort.
+    return pick(["headlines", "sentiment"]);
+  }
   const useful = suppliesFields.filter(
     (field) => WAVE_B_GAP_FIELD_SET.has(field) && !SCARCE_EXCLUDE_FIELDS.has(field)
   );
