@@ -104,7 +104,8 @@ const ENV_KEYS = [
   "EARNINGSCALLS_PREVIEW_GUARD_MIN_CHARS",
   "EARNINGSCALLS_MAX_REQUESTS_PER_PASS",
   "EARNINGSCALLS_ENTITLEMENT_PROBE_ANCHOR",
-  "FMP_API_KEY"
+  "FMP_API_KEY",
+  "RAG_PINECONE_WRITE_CLASS"
 ] as const;
 const savedEnv = new Map<string, string | undefined>();
 for (const key of ENV_KEYS) savedEnv.set(key, process.env[key]);
@@ -1054,5 +1055,138 @@ describe("resolution fallback + lease/ingest semantics (adapted from the pre-red
     expect(result.requests).toBe(0);
     expect(result.skippedBudget).toBe(1); // one quiet skip, then the pass stops — no per-symbol storm
     expect(log).toHaveLength(0);
+  });
+});
+
+describe("signal sections + local FTS (ROIC mirror)", () => {
+  const SPEAKER_TEXT = [
+    "Tim Cook (CEO): Welcome everyone. Revenue grew double digits and services hit a record.",
+    "Luca Maestri (CFO): Gross margin expanded on mix and we remain confident in the outlook.",
+    "Operator: First question from Jane Doe.",
+    "Jane Doe (Analyst): Can you talk about iPhone demand in China?",
+    "Tim Cook (CEO): China demand was solid with strong upgrade cycles.",
+    "Operator: Next question from John Smith.",
+    "John Smith (Analyst): How should we think about services growth?",
+    "Luca Maestri (CFO): Services growth remains durable across categories."
+  ].join("\n\n");
+
+  it("earningsCallsSpeakerSections prefers speaker/role markers and falls back to half/half", async () => {
+    const { earningsCallsSpeakerSections } = await lib();
+    const labeled = earningsCallsSpeakerSections(SPEAKER_TEXT);
+    expect(labeled.some((s) => s.itemCode === "management")).toBe(true);
+    expect(labeled.some((s) => s.itemCode === "analyst" || s.itemCode === "qa")).toBe(true);
+    expect(labeled.some((s) => s.itemCode === "operator")).toBe(true);
+
+    const plain = "Prepared remarks without labels. ".repeat(40) + "\n\n" + "More commentary after the break. ".repeat(40);
+    const fallback = earningsCallsSpeakerSections(plain);
+    expect(fallback.map((s) => s.itemCode)).toEqual(["management", "qa"]);
+    expect(fallback[0]!.text.length).toBeGreaterThan(50);
+    expect(fallback[1]!.text.length).toBeGreaterThan(50);
+  });
+
+  it("highlight+signal skips full-body storeDocument, attempts signal extras, and writes FTS for earningscalls:AAPL:2024Q1", async () => {
+    await primeConfirmedEntitlement();
+    const { refreshEarningsCallsTranscriptsIfDue, accessionFor } = await lib();
+    const { upsertEarningsCallsTranscript, listUningestedEarningsCallsTranscripts, markEarningsCallsTranscriptIngested } =
+      await dbLib();
+    const { pinBareSecAccession, countLocalFtsRows } = await import("../src/lib/rag/persist-local-complete");
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    process.env.RAG_PINECONE_WRITE_CLASS = "highlight+signal";
+    for (const leftover of listUningestedEarningsCallsTranscripts(500)) {
+      markEarningsCallsTranscriptIngested(leftover.symbol, leftover.fiscalYear, leftover.fiscalQuarter);
+    }
+    // Clear any prior AAPL 2024Q1 ingest from an earlier test in this shared DB.
+    const { getDb } = await import("../src/lib/db");
+    getDb()
+      .prepare(
+        `UPDATE earningscalls_transcripts SET ingested_at = NULL
+         WHERE symbol = 'AAPL' AND fiscal_year = 2024 AND fiscal_quarter = 1`
+      )
+      .run();
+    upsertEarningsCallsTranscript({
+      symbol: "AAPL",
+      fiscalYear: 2024,
+      fiscalQuarter: 1,
+      content: SPEAKER_TEXT,
+      fetchedAt: new Date(NOW).toISOString(),
+      eventId: 4242
+    });
+    const accession = accessionFor({ symbol: "AAPL", fiscalYear: 2024, fiscalQuarter: 1 });
+    expect(accession).toBe("earningscalls:AAPL:2024Q1");
+    expect(pinBareSecAccession(accession)).toBe(accession);
+
+    const calls: Array<{ docId?: string; documentKey?: string; docType?: string }> = [];
+    storeDocumentStub.impl = (...args: unknown[]) => {
+      const doc = args[0] as { doc_id?: string; doc_type?: string };
+      const opts = args[2] as { documentKey?: string } | undefined;
+      calls.push({ docId: doc?.doc_id, documentKey: opts?.documentKey, docType: doc?.doc_type });
+      return Promise.resolve({ attempted: 2, indexed: 2, documentComplete: true });
+    };
+
+    const result = await refreshEarningsCallsTranscriptsIfDue(
+      NOW,
+      passDeps({ http: makeHttp(() => ({ ok: false, kind: "not_found" }), []), ingest: undefined })
+    );
+    expect(result.ingested).toBe(1);
+
+    const fullBodyCalls = calls.filter(
+      (c) => c.documentKey === accession || c.docId === accession
+    );
+    expect(fullBodyCalls).toHaveLength(0);
+
+    const signalCalls = calls.filter(
+      (c) =>
+        String(c.documentKey ?? c.docId ?? "").includes(":section:") &&
+        String(c.documentKey ?? c.docId ?? "").includes(accession)
+    );
+    expect(signalCalls.length).toBeGreaterThan(0);
+    expect(countLocalFtsRows(accession)).toBeGreaterThan(0);
+
+    const raw = new Database(DB_PATH, { readonly: true });
+    try {
+      const rows = raw
+        .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE accession = ?")
+        .get(accession) as { n: number };
+      expect(rows.n).toBeGreaterThan(0);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it("default full-body write-class still storeDocuments the transcript body", async () => {
+    await primeConfirmedEntitlement();
+    const { refreshEarningsCallsTranscriptsIfDue, accessionFor } = await lib();
+    const { upsertEarningsCallsTranscript, listUningestedEarningsCallsTranscripts, markEarningsCallsTranscriptIngested } =
+      await dbLib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    delete process.env.RAG_PINECONE_WRITE_CLASS;
+    for (const leftover of listUningestedEarningsCallsTranscripts(500)) {
+      markEarningsCallsTranscriptIngested(leftover.symbol, leftover.fiscalYear, leftover.fiscalQuarter);
+    }
+    upsertEarningsCallsTranscript({
+      symbol: "FBODY",
+      fiscalYear: 2025,
+      fiscalQuarter: 2,
+      content: SPEAKER_TEXT,
+      fetchedAt: new Date(NOW).toISOString(),
+      eventId: 777
+    });
+    const accession = accessionFor({ symbol: "FBODY", fiscalYear: 2025, fiscalQuarter: 2 });
+
+    const calls: Array<{ documentKey?: string; docId?: string }> = [];
+    storeDocumentStub.impl = (...args: unknown[]) => {
+      const doc = args[0] as { doc_id?: string };
+      const opts = args[2] as { documentKey?: string } | undefined;
+      calls.push({ documentKey: opts?.documentKey, docId: doc?.doc_id });
+      return Promise.resolve({ attempted: 3, indexed: 3, documentComplete: true });
+    };
+
+    const result = await refreshEarningsCallsTranscriptsIfDue(
+      NOW,
+      passDeps({ http: makeHttp(() => ({ ok: false, kind: "not_found" }), []), ingest: undefined })
+    );
+    expect(result.ingested).toBe(1);
+    expect(calls.some((c) => c.documentKey === accession || c.docId === accession)).toBe(true);
+    expect(calls.some((c) => String(c.documentKey ?? c.docId ?? "").includes(":section:"))).toBe(true);
   });
 });

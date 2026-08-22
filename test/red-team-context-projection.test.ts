@@ -30,6 +30,7 @@ function greenUserContent() {
     closestHistoricalAnalogs: "2026-05-02 AAPL momentum entry, +2.1%",
     ownerCoaching: "Prefer liquid names near earnings.",
     evidenceManifest: { packHash: "a".repeat(64), greenRedParityHash: "b".repeat(64), refs: [{ id: "e1" }] },
+    reviewerFilingsPack: "### RAG Dossier for AAPL\nItem 1A. Supply-chain risk.",
     // ── Green-only bulk the reviewer used to receive verbatim ──
     marketScan: { topCandidates: Array.from({ length: 40 }, (_, i) => ({ sym: `SYM${i}`, news: "x".repeat(400) })) },
     retrievedFinancialContext: "R".repeat(20_000),

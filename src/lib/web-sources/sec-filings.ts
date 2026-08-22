@@ -43,6 +43,7 @@ import { chunkDocument } from "../rag/chunk";
 import { persistLocalComplete } from "../rag/persist-local-complete";
 import { mirrorFtsChunksBounded } from "../rag/mirror-fts-bounded";
 import {
+  parseItemCodeFromSection,
   pineconeWriteClass,
   writesFullBodyToPinecone
 } from "../rag/pinecone-write-class";
@@ -52,33 +53,31 @@ import { parseFilingHtml } from "./sec-parser";
 import { buildSecDocument } from "../rag/sec-document";
 import { normalizeSymbol } from "../money";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
-import * as fs from "fs";
-import * as path from "path";
+import {
+  readFirstExisting,
+  secArtifactReadPaths,
+  secArtifactWritePath,
+  writeCorpusFile
+} from "../rag/corpus-layout";
 
-function getLocalArtifactPath(cik: string, accession: string, sequence: number, documentName: string): string {
-  const paddedCik = padCik(cik);
-  const cleanDocName = documentName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const dataDir = process.env.DATA_DIR ?? "data";
-  return path.join(dataDir, "sec-artifacts", paddedCik, accession, `${sequence}-${cleanDocName}`);
+export function getLocalArtifactPath(cik: string, accession: string, sequence: number, documentName: string): string {
+  return secArtifactWritePath(cik, accession, sequence, documentName);
 }
 
 export async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
-  const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
+  const candidates = secArtifactReadPaths(cik, accession, sequence, documentName);
   try {
-    if (fs.existsSync(filePath)) {
-      return await fs.promises.readFile(filePath, "utf8");
-    }
+    return await readFirstExisting(candidates);
   } catch (err) {
-    console.warn(`[sec-filings] readLocalArtifact failed for ${filePath}:`, err);
+    console.warn(`[sec-filings] readLocalArtifact failed for ${candidates[0]}:`, err);
+    return null;
   }
-  return null;
 }
 
 export async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
-  const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
+  const filePath = secArtifactWritePath(cik, accession, sequence, documentName);
   try {
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.promises.writeFile(filePath, content, "utf8");
+    await writeCorpusFile(filePath, content);
   } catch (err) {
     console.warn(`[sec-filings] writeLocalArtifact failed for ${filePath}:`, err);
   }
@@ -632,6 +631,41 @@ export async function ingestFiling(
     url: filingRef.url
   });
   const localChunks = chunkDocument(document, {});
+  try {
+    await writeLocalArtifact(
+      cik,
+      filingRef.accession,
+      1,
+      "sections.json",
+      JSON.stringify(
+        sections.map((section) => ({
+          itemCode: section.itemCode,
+          itemTitle: section.itemTitle,
+          text: section.text
+        }))
+      )
+    );
+    await writeLocalArtifact(
+      cik,
+      filingRef.accession,
+      1,
+      "chunks.json",
+      JSON.stringify(
+        localChunks.map((chunk) => ({
+          text: chunk.text,
+          parent_text: chunk.parent_text ?? chunk.text,
+          content_hash: chunk.content_hash,
+          section: chunk.section,
+          itemCode: parseItemCodeFromSection(chunk.section)
+        }))
+      )
+    );
+  } catch (err) {
+    console.warn(
+      `[sec-filings] sections/chunks sidecar failed for ${filingRef.accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
   const localComplete = await persistLocalComplete({
     ticker,
     accession: filingRef.accession,
@@ -666,6 +700,11 @@ export async function ingestFiling(
           itemCode: s.itemCode,
           itemTitle: s.itemTitle,
           text: s.text
+        })),
+        sourceChunks: localChunks.map((chunk) => ({
+          content_hash: chunk.content_hash,
+          text: chunk.text,
+          section: chunk.section
         }))
       }),
       publishedAt: filingRef.filedAt,
@@ -678,21 +717,23 @@ export async function ingestFiling(
     );
   }
   assertSecFilingLease(leaseGuard);
-  const signal = await storeSignalSectionDocuments({
-    ticker,
-    accession: filingRef.accession,
-    form: filingRef.docType,
-    title: document.title,
-    publishedAt: filingRef.filedAt,
-    acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt,
-    source: "sec-edgar",
-    url: filingRef.url,
-    chunks: localChunks,
-    userId,
-    ...(leaseGuard ? { leaseGuard } : {})
-  }, storeDocument);
-  assertSecFilingLease(leaseGuard);
+  // Default full-body already upserts the whole filing.  Extra signal-section
+  // documents would double WU this week (write-class flip still forbidden).
   if (!writesFullBodyToPinecone()) {
+    const signal = await storeSignalSectionDocuments({
+      ticker,
+      accession: filingRef.accession,
+      form: filingRef.docType,
+      title: document.title,
+      publishedAt: filingRef.filedAt,
+      acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt,
+      source: "sec-edgar",
+      url: filingRef.url,
+      chunks: localChunks,
+      userId,
+      ...(leaseGuard ? { leaseGuard } : {})
+    }, storeDocument);
+    assertSecFilingLease(leaseGuard);
     insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, localChunks.length, {
       pineconeWriteClass: writeClass,
       pineconeVectorCount: signal.indexed
@@ -771,7 +812,7 @@ export async function ingestFiling(
     runWithActiveVectorCommitProof(result.managedCommitProof, () => {
       insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted, {
         pineconeWriteClass: writeClass,
-        pineconeVectorCount: result.attempted + signal.indexed
+        pineconeVectorCount: result.attempted
       });
       audit("sec_filing_ingest", {
         ticker,
@@ -781,7 +822,7 @@ export async function ingestFiling(
         chunks: result.attempted,
         attempted: result.attempted,
         pinecone_write_class: writeClass,
-        pinecone_vector_count: result.attempted + signal.indexed
+        pinecone_vector_count: result.attempted
       });
     });
   } catch (err) {

@@ -21,6 +21,7 @@ import { resolveSourceNumber } from "../source-settings";
 import { retryBackoffMs } from "./congress";
 import { politeFetchText, runRateLimited, secUserAgent } from "./http";
 import { padCik } from "./sec-filings";
+import { persistCorpusSnapshot, thirteenFWritePath } from "../rag/corpus-layout";
 import type { WebSourceRefreshResult } from "./types";
 
 const DATASET_KEY = "webSource:13f:dataset";
@@ -358,6 +359,17 @@ export async function refreshThirteenF(
         fetchedAt
       }));
       replaceThirteenFFiling(rows);
+      persistCorpusSnapshot(
+        thirteenFWritePath(padCik(filer.cik), period),
+        JSON.stringify({
+          filerCik: padCik(filer.cik),
+          filerName: filer.short,
+          periodEnd: period,
+          accession: latest.accession,
+          fetchedAt,
+          holdings: rows
+        })
+      );
       purgeInvalidThirteenFPeriods(padCik(filer.cik));
       okFilers.push(padCik(filer.cik));
       return rows.length;

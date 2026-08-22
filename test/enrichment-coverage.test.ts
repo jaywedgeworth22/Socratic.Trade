@@ -3,8 +3,13 @@ import {
   __resetEnrichmentCoverageForTests,
   buildEnrichmentCoverageReport,
   collectFilledFields,
+  COVERAGE_GAP_FIELDS,
   getLastEnrichmentCoverageReport,
-  symbolHasCoverageGap
+  paidProviderHasUsefulWaveBGap,
+  scarceProviderHasUsefulGap,
+  symbolHasCoverageGap,
+  WAVE_B_GAP_FIELDS,
+  type EnrichmentCoverageRecord
 } from "../src/lib/enrichment-coverage";
 import {
   CascadingEnrichmentProvider,
@@ -22,15 +27,12 @@ afterEach(() => {
   delete process.env.ENRICHMENT_FREE_FIRST_ENABLED;
 });
 
-/** Core-complete free enrichment so paid-wave gap filter skips the symbol. */
+/** Scan-core complete free enrichment so the Wave B gate skips the symbol.
+ *  Bid/ask/vwap/asOf are deliberately omitted — those must not force paid work. */
 function coreComplete(overrides: SymbolEnrichment = {}): SymbolEnrichment {
   return {
     price: 200,
-    bid: 199,
-    ask: 201,
     intradayChangePct: 1,
-    vwap: 200,
-    asOf: "2026-07-26T00:00:00.000Z",
     sentiment: 55,
     peRatio: 28,
     analystRating: "Buy",
@@ -45,17 +47,7 @@ function coreComplete(overrides: SymbolEnrichment = {}): SymbolEnrichment {
     beta: 1.1,
     fiftyTwoWeekHigh: 220,
     fiftyTwoWeekLow: 140,
-    insiderSentiment: 60,
-    fcfYield: 3,
-    debtToEquity: 1.5,
-    epsGrowth: 0.1,
     daysToEarnings: 10,
-    institutionOwnershipPct: 60,
-    returnOnEquity: 40,
-    returnOnAssets: 20,
-    revenueGrowth: 0.1,
-    freeCashFlowYield: 3,
-    grossProfitMargin: 40,
     headlines: ["Apple news"],
     ...overrides
   };
@@ -117,6 +109,82 @@ describe("collectFilledFields / symbolHasCoverageGap", () => {
     expect(filled.has("headlines")).toBe(false);
     expect(symbolHasCoverageGap(filled)).toBe(true);
   });
+
+  it("does not treat bid/ask/vwap/asOf as Wave B gaps once scan-core is filled", () => {
+    const filled = new Set(WAVE_B_GAP_FIELDS);
+    expect(symbolHasCoverageGap(filled, WAVE_B_GAP_FIELDS)).toBe(false);
+    expect(symbolHasCoverageGap(filled, COVERAGE_GAP_FIELDS)).toBe(true);
+  });
+
+  it("skips a scarce SteadyAPI provider when price-family + profile are filled", () => {
+    const filled = new Set(["price", "volume", "sector", "industry", "companyName"]);
+    const supplies = [
+      "price",
+      "intradayChangePct",
+      "volume",
+      "companyName",
+      "fiftyTwoWeekHigh",
+      "fiftyTwoWeekLow",
+      "sector",
+      "industry"
+    ];
+    expect(scarceProviderHasUsefulGap("yahoo-finance15", supplies, filled)).toBe(false);
+    expect(scarceProviderHasUsefulGap("yahoo-finance15", supplies, new Set(["price", "volume"]))).toBe(true);
+  });
+
+  it("does not treat bid/ask as a Wave B paid-provider gap", () => {
+    const filled = new Set(["price", "peRatio", "volume", "sector"]);
+    expect(
+      paidProviderHasUsefulWaveBGap(["bid", "ask", "vwap", "peRatio", "price"], filled)
+    ).toBe(false);
+    expect(
+      paidProviderHasUsefulWaveBGap(["bid", "ask", "daysToEarnings"], filled)
+    ).toBe(true);
+    expect(paidProviderHasUsefulWaveBGap(["bid", "ask", "vwap"], filled)).toBe(false);
+  });
+
+  it("treats analystBySource as filling analystRating so Yahoo does not ghost Wave B", () => {
+    const filled = collectFilledFields(
+      [
+        {
+          data: {
+            AAPL: {
+              peRatio: 28,
+              analystBySource: { yahoo: { rating: "buy" } }
+            } as unknown as EnrichmentCoverageRecord
+          }
+        }
+      ],
+      "AAPL"
+    );
+    expect(filled.has("analystRating")).toBe(true);
+    expect(filled.has("analystBySource")).toBe(true);
+  });
+
+  it("does not treat headlines or sentiment as Wave B gaps", () => {
+    expect(WAVE_B_GAP_FIELDS).not.toContain("headlines");
+    expect(WAVE_B_GAP_FIELDS).not.toContain("sentiment");
+    const filled = new Set(WAVE_B_GAP_FIELDS);
+    expect(symbolHasCoverageGap(filled, WAVE_B_GAP_FIELDS)).toBe(false);
+  });
+
+  it("does not spend RapidAPI last-resort on a news-only hole", () => {
+    const filled = new Set(["price", "volume", "sector", "industry", "peRatio", "eps", "companyName"]);
+    expect(
+      scarceProviderHasUsefulGap(
+        "alpha-vantage-rapidapi",
+        ["peRatio", "headlines", "sentiment", "eps", "sector"],
+        filled
+      )
+    ).toBe(false);
+    expect(
+      scarceProviderHasUsefulGap(
+        "real-time-finance-data",
+        ["companyName", "price", "volume", "headlines", "sentiment"],
+        filled
+      )
+    ).toBe(false);
+  });
 });
 
 function freeStub(name: string, data: Record<string, SymbolEnrichment>): MarketEnrichmentProvider & { calls: string[][] } {
@@ -133,12 +201,17 @@ function freeStub(name: string, data: Record<string, SymbolEnrichment>): MarketE
   };
 }
 
-function paidStub(name: string, data: Record<string, SymbolEnrichment> = {}): MarketEnrichmentProvider & { calls: string[][] } {
+function paidStub(
+  name: string,
+  data: Record<string, SymbolEnrichment> = {},
+  suppliesFields?: readonly (keyof SymbolEnrichment)[]
+): MarketEnrichmentProvider & { calls: string[][] } {
   const calls: string[][] = [];
   return {
     name,
     configured: true,
     costTier: "paid",
+    ...(suppliesFields ? { suppliesFields } : {}),
     calls,
     async enrich(symbols: string[]) {
       calls.push([...symbols]);
@@ -233,5 +306,23 @@ describe("free-first cascade planner", () => {
     const cascade = new CascadingEnrichmentProvider([yahoo, fmp]);
     await cascade.enrich(["AAPL", "MSFT"]);
     expect(fmp.calls[0]).toEqual(["AAPL", "MSFT"]);
+  });
+
+  it("does not invoke paid Wave B when Yahoo filled scan-core without bid/ask/vwap", async () => {
+    const yahoo = freeStub("yahoo-finance", { AAPL: coreComplete() });
+    const paid = paidStub("finnhub");
+    await new CascadingEnrichmentProvider([yahoo, paid]).enrich(["AAPL"]);
+    expect(paid.calls).toEqual([]);
+  });
+
+  it("does not dispatch Finnhub for bid/ask when the symbol is only missing daysToEarnings", async () => {
+    const yahoo = freeStub("yahoo-finance", {
+      AAPL: coreComplete({ daysToEarnings: undefined })
+    });
+    const finnhub = paidStub("finnhub", {}, ["bid", "ask", "vwap", "peRatio", "price"]);
+    const roic = paidStub("roic", { AAPL: { daysToEarnings: 12 } }, ["daysToEarnings", "epsGrowth"]);
+    await new CascadingEnrichmentProvider([yahoo, finnhub, roic]).enrich(["AAPL"]);
+    expect(finnhub.calls).toEqual([]);
+    expect(roic.calls).toEqual([["AAPL"]]);
   });
 });

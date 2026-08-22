@@ -9,14 +9,18 @@ import {
   isFilingApiAuthStatus,
   isFilingApiKeyRejected,
   markFilingApiKeyRejected,
+  resetFilingApiAuthMemoryForTests,
   resetFilingApiAuthStateForTests,
   shouldUseFilingApiKey
 } from "../src/lib/filingapi-auth";
+import { resetDurableStateCacheForTests } from "../src/lib/durable-state";
+import { getDb } from "../src/lib/db";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-filingapi-auth-${randomUUID()}.db`)}`;
   process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
   process.env.PROVIDER_RATE_LIMIT_DISABLED = "1";
+  getDb();
 });
 
 describe("filingapi-auth", () => {
@@ -43,6 +47,20 @@ describe("filingapi-auth", () => {
     expect(shouldUseFilingApiKey("")).toBe(false);
     expect(shouldUseFilingApiKey("   ")).toBe(false);
     expect(isFilingApiKeyRejected(undefined)).toBe(false);
+  });
+
+  it("durable reject survives a new module state / re-read", () => {
+    markFilingApiKeyRejected("dead-trial-key");
+    expect(shouldUseFilingApiKey("dead-trial-key")).toBe(false);
+
+    // Simulate a process restart: drop the in-memory set and durable-state
+    // hydration cache, leave the SQLite row.  shouldUseFilingApiKey must
+    // re-read the rejected fingerprint from durable_state.
+    resetFilingApiAuthMemoryForTests();
+    resetDurableStateCacheForTests("filingapi");
+    expect(isFilingApiKeyRejected("dead-trial-key")).toBe(true);
+    expect(shouldUseFilingApiKey("dead-trial-key")).toBe(false);
+    expect(shouldUseFilingApiKey("replacement-key")).toBe(true);
   });
 
   it("classifies 401/403 statuses and unauthorized text", () => {
