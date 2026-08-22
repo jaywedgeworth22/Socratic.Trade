@@ -8,7 +8,8 @@ import {
   paidProviderHasUsefulWaveBGap,
   scarceProviderHasUsefulGap,
   symbolHasCoverageGap,
-  WAVE_B_GAP_FIELDS
+  WAVE_B_GAP_FIELDS,
+  type EnrichmentCoverageRecord
 } from "../src/lib/enrichment-coverage";
 import {
   CascadingEnrichmentProvider,
@@ -144,7 +145,16 @@ describe("collectFilledFields / symbolHasCoverageGap", () => {
 
   it("treats analystBySource as filling analystRating so Yahoo does not ghost Wave B", () => {
     const filled = collectFilledFields(
-      [{ data: { AAPL: { analystBySource: { yahoo: { rating: "buy" } }, peRatio: 28 } } }],
+      [
+        {
+          data: {
+            AAPL: {
+              peRatio: 28,
+              analystBySource: { yahoo: { rating: "buy" } }
+            } as unknown as EnrichmentCoverageRecord
+          }
+        }
+      ],
       "AAPL"
     );
     expect(filled.has("analystRating")).toBe(true);
@@ -194,7 +204,7 @@ function freeStub(name: string, data: Record<string, SymbolEnrichment>): MarketE
 function paidStub(
   name: string,
   data: Record<string, SymbolEnrichment> = {},
-  suppliesFields?: readonly string[]
+  suppliesFields?: readonly (keyof SymbolEnrichment)[]
 ): MarketEnrichmentProvider & { calls: string[][] } {
   const calls: string[][] = [];
   return {

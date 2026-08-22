@@ -43,6 +43,7 @@ import { chunkDocument } from "../rag/chunk";
 import { persistLocalComplete } from "../rag/persist-local-complete";
 import { mirrorFtsChunksBounded } from "../rag/mirror-fts-bounded";
 import {
+  parseItemCodeFromSection,
   pineconeWriteClass,
   writesFullBodyToPinecone
 } from "../rag/pinecone-write-class";
@@ -655,7 +656,7 @@ export async function ingestFiling(
           parent_text: chunk.parent_text ?? chunk.text,
           content_hash: chunk.content_hash,
           section: chunk.section,
-          itemCode: chunk.itemCode
+          itemCode: parseItemCodeFromSection(chunk.section)
         }))
       )
     );
