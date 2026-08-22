@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-22 GROK — Kimi leftover: CT peer intraday uses stored operator token
+
+Re-landed the only unique slice from retired-KIMI ST #3044.  CI/pin-check/lockfile/png deletes from that PR are already on main or harmful.  Peer `/api/market/intraday` now passes `operatorPeerRead` and uses the operator (`local`) *stored* MCP token, not a live `ROBINHOOD_MCP_AUTH_TOKEN` env bypass.  Board `6a7fbecc`.  Branch `grok/kimi-integrate`.
+
 ## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
 
 - Isolated test SQLite DB in `test/api-keys-tombstone.test.ts` per repo convention (`agentic-api-keys-tombstone-${randomUUID()}.db`).

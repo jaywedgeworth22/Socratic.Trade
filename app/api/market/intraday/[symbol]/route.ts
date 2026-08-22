@@ -42,7 +42,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ symbol: 
   }
 
   const timeframe = normalizeTimeframe(sp.get("timeframe"));
-  const result = await fetchIntradayBars(symbol, new Date(startMs).toISOString(), new Date(endMs).toISOString(), timeframe);
+  const result = await fetchIntradayBars(
+    symbol,
+    new Date(startMs).toISOString(),
+    new Date(endMs).toISOString(),
+    timeframe,
+    undefined,
+    { operatorPeerRead: true }
+  );
   switch (result.kind) {
     case "ok":
       // Confirmed empty (weekend / halt) stays 200 so the caller only treats non-200 as a provider failure.
