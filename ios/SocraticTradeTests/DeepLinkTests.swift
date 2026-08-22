@@ -24,6 +24,19 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(destination("https://socratictrade.com/console/results"), .tab(.results))
     }
 
+    func testActivityTabQuerySelectsTheSectionWithoutInventingNewPaths() {
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=alerts"), .activity(.alerts))
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=notifications"), .activity(.notifications))
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=runs"), .activity(.runs))
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=fills"), .activity(.fills))
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=audit"), .activity(.audit))
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=all"), .activity(.audit))
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=ALL")?.activitySection, .audit)
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=nope"), .tab(.activity))
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity")?.activitySection, nil)
+        XCTAssertEqual(destination("https://socratictrade.com/console/activity?tab=notifications")?.tab, .activity)
+    }
+
     func testExtractsAProposalIdFromPathAndQuery() {
         XCTAssertEqual(
             destination("https://socratictrade.com/console/approvals/2b9f0c1e-4a77-4a1e-9f2e-7d1c8f0b3a55"),
@@ -125,7 +138,9 @@ final class DeepLinkTests: XCTestCase {
             .tab(.guardrails),
             .tab(.results),
             .proposal(id: "proposal-1"),
-            .symbol("AAPL")
+            .symbol("AAPL"),
+            .activity(.alerts),
+            .activity(.notifications)
         ] {
             XCTAssertTrue(AppTab.customizable.contains(destination.tab), "\(destination)")
         }

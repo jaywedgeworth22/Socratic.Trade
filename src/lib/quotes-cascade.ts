@@ -11,7 +11,11 @@ import { DEFAULT_POLICY } from "./defaults";
 import { AlpacaSnapshotEnrichmentProvider, fetchWithRetry } from "./data-providers";
 import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
 import { normalizeSymbol } from "./money";
-import { isDelayedYahooFallbackQuote, isYahooFallbackProvider } from "./quote-delayed-fallback";
+import {
+  isDelayedYahooFallbackQuote,
+  isYahooFallbackProvider,
+  SESSION_CLOSE_PROVIDER
+} from "./quote-delayed-fallback";
 import type { BrokerQuote, ConnectedAccount, TradingPolicy } from "./types";
 
 /**
@@ -50,18 +54,63 @@ export function cascadeFreshMaxAgeMs(maxQuoteAgeSec?: number | null): number {
  * Missing/unparseable asOf is NEVER treated as fresh — continue the cascade.
  * Venue-authoritative quotes are handled separately (always acceptable when priced).
  */
+function isTwoSidedLiveNbbo(quote: { bid?: number; ask?: number }): boolean {
+  return (
+    typeof quote.bid === "number" &&
+    quote.bid > 0 &&
+    typeof quote.ask === "number" &&
+    quote.ask > 0
+  );
+}
+
 export function isQuoteFresh(
-  quote: { asOf?: string; venuePriceAuthoritative?: boolean },
+  quote: {
+    asOf?: string;
+    venuePriceAuthoritative?: boolean;
+    bid?: number;
+    ask?: number;
+    fetchedAt?: string;
+    provider?: string;
+  },
   nowMs: number,
   maxAgeMs: number = cascadeFreshMaxAgeMs()
 ): boolean {
   if (quote.venuePriceAuthoritative) return true;
+  // Two-sided broker NBBO fetched just now is live even when last-print `asOf` is old
+  // (quiet names / IEX last trade sitting still).  Age the fetch, not the last print.
+  if (isTwoSidedLiveNbbo(quote) && quote.fetchedAt) {
+    const fetchedMs = new Date(quote.fetchedAt).getTime();
+    if (!Number.isNaN(fetchedMs)) {
+      const fetchAgeMs = nowMs - fetchedMs;
+      if (fetchAgeMs < 0 || fetchAgeMs <= maxAgeMs) return true;
+    }
+  }
   if (!quote.asOf) return false;
   const asOfMs = new Date(quote.asOf).getTime();
   if (Number.isNaN(asOfMs)) return false;
   const ageMs = nowMs - asOfMs;
   if (ageMs < 0) return true; // clock skew / future stamp — accept
   return ageMs <= maxAgeMs;
+}
+
+/** Broker tape the cascade should keep: live-fresh, or last-session close (not Yahoo delayed). */
+export function isUsableBrokerQuote(
+  quote: {
+    asOf?: string;
+    venuePriceAuthoritative?: boolean;
+    bid?: number;
+    ask?: number;
+    fetchedAt?: string;
+    provider?: string;
+    price?: number;
+  },
+  nowMs: number,
+  maxAgeMs: number = cascadeFreshMaxAgeMs()
+): boolean {
+  if (isQuoteFresh(quote, nowMs, maxAgeMs)) return true;
+  const priced =
+    (typeof quote.price === "number" && quote.price > 0) || isTwoSidedLiveNbbo(quote);
+  return priced && quote.provider === SESSION_CLOSE_PROVIDER;
 }
 
 /**
@@ -228,7 +277,7 @@ export async function fetchFreshQuotesCascade(
         result[symbol] = normalizedQuote;
       } else {
         updateBestQuote(symbol, normalizedQuote);
-        if (isQuoteFresh(normalizedQuote, nowMs, maxAgeMs)) {
+        if (isUsableBrokerQuote(normalizedQuote, nowMs, maxAgeMs)) {
           result[symbol] = normalizedQuote;
         }
       }

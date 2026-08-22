@@ -6,6 +6,7 @@ import { resolveRequestUser } from "@/lib/request-user";
 import { listAlerts } from "@/lib/alerts";
 import { listWatchlist } from "@/lib/watchlist";
 import { isWorkingOrderState } from "@/lib/broker-held-orders";
+import { plainEnglishRunFailure } from "@/lib/strategy-run-failure";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +56,33 @@ export async function GET(request: Request) {
       symbolMetaBySymbol: snapshot.symbolMetaBySymbol,
       connectedAccounts: snapshot.connectedAccounts
     }),
+    strategyRuns: (snapshot.strategyRuns ?? []).map((run) => ({
+      id: run.id,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt ?? null,
+      status: run.status,
+      summary: run.summary ?? null,
+      connectedAccountId: run.connectedAccountId ?? null,
+      placedCount: run.placedCount,
+      paperCount: run.paperCount,
+      blockedCount: run.blockedCount,
+      proposedCount: run.proposedCount,
+      totalCount: run.totalCount,
+      failure:
+        run.status === "failed" ? plainEnglishRunFailure({ status: run.status, summary: run.summary }) : null
+    })),
+    unifiedFeed: (snapshot.unifiedFeed ?? []).slice(0, 40).map((group) => ({
+      id: group.id,
+      title: group.title,
+      detail: group.detail,
+      status: group.status,
+      updatedAt: group.updatedAt,
+      accountLabel: group.accountLabel ?? null,
+      failure:
+        group.status === "failed"
+          ? plainEnglishRunFailure({ status: group.status, summary: group.detail })
+          : null
+    })),
     recentCommands: listMobileCommands({ userId: user.userId, limit: 30 }),
     // Same last-good universe `/console/scan` paints when live Refresh 503s.
     latestScan: compactMobileMarketScan(snapshot.latestScan),

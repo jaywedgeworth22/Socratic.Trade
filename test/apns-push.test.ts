@@ -21,6 +21,7 @@ import {
 import {
   countActiveDeviceTokens,
   getDeviceToken,
+  getNotifyPrefs,
   listActiveDeviceTokens,
   maskDeviceToken,
   normalizeDeviceToken,
@@ -31,7 +32,7 @@ import {
   unregisterDeviceToken,
   getDb
 } from "../src/lib/db";
-import { notify, type NotifyConfig } from "../src/lib/notify";
+import { channelsForNotify, notify, type NotifyConfig } from "../src/lib/notify";
 import { sendNotification } from "../src/lib/notifications";
 import { pushCollapseId, pushDeepLink } from "../src/lib/push-deep-links";
 import { DEFAULT_NOTIFICATION_SETTINGS } from "../src/lib/defaults";
@@ -376,9 +377,9 @@ describe("push deep links", () => {
     expect(pushDeepLink("price_alert", { alert: { symbol: "TSLA", id: "a1" } }, origin)).toBe(
       "https://socratictrade.com/console/watchlist?symbol=TSLA"
     );
-    expect(pushDeepLink("run_failed", { runId: "r1" }, origin)).toBe("https://socratictrade.com/console/activity");
+    expect(pushDeepLink("run_failed", { runId: "r1" }, origin)).toBe("https://socratictrade.com/console/activity?tab=alerts");
     // The catch-all is a TWO-segment console path, because the iOS router rejects bare `/console`.
-    expect(pushDeepLink("learning_review", {}, origin)).toBe("https://socratictrade.com/console/activity");
+    expect(pushDeepLink("learning_review", {}, origin)).toBe("https://socratictrade.com/console/activity?tab=notifications");
   });
 
   it("collapses the noisy repeats and leaves fills alone", () => {
@@ -393,6 +394,20 @@ describe("push deep links", () => {
 // ── notify() channel wiring ───────────────────────────────────────────────────
 
 describe("apns delivery channel", () => {
+  it("includes native push when the user has a live device even if prefs omitted apns", () => {
+    const userId = `u-${randomUUID()}`;
+    registerDeviceToken({
+      userId,
+      token: hexToken("auto-apns"),
+      environment: "production",
+      bundleId: "trade.socratic.app"
+    });
+    setNotifyPrefs(userId, { channels: ["pushover"], pushoverTarget: "u123" });
+    const ids = channelsForNotify(userId, getNotifyPrefs(userId), notifyConfig(testConfig()));
+    expect(ids[0]).toBe("apns");
+    expect(ids).toContain("pushover");
+  });
+
   it("delivers to every live device and retires the ones Apple rejects", async () => {
     const userId = `u-${randomUUID()}`;
     const live = hexToken("live-device");
@@ -522,10 +537,10 @@ describe("push respects the user's existing per-event notification preferences",
     const { transport, calls } = recordingTransport(() => okResponse);
     const cases: Array<{ type: "pending_approval" | "kill_switch" | "fill" | "price_alert" | "run_failed"; payload: unknown; path: string }> = [
       { type: "pending_approval", payload: { proposalId: "p1", proposal: { symbol: "AAPL", side: "buy" } }, path: "/console/approvals?proposal=p1" },
-      { type: "kill_switch", payload: { reason: "Volatility panic brake — halt new entries" }, path: "/console/activity" },
+      { type: "kill_switch", payload: { reason: "Volatility panic brake — halt new entries" }, path: "/console/activity?tab=alerts" },
       { type: "fill", payload: { fill: { symbol: "AAPL", side: "buy", status: "filled", quantity: 1, price: 1, notional: 1 } }, path: "/console/orders?symbol=AAPL" },
       { type: "price_alert", payload: { alert: { id: "a1", symbol: "TSLA" }, currentPrice: 1 }, path: "/console/watchlist?symbol=TSLA" },
-      { type: "run_failed", payload: { runId: "r1", summary: "boom" }, path: "/console/activity" }
+      { type: "run_failed", payload: { runId: "r1", summary: "boom" }, path: "/console/activity?tab=alerts" }
     ];
 
     for (const c of cases) {
