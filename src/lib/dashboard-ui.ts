@@ -2,6 +2,7 @@ import type { EnrichmentSources, EquityPosition, MarketQuote, NotificationEvent,
 import type { SymbolMeta } from "./dashboard-feed";
 import { SUPPORTED_INDEX_UNIVERSES, indexUniverseLabel } from "./index-universes";
 import { formatQuantity } from "./money";
+import { notificationFailureDetail } from "./strategy-run-failure";
 
 export interface EnrichedPosition extends EquityPosition {
   costBasis: number;
@@ -337,7 +338,7 @@ export function feedStatusLabel(raw?: string | null): string {
 export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   fill: "Order filled",
   block: "Trade blocked",
-  run_failed: "Run failed",
+  run_failed: "Strategy Run Failed",
   pending_approval: "Awaiting your approval",
   kill_switch: "Kill switch",
   price_alert: "Price alert",
@@ -452,6 +453,12 @@ function notificationDetail(event: NotificationEvent): string {
     const reason = stringValue(payload.reason) || stringValue(payload.detail);
     return reason ? `Audit logged: ${reason}` : "Advisory audit logged";
   }
+  const failure = notificationFailureDetail({
+    type: event.type,
+    payload: event.payload,
+    title: event.title
+  });
+  if (failure) return failure;
   const prefix = notificationStatusLabel(event.status);
   const reason = notificationReason(event.error);
   return reason ? `${prefix} - ${reason}` : prefix;

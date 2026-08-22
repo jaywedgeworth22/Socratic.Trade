@@ -601,7 +601,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       title: `${failed.length} order ${failed.length === 1 ? "intent" : "intents"} awaiting reconciliation`,
       detail:
         "A broker call failed or its response was lost. The durable intent was recorded before the call, so it cannot double-place — the broker-truth sweep will resolve it.  Do not retry manually.",
-      href: "/console/activity"
+      href: "/console/activity?tab=alerts"
     });
   }
   const activeAccount = activeConnectedAccount(snapshot);
@@ -628,7 +628,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
         tone: "neg",
         title,
         detail,
-        href: "/console/activity"
+        href: "/console/activity?tab=alerts"
       });
     }
   }

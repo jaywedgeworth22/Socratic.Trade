@@ -14,17 +14,25 @@ Activity.  Admin is a first-class `AppTab` gated on `currentUser.isAdmin`; nativ
 eleven website admin pages with a fenced WKWebView that intercepts `/console`.  Linux VM has
 no xcodebuild — first Swift compile is CI.  iOS-only; no Coolify deploy.
 
-`ios-build` run 32535072344 compiled and ran 237 XCTests; one failure:
-`TabPreferencesTests.testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin` — `barTabs`
-uses `AppTab` declaration order, so Admin (declared after Results) sorted after Insights
-instead of the first extra slot auto-fill promised.  Fix: declare `.admin` after
-`.activity` so canonical order matches auto-fill.  Next: re-run `ios-build` + `verify`.
+Head after owner `origin/main` merges: `472f3cfe` (pulled in #3032).  CI on that SHA was green:
+`verify`/`verify-hosted` run 32540455277 success; `ios-build` run 32540455303 success (unsigned
+xcodebuild + simulator tests).  Auto-merge is armed.  While that CI ran, #3031 landed on
+`main` (`d588387b`) and GitHub went CONFLICTING.  Real conflicts in `ActivityView.swift` and
+`MobileControlView.swift`.  Resolution: keep #3031's five Activity sections; keep this PR's
+`NotificationsInboxView` (Unread/All bell sheet); Assets More copy stays without price alerts.
 Do not TestFlight from this PR.
 
 Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
 Local receipts: `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm run build` ok.
 Local `npm test` aborted (network 404s / single worker); CI `verify` is the JS test of
 record.
+## 2026-08-21 CURSOR — Activity layout redesign (Alerts Center first)
+
+Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now five Title Case tabs in this order: Alerts Center, Notifications, Strategy Runs, Order Fills, Audit Log.  Default Alerts Center.  Former All unified feed is Audit Log.  Failed runs show wrapping English.  APNs is auto-included when the user has a live device.  Admins get system alerts.  Alpaca session close is no longer stamped Delayed Quote.  Push `?tab=` is additive so another agent's deep-link pairing is not smashed.
+
+PR #3031 on `cursor/activity-layout-redesign-085b`, squash `d588387b` on `main`.  `ios-build` green (233/0).  Merged.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
+
+# Current Status
 ## 2026-08-21 GROK — Stop paging Starter 2M Pinecone write units
 
 Owner: the 2M monthly write-unit pages keep firing and ingest should continue.  Live Pinecone is a Standard trial (unlimited WUs, $300, 21 days from 2026-08-09).  Infisical daily fuse is already 5M; monthly budget was unset (off).  #2799 ignored 2M only when the error body contained `429`; Pinecone's official monthly-quota text often does not, so hourly `Pinecone connection failed` still went out.

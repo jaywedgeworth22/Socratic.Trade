@@ -42,7 +42,7 @@ export function AuditLogPanel() {
   const visible = useMemo(() => filterAuditEvents(events, kindQuery), [events, kindQuery]);
 
   return (
-    <Card title="Audit Log">
+    <Card title="Raw Events">
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Raw audit events for this account (newest 200).{SENTENCE_GAP}Filter is local — the server
         query is unchanged.

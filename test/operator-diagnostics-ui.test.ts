@@ -114,7 +114,8 @@ describe("operator diagnostic UI wiring", () => {
     ["app/admin/backtest-ic/backtest-ic-client.tsx", "fetchBacktestIc"],
     ["app/console/strategy/page.tsx", "TuningDryRunPanel"],
     ["app/console/lessons/page.tsx", "LearningLedgerPanel"],
-    ["app/console/activity/page.tsx", "AuditLogPanel"],
+    ["app/console/activity/page.tsx", "AuditFeed"],
+    ["app/console/activity/audit-feed.tsx", "AuditLogPanel"],
     ["app/admin/layout.tsx", "/admin/backtest-ic"]
   ] as const;
 

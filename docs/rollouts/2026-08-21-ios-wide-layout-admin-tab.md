@@ -107,10 +107,20 @@ expected `[home, proposals, markets, activity, admin, insights]` and got
 declare `.admin` immediately after `.activity` so the first extra iPad slot
 matches `autoFill`.  The follow-up commit is on this same PR.
 
+Owner later merged `origin/main` onto this branch (`472f3cfe`, pulled in #3032).
+CI on that SHA: `verify`/`verify-hosted` run 32540455277 success; `ios-build`
+run 32540455303 success.  While those jobs ran, #3031 (`d588387b`) landed on
+`main` and GitHub reported CONFLICTING.  `git merge-tree --write-tree` exit 1:
+real conflicts in `ios/SocraticTrade/ActivityView.swift` and
+`ios/SocraticTrade/MobileControlView.swift`.  Resolution kept #3031's five
+Activity sections and this PR's `NotificationsInboxView` (Unread/All bell
+sheet).  Assets More copy stays "Holdings, orders, and watchlist." (no price
+alerts).  Activity More copy takes #3031's five-section line.
+
 ## 5. Next Steps & Blockers
 
-- Re-run `ios-build` after the Admin enum-order fix; confirm
-  `testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin` passes.
+- Re-run `verify` + `ios-build` on the #3031 merge head; confirm
+  `testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin` still passes.
 - Confirm Admin rail SF Symbols render on device/simulator.
 - Screenshot iPad Air 11" portrait/landscape and a dragged Mac window (still open from
   the adaptive-tabs follow-ups).

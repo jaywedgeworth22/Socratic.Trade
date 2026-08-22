@@ -32,6 +32,7 @@ import { audit, getActiveConnectedAccount, getConnectedAccount, resolveApiKey } 
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
 import { isTransientNetworkError } from "./network-errors";
+import { SESSION_CLOSE_PROVIDER } from "./quote-delayed-fallback";
 import {
   ALPACA_MCP_FETCH_MS,
   alpacaAccountReadBudgetMs,
@@ -66,8 +67,7 @@ export async function fillMissingQuotesWithClose(
           symbol,
           price: fb.price,
           asOf: fb.asOf,
-          provider: "yahoo-finance-delayed",
-          delayedFallback: true,
+          provider: SESSION_CLOSE_PROVIDER,
           fetchedAt: new Date().toISOString()
         };
       }
@@ -701,7 +701,8 @@ class AlpacaBrokerGateway implements BrokerGateway {
           bid,
           ask,
           asOf: optionalIso(anyQ.t),
-          provider: "alpaca"
+          provider: "alpaca",
+          fetchedAt: new Date().toISOString()
         };
       }
     } catch (error) {

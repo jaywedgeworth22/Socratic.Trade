@@ -161,13 +161,24 @@ export function CommandPalette() {
         }
       })),
       {
-        id: "nav:notifications",
-        label: "Notifications",
-        hint: "Open later alerts — time, body, and whether you have read them.",
+        id: "nav:alerts-center",
+        label: "Alerts Center",
+        hint: "Open the Alerts Center on Activity.",
         keywords: "notifications alerts inbox history unread alert center",
         run: () => {
           if (checkNav(undefined, "/console/activity?tab=alerts")) {
             router.push("/console/activity?tab=alerts");
+          }
+        }
+      },
+      {
+        id: "nav:notifications",
+        label: "Notifications",
+        hint: "Delivery ledger of push, email, SMS, and Pushover sends.",
+        keywords: "notifications delivery push pushover email sms sent",
+        run: () => {
+          if (checkNav(undefined, "/console/activity?tab=notifications")) {
+            router.push("/console/activity?tab=notifications");
           }
         }
       },

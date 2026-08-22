@@ -82,7 +82,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .home: return "Live thesis, actions, and agent controls."
         case .proposals: return "Trade proposals awaiting your judgment."
         case .markets: return "Holdings, orders, and watchlist."
-        case .activity: return "Fills, scheduler, and what the agent did."
+        case .activity: return "Alerts Center, Notifications, Strategy Runs, Order Fills, and the Audit Log."
         case .insights: return "Status brief and attention items."
         case .coach: return "Ask the desk — a real Coach conversation."
         case .scan: return "Ranked names with watchlist actions."
@@ -346,6 +346,8 @@ struct MobileControlView: View {
     @State private var focusedProposalId: String?
     /// Ticker a deep link asked for, handed to MarketsView (Assets).
     @State private var focusedSymbol: String?
+    /// Activity subsection (`?tab=`).  Path-only `/console/activity` does not reset this.
+    @State private var activitySection: ActivitySection = .alerts
     /// Clears the ring above once the cue has been seen (see `apply`).
     @State private var focusExpiry: Task<Void, Never>?
 
@@ -568,6 +570,9 @@ struct MobileControlView: View {
         selection.wrappedValue = destination.tab
         focusedProposalId = destination.proposalId
         focusedSymbol = destination.focusedSymbol
+        if let section = destination.activitySection {
+            activitySection = section
+        }
         pendingDeepLink = nil
         focusExpiry?.cancel()
         guard focusedProposalId != nil || focusedSymbol != nil else { return }
@@ -592,7 +597,7 @@ struct MobileControlView: View {
         case .home: HomeView(selectedTab: selection)
         case .proposals: ProposalsView(focusedProposalId: $focusedProposalId)
         case .markets: MarketsView(selectedTab: selection, focusedSymbol: $focusedSymbol)
-        case .activity: ActivityView()
+        case .activity: ActivityView(selectedSection: $activitySection)
         case .insights: InsightsView(selectedTab: selection)
         case .coach: CoachView()
         case .scan: ScanView()

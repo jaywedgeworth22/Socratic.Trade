@@ -1,5 +1,37 @@
 import Foundation
 
+/// One of the five Activity screens.  Query `?tab=` on `/console/activity` selects this.
+/// Path-only `/console/activity` stays `.tab(.activity)` so older contract rows keep passing.
+enum ActivitySection: String, Equatable, CaseIterable, Identifiable {
+    case alerts
+    case notifications
+    case runs
+    case fills
+    case audit
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .alerts: return "Alerts Center"
+        case .notifications: return "Notifications"
+        case .runs: return "Strategy Runs"
+        case .fills: return "Order Fills"
+        case .audit: return "Audit Log"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .alerts: return "bell.badge"
+        case .notifications: return "bell"
+        case .runs: return "arrow.triangle.2.circlepath"
+        case .fills: return "tray.full"
+        case .audit: return "list.bullet.rectangle"
+        }
+    }
+}
+
 /// Where an incoming link lands inside the app.
 enum DeepLinkDestination: Equatable {
     case tab(AppTab)
@@ -7,6 +39,8 @@ enum DeepLinkDestination: Equatable {
     case proposal(id: String)
     /// The Assets tab, scrolled to one ticker (orders / watchlist query).
     case symbol(String)
+    /// Activity, opened on a specific section (`?tab=`).
+    case activity(ActivitySection)
 
     /// The tab that must be selected to show this destination.
     var tab: AppTab {
@@ -14,6 +48,7 @@ enum DeepLinkDestination: Equatable {
         case .tab(let tab): return tab
         case .proposal: return .proposals
         case .symbol: return .markets
+        case .activity: return .activity
         }
     }
 
@@ -24,6 +59,11 @@ enum DeepLinkDestination: Equatable {
 
     var focusedSymbol: String? {
         if case .symbol(let symbol) = self { return symbol }
+        return nil
+    }
+
+    var activitySection: ActivitySection? {
+        if case .activity(let section) = self { return section }
         return nil
     }
 }
@@ -92,7 +132,28 @@ enum DeepLink {
             }
             return .tab(.markets)
         case "activity":
-            return segments.count == 2 ? .tab(.activity) : nil
+            guard segments.count == 2 else { return nil }
+            if let raw = components.queryItems?.first(where: { $0.name.lowercased() == "tab" })?.value?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(),
+               !raw.isEmpty
+            {
+                switch raw {
+                case "alerts":
+                    return .activity(.alerts)
+                case "notifications":
+                    return .activity(.notifications)
+                case "runs":
+                    return .activity(.runs)
+                case "fills":
+                    return .activity(.fills)
+                case "audit", "all":
+                    return .activity(.audit)
+                default:
+                    return .tab(.activity)
+                }
+            }
+            return .tab(.activity)
         case "assistant", "coach":
             return segments.count == 2 ? .tab(.coach) : nil
         case "scan":

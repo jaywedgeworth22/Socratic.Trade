@@ -57,7 +57,7 @@ export const DESTINATIONS: Destination[] = [
   { href: "/console", label: "Home", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
   { href: "/console/approvals", label: "Proposals", icon: Inbox, desc: "Trade proposals awaiting your judgment." },
   { href: "/console/lessons", label: "Lessons", icon: GraduationCap, desc: "Pending learning and past learning." },
-  { href: "/console/activity", label: "Activity", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },
+  { href: "/console/activity", label: "Activity", icon: ActivityIcon, desc: "Alerts Center, Notifications, Strategy Runs, Order Fills, and the Audit Log decision journal." },
   { href: "/console/scan", label: "Scan", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
   { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols the agent monitors, with price alerts that notify you when a level is crossed." },
   { href: "/console/macro", label: "Macro", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },

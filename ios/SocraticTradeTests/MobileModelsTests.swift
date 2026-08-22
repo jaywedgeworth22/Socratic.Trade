@@ -31,6 +31,15 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.unreadNotificationCount, 1)
         XCTAssertEqual(snapshot.inScopeNotifications(activeAccountId: "account-1").count, 1)
         XCTAssertTrue(snapshot.inScopeNotifications(activeAccountId: "other").isEmpty)
+        XCTAssertEqual(snapshot.strategyRuns.first?.id, "run-1")
+        XCTAssertEqual(snapshot.strategyRuns.first?.status, "failed")
+        XCTAssertEqual(
+            snapshot.strategyRuns.first?.failure,
+            "This strategy run stopped because gathering market data took too long.  The next run will try again."
+        )
+        XCTAssertEqual(snapshot.unifiedFeed.first?.title, "Strategy Run Failed")
+        XCTAssertEqual(snapshot.unifiedFeed.first?.status, "failed")
+        XCTAssertNil(snapshot.notifications.first?.channel)
     }
 
     func testSnapshotDecodesCompactLatestScan() throws {
@@ -74,6 +83,8 @@ final class MobileModelsTests: XCTestCase {
         let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
         XCTAssertTrue(snapshot.notifications.isEmpty)
         XCTAssertEqual(snapshot.unreadNotificationCount, 0)
+        XCTAssertTrue(snapshot.strategyRuns.isEmpty)
+        XCTAssertTrue(snapshot.unifiedFeed.isEmpty)
     }
 
     func testDeletionPreviewMatchesReadOnlyServerContract() throws {
@@ -557,6 +568,8 @@ final class MobileModelsTests: XCTestCase {
       "watchlist":[{"symbol":"MSFT","addedAt":"2026-07-20T12:00:00.000Z"}],
       "alerts":[{"id":"alert-1","symbol":"AAPL","op":">","price":200,"note":"Breakout","status":"triggered","createdAt":"2026-07-20T12:00:00.000Z","triggeredAt":"2026-07-21T15:00:00.000Z","triggeredPrice":205}],
       "notifications":[{"id":"note-1","createdAt":"2026-07-21T17:32:00.000Z","type":"run_failed","title":"Strategy Run Failed","body":"Sent","read":false,"status":"sent","acknowledgedAt":null,"connectedAccountId":"account-1","accountLabel":"Brokerage"}],
+      "strategyRuns":[{"id":"run-1","startedAt":"2026-07-21T17:30:00.000Z","finishedAt":"2026-07-21T17:31:00.000Z","status":"failed","summary":"strategy gather timeout","connectedAccountId":"account-1","placedCount":0,"paperCount":0,"blockedCount":0,"proposedCount":0,"totalCount":0,"failure":"This strategy run stopped because gathering market data took too long.  The next run will try again."}],
+      "unifiedFeed":[{"id":"feed-1","title":"Strategy Run Failed","detail":"strategy gather timeout","status":"failed","updatedAt":"2026-07-21T17:31:00.000Z","accountLabel":"Brokerage","failure":"This strategy run stopped because gathering market data took too long.  The next run will try again."}],
       "recentCommands":[{"id":"command-1","commandType":"strategy.run_once","status":"succeeded","error":null,"createdAt":"2026-07-21T17:30:00.000Z","queuedAt":"2026-07-21T17:30:00.000Z","startedAt":"2026-07-21T17:30:01.000Z","finishedAt":"2026-07-21T17:31:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}]
     }
     """#
