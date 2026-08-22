@@ -10,8 +10,9 @@
 //   pending_approval -> https://socratictrade.com/console/approvals?proposal=<proposalId>
 //   fill             -> https://socratictrade.com/console/orders?symbol=<SYMBOL>
 //   price_alert      -> https://socratictrade.com/console/watchlist?symbol=<SYMBOL>
-//   run_failed       -> https://socratictrade.com/console/activity
-//   (anything else)  -> https://socratictrade.com/console/activity
+//   run_failed       -> https://socratictrade.com/console/activity?tab=alerts
+//   kill_switch      -> https://socratictrade.com/console/activity?tab=alerts
+//   (anything else)  -> https://socratictrade.com/console/activity?tab=notifications
 //
 // CONTRACT WITH THE iOS ROUTER (ios/SocraticTrade/DeepLink.swift). Every URL emitted here must be
 // one `DeepLink.destination(for:)` accepts, or the tap opens the app and lands nowhere. That parser
@@ -102,11 +103,12 @@ export function pushDeepLink(kind: string, payload: unknown, origin: string = pu
           : "/console/watchlist";
       case "run_failed":
       case "kill_switch":
-        return "/console/activity";
+        return "/console/activity?tab=alerts";
       default:
-        // Activity, not `/console`: the iOS router only accepts a two-segment console path, and
-        // this is the screen that actually lists the notification that was just delivered.
-        return "/console/activity";
+        // Notifications tab, not bare `/console`: the iOS router only accepts a two-segment
+        // console path.  Catch-all events have no more specific screen, so they land on the
+        // delivery ledger.  Failed runs / kill switch go to Alerts Center above.
+        return "/console/activity?tab=notifications";
     }
   })();
   return `${origin}${path}`;

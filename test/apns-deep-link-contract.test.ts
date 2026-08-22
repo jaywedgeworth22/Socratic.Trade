@@ -117,7 +117,7 @@ describe("push deep links: the URLs the server emits are the ones the iOS router
     // DeepLink.universalLinkHost is an exact-match check — `www.`, a subdomain, or http all mean
     // no routing at all, so the default origin is not a cosmetic choice.
     expect(read(SWIFT_ROUTER)).toContain('universalLinkHost = "socratictrade.com"');
-    expect(pushDeepLink("run_failed", {})).toBe("https://socratictrade.com/console/activity");
+    expect(pushDeepLink("run_failed", {})).toBe("https://socratictrade.com/console/activity?tab=alerts");
   });
 
   it("delivers the link under a payload key the app actually reads", () => {

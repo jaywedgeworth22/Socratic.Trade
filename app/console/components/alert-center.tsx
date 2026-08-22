@@ -206,7 +206,7 @@ export function AlertCenter({
   connectedAccounts,
   symbolMetaBySymbol,
   activeAccountId,
-  title = "Alert center",
+  title = "Alerts Center",
   maxItems
 }: {
   notifications: NotificationEvent[];
@@ -288,8 +288,8 @@ export function AlertCenter({
       hint: "Events that likely need you: kill switch, failed runs, budget alerts, degraded providers, failed deliveries.  Repeat alerts for one ongoing condition count once."
     },
     { id: "deliveries", label: "Deliveries", count: summary.deliveries, hint: "Notification deliveries that failed or were skipped." },
-    { id: "approvals", label: "Proposals", count: summary.approvals, hint: "Proposals waiting for you, policy blocks, and withdrawn ideas." },
-    { id: "all", label: "All", count: summary.total, hint: "Every alert in the current account scope." }
+    { id: "approvals", label: "Approvals", count: summary.approvals, hint: "Proposals waiting for you, policy blocks, and withdrawn ideas." },
+    { id: "all", label: "All Alerts", count: summary.total, hint: "Every alert in the current account scope." }
   ];
 
   // Acks the whole incident, not just the row on screen: a collapsed provider_degraded line stands
@@ -374,7 +374,7 @@ export function AlertCenter({
         )}
 
         {/* Wrapping pill row instead of a fixed 4-column tile grid: the uppercase tile headings
-            clipped ("DELIVERIE…") in narrow rails. Pills wrap to any width, use sentence case,
+            clipped ("DELIVERIE…") in narrow rails.  Pills wrap to any width, use Title Case,
             and signal the selected state with aria-pressed + weight, not color alone. */}
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Alert filters">
           {filters.map((item) => {
@@ -418,7 +418,7 @@ export function AlertCenter({
         </div>
 
         {visibleRows.length === 0 && mutedVisibleRows.length === 0 ? (
-          <Empty>No alerts match this filter.</Empty>
+          <Empty>{filter === "attention" ? "No alerts need attention." : "No alerts match this filter."}</Empty>
         ) : (
           <div className="flex flex-col gap-2">
             {providerRows.length > 0 && (
@@ -575,8 +575,8 @@ function AlertRow({
           <AlertTriangle size={14} className="mt-0.5 shrink-0 text-[color:var(--con-warn)]" />
         ) : null}
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-[color:var(--con-fg)]">{row.title}</p>
-          <p className="mt-0.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">{row.detail}</p>
+          <p className="font-semibold leading-relaxed text-[color:var(--con-fg)]">{row.title}</p>
+          <p className="mt-1 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{row.detail}</p>
           {row.repeatCount > 1 && (
             <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
               {row.repeatCount} alerts for this condition, oldest <Ago iso={row.firstAt} />

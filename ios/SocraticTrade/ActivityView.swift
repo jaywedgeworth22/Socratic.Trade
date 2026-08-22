@@ -1,23 +1,41 @@
 import SwiftUI
+import UIKit
 
 struct ActivityView: View {
     @EnvironmentObject private var store: MobileStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Binding var selectedSection: ActivitySection
     @State private var presentedItem: PresentedMarketItem?
-    @State private var notificationFilter: NotificationHistoryFilter = .unread
+
+    init(selectedSection: Binding<ActivitySection>) {
+        self._selectedSection = selectedSection
+    }
+
+    /// iPhone keeps the chip strip even in landscape; iPad and Mac get the left rail.
+    private var isRegularWidth: Bool {
+        horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
+    }
 
     var body: some View {
-        SnapshotScaffold { snapshot in
-            NotificationHistorySection(
-                snapshot: snapshot,
-                filter: $notificationFilter,
-                markRead: { ids in
-                    await store.acknowledgeNotifications(ids: ids)
+        Group {
+            if isRegularWidth {
+                HStack(alignment: .top, spacing: 0) {
+                    ActivitySectionRail(selection: $selectedSection)
+                        .frame(width: 220)
+                    SnapshotScaffold {
+                        sectionContent(snapshot: $0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            )
-            DailyActivityCard(snapshot: snapshot)
-            SchedulerActivityCard(snapshot: snapshot)
-            FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedItem: $presentedItem)
-            CommandActivitySection(commands: snapshot.recentCommands)
+            } else {
+                VStack(spacing: 0) {
+                    ActivitySectionChips(selection: $selectedSection)
+                    SnapshotScaffold {
+                        sectionContent(snapshot: $0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
         }
         .navigationTitle("Activity")
         .navigationBarTitleDisplayMode(.inline)
@@ -25,20 +43,150 @@ struct ActivityView: View {
             SymbolInfoSheet(item: item)
         }
     }
+
+    @ViewBuilder
+    private func sectionContent(snapshot: MobileSnapshot) -> some View {
+        switch selectedSection {
+        case .alerts:
+            AlertsCenterSection(
+                snapshot: snapshot,
+                markRead: { ids in await store.acknowledgeNotifications(ids: ids) }
+            )
+            .cardSpansAllColumns()
+        case .notifications:
+            NotificationsLedgerSection(
+                snapshot: snapshot,
+                markRead: { ids in await store.acknowledgeNotifications(ids: ids) }
+            )
+            .cardSpansAllColumns()
+        case .runs:
+            StrategyRunsSection(snapshot: snapshot)
+                .cardSpansAllColumns()
+        case .fills:
+            FillActivitySection(fills: snapshot.performance?.fills ?? [], presentedItem: $presentedItem)
+                .cardSpansAllColumns()
+        case .audit:
+            AuditLogSection(items: snapshot.unifiedFeed)
+                .cardSpansAllColumns()
+        }
+    }
 }
 
-private enum NotificationHistoryFilter: String, CaseIterable, Identifiable {
-    case unread = "Unread"
-    case all = "All"
+private struct ActivitySectionChips: View {
+    @Binding var selection: ActivitySection
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(ActivitySection.allCases) { section in
+                    Button {
+                        selection = section
+                    } label: {
+                        Text(section.title)
+                            .font(.appCaption.weight(selection == section ? .bold : .semibold))
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 44)
+                            .background(
+                                selection == section ? AppPalette.accent.opacity(0.14) : Color.clear,
+                                in: Capsule()
+                            )
+                            .foregroundStyle(selection == section ? AppPalette.accent : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == section ? .isSelected : [])
+                    .accessibilityLabel(section.title)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .background(AppPalette.background)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Activity views")
+    }
+}
+
+private struct ActivitySectionRail: View {
+    @Binding var selection: ActivitySection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Activity")
+                .font(.appCaption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 16)
+            ForEach(ActivitySection.allCases) { section in
+                Button {
+                    selection = section
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: section.systemImage)
+                            .frame(width: 18)
+                        Text(section.title)
+                            .font(.appSubheadline.weight(selection == section ? .semibold : .regular))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 44)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        selection == section ? AppPalette.accent.opacity(0.14) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                    .foregroundStyle(selection == section ? AppPalette.accent : .primary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == section ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .background(AppPalette.background)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(width: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Activity views")
+    }
+}
+
+private enum AlertCenterFilter: String, CaseIterable, Identifiable {
+    case attention = "Attention"
+    case deliveries = "Deliveries"
+    case approvals = "Approvals"
+    case all = "All Alerts"
 
     var id: String { rawValue }
 }
 
-private struct NotificationHistorySection: View {
+private func matchesAlertFilter(_ item: NotificationHistoryItem, filter: AlertCenterFilter) -> Bool {
+    switch filter {
+    case .attention:
+        guard !item.read else { return false }
+        switch item.type {
+        case "kill_switch", "run_failed", "budget_alert", "provider_degraded",
+             "earningscalls_entitlement_blocked", "risk_advisory":
+            return true
+        default:
+            return item.status == "failed"
+        }
+    case .deliveries:
+        return item.status == "failed" || item.status == "skipped"
+    case .approvals:
+        return item.type == "pending_approval" || item.type == "block" || item.type == "proposal_withdrawn"
+    case .all:
+        return true
+    }
+}
+
+private struct AlertsCenterSection: View {
     let snapshot: MobileSnapshot
-    @Binding var filter: NotificationHistoryFilter
     let markRead: ([String]) async -> Void
 
+    @State private var filter: AlertCenterFilter = .attention
     @State private var ackingIds: Set<String> = []
 
     private var activeAccountId: String? {
@@ -50,28 +198,24 @@ private struct NotificationHistorySection: View {
     }
 
     private var visible: [NotificationHistoryItem] {
-        let rows = filter == .unread ? scoped.filter { !$0.read } : scoped
-        return Array(rows.prefix(40))
+        Array(scoped.filter { matchesAlertFilter($0, filter: filter) }.prefix(40))
     }
 
-    private var unreadCount: Int {
-        scoped.filter { !$0.read }.count
+    private var attentionCount: Int {
+        scoped.filter { matchesAlertFilter($0, filter: .attention) }.count
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            SectionHeading(
-                "Notifications",
-                subtitle: "Alerts you can open later.  Refresh still shows them."
-            )
+        VStack(spacing: 12) {
+            SectionHeading("Alerts Center", subtitle: "Problems that need a look.  Acknowledge once you have seen them.")
             filterRow
             if visible.isEmpty {
                 EmptyStateCard(
-                    title: filter == .unread ? "No Unread Notifications" : "No Notifications Yet",
-                    message: filter == .unread
-                        ? "Nothing unread for this account.  Switch to All to see earlier alerts."
-                        : "Fills, blocks, and run alerts will appear here after they are sent.",
-                    systemImage: "bell"
+                    title: filter == .attention ? "No Alerts Need Attention" : "No Matching Alerts",
+                    message: filter == .attention
+                        ? "No alerts need attention."
+                        : "No alerts match this filter.",
+                    systemImage: "bell.badge"
                 )
             } else {
                 ForEach(visible) { item in
@@ -86,37 +230,39 @@ private struct NotificationHistorySection: View {
     }
 
     private var filterRow: some View {
-        HStack(spacing: 8) {
-            ForEach(NotificationHistoryFilter.allCases) { option in
-                Button {
-                    filter = option
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(option.rawValue)
-                        if option == .unread {
-                            Text("\(unreadCount)")
-                                .font(.appCaption2.weight(.bold))
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(AlertCenterFilter.allCases) { option in
+                    Button {
+                        filter = option
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(option.rawValue)
+                            if option == .attention {
+                                Text("\(attentionCount)")
+                                    .font(.appCaption2.weight(.bold))
+                            }
                         }
+                        .font(.appCaption.weight(filter == option ? .bold : .semibold))
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 44)
+                        .background(
+                            filter == option ? AppPalette.accent.opacity(0.14) : Color.clear,
+                            in: Capsule()
+                        )
+                        .foregroundStyle(filter == option ? AppPalette.accent : .secondary)
                     }
-                    .font(.appCaption.weight(filter == option ? .bold : .semibold))
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 36)
-                    .background(
-                        filter == option ? AppPalette.accent.opacity(0.14) : Color.clear,
-                        in: Capsule()
-                    )
-                    .foregroundStyle(filter == option ? AppPalette.accent : .secondary)
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(filter == option ? .isSelected : [])
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(filter == option ? .isSelected : [])
-            }
-            Spacer()
-            if unreadCount > 0 {
-                Button("Mark All Read") {
-                    Task { await markAllVisibleUnread() }
+                if attentionCount > 0, filter == .attention {
+                    Button("Mark All Read") {
+                        Task { await markAllVisibleUnread() }
+                    }
+                    .font(.appCaption.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .disabled(!ackingIds.isEmpty)
                 }
-                .font(.appCaption.weight(.semibold))
-                .disabled(!ackingIds.isEmpty)
             }
         }
     }
@@ -137,19 +283,63 @@ private struct NotificationHistorySection: View {
     }
 }
 
+private struct NotificationsLedgerSection: View {
+    let snapshot: MobileSnapshot
+    let markRead: ([String]) async -> Void
+
+    @State private var ackingIds: Set<String> = []
+
+    private var activeAccountId: String? {
+        snapshot.readiness.activeConnectedAccount?.id ?? snapshot.policy.connectedAccountId
+    }
+
+    private var visible: [NotificationHistoryItem] {
+        Array(snapshot.inScopeNotifications(activeAccountId: activeAccountId).prefix(40))
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            SectionHeading("Notifications", subtitle: "Every send this app made — push, email, or otherwise.")
+            if visible.isEmpty {
+                EmptyStateCard(
+                    title: "No Delivery Records Yet",
+                    message: "No delivery records yet.",
+                    systemImage: "bell"
+                )
+            } else {
+                ForEach(visible) { item in
+                    NotificationHistoryRow(
+                        item: item,
+                        acking: ackingIds.contains(item.id),
+                        markRead: { await markOne(item) }
+                    )
+                }
+            }
+        }
+    }
+
+    private func markOne(_ item: NotificationHistoryItem) async {
+        guard !item.read else { return }
+        ackingIds.insert(item.id)
+        defer { ackingIds.remove(item.id) }
+        await markRead([item.id])
+    }
+}
+
 private struct NotificationHistoryRow: View {
     let item: NotificationHistoryItem
     let acking: Bool
     let markRead: () async -> Void
 
     var body: some View {
-        AppCard(padding: 13) {
+        AppCard(padding: 16) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(item.title)
                         .font(.appHeadline)
                         .foregroundStyle(.primary)
-                    Spacer()
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
                     StatusPill(
                         item.readLabel,
                         color: item.read ? .secondary : AppPalette.accent,
@@ -159,10 +349,15 @@ private struct NotificationHistoryRow: View {
                 if !item.body.isEmpty {
                     Text(item.body)
                         .font(.appSubheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(item.type == "run_failed" ? AppPalette.negative : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
+                    if let channel = item.channel, !channel.isEmpty {
+                        Text(channel)
+                            .font(.appFootnote)
+                            .foregroundStyle(.tertiary)
+                    }
                     Text(AppFormat.dateTime(item.createdAt))
                         .font(.appFootnote)
                         .foregroundStyle(.secondary)
@@ -195,32 +390,32 @@ private struct NotificationHistoryRow: View {
     }
 }
 
-private struct DailyActivityCard: View {
+private struct StrategyRunsSection: View {
     let snapshot: MobileSnapshot
 
-    var body: some View {
-        VStack(spacing: 10) {
-            SectionHeading("Today", subtitle: "this trading day (New York)")
-            AppMetricGrid {
-                MetricTile(title: "All orders", value: "\(snapshot.dailyStats.orderCount)")
-                MetricTile(title: "Opening orders", value: "\(snapshot.dailyStats.openingOrderCount)")
-                MetricTile(
-                    title: "Opening notional",
-                    value: AppFormat.money(snapshot.dailyStats.notional, compact: true),
-                    detail: dailyNotionalDetail(snapshot)
-                )
-                MetricTile(
-                    title: "In Progress",
-                    value: "\(snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running)",
-                    detail: "\(snapshot.readiness.commandBacklog.queued) queued · \(snapshot.readiness.commandBacklog.running) running"
-                )
-            }
-        }
+    private var accountLabelById: [String: String] {
+        Dictionary(snapshot.connectedAccounts.map { ($0.id, $0.label) }, uniquingKeysWith: { _, last in last })
     }
 
-    private func dailyNotionalDetail(_ snapshot: MobileSnapshot) -> String? {
-        guard let cap = snapshot.policy.maxDailyNotional else { return nil }
-        return "of \(AppFormat.money(cap, compact: true)) cap"
+    var body: some View {
+        VStack(spacing: 12) {
+            SectionHeading("Strategy Runs", subtitle: "Each evaluation of the account, newest first.")
+            SchedulerActivityCard(snapshot: snapshot)
+            if snapshot.strategyRuns.isEmpty {
+                EmptyStateCard(
+                    title: "No Strategy Runs Yet",
+                    message: "No strategy runs yet.",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+            } else {
+                ForEach(snapshot.strategyRuns) { run in
+                    StrategyRunRow(
+                        run: run,
+                        accountLabel: run.connectedAccountId.flatMap { accountLabelById[$0] }
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -231,9 +426,9 @@ private struct SchedulerActivityCard: View {
         AppCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    SectionHeading("Scheduler")
+                    Text("Scheduler")
+                        .font(.appHeadline)
                     Spacer()
-                    // Shared market-aware run-state vocabulary (console deriveStateInfo parity).
                     StatusPill(
                         deriveRunStateWord(snapshot: snapshot).rawValue,
                         color: deriveRunStateWord(snapshot: snapshot).pillColor,
@@ -248,9 +443,87 @@ private struct SchedulerActivityCard: View {
                         autonomyActive: snapshot.policy.systemState == "active"
                     )
                 )
-                LabeledContent("Cadence", value: snapshot.policy.runCadenceMinutes.map { "\($0) minutes" } ?? "Manual")
             }
         }
+    }
+}
+
+private struct StrategyRunRow: View {
+    let run: StrategyRunItem
+    let accountLabel: String?
+
+    private var statusColor: Color {
+        switch run.status {
+        case "failed": return AppPalette.negative
+        case "running": return AppPalette.accent
+        case "skipped", "skipped_budget", "skipped_market_closed", "skipped_broker_unhealthy":
+            return AppPalette.warning
+        default: return AppPalette.positive
+        }
+    }
+
+    private var statusLabel: String {
+        switch run.status {
+        case "failed": return "Failed"
+        case "running": return "Running"
+        case "skipped": return "Skipped"
+        case "skipped_budget": return "Skipped · Budget"
+        case "skipped_market_closed": return "Skipped · Market Closed"
+        case "skipped_broker_unhealthy": return "Skipped · Broker"
+        default: return "Completed"
+        }
+    }
+
+    var body: some View {
+        AppCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Strategy Run")
+                        .font(.appHeadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    StatusPill(statusLabel, color: statusColor, systemImage: "arrow.triangle.2.circlepath")
+                }
+                Text(metaLine)
+                    .font(.appFootnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(countLine)
+                    .font(.appCaption)
+                    .foregroundStyle(.tertiary)
+                if let failure = run.failure, !failure.isEmpty {
+                    Text("Failure.  \(failure)")
+                        .font(.appSubheadline)
+                        .foregroundStyle(AppPalette.negative)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let summary = run.summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.appSubheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Strategy Run, \(statusLabel)")
+    }
+
+    private var metaLine: String {
+        var parts = ["Started \(AppFormat.dateTime(run.startedAt))"]
+        if let finished = run.finishedAt {
+            parts.append("Completed \(AppFormat.dateTime(finished))")
+        }
+        if let accountLabel, !accountLabel.isEmpty {
+            parts.append(accountLabel)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var countLine: String {
+        var parts = ["\(run.proposedCount) proposed", "\(run.placedCount) placed"]
+        if run.paperCount > 0 { parts.append("\(run.paperCount) paper") }
+        parts.append("\(run.blockedCount) blocked")
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -263,12 +536,12 @@ private struct FillActivitySection: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            SectionHeading("Fills", subtitle: "Most recent executions")
+        VStack(spacing: 12) {
+            SectionHeading("Order Fills", subtitle: "Most recent executions.")
             if recentFills.isEmpty {
                 EmptyStateCard(
-                    title: "No fills yet",
-                    message: "Executed broker fills will appear here after the selected account trades.",
+                    title: "No Order Fills Yet",
+                    message: "No order fills yet.",
                     systemImage: "tray"
                 )
             } else {
@@ -288,7 +561,7 @@ private struct FillActivityRow: View {
         Button {
             presentedItem = .fill(fill)
         } label: {
-            AppCard(padding: 13) {
+            AppCard(padding: 16) {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 8) {
@@ -331,74 +604,78 @@ private struct FillActivityRow: View {
     }
 }
 
-private struct CommandActivitySection: View {
-    let commands: [MobileCommand]
+private struct AuditLogSection: View {
+    let items: [ActivityAuditItem]
 
     var body: some View {
-        VStack(spacing: 10) {
-            SectionHeading("Recent Actions", subtitle: "what you asked this app to do")
-            if commands.isEmpty {
+        VStack(spacing: 12) {
+            SectionHeading("Audit Log", subtitle: "The decision journal, grouped by day.")
+            if items.isEmpty {
                 EmptyStateCard(
-                    title: "No Recent Actions",
-                    message: "Actions you take here will show up here.",
-                    systemImage: "list.bullet"
+                    title: "No Audit Events Yet",
+                    message: "No audit events yet.",
+                    systemImage: "list.bullet.rectangle"
                 )
             } else {
-                ForEach(commands) { command in
-                    CommandActivityRow(command: command)
+                ForEach(items) { item in
+                    AuditLogRow(item: item)
                 }
             }
         }
     }
 }
 
-private struct CommandActivityRow: View {
-    let command: MobileCommand
+private struct AuditLogRow: View {
+    let item: ActivityAuditItem
 
     private var statusColor: Color {
-        switch command.status {
-        case "succeeded": return AppPalette.positive
-        case "failed", "cancelled": return AppPalette.negative
-        case "running", "queued": return AppPalette.warning
+        switch item.status {
+        case "failed": return AppPalette.negative
+        case "filled", "completed", "placed", "sent": return AppPalette.positive
+        case "pending", "pending_approval", "running": return AppPalette.accent
+        case "skipped", "blocked", "pending_reconciliation": return AppPalette.warning
         default: return .secondary
         }
     }
 
     var body: some View {
-        AppCard {
+        AppCard(padding: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(displayName)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
                         .font(.appHeadline)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    StatusPill(command.status.capitalized, color: statusColor, systemImage: statusIcon)
+                    if !item.status.isEmpty {
+                        StatusPill(item.status.replacingOccurrences(of: "_", with: " ").capitalized, color: statusColor)
+                    }
                 }
-                HStack {
-                    Text(AppFormat.dateTime(command.updatedAt))
-                        .font(.appFootnote)
+                if !item.detail.isEmpty {
+                    Text(item.detail)
+                        .font(.appSubheadline)
                         .foregroundStyle(.secondary)
-                    Spacer()
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if let error = command.error, !error.isEmpty {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.appCaption)
+                if let failure = item.failure, !failure.isEmpty, failure != item.detail {
+                    Text("Failure.  \(failure)")
+                        .font(.appSubheadline)
                         .foregroundStyle(AppPalette.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                HStack {
+                    Text(AppFormat.dateTime(item.updatedAt))
+                        .font(.appFootnote)
+                        .foregroundStyle(.secondary)
+                    if let account = item.accountLabel, !account.isEmpty {
+                        Text(account)
+                            .font(.appFootnote)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                }
             }
         }
-    }
-
-    private var displayName: String {
-        AppFormat.commandLabel(command.commandType)
-    }
-
-    private var statusIcon: String {
-        switch command.status {
-        case "succeeded": return "checkmark.circle.fill"
-        case "failed", "cancelled": return "xmark.circle.fill"
-        case "running": return "gearshape.2.fill"
-        default: return "clock.fill"
-        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(item.title)
     }
 }

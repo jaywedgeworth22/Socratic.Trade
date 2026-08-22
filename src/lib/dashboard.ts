@@ -1175,7 +1175,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
         : undefined
     ),
     dailyStats,
-    strategyRuns: listStrategyRuns(15, userId, policy.connectedAccountId),
+    strategyRuns: listStrategyRuns(40, userId, policy.connectedAccountId),
     pendingProposals: pendingProposalsWithPerf,
     recentProposals: recentProposalsWithPerf,
     performance,

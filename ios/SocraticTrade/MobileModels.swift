@@ -21,6 +21,10 @@ struct MobileSnapshot: Decodable {
     let alerts: [PriceAlert]
     /// Persisted notification inbox (last 100).  Missing on older payloads.
     let notifications: [NotificationHistoryItem]
+    /// Compact strategy-run rows for Activity → Strategy Runs.  Missing on older payloads.
+    let strategyRuns: [StrategyRunItem]
+    /// Compact unified-feed groups for Activity → Audit Log.  Missing on older payloads.
+    let unifiedFeed: [ActivityAuditItem]
     let recentCommands: [MobileCommand]
     /// Last-good `/api/scan` universe.  Same seed `/console/scan` keeps when Refresh 503s.
     let latestScan: MarketScanResponse?
@@ -44,6 +48,8 @@ struct MobileSnapshot: Decodable {
         case watchlist
         case alerts
         case notifications
+        case strategyRuns
+        case unifiedFeed
         case recentCommands
         case latestScan
         case weeklyMarketDigest
@@ -73,6 +79,9 @@ struct MobileSnapshot: Decodable {
         watchlist = try values.decodeIfPresent([WatchlistItem].self, forKey: .watchlist) ?? []
         alerts = try values.decodeIfPresent([PriceAlert].self, forKey: .alerts) ?? []
         notifications = try values.decodeIfPresent([NotificationHistoryItem].self, forKey: .notifications) ?? []
+        // try?: a malformed new field must not blank the whole snapshot.
+        strategyRuns = (try? values.decodeIfPresent([StrategyRunItem].self, forKey: .strategyRuns)) ?? []
+        unifiedFeed = (try? values.decodeIfPresent([ActivityAuditItem].self, forKey: .unifiedFeed)) ?? []
         recentCommands = try values.decodeIfPresent([MobileCommand].self, forKey: .recentCommands) ?? []
         latestScan = try values.decodeIfPresent(MarketScanResponse.self, forKey: .latestScan)
         weeklyMarketDigest = try values.decodeIfPresent(WeeklyMarketDigest.self, forKey: .weeklyMarketDigest)
@@ -559,6 +568,7 @@ struct NotificationHistoryItem: Decodable, Identifiable, Equatable {
     let acknowledgedAt: String?
     let connectedAccountId: String?
     let accountLabel: String?
+    let channel: String?
 
     var readLabel: String { read ? "read" : "unread" }
 
@@ -573,6 +583,7 @@ struct NotificationHistoryItem: Decodable, Identifiable, Equatable {
         case acknowledgedAt
         case connectedAccountId
         case accountLabel
+        case channel
     }
 
     init(from decoder: Decoder) throws {
@@ -591,6 +602,70 @@ struct NotificationHistoryItem: Decodable, Identifiable, Equatable {
         status = try values.decodeIfPresent(String.self, forKey: .status) ?? "sent"
         connectedAccountId = try values.decodeIfPresent(String.self, forKey: .connectedAccountId)
         accountLabel = try values.decodeIfPresent(String.self, forKey: .accountLabel)
+        channel = try values.decodeIfPresent(String.self, forKey: .channel)
+    }
+}
+
+/// Compact strategy-run row from `/api/mobile/snapshot` `strategyRuns`.
+struct StrategyRunItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let startedAt: String
+    let finishedAt: String?
+    let status: String
+    let summary: String?
+    let connectedAccountId: String?
+    let placedCount: Int
+    let paperCount: Int
+    let blockedCount: Int
+    let proposedCount: Int
+    let totalCount: Int
+    let failure: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, startedAt, finishedAt, status, summary, connectedAccountId
+        case placedCount, paperCount, blockedCount, proposedCount, totalCount, failure
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        startedAt = try values.decode(String.self, forKey: .startedAt)
+        finishedAt = try values.decodeIfPresent(String.self, forKey: .finishedAt)
+        status = try values.decodeIfPresent(String.self, forKey: .status) ?? "completed"
+        summary = try values.decodeIfPresent(String.self, forKey: .summary)
+        connectedAccountId = try values.decodeIfPresent(String.self, forKey: .connectedAccountId)
+        placedCount = (try? values.decodeIfPresent(Int.self, forKey: .placedCount)) ?? 0
+        paperCount = (try? values.decodeIfPresent(Int.self, forKey: .paperCount)) ?? 0
+        blockedCount = (try? values.decodeIfPresent(Int.self, forKey: .blockedCount)) ?? 0
+        proposedCount = (try? values.decodeIfPresent(Int.self, forKey: .proposedCount)) ?? 0
+        totalCount = (try? values.decodeIfPresent(Int.self, forKey: .totalCount)) ?? 0
+        failure = try values.decodeIfPresent(String.self, forKey: .failure)
+    }
+}
+
+/// Compact unified-feed group from `/api/mobile/snapshot` `unifiedFeed` (Audit Log).
+struct ActivityAuditItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let title: String
+    let detail: String
+    let status: String
+    let updatedAt: String
+    let accountLabel: String?
+    let failure: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, detail, status, updatedAt, accountLabel, failure
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        title = try values.decodeIfPresent(String.self, forKey: .title) ?? "Event"
+        detail = try values.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        status = try values.decodeIfPresent(String.self, forKey: .status) ?? ""
+        updatedAt = try values.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
+        accountLabel = try values.decodeIfPresent(String.self, forKey: .accountLabel)
+        failure = try values.decodeIfPresent(String.self, forKey: .failure)
     }
 }
 

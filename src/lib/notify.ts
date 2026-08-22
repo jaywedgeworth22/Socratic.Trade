@@ -551,10 +551,31 @@ export function describeChannels(cfg: NotifyConfig = loadNotifyConfig()): Notify
 
 /**
  * Deliver `msg` to every channel the user enabled that is both admin-available and has a target.
+ * Native iOS push is included whenever this user has a live device token and APNs is configured,
+ * even if `prefs.channels` omitted `apns` — account notices must reach the app, not only Pushover.
  * Returns a per-channel result list and, for ordinary callers, never throws — a failing channel is
  * recorded and the others run. A guarded caller's ownership/cancellation error is control flow and
  * is deliberately rethrown before retries, later channels, or per-channel audit writes.
  */
+export function channelsForNotify(
+  userId: string,
+  prefs: NotifyPrefs,
+  cfg: NotifyConfig
+): NotifyChannelId[] {
+  const requested: NotifyChannelId[] = [...(prefs.channels ?? [])];
+  let hasTokens = false;
+  try {
+    hasTokens = listActiveDeviceTokens(userId).length > 0;
+  } catch {
+    hasTokens = false;
+  }
+  if (CHANNELS.apns.available(cfg) && hasTokens && !requested.includes("apns")) {
+    requested.unshift("apns");
+  }
+  const skipEmail = isPushoverDeliverable(prefs, cfg);
+  return skipEmail ? requested.filter((id) => id !== "email") : requested;
+}
+
 export async function notify(
   userId: string,
   msg: NotifyMessage,
@@ -565,10 +586,7 @@ export async function notify(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const prefs = deps.prefs ?? getNotifyPrefs(userId);
   const results: NotifyChannelResult[] = [];
-  const requested = prefs.channels ?? [];
-  // Resend costs money.  When Pushover can deliver, skip email on this send.
-  const skipEmail = isPushoverDeliverable(prefs, cfg);
-  const channelIds = skipEmail ? requested.filter((id) => id !== "email") : requested;
+  const channelIds = channelsForNotify(userId, prefs, cfg);
   for (const id of channelIds) {
     assertNotifyActive(deps);
     const channel = CHANNELS[id];

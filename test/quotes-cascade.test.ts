@@ -3,6 +3,7 @@ import {
   cascadeFreshMaxAgeMs,
   fetchFreshQuotesCascade,
   isQuoteFresh,
+  isUsableBrokerQuote,
   quoteAgeSecForStalenessGate,
   resolveVenueQuoteMode
 } from "../src/lib/quotes-cascade";
@@ -74,6 +75,31 @@ describe("isQuoteFresh / cascadeFreshMaxAgeMs", () => {
     const now = Date.now();
     expect(isQuoteFresh({ asOf: new Date(now - 30_000).toISOString() }, now, cascadeFreshMaxAgeMs(120))).toBe(true);
     expect(isQuoteFresh({ asOf: new Date(now - 180_000).toISOString() }, now, cascadeFreshMaxAgeMs(120))).toBe(false);
+  });
+
+  it("treats a two-sided live NBBO as fresh when fetchedAt is recent even if last-print asOf is old", () => {
+    const now = Date.now();
+    const quietName = {
+      bid: 10.1,
+      ask: 10.2,
+      asOf: new Date(now - 30 * 60 * 1000).toISOString(),
+      fetchedAt: new Date(now - 5_000).toISOString(),
+      provider: "alpaca"
+    };
+    expect(isQuoteFresh(quietName, now, cascadeFreshMaxAgeMs(120))).toBe(true);
+    expect(isUsableBrokerQuote(quietName, now, cascadeFreshMaxAgeMs(120))).toBe(true);
+  });
+
+  it("keeps a priced session-close quote usable without calling it a delayed Yahoo fallback", () => {
+    const now = Date.now();
+    const close = {
+      price: 95.25,
+      asOf: "2026-06-24",
+      fetchedAt: new Date(now).toISOString(),
+      provider: "session-close"
+    };
+    expect(isQuoteFresh(close, now, cascadeFreshMaxAgeMs(120))).toBe(false);
+    expect(isUsableBrokerQuote(close, now, cascadeFreshMaxAgeMs(120))).toBe(true);
   });
 
   it("never treats missing asOf as fresh (unless venue-authoritative)", () => {

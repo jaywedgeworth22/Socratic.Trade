@@ -610,6 +610,92 @@ function operatorAlertEmail(): string | undefined {
   );
 }
 
+/**
+ * System-wide alerts go to every administrator via sendNotification (APNs is
+ * auto-included when they have a registered device).  Pushover/email remain a
+ * last-resort additionalDelivery only when no admin has a live device token and
+ * those channels are not already in prefs — otherwise we double-send.
+ */
+async function deliverSystemAlertToAdmins(input: {
+  type: "provider_degraded" | "storage_warning";
+  title: string;
+  body: string;
+  payload: unknown;
+  kind: string;
+}): Promise<void> {
+  const { getNotifyPrefs, getPolicy, listActiveDeviceTokens } = await import("./db");
+  const { isPushoverDeliverable, loadNotifyConfig, notify, operatorPushoverUserKey } = await import("./notify");
+  const { sendNotification } = await import("./notifications");
+  const { listAdminUserIds } = await import("./admin-user-ids");
+
+  const adminIds = listAdminUserIds();
+  const config = loadNotifyConfig();
+  const prefs = getNotifyPrefs("local");
+  const alreadySendingPushover = prefs.channels.includes("pushover");
+  const alreadySendingEmail = prefs.channels.includes("email") && Boolean(prefs.email.trim());
+  let anyAdminHasApns = false;
+  for (const id of adminIds) {
+    try {
+      if (listActiveDeviceTokens(id).length > 0) {
+        anyAdminHasApns = true;
+        break;
+      }
+    } catch {
+      /* registry hiccup must not block the rest of delivery */
+    }
+  }
+
+  const fallbackEmail = operatorAlertEmail();
+  const additionalDelivery =
+    anyAdminHasApns || alreadySendingPushover || alreadySendingEmail
+      ? undefined
+      : isPushoverDeliverable(prefs, config)
+        ? () =>
+            notify(
+              "local",
+              { title: input.title, body: input.body, kind: input.kind, data: input.payload },
+              {
+                config,
+                prefs: {
+                  ...prefs,
+                  channels: ["pushover"],
+                  pushoverTarget: operatorPushoverUserKey(prefs),
+                  updatedAt: prefs.updatedAt
+                }
+              }
+            )
+        : fallbackEmail && config.email.resendKey && config.email.from
+          ? () =>
+              notify(
+                "local",
+                { title: input.title, body: input.body, kind: input.kind, data: input.payload },
+                {
+                  config,
+                  prefs: {
+                    ...prefs,
+                    channels: ["email" as const],
+                    email: fallbackEmail,
+                    updatedAt: prefs.updatedAt
+                  }
+                }
+              )
+          : undefined;
+
+  for (const userId of adminIds) {
+    const policy = getPolicy(userId);
+    await sendNotification(
+      { type: input.type, title: input.title, payload: input.payload },
+      {
+        userId,
+        policy,
+        directBody: input.body,
+        notifyDeps: { config },
+        ...(userId === "local" && additionalDelivery ? { additionalDelivery } : {})
+      }
+    ).catch(() => {});
+  }
+}
+
 async function captureHealthSentryMessage(
   level: "warning" | "error",
   message: string,
@@ -736,67 +822,13 @@ export async function alertConnectionFailure(
     }
 
     if (isGlobal) {
-      // Global failures: Route to admin email and health.
-      const { getNotifyPrefs } = await import("./db");
-      const prefs = getNotifyPrefs("local");
-      const { isPushoverDeliverable, loadNotifyConfig, notify, operatorPushoverUserKey } = await import("./notify");
-
-      const fallbackEmail = operatorAlertEmail();
-      const config = loadNotifyConfig();
-
-      // Prefer Pushover when it can deliver (Resend costs money).  Email stays last resort.
-      // Skip a fallback that would re-send the same payload on a channel sendNotification
-      // already has in prefs — that looked like two alerts in one minute.
-      const alreadySendingPushover = prefs.channels.includes("pushover");
-      const alreadySendingEmail = prefs.channels.includes("email") && Boolean(prefs.email.trim());
-      const additionalDelivery =
-        isPushoverDeliverable(prefs, config) && !alreadySendingPushover
-          ? () =>
-              notify(
-                "local",
-                { title, body, kind: "provider_degraded", data: payload },
-                {
-                  config,
-                  prefs: {
-                    ...prefs,
-                    channels: ["pushover"],
-                    pushoverTarget: operatorPushoverUserKey(prefs),
-                    updatedAt: prefs.updatedAt
-                  }
-                }
-              )
-          : fallbackEmail &&
-              config.email.resendKey &&
-              config.email.from &&
-              !alreadySendingEmail &&
-              !isPushoverDeliverable(prefs, config)
-            ? () =>
-                notify(
-                  "local",
-                  { title, body, kind: "provider_degraded", data: payload },
-                  {
-                    config,
-                    prefs: {
-                      ...prefs,
-                      channels: ["email" as any],
-                      email: fallbackEmail,
-                      updatedAt: prefs.updatedAt
-                    }
-                  }
-                )
-            : undefined;
-
-      // Also send standard notification. Delivery honors the user's real enabledEvents toggle
-      // (owner ruling 2026-08-12, "ALL toggles must be real" — no force-include). A legacy stored
-      // enabledEvents array predating this event type was backfilled once by migration 78
-      // (db.ts); after that the toggle is genuinely the user's.
-      const { sendNotification } = await import("./notifications");
-      const { getPolicy } = await import("./db");
-      const policy = getPolicy("local");
-      await sendNotification(
-        { type: "provider_degraded", title, payload },
-        { userId: "local", policy, directBody: body, notifyDeps: { config }, additionalDelivery }
-      ).catch(() => {});
+      await deliverSystemAlertToAdmins({
+        type: "provider_degraded",
+        title,
+        body,
+        payload,
+        kind: "provider_degraded"
+      });
     } else {
       // User-key failures: Route to user notifications only. Same real-toggle delivery as above.
       const { sendNotification } = await import("./notifications");
@@ -827,57 +859,13 @@ export async function alertStorageWarning(warningType: string, message: string):
 
     audit("storage_warning_alert", payload, "local");
 
-    // Route to admin email
-    const { getNotifyPrefs } = await import("./db");
-    const prefs = getNotifyPrefs("local");
-    const { isPushoverDeliverable, loadNotifyConfig, notify, operatorPushoverUserKey } = await import("./notify");
-
-    const fallbackEmail = operatorAlertEmail();
-    const config = loadNotifyConfig();
-
-    const additionalDelivery = isPushoverDeliverable(prefs, config)
-      ? () =>
-          notify(
-            "local",
-            { title, body, kind: "storage_warning", data: payload },
-            {
-              config,
-              prefs: {
-                ...prefs,
-                channels: ["pushover"],
-                pushoverTarget: operatorPushoverUserKey(prefs),
-                updatedAt: prefs.updatedAt
-              }
-            }
-          )
-      : fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())
-        ? () =>
-            notify(
-              "local",
-              { title, body, kind: "storage_warning", data: payload },
-              {
-                config,
-                prefs: {
-                  ...prefs,
-                  channels: ["email" as any],
-                  email: fallbackEmail,
-                  updatedAt: prefs.updatedAt
-                }
-              }
-            )
-        : undefined;
-
-    // Also send standard notification. Delivery honors the user's real enabledEvents toggle
-    // (owner ruling 2026-08-12, "ALL toggles must be real" — no force-include). A legacy stored
-    // enabledEvents array predating this event type was backfilled once by migration 78 (db.ts);
-    // after that the toggle is genuinely the user's.
-    const { sendNotification } = await import("./notifications");
-    const { getPolicy } = await import("./db");
-    const policy = getPolicy("local");
-    await sendNotification(
-      { type: "storage_warning", title, payload },
-      { userId: "local", policy, directBody: body, notifyDeps: { config }, additionalDelivery }
-    ).catch(() => {});
+    await deliverSystemAlertToAdmins({
+      type: "storage_warning",
+      title,
+      body,
+      payload,
+      kind: "storage_warning"
+    });
   } catch {
     // never throw on warnings
   }
