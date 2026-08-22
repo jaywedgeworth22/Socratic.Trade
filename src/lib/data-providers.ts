@@ -76,6 +76,7 @@ import {
 import {
   AV_RAPIDAPI_OVERVIEW_CORE_FIELDS,
   WAVE_B_GAP_FIELDS,
+  paidProviderHasUsefulWaveBGap,
   scarceProviderHasUsefulGap
 } from "./enrichment-coverage";
 
@@ -1513,8 +1514,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
               const targets =
                 fields && fields.length > 0
                   ? gapSymbols.filter((symbol) => {
-                      const filled = filledAfterFree.get(symbol);
-                      return fields.some((field) => !filled?.has(field as string));
+                      const filled = filledAfterFree.get(symbol) ?? new Set<string>();
+                      return paidProviderHasUsefulWaveBGap(fields as readonly string[], filled);
                     })
                   : gapSymbols;
               if (targets.length === 0) {

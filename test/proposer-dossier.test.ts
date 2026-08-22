@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { applyVersionedMigrations, getDb } from "../src/lib/db";
 import { insertDocumentAbstract } from "../src/lib/db-document-abstracts";
+import { secArtifactWritePath, writeCorpusFileSync } from "../src/lib/rag/corpus-layout";
 import {
   assembleProposerDossier,
+  HYDRATE_ATTACH_CHARS,
   proposerDossierEnabled,
   SCOUT_STUB_CHARS
 } from "../src/lib/rag/proposer-dossier";
@@ -134,5 +137,53 @@ describe("assembleProposerDossier", () => {
     expect(dossier.coverage.want).toContain("10-k");
     expect(dossier.coverage.have).toContain("10-k");
     expect(dossier.coverage.have).toContain("8-k");
+  });
+
+  it("caps hydrated 1A text so one filing cannot eat the 24k hose", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "dossier-hydrate-"));
+    const previousDataDir = process.env.DATA_DIR;
+    const previousCorpusDir = process.env.CORPUS_DIR;
+    process.env.DATA_DIR = dataDir;
+    delete process.env.CORPUS_DIR;
+    try {
+      const huge = "Item 1A. Risk. Export controls and going-concern language. ".repeat(200);
+      expect(huge.length).toBeGreaterThan(HYDRATE_ATTACH_CHARS);
+      writeCorpusFileSync(
+        secArtifactWritePath("0000320193", ACCESSION, 1, "chunks.json"),
+        JSON.stringify([
+          {
+            text: huge,
+            parent_text: huge,
+            itemCode: "1A",
+            section: "1A. Risk Factors"
+          }
+        ])
+      );
+      const dossier = await assembleProposerDossier({
+        symbol: "AAPL",
+        depth: "deep",
+        query: "catalysts",
+        limit: 8,
+        retrieve: async () => [
+          {
+            id: "sec-1a",
+            text: "short 1A vector",
+            score: 0.9,
+            doc_type: "10-k",
+            section: "1A. Risk Factors",
+            metadata: { accession: ACCESSION }
+          }
+        ]
+      });
+      const attached = dossier.chunks.find((chunk) => chunk.id === "sec-1a");
+      expect(attached?.text.length).toBeLessThanOrEqual(HYDRATE_ATTACH_CHARS);
+      expect(attached?.text.length ?? 0).toBeGreaterThan("short 1A vector".length);
+      expect(attached?.text).toContain("Export controls");
+    } finally {
+      if (previousDataDir === undefined) delete process.env.DATA_DIR;
+      else process.env.DATA_DIR = previousDataDir;
+      if (previousCorpusDir === undefined) delete process.env.CORPUS_DIR;
+      else process.env.CORPUS_DIR = previousCorpusDir;
+    }
   });
 });

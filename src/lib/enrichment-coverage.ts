@@ -103,15 +103,15 @@ export const COVERAGE_GAP_FIELDS: readonly string[] = [
 
 /**
  * Scan-useful fields that justify Wave B (keyed non-scarce) spend.  The gate
- * drops quote microstructure (bid/ask/vwap/asOf) and rare specialty (leverage,
- * ROA/ROE, FCF, institution %) so Yahoo filling the scan core does not force
- * Finnhub/ROIC on every symbol.  Keep COVERAGE_GAP_FIELDS for reports — those
- * still track bid/ask/vwap/asOf and specialty leftovers.
+ * drops quote microstructure (bid/ask/vwap/asOf), news (headlines/sentiment —
+ * Alpaca Wave A owns those), and specialty (insiderSentiment, epsGrowth,
+ * leverage, ROA/ROE, FCF, institution %) so Yahoo filling the scan core does
+ * not force Finnhub/ROIC on every symbol.  Insider gaps stay Wave C.
+ * Keep COVERAGE_GAP_FIELDS for reports.
  */
 export const WAVE_B_GAP_FIELDS: readonly string[] = [
   "price",
   "intradayChangePct",
-  "sentiment",
   "peRatio",
   "analystRating",
   "sector",
@@ -125,11 +125,11 @@ export const WAVE_B_GAP_FIELDS: readonly string[] = [
   "beta",
   "fiftyTwoWeekHigh",
   "fiftyTwoWeekLow",
-  "insiderSentiment",
-  "epsGrowth",
-  "daysToEarnings",
-  "headlines"
+  "daysToEarnings"
 ];
+
+/** RapidAPI last-resort must not spend quota on news.  Alpaca (Wave A) + Finnhub (Wave B) own that. */
+const SCARCE_EXCLUDE_FIELDS = new Set(["headlines", "sentiment"]);
 
 /** Price-family + profile fields that justify a SteadyAPI / YH-15 quote or modules call. */
 export const STEADY_API_USEFUL_FIELDS: readonly string[] = ["price", "volume", "sector", "industry"];
@@ -168,15 +168,17 @@ export function scarceProviderUsefulFields(
     return pick(STEADY_API_USEFUL_FIELDS);
   }
   if (providerName === "alpha-vantage-rapidapi") {
-    return pick([...AV_RAPIDAPI_OVERVIEW_CORE_FIELDS, "sentiment", "headlines"]);
+    return pick(AV_RAPIDAPI_OVERVIEW_CORE_FIELDS);
   }
   if (providerName === "filingapi") {
     // Insiders RapidAPI already owns insiderSentiment; do not double-spend the
     // FilingAPI trial key on the same gap.
     return pick(["companyName", "sector", "industry", "daysToEarnings"]);
   }
-  const useful = suppliesFields.filter((field) => WAVE_B_GAP_FIELD_SET.has(field));
-  return useful.length > 0 ? useful : suppliesFields;
+  const useful = suppliesFields.filter(
+    (field) => WAVE_B_GAP_FIELD_SET.has(field) && !SCARCE_EXCLUDE_FIELDS.has(field)
+  );
+  return useful.length > 0 ? useful : suppliesFields.filter((field) => !SCARCE_EXCLUDE_FIELDS.has(field));
 }
 
 /** True when a scarce provider can still add a scan-useful field for this symbol. */
@@ -186,7 +188,22 @@ export function scarceProviderHasUsefulGap(
   filled: ReadonlySet<string>
 ): boolean {
   const useful = scarceProviderUsefulFields(providerName, suppliesFields);
-  if (useful.length === 0) return suppliesFields.some((field) => !filled.has(field));
+  if (useful.length === 0) return false;
+  return useful.some((field) => !filled.has(field));
+}
+
+/**
+ * Wave B paid providers still fire when ANY of suppliesFields is empty, including
+ * bid/ask/vwap.  Intersect with WAVE_B_GAP_FIELDS so Finnhub does not run a quote
+ * just because microstructure is missing on a symbol that already has a scan-core gap
+ * (e.g. daysToEarnings).  Providers that declare no suppliesFields stay ungated.
+ */
+export function paidProviderHasUsefulWaveBGap(
+  suppliesFields: readonly string[],
+  filled: ReadonlySet<string>
+): boolean {
+  const useful = suppliesFields.filter((field) => WAVE_B_GAP_FIELD_SET.has(field));
+  if (useful.length === 0) return false;
   return useful.some((field) => !filled.has(field));
 }
 
@@ -407,6 +424,10 @@ export function collectFilledFields(
       }
       if (!isFilledEnrichmentValue(value)) continue;
       filled.add(key);
+      // Yahoo writes recommendationMean as analystBySource, not analystRating.
+      // Treating them as the same scan-core fill stops Wave B on every symbol.
+      if (key === "analystBySource") filled.add("analystRating");
+      if (key === "analystRating") filled.add("analystBySource");
     }
   }
   return filled;

@@ -386,6 +386,13 @@ describe("ingestFiling", () => {
     );
     const stored = mocks.storeDocument.mock.calls.at(-1)?.[0] as { text?: string };
     expect(stored.text).not.toMatch(/<h2|<p>/i);
+
+    const { readLocalArtifact } = await import("../src/lib/web-sources/sec-filings");
+    const chunksJson = await readLocalArtifact("0000320193", ref.accession, 1, "chunks.json");
+    expect(chunksJson).toBeTruthy();
+    const parsed = JSON.parse(chunksJson ?? "[]") as Array<{ text?: string }>;
+    expect(parsed.length).toBeGreaterThan(0);
+    expect(parsed.some((chunk) => /substantial risks/i.test(chunk.text ?? ""))).toBe(true);
   });
 
   it("defers ingest when strategy work is in flight during FTS mirror", async () => {

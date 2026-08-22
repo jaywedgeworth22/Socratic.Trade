@@ -114,7 +114,10 @@ import {
 } from "./operation-lease";
 import type { VectorStoreLeaseGuard } from "./vector-db";
 import { getTechnicalWatchlist } from "./web-sources/technical";
+import { chunkDocument, hashContent } from "./rag/chunk";
 import { writesFullBodyToPinecone } from "./rag/pinecone-write-class";
+import { persistLocalComplete } from "./rag/persist-local-complete";
+import { storeSignalSectionDocuments } from "./rag/processed-corpus-write";
 import fs from "fs";
 import path from "path";
 
@@ -853,6 +856,83 @@ export function accessionFor(row: { symbol: string; fiscalYear: number; fiscalQu
   return `earningscalls:${normalizeSymbol(row.symbol)}:${row.fiscalYear}Q${row.fiscalQuarter}`;
 }
 
+/** Map a speaker / section label to the ROIC-compatible role codes selectSignalChunks expects. */
+function roleOfEarningsCallsLabel(label: string): string {
+  const s = label.toLowerCase().trim();
+  if (!s) return "qa";
+  if (/\boperator\b/.test(s)) return "operator";
+  if (/\b(q\s*&\s*a|questions?\s*(?:and|&)\s*answers?)\b/.test(s)) return "qa";
+  if (/\banalyst\b/.test(s) && !/\b(ceo|cfo|coo|officer|president)\b/.test(s)) return "analyst";
+  if (/\b(ceo|cfo|coo|cto|chief|officer|president|director|management|prepared)\b/.test(s)) {
+    return "management";
+  }
+  return "qa";
+}
+
+/**
+ * Split a cached EarningsCalls body into management + Q&A role sections for signal writes.
+ * Prefers `Speaker:` / Operator / Analyst / Q&A markers when present; otherwise first half
+ * is management remarks and the rest is Q&A (pinned by tests).
+ */
+export function earningsCallsSpeakerSections(
+  content: string
+): Array<{ itemCode: string; itemTitle: string; text: string }> {
+  const trimmed = String(content ?? "").trim();
+  if (!trimmed) return [];
+
+  const turnRe = /^([A-Za-z][^\n:]{0,78}):\s*([\s\S]*)$/;
+  const paragraphs = trimmed
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const turns: Array<{ label: string; text: string }> = [];
+  let labeled = 0;
+  for (const para of paragraphs) {
+    const match = para.match(turnRe);
+    if (match) {
+      labeled += 1;
+      turns.push({ label: match[1]!.trim(), text: match[2]!.trim() });
+    } else if (turns.length > 0) {
+      turns[turns.length - 1]!.text += `\n\n${para}`;
+    } else {
+      turns.push({ label: "Management", text: para });
+    }
+  }
+
+  if (labeled >= 2) {
+    return turns
+      .filter((turn) => turn.text.trim().length > 0)
+      .map((turn) => ({
+        itemCode: roleOfEarningsCallsLabel(turn.label),
+        itemTitle: turn.label,
+        text: turn.text
+      }));
+  }
+
+  const qaHeaderRe = /\n(?:Questions?(?:\s+and\s+|&\s*)Answers?|Q\s*&\s*A)\s*\n/i;
+  const qaParts = trimmed.split(qaHeaderRe);
+  if (qaParts.length >= 2) {
+    const management = qaParts[0]!.trim();
+    const qa = qaParts.slice(1).join("\n\n").trim();
+    const out: Array<{ itemCode: string; itemTitle: string; text: string }> = [];
+    if (management) out.push({ itemCode: "management", itemTitle: "Management remarks", text: management });
+    if (qa) out.push({ itemCode: "qa", itemTitle: "Q&A", text: qa });
+    if (out.length > 0) return out;
+  }
+
+  const mid = Math.floor(trimmed.length / 2);
+  let splitAt = trimmed.indexOf("\n\n", mid);
+  if (splitAt < 0) splitAt = mid;
+  const first = trimmed.slice(0, splitAt).trim();
+  const rest = trimmed.slice(splitAt).trim();
+  const fallback: Array<{ itemCode: string; itemTitle: string; text: string }> = [];
+  if (first) fallback.push({ itemCode: "management", itemTitle: "Management remarks", text: first });
+  if (rest) fallback.push({ itemCode: "qa", itemTitle: "Q&A", text: rest });
+  return fallback.length > 0
+    ? fallback
+    : [{ itemCode: "management", itemTitle: "Management remarks", text: trimmed }];
+}
+
 function recordIngestedLedgerRow(accession: string, ticker: string, chunkCount: number, indexedAt: string): void {
   getDb()
     .prepare(
@@ -872,21 +952,28 @@ async function ingestCachedTranscript(
 ): Promise<boolean> {
   if (!row.content) return false;
   const accession = accessionFor(row);
+  const title = `${row.symbol} earnings call ${row.fiscalYear} Q${row.fiscalQuarter}`;
+  const publishedAt = row.eventDate ?? row.fetchedAt;
+  const url = row.eventId
+    ? `${EARNINGSCALLS_BASE}/transcripts/${row.eventId}`
+    : `${EARNINGSCALLS_BASE}/search/by_ticker`;
+  const sections = earningsCallsSpeakerSections(row.content);
   const writeFullBody = writesFullBodyToPinecone();
+  const { storeDocument } = await import("./vector-db");
   let attempted = 0;
   if (writeFullBody) {
-    const { storeDocument } = await import("./vector-db");
     const stored = await storeDocument(
       {
         text: row.content,
         doc_id: accession,
         ticker: row.symbol,
-        title: `${row.symbol} earnings call ${row.fiscalYear} Q${row.fiscalQuarter}`,
+        title,
         doc_type: EARNINGSCALLS_TRANSCRIPT_DOC_TYPE,
-        published_at: row.eventDate ?? row.fetchedAt,
+        published_at: publishedAt,
         acceptance_datetime: row.fetchedAt,
         source: EARNINGSCALLS_TRANSCRIPT_SOURCE,
-        url: row.eventId ? `${EARNINGSCALLS_BASE}/transcripts/${row.eventId}` : `${EARNINGSCALLS_BASE}/search/by_ticker`
+        url,
+        sections
       },
       "local",
       { parserRevision: "earningscalls-transcript-v1", documentKey: accession, leaseGuard }
@@ -918,14 +1005,76 @@ async function ingestCachedTranscript(
       headline: `${row.symbol} earnings call highlights ${row.fiscalYear} Q${row.fiscalQuarter}`,
       chunks: tradeHighlightChunksFromText(row.content, {
         maxChunks: 8,
-        formHint: "earnings"
+        formHint: "earnings",
+        sections
       }),
-      publishedAt: row.eventDate ?? row.fetchedAt,
+      publishedAt,
       acceptanceDatetime: row.fetchedAt
     });
   } catch (err) {
     console.warn(
       `[earningscalls] abstract failed for ${accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
+  // Keep-set extras: management + first 8 Q&A turns as complete storeDocuments (ROIC mirror).
+  const signalChunks = chunkDocument(
+    {
+      doc_id: `${accession}:signal`,
+      title,
+      doc_type: EARNINGSCALLS_TRANSCRIPT_DOC_TYPE,
+      source: EARNINGSCALLS_TRANSCRIPT_SOURCE,
+      text: row.content,
+      ticker: row.symbol,
+      published_at: publishedAt,
+      acceptance_datetime: row.fetchedAt,
+      url,
+      sections
+    },
+    {}
+  );
+  try {
+    await storeSignalSectionDocuments(
+      {
+        ticker: row.symbol,
+        accession,
+        form: "earnings-transcript",
+        title,
+        publishedAt,
+        acceptanceDatetime: row.fetchedAt,
+        source: EARNINGSCALLS_TRANSCRIPT_SOURCE,
+        url,
+        chunks: signalChunks,
+        userId: "local",
+        ...(leaseGuard ? { leaseGuard } : {})
+      },
+      storeDocument
+    );
+  } catch (err) {
+    console.warn(
+      `[earningscalls] signal sections failed for ${accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
+  // Local FTS so hydrate can recover without dumping the full call into Pinecone.
+  // recordLedger false: ingest already wrote ingested_accessions above.
+  try {
+    await persistLocalComplete({
+      ticker: row.symbol,
+      accession,
+      docType: EARNINGSCALLS_TRANSCRIPT_DOC_TYPE,
+      source: EARNINGSCALLS_TRANSCRIPT_SOURCE,
+      chunks: signalChunks.map((chunk) => ({
+        content_hash: chunk.content_hash || hashContent(chunk.text),
+        text: chunk.text
+      })),
+      recordLedger: false
+    });
+  } catch (err) {
+    console.warn(
+      `[earningscalls] local FTS persist failed for ${accession}:`,
       err instanceof Error ? err.message : String(err)
     );
   }

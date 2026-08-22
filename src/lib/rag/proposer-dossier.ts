@@ -4,16 +4,18 @@
 import { getDocumentAbstractsForTicker, type DocumentAbstract } from "../db-document-abstracts";
 import { normalizeSymbol } from "../money";
 import type { RetrievedChunk, RetrieveOptions } from "../vector-db";
-import { envFlagOn } from "./env-flag";
+import { envFlagOn, type EnvSource } from "./env-flag";
 import { hydrateAccession, HYDRATE_WALL_MS } from "./hydrate-accession";
 import { isCompactRagSummaryDocType, orderChunksForProposer } from "./proposer-format";
 import { bareSecAccession, parseItemCodeFromSection } from "./pinecone-write-class";
 
 export const SCOUT_STUB_CHARS = 1_200;
 export const HYDRATE_ACCESSION_CAP = 8;
+/** One hydrated 1A/MD&A slice.  Unbounded FTS joins blow the 24k filings hose. */
+export const HYDRATE_ATTACH_CHARS = 4_000;
 export const DEEP_COVERAGE_TYPES = ["10-k", "10-q", "8-k", "earnings-transcript"] as const;
 
-export function proposerDossierEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function proposerDossierEnabled(env: EnvSource = process.env): boolean {
   return envFlagOn("RAG_PROPOSER_DOSSIER", true, env);
 }
 
@@ -75,6 +77,12 @@ function compactDocTypeForAbstract(sourceType: string): string {
 }
 
 function truncateStub(text: string, max = SCOUT_STUB_CHARS): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return trimmed.slice(0, max);
+}
+
+function capHydrateAttach(text: string, max = HYDRATE_ATTACH_CHARS): string {
   const trimmed = text.trim();
   if (trimmed.length <= max) return trimmed;
   return trimmed.slice(0, max);
@@ -287,7 +295,7 @@ export async function assembleProposerDossier(
       continue;
     }
     if (local.text && local.text.length > chunk.text.length) {
-      hydratedChunks.push({ ...chunk, text: local.text });
+      hydratedChunks.push({ ...chunk, text: capHydrateAttach(local.text) });
     } else {
       hydratedChunks.push(chunk);
     }

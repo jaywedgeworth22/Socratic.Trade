@@ -143,14 +143,14 @@ describe("cascade wave-two gate for quota-scarce providers", () => {
     expect(result.AAPL?.sector).toBe("Technology");
   });
 
-  it("treats an empty array (e.g. headlines: []) as NOT covered", async () => {
-    const yahoo = freeStub("yahoo-finance", { AAPL: { headlines: [] } });
-    const scarce = scarceStub("mboum-finance", ["headlines"], { AAPL: { headlines: ["real news"] } });
+  it("treats an empty string as NOT covered so first-wins does not block failover", async () => {
+    const yahoo = freeStub("yahoo-finance", { AAPL: { sector: "" } });
+    const scarce = scarceStub("mboum-finance", ["sector", "price"], { AAPL: { sector: "Technology" } });
     const cascade = new CascadingEnrichmentProvider([yahoo, scarce]);
     const result = await cascade.enrich(["AAPL"]);
 
     expect(scarce.calls[0]).toEqual(["AAPL"]);
-    expect(result.AAPL?.headlines).toEqual(["real news"]);
+    expect(result.AAPL?.sector).toBe("Technology");
   });
 
   // (c) a wave-one failure must not suppress the failover tier.

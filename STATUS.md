@@ -2,13 +2,13 @@
 
 ## 2026-08-22 GROK — Litestream L2/L3 + cascade last-resort + RAG hydrate (IN PROGRESS)
 
-Branch `grok/litestream-cascade-rag` in `~/apps/trading-grok-litestream-cascade`.  Boards 1e3df744 / b88b6675 / f7ffb62f.
+Branch `grok/litestream-cascade-rag` in `~/apps/trading-grok-litestream-cascade`.  Boards 1e3df744 / b88b6675 / f7ffb62f.  Diagnosis: `docs/audits/2026-08-22-cascade-rag-diagnosis.md`.  PR #3041.
 
-Live `/api/health` still `storageDegraded`: L2 last 2026-08-18T06:25:07Z, L3 last 2026-08-18T07:00:11Z, L0/L1/L9 healthy.  B2 listing: L1 13581 files, **0 holes**, last L2 `8323f`.  Compact then PUTs one L2 covering four days; logs `connection reset by peer` and `extract timestamp from LTX header: EOF`.  Heal (dry-run done): keep newest 48 L1 (~130MB), delete older L1 + all L2/L3, never L0/L9.  Applying on live B2.
+Live `/api/health` still `storageDegraded` (L2/L3 since 2026-08-18).  B2 L1-suffix heal still applying.  Do not bounce Coolify.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Keepout: Claude gather-budget 06df80cf.
 
-Cascade diagnosis: Yahoo floor is healthy; Wave B gap list includes bid/ask/vwap so paid waves almost always run; SteadyAPI still quotes after Yahoo filled price; history tries Marketstack before Yahoo; FilingAPI 401 and yh-finance-apidojo 403 still registered.  Keepout: Claude gather-budget 06df80cf.
+Cascade: Yahoo `analystBySource` now fills `analystRating` so Wave B is not ghost-open; headlines/sentiment dropped from WAVE_B (Alpaca owns news); RapidAPI last-resort no longer spends on news-only holes; Wave B paid providers intersect WAVE_B fields only.
 
-RAG: PR B hydrate/dossier landed on this branch; write-class still `full-body` (do not flip).  Slice now: 8-K extracted text writes to moveable `data/corpus/eight-k/{accession}/main.txt` (+ optional `main.html`); `hydrateAccession` recovers that sidecar without fetch; known-CIK path skips `listSecAccessionDirs` walk; FTS filters item/hash in WHERE then LIMIT 8.  `WEB_SOURCE_SEC8K_FULL_BODY` stays off.  Focused vitest: `test/corpus-layout.test.ts` + `test/hydrate-accession.test.ts` green.
+RAG: PR B hydrate/dossier + 8-K sidecar + EarningsCalls signal/FTS + analog compact cards + thin Red `reviewerFilingsPack` + hydrate attach cap 4k + live `ingestFiling` writes `chunks.json`/`sections.json`.  Write-class still `full-body`.
 
 ## 2026-08-22 GROK — 5M WU snap + RAG panel MERGED (#3037 `f5500b610`)
 

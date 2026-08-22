@@ -798,6 +798,9 @@ async function drainEightKRagBacklogs(
           if (summaryComplete) {
             const completed = new Set(ragEvents.map((event) => event.accession));
             persistEightKSummaryBacklog(summaryBacklog.filter((event) => !completed.has(event.accession)));
+            for (const event of ragEvents) {
+              await writeEightKCorpusSidecar(event.accession, buildEightKContext(event));
+            }
             assertRagOwnership();
           } else {
             warnings.push(`8-K summary RAG deferred${summaryResult.error ? `: ${summaryResult.error}` : " by RAG capacity"}`);

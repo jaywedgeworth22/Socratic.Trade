@@ -630,6 +630,41 @@ export async function ingestFiling(
     url: filingRef.url
   });
   const localChunks = chunkDocument(document, {});
+  try {
+    await writeLocalArtifact(
+      cik,
+      filingRef.accession,
+      1,
+      "sections.json",
+      JSON.stringify(
+        sections.map((section) => ({
+          itemCode: section.itemCode,
+          itemTitle: section.itemTitle,
+          text: section.text
+        }))
+      )
+    );
+    await writeLocalArtifact(
+      cik,
+      filingRef.accession,
+      1,
+      "chunks.json",
+      JSON.stringify(
+        localChunks.map((chunk) => ({
+          text: chunk.text,
+          parent_text: chunk.parent_text ?? chunk.text,
+          content_hash: chunk.content_hash,
+          section: chunk.section,
+          itemCode: chunk.itemCode
+        }))
+      )
+    );
+  } catch (err) {
+    console.warn(
+      `[sec-filings] sections/chunks sidecar failed for ${filingRef.accession}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
   const localComplete = await persistLocalComplete({
     ticker,
     accession: filingRef.accession,

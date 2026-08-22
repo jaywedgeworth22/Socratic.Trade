@@ -32,7 +32,10 @@ PR B without flipping `RAG_PINECONE_WRITE_CLASS` (still `full-body`):
 - `hydrateAccession` local-only (chunks.json, artifacts, FTS, ROIC/earnings SQL).  150ms fail-open.  No EDGAR.
 - `assembleProposerDossier` for Green/Red (`RAG_PROPOSER_DOSSIER` default on).  Deep k=8 / scout k=1 unchanged.  24k family budget unchanged.
 - Highlight ids use real content hashes when known.  Provenance prints bare SEC accession.
-- EarningsCalls skips full-body Pinecone upsert when write-class is not `full-body` (inert until a later flip).
+- EarningsCalls skips full-body Pinecone upsert when write-class is not `full-body` (inert until a later flip).  Same producer now writes management + 8 Q&A signal extras and mirrors FTS.
+- Analog inject uses compact cards (situation / return_pct / holding_days / risk_exit) plus a Green analog job line (`agentic-strategy@2.17.0`).
+- Red gets `reviewerFilingsPack` (proposed symbols only, 4k/name, 8k total).  Not the 24k Green hose.
+- Hydrate attach capped at 4,000 chars.  Live `ingestFiling` writes `chunks.json` + `sections.json`.  8-K summary ingest writes `corpus/eight-k/{accession}/main.txt`.
 
 Follow-up slice (same branch, no write-class flip):
 
@@ -94,17 +97,16 @@ Heal dry-run: L1 holes 0; keep 48 L1; delete 13533 L1 + 403 L2 + 35 L3.
 
 ## Next Steps & Blockers
 
-- Confirm L2 `fileCount >= 1` within ~5 minutes after heal + next compaction (after this image deploys with part-size, or immediately if Compact retries against the trimmed L1 suffix).
+- Confirm L2 `fileCount >= 1` after heal + next compaction.
 - Coolify `stop_grace_period` on the next planned non-RTH bounce.
 - After a live strategy run proves hydrate 1A from local files: operator may set Infisical `RAG_PINECONE_WRITE_CLASS=highlight+signal`.  Not this week.
-- 8-K sidecars only appear when full-body ingest actually runs (`WEB_SOURCE_SEC8K_FULL_BODY` still off) or when abstract-upgrade re-extracts an already-ledgered body.  Historical 8-Ks without a sidecar still rely on FTS/chunks.
-- Transcript FTS still missing; high-interest full-call exception stays.
-- EarningsCalls still lacks `storeSignalSectionDocuments`.
+- Quote route still waits on the full 6s cascade before returning the Yahoo chart floor (P1).
+- Form 4 XML / 13F / ARK files are still SQLite-only (declared corpus kinds unused).
 - Claude gather-budget P0 remains that seat's.
 
 ## Zero-Code Findings
 
-- Last-resort RapidAPI was firing because Wave B treated bid/ask/vwap as coverage gaps and SteadyAPI always reserved a quote call.  Yahoo floor was healthy (`lastFailure: null`).
+- Last-resort RapidAPI was firing because Wave B treated bid/ask/vwap as coverage gaps, Yahoo `analystBySource` did not fill `analystRating` (ghost Wave B on every symbol), and empty Alpaca headlines counted as a WAVE_B gap.  Yahoo floor was healthy (`lastFailure: null`).
 - FilingAPI public health `ok: true` with lastFailure HTTP 401 is a streak/soften artifact plus in-memory-only reject.
 - ROIC archive already holds 17167 transcripts / 17162 artifact files for 946 symbols.
 - Pinecone month-to-date ~12.9M WU; trial remaining ~$248 / 5 days.  Do not bulk 10-K body.

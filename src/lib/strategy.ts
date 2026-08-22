@@ -171,6 +171,7 @@ import {
   type UntrustedPromptField
 } from "./prompt-safety";
 import { debateProposal, projectRedTeamReviewContext, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
+import { sliceRagDossierForSymbols } from "./rag/reviewer-filings-pack";
 import {
   captureProposalSizingSnapshot,
   proposalForFinalSizeRedReview,
@@ -6472,9 +6473,10 @@ async function proposeTrades(input: {
     // pack, learned context and the reflection summary to a reviewer that judges ONE finalized
     // proposal — re-sent per opening, multiplied by the openings in a run.  Evidence parity is
     // preserved by `evidenceManifest`, whose `greenRedParityHash` is the actual proof both stages
-    // judged the same pack; the bodies were never what made that provable.
+    // judged the same pack.  `reviewerFilingsPack` is a CAPPED slice for proposed names only.
     ...projectRedTeamReviewContext(userContent as unknown as Record<string, unknown>),
-    candidatesUnderReview
+    candidatesUnderReview,
+    reviewerFilingsPack: sliceRagDossierForSymbols(budgetedRagContext, [...proposedSymbols])
   };
 
   return {
