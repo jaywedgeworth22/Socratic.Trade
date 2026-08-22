@@ -29,7 +29,7 @@ record.
 
 Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now five Title Case tabs in this order: Alerts Center, Notifications, Strategy Runs, Order Fills, Audit Log.  Default Alerts Center.  Former All unified feed is Audit Log.  Failed runs show wrapping English.  APNs is auto-included when the user has a live device.  Admins get system alerts.  Alpaca session close is no longer stamped Delayed Quote.  Push `?tab=` is additive so another agent's deep-link pairing is not smashed.
 
-PR #3031 on `cursor/activity-layout-redesign-085b`, rematched onto `origin/main` `cd4c700d` (#3018 keyed Finnhub abort).  `ios-build` green (233/0).  Tooltip sentence-gap + AuditLogPanel wiring marker fixed; re-dispatching `verify`.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
+PR #3031 merged to `main` as squash `d588387b` at 00:47:48Z.  `verify` + `ios-build` were green on `0e2d4dcf` (233 XCTests / 0 failures).  Live `/api/health` at 00:49Z still served `c6f33086` (#3032) — website auto-deploy is queued, not claimed.  iOS ships only via TestFlight.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
 
 # Current Status
 ## 2026-08-21 GROK — Stop paging Starter 2M Pinecone write units
