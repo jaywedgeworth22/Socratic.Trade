@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-08-21 CURSOR — local Grok kickoff for adaptive-tabs screenshots
+
+Cursor local is down.  Paste-ready Mac brief: `docs/rollouts/2026-08-21-ios-adaptive-tabs-mac-qa.md`.  Grok starts from `origin/main` in a new `~/apps/trading-grok-tabs` worktree (do not clobber `~/apps/trading-grok-drain`).  Launch DEBUG with `-ASCScreenshots`.  Do not redo B/C/D.  #3027 is optional (`origin/main` merged onto it) -- shots do not wait on it.
+
+## 2026-08-21 CURSOR — adaptive-tabs leftover B: LayoutMathTests.swift + Mac xcodegen
+
+Independent re-check of `docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`: items C, D, and the XCTest half of A were already on `main` (#3023 `7ba178e1`, #3012 `c614391c`, Mac job 32529663287 `success`, 232/0).  Item B was still open.  PR #3027: file is `ios/SocraticTradeTests/LayoutMathTests.swift` (class names unchanged).  Mac job 32534166394 `success` (xcodegen 2.46.0, BUILD/TEST SUCCEEDED); generated pbxproj committed from the artifact.  Merged `origin/main` `b2ca4c14` into this branch (`a37a7b2e`); GitHub DIRTY state was an auto-merge of EFFORT-LOG + `.gitleaksignore`, both sides kept.  Do not block screenshots on it.  Screenshots / auto-fill veto / knobs need a local Grok Mac seat (Cursor local is down).  Paste-ready brief: `docs/rollouts/2026-08-21-ios-adaptive-tabs-mac-qa.md` -- start from `origin/main` in `~/apps/trading-grok-tabs`, not the drain worktree.  Rollout: `docs/rollouts/2026-08-21-ios-layout-math-tests-rename.md`.
 ## 2026-08-22 CURSOR — PR #3028 merged to `main` (iOS wide layout / Admin tab / gear-bell)
 
 Squash `a851a68d` (`a851a68da16b9c7ec722897a3ab4f378e0117111`) at 2026-08-22 01:14:36Z.

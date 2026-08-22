@@ -39,4 +39,12 @@ describe("iOS release-readiness plist + privacy manifest", () => {
     expect(pbxproj).toContain("PrivacyInfo.xcprivacy in Resources");
     expect(pbxproj).toMatch(/PBXFileReference;.*path = PrivacyInfo\.xcprivacy;/);
   });
+
+  it("compiles LayoutMathTests.swift from the checked-in pbxproj", () => {
+    // Renamed from WrappingHStackTests.swift (adaptive-tabs leftover B).  The
+    // ship script does not generate; a project.yml folder glob is not enough.
+    expect(pbxproj).toContain("LayoutMathTests.swift in Sources");
+    expect(pbxproj).toMatch(/PBXFileReference;.*path = LayoutMathTests\.swift;/);
+    expect(pbxproj).not.toContain("WrappingHStackTests.swift");
+  });
 });

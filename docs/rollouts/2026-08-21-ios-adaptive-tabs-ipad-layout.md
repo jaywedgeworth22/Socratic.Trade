@@ -221,9 +221,8 @@ and adding an `xcodebuild test` lane, because the current workflow only ever run
 2. **On a Mac session:** take the screenshots this container cannot.  iPad Air 11" simulator
    in both orientations, plus a Mac window dragged from wide to narrow, per the fleet rule
    that `BUILD SUCCEEDED` is not visual QA.
-3. **On a Mac session:** rename `WrappingHStackTests.swift` to something like
-   `LayoutMathTests.swift` and run `xcodegen generate` (then restore `objectVersion = 100`),
-   so the file name matches what it now covers.
+3. **DONE (2026-08-21 night, CURSOR):** file is `LayoutMathTests.swift`.  Mac `ios-build`
+   now runs `xcodegen generate`.  Rollout: `docs/rollouts/2026-08-21-ios-layout-math-tests-rename.md`.
 4. **Owner call, not taken here:** whether `AppTab.customizable`'s declaration order is the
    right PRIORITY order for auto-fill.  It currently reads defaults first
    (Home, Proposals, Assets, Activity) then Insights, Coach, Scan, Guardrails, Results.

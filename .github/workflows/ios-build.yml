@@ -55,6 +55,60 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
+      # project.yml is the source of truth.  Linux seats cannot run xcodegen, and
+      # the Cursor hook blocks hand-edits of project.pbxproj, so this Mac job
+      # generates before build/test.  The checked-in pbxproj still matters for
+      # TestFlight (the ship script does not generate); after this job, commit
+      # the generated file from the artifact so they stay in sync.
+      - name: Generate Xcode project from project.yml
+        run: |
+          set -euo pipefail
+          xcg=""
+          if command -v xcodegen >/dev/null 2>&1; then
+            xcg="$(command -v xcodegen)"
+          else
+            ver="2.46.0"
+            zip="$RUNNER_TEMP/xcodegen.zip"
+            dest="$RUNNER_TEMP/xcodegen-$ver"
+            curl -fsSL -o "$zip" \
+              "https://github.com/yonaskolb/XcodeGen/releases/download/${ver}/xcodegen.zip"
+            rm -rf "$dest"
+            mkdir -p "$dest"
+            unzip -q "$zip" -d "$dest"
+            if [ -x "$dest/bin/xcodegen" ]; then
+              xcg="$dest/bin/xcodegen"
+            elif [ -x "$dest/xcodegen/bin/xcodegen" ]; then
+              xcg="$dest/xcodegen/bin/xcodegen"
+            else
+              xcg="$(find "$dest" -type f -name xcodegen -perm -111 | head -1)"
+            fi
+            if [ -z "$xcg" ] || [ ! -x "$xcg" ]; then
+              echo "::error::xcodegen binary not found in release zip ${ver}"
+              find "$dest" -maxdepth 4 -type f
+              exit 1
+            fi
+          fi
+          echo "Using xcodegen: $xcg"
+          "$xcg" --version || "$xcg" version || true
+          ( cd ios && "$xcg" generate )
+          python3 -c '
+          from pathlib import Path
+          p = Path("ios/Socratic Trade.xcodeproj/project.pbxproj")
+          text = p.read_text()
+          text = text.replace("objectVersion = 77;", "objectVersion = 100;")
+          text = text.replace("preferredProjectObjectVersion = 77;", "preferredProjectObjectVersion = 100;")
+          p.write_text(text)
+          '
+          grep -F "LayoutMathTests.swift in Sources" "ios/Socratic Trade.xcodeproj/project.pbxproj"
+          grep -F "PrivacyInfo.xcprivacy in Resources" "ios/Socratic Trade.xcodeproj/project.pbxproj"
+
+      - name: Upload generated pbxproj
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: generated-pbxproj
+          path: ios/Socratic Trade.xcodeproj/project.pbxproj
+          if-no-files-found: error
+
       - name: Assert stable Xcode 26 (never beta)
         run: |
           echo "DEVELOPER_DIR=${DEVELOPER_DIR}"
