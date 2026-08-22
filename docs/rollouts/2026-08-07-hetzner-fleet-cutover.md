@@ -21,8 +21,8 @@ app-level SQLite snapshots (they are not a substitute for frequent app RPO).
 | App | Domain | Coolify UUID | Notes |
 |-----|--------|--------------|-------|
 | Socratic.Trade | socratictrade.com (+ www, admin) | `<ST_COOLIFY_APP_UUID>` | Litestream L9 snapshot restored + integrity repair (`task_journal` salvage). Live trading DB. |
-| Congress.Trade | congress.trade (+ www) | `c11c5hdhuczureb6w2pg20p0` | Fresh local SQLite + `/api/admin/migrate`. **No Oracle CT DB copy** — empty pipeline data until re-ingest / future R2 restore. Runtime container: `congress-app-live` (Traefik labels + coolify network). Compose sqlite-web port conflict avoided (proxy owns :8080). |
-| Usage Monitor | usage.jays.services | `yagelvqux9e8l1kztif7bf2o` | Booted with `LITESTREAM_EMERGENCY_DISABLE=true` (R2 LTX non-contiguous). Volume perms fixed for uid 1000. Fresh DB schema via migrate-safe. |
+| Congress.Trade | congress.trade (+ www) | `<CT_COOLIFY_APP_UUID>` | Fresh local SQLite + `/api/admin/migrate`. **No Oracle CT DB copy** — empty pipeline data until re-ingest / future R2 restore. Runtime container: `congress-app-live` (Traefik labels + coolify network). Compose sqlite-web port conflict avoided (proxy owns :8080). |
+| Usage Monitor | usage.jays.services | `<UM_COOLIFY_APP_UUID>` | Booted with `LITESTREAM_EMERGENCY_DISABLE=true` (R2 LTX non-contiguous). Volume perms fixed for uid 1000. Fresh DB schema via migrate-safe. |
 
 ### DNS (Cloudflare → Hetzner `<PROD_ORIGIN_IP>`, proxied)
 

@@ -73,9 +73,10 @@ done
 printf '%s' "$CPU_SHARES" | grep -Eq '^[0-9]+$' || fail_usage "CPU_SHARES must be an integer."
 printf '%s' "$CPUS" | grep -Eq '^[0-9]+([.][0-9]+)?$' || fail_usage "CPUS must be a number."
 
-# Protected first: a name that matches both (e.g. a hypothetical
-# "socratic-ocr") must stay protected. CT batch names are congress / scan / ocr.
-PROTECTED_RE='socratic|coolify|usage-monitor|usage_monitor|litestream|d83b1aykr03uwr32yhgzaiay|yagelvqux9e8l1kztif7bf2o'
+PROTECTED_RE='socratic|coolify|usage-monitor|usage_monitor|litestream|mock-st-app-uuid'
+if [ -n "${PROTECTED_CONTAINER_UUIDS:-}" ]; then
+  PROTECTED_RE="${PROTECTED_RE}|${PROTECTED_CONTAINER_UUIDS}"
+fi
 WORKER_RE='scan-cpu|scan_cpu|scan-worker|scan_worker|ocr'
 APP_RE='congress'
 

@@ -2,15 +2,16 @@
 //
 // Two consumers share this: the technical connector (`web-sources/technical.ts`, which
 // only reads closes) and the symbol-drilldown price chart (`/api/history`, which needs
-// full candles). Sources cascade keyed-first then free:
+// full candles). Sources cascade keyed-first then free floor before last-resort keyed:
 // local flat-files → imported/App A → connected brokers (Tradier / Alpaca / Robinhood)
-// → Massive → ROIC.ai → Tiingo → Marketstack → Yahoo.
+// → Massive → ROIC.ai → Tiingo → Yahoo → Marketstack.
 // Broker-owned bars come BEFORE paid third parties so a connected venue lifts Massive/ROIC/Tiingo
 // spend and is usually the same tape the account would fill against.
-// Keyed providers are reliable from datacenter IPs; the free Yahoo
-// endpoint is frequently rate-limited (HTTP 429) or bot-challenged server-side, so a keyed
-// provider is strongly recommended. Server-side only; cached briefly. Never fabricates —
-// no bars → returns null, callers degrade to "—".
+// Capability matrix ranks Yahoo `good` and Marketstack `last_resort` for ohlcv_daily — Yahoo
+// is the free floor; Marketstack only runs after Yahoo fails. Keyed Massive/ROIC/Tiingo stay
+// ahead of Yahoo when present. Yahoo chart 429s fail fast when Marketstack can still try.
+// Server-side only; cached briefly. Never fabricates — no bars → returns null, callers
+// degrade to "—".
 //
 // ROIC.ai (api.roic.ai v3 stock-prices) is ST-side only: Congress.Trade (App A) reads
 // prices exclusively via ST's peer market-read routes (PRICE_PROVIDER=peer) after ST has
@@ -79,12 +80,21 @@ function historyTtlMs(): number {
 // helper layers true exponential backoff on top, retrying ONLY on 429 — any other failure (network
 // error, timeout, non-429 status) still fails on the first attempt so the cascade degrades to the
 // next tier promptly instead of stalling.
+//
+// When a later live tier still exists (Marketstack), keep Yahoo attempts short (2) so a 429 burst
+// does not stall the serial cascade for ~4×9s before the last-resort keyed source can run. When
+// Yahoo is the terminal floor, keep the longer retry budget.
 const YAHOO_CHART_TIMEOUT_MS = 9000;
-const YAHOO_CHART_MAX_ATTEMPTS = 4; // 1 initial try + 3 retries
+const YAHOO_CHART_MAX_ATTEMPTS = 4; // terminal floor: 1 initial try + 3 retries
+const YAHOO_CHART_FAST_FAIL_ATTEMPTS = 2; // later tier present: 1 initial + 1 retry
 const YAHOO_CHART_BASE_BACKOFF_MS = 400;
 
-async function fetchYahooChartJson<T>(url: string): Promise<T> {
-  for (let attempt = 0; attempt < YAHOO_CHART_MAX_ATTEMPTS; attempt++) {
+async function fetchYahooChartJson<T>(
+  url: string,
+  opts?: { maxAttempts?: number }
+): Promise<T> {
+  const maxAttempts = opts?.maxAttempts ?? YAHOO_CHART_MAX_ATTEMPTS;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), YAHOO_CHART_TIMEOUT_MS);
     try {
@@ -93,7 +103,7 @@ async function fetchYahooChartJson<T>(url: string): Promise<T> {
         cache: "no-store",
         signal: controller.signal
       });
-      if (res.status === 429 && attempt < YAHOO_CHART_MAX_ATTEMPTS - 1) {
+      if (res.status === 429 && attempt < maxAttempts - 1) {
         await new Promise((resolve) =>
           setTimeout(resolve, Math.min(4000, YAHOO_CHART_BASE_BACKOFF_MS * 2 ** attempt))
         );
@@ -295,12 +305,21 @@ export async function fetchDailyOHLC(
       sourceId: "tiingo",
       fetch: () => fetchTiingo(symbol, startDate, keySources.tiingo.key, opts?.usageLabel)
     },
+    // Yahoo free floor before Marketstack last_resort (capability matrix ohlcv_daily).
+    {
+      scope: "shared",
+      sourceId: "yahoo-finance",
+      fetch: () =>
+        fetchYahoo(symbol, {
+          // Fail 429s faster when Marketstack can still satisfy the request.
+          maxAttempts: keySources.marketstack.key ? YAHOO_CHART_FAST_FAIL_ATTEMPTS : YAHOO_CHART_MAX_ATTEMPTS
+        })
+    },
     {
       scope: cacheScopeForKeySource(keySources.marketstack.source, userId),
       sourceId: "marketstack",
       fetch: () => fetchMarketstack(symbol, keySources.marketstack.key, opts?.usageLabel)
-    },
-    { scope: "shared", sourceId: "yahoo-finance", fetch: () => fetchYahoo(symbol) }
+    }
   ];
 
   for (const source of sources) {
@@ -755,10 +774,13 @@ async function fetchMarketstack(symbol: string, key?: string, usageLabel?: strin
   }
 }
 
-async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
+async function fetchYahoo(
+  symbol: string,
+  opts?: { maxAttempts?: number }
+): Promise<OHLCBar[] | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1y&interval=1d`;
-    const json = await fetchYahooChartJson<YahooChartResponse>(url);
+    const json = await fetchYahooChartJson<YahooChartResponse>(url, opts);
     const result = json?.chart?.result?.[0];
     const ts = result?.timestamp ?? [];
     const q = result?.indicators?.quote?.[0];

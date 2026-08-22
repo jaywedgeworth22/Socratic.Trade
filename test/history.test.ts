@@ -286,6 +286,8 @@ describe("fetchDailyOHLC", () => {
     const credKey = await apiKeyFingerprint("tiingo-history-test-key");
     admitProviderRequests("tiingo", credKey, 50); // exhausts the 50/hour default
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      // Yahoo free floor is tried before Marketstack last_resort; fail it so Marketstack wins.
+      if (String(url).includes("query1.finance.yahoo.com")) return new Response("yahoo down", { status: 500 });
       if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
       return new Response("unexpected source (Tiingo should have been skipped, not called)", { status: 500 });
     });
@@ -295,13 +297,38 @@ describe("fetchDailyOHLC", () => {
     expect(bars).not.toBeNull();
     expect(bars![0]).toMatchObject({ close: 20.5 });
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("api.tiingo.com"))).toBe(false);
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    const yahooIdx = urls.findIndex((url) => url.includes("query1.finance.yahoo.com"));
+    const marketstackIdx = urls.findIndex((url) => url.includes("api.marketstack.com"));
+    expect(yahooIdx).toBeGreaterThanOrEqual(0);
+    expect(marketstackIdx).toBeGreaterThan(yahooIdx);
   });
 
-  it("falls back from Tradier to Marketstack before free sources", async () => {
+  it("prefers Yahoo free floor over Marketstack last_resort when Tradier fails", async () => {
     connectTradier("tradier-test-key");
     process.env.MARKETSTACK_API_KEY = "marketstack-test-key";
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       if (String(url).includes("api.tradier.com")) return new Response("tradier down", { status: 500 });
+      if (String(url).includes("query1.finance.yahoo.com")) return new Response(yahooBody(60), { status: 200 });
+      if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
+      return new Response("unexpected source", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL", Date.UTC(2026, 5, 18));
+    expect(bars).not.toBeNull();
+    expect(bars!.length).toBe(60);
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.includes("api.tradier.com"))).toBe(true);
+    expect(urls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(true);
+    // Yahoo already satisfied the cascade — Marketstack last_resort must not run.
+    expect(urls.some((url) => url.includes("api.marketstack.com"))).toBe(false);
+  });
+
+  it("calls Yahoo before Marketstack when only a Marketstack key is present; Marketstack only if Yahoo fails", async () => {
+    process.env.MARKETSTACK_API_KEY = "marketstack-test-key";
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).includes("query1.finance.yahoo.com")) return new Response("yahoo down", { status: 500 });
       if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
       return new Response("unexpected source", { status: 500 });
     });
@@ -309,12 +336,33 @@ describe("fetchDailyOHLC", () => {
 
     const bars = await fetchDailyOHLC("AAPL");
     expect(bars).not.toBeNull();
-    expect(bars).toHaveLength(2);
-    expect(bars![0]).toMatchObject({ time: "2026-06-16T00:00:00+0000", close: 20.5, volume: 3000 });
+    expect(bars![0]).toMatchObject({ close: 20.5 });
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(urls.some((url) => url.includes("api.tradier.com"))).toBe(true);
-    expect(urls.some((url) => url.includes("api.marketstack.com"))).toBe(true);
-    expect(urls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
+    const yahooIdx = urls.findIndex((url) => url.includes("query1.finance.yahoo.com"));
+    const marketstackIdx = urls.findIndex((url) => url.includes("api.marketstack.com"));
+    expect(yahooIdx).toBeGreaterThanOrEqual(0);
+    expect(marketstackIdx).toBeGreaterThan(yahooIdx);
+  });
+
+  it("fails Yahoo 429s faster when Marketstack can still run as last_resort", async () => {
+    process.env.MARKETSTACK_API_KEY = "marketstack-test-key";
+    let yahooCalls = 0;
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).includes("query1.finance.yahoo.com")) {
+        yahooCalls++;
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
+      return new Response("unexpected source", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(bars![0]).toMatchObject({ close: 20.5 });
+    // Fast-fail path: 1 initial + 1 retry (not the terminal-floor 4× budget).
+    expect(yahooCalls).toBe(2);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("api.marketstack.com"))).toBe(true);
   });
 
   it("skips Massive when the local REST budget is exhausted and falls through to free history", async () => {
@@ -423,19 +471,22 @@ describe("fetchDailyOHLC", () => {
     setDataPoolConsent(userB, false);
     upsertUserApiKey(userA, "marketstack", "user-a-marketstack-key");
     upsertUserApiKey(userB, "marketstack", "user-b-marketstack-key");
-    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
-      String(url).includes("api.marketstack.com")
-        ? new Response(marketstackBody, { status: 200 })
-        : new Response("unexpected source", { status: 500 })
-    );
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      // Yahoo free floor runs before Marketstack; fail it so the keyed last_resort path is exercised.
+      if (String(url).includes("query1.finance.yahoo.com")) return new Response("yahoo down", { status: 500 });
+      if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
+      return new Response("unexpected source", { status: 500 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const now = Date.UTC(2026, 5, 18);
 
     await fetchDailyOHLC("AAPL", now, userA);
     await fetchDailyOHLC("AAPL", now + 1000, userB);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+    const marketstackUrls = fetchMock.mock.calls
+      .map((call) => String(call[0]))
+      .filter((url) => url.includes("api.marketstack.com"));
+    expect(marketstackUrls).toEqual([
       expect.stringContaining("access_key=user-a-marketstack-key"),
       expect.stringContaining("access_key=user-b-marketstack-key")
     ]);
@@ -447,11 +498,11 @@ describe("fetchDailyOHLC", () => {
     const userB = `history-shared-b-${randomUUID()}`;
     upsertUserApiKey(userA, "marketstack", "user-a-marketstack-key");
     upsertUserApiKey(userB, "marketstack", "user-b-marketstack-key");
-    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
-      String(url).includes("api.marketstack.com")
-        ? new Response(marketstackBody, { status: 200 })
-        : new Response("unexpected source", { status: 500 })
-    );
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).includes("query1.finance.yahoo.com")) return new Response("yahoo down", { status: 500 });
+      if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
+      return new Response("unexpected source", { status: 500 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const now = Date.UTC(2026, 5, 18);
 
@@ -459,8 +510,11 @@ describe("fetchDailyOHLC", () => {
     const second = await fetchDailyOHLC("AAPL", now + 1000, userB);
 
     expect(second).toBe(first);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toContain("access_key=user-a-marketstack-key");
+    const marketstackUrls = fetchMock.mock.calls
+      .map((call) => String(call[0]))
+      .filter((url) => url.includes("api.marketstack.com"));
+    expect(marketstackUrls).toHaveLength(1);
+    expect(marketstackUrls[0]).toContain("access_key=user-a-marketstack-key");
   });
 
   it("fulfills old shared history misses when a later shared cache fill succeeds", async () => {

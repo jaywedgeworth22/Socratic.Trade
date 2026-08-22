@@ -17,7 +17,7 @@ describe("CascadingEnrichmentProvider gather abort", () => {
       name: "finnhub",
       configured: true,
       costTier: "paid",
-      suppliesFields: ["sentiment"],
+      suppliesFields: ["peRatio"],
       async enrich(_symbols, context) {
         paidSignal = context?.signal;
         return new Promise((_resolve, reject) => {

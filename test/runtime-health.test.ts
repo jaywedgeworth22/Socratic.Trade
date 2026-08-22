@@ -1226,6 +1226,33 @@ describe("scanLitestreamRuntimeLogText (pure)", () => {
     expect(findings[0].line).toContain("non-contiguous transaction ids");
   });
 
+  it("still counts mega-L2 B2 failure substrings as compaction failed and classifies them", () => {
+    const cases = [
+      {
+        error: "Storage class not supported",
+        classification: "storage-class-unsupported" as const
+      },
+      {
+        error: "extract timestamp from LTX header: EOF",
+        classification: "ltx-header-eof" as const
+      },
+      {
+        error: "connection reset by peer",
+        classification: "connection-reset" as const
+      }
+    ];
+    for (const c of cases) {
+      const text =
+        `time=2026-08-22T12:00:00.000Z level=ERROR msg="compaction failed" level=2 error="${c.error}"`;
+      const findings = scanLitestreamRuntimeLogText(text);
+      expect(findings).toHaveLength(1);
+      expect(findings[0].marker).toBe("compaction failed");
+      expect(findings[0].classification).toBe(c.classification);
+      expect(findings[0].line).toContain(`[${c.classification}]`);
+      expect(findings[0].line).toContain("compaction failed");
+    }
+  });
+
   it("finds a validation-monitor failure line independently of a compaction-failure line", () => {
     const text = 'time=2026-08-13T01:00:00.000Z level=WARN msg="validation error detected" level=1 type=gap message="ltx sequence gap"';
     const findings = scanLitestreamRuntimeLogText(text);

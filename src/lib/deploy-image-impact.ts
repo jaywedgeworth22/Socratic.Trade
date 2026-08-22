@@ -1,6 +1,6 @@
 // Classify whether a Coolify image rebuild can change socratictrade.com.
 //
-// Live Coolify `watch_paths` on socratic-app (uuid d83b1aykr03uwr32yhgzaiay)
+// Live Coolify `watch_paths` on socratic-app (see fleet-ops:ATTACK-MAP.md)
 // was applied by ASC 2026-08-18.  App stayed healthy; no bounce.  Do NOT
 // re-apply or PATCH that list from a PR.  Auto-deploy stays on.  Stop-old-
 // first stays.  health_check_start_period stays 60.

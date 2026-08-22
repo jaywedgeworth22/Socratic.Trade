@@ -21,6 +21,7 @@ import { politeFetchText, runRateLimited, secUserAgent } from "./http";
 import { parseAndSaveForm4 } from "./sec-facts";
 import { loadTickerCikMap } from "./sec8k";
 import { padCik } from "./sec-filings";
+import { form4WritePath, persistCorpusSnapshot } from "../rag/corpus-layout";
 
 const DATASET_KEY = "webSource:insider:dataset";
 const ATTEMPT_KEY = "webSource:insider:lastAttempt";
@@ -260,6 +261,19 @@ function persistForm4Xml(xml: string, dir: string, accession: string, parsed: In
   } catch {
     // Structured persist is additive; sentiment dataset still stores the filing.
   }
+  persistCorpusSnapshot(form4WritePath(accession, "ownership.xml"), xml);
+  persistCorpusSnapshot(
+    form4WritePath(accession, "summary.json"),
+    JSON.stringify({
+      cik,
+      accession,
+      symbol: parsed?.symbol ?? "",
+      owner: parsed?.owner ?? "",
+      filedAt: parsed?.filedAt ?? "",
+      buyTx: parsed?.buyTx ?? 0,
+      sellTx: parsed?.sellTx ?? 0
+    })
+  );
 }
 
 async function fetchForm4FromDirs(

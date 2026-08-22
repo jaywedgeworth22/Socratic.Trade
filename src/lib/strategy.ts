@@ -171,6 +171,7 @@ import {
   type UntrustedPromptField
 } from "./prompt-safety";
 import { debateProposal, projectRedTeamReviewContext, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
+import { sliceRagDossierForSymbols } from "./rag/reviewer-filings-pack";
 import {
   captureProposalSizingSnapshot,
   proposalForFinalSizeRedReview,
@@ -1456,7 +1457,7 @@ export async function runStrategyOnce(
                 }
               }
 
-              const chunks = await retrieveContextDetailed(query, sym, limit, userId, {
+              const retrieveOptions = {
                 docType: requestedFilingsDocTypes,
                 asOf: runAsOf,
                 minScore: defaultMinScore(),
@@ -1465,10 +1466,45 @@ export async function runStrategyOnce(
                 connectedAccountId: policy.connectedAccountId,
                 runId,
                 ...(variants.length > 0 ? { queries: variants } : {}),
-                onStatus: (status) => {
+                onStatus: (status: import("./vector-db").RetrievalStatus) => {
                   ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
                 }
-              });
+              };
+              let chunks;
+              const { proposerDossierEnabled, assembleProposerDossier } = await import("./rag/proposer-dossier");
+              if (proposerDossierEnabled()) {
+                const dossier = await assembleProposerDossier({
+                  symbol: sym,
+                  depth: isDeep ? "deep" : "scout",
+                  query,
+                  userId,
+                  limit,
+                  retrieveOptions,
+                  retrieve: retrieveContextDetailed
+                });
+                chunks = dossier.chunks;
+                if (dossier.coverage.missing.length > 0 || dossier.coverage.hydrateMisses.length > 0) {
+                  const reason = [
+                    dossier.coverage.missing.length > 0
+                      ? `coverage_missing:${dossier.coverage.missing.join(",")}`
+                      : "",
+                    dossier.coverage.hydrateMisses.length > 0
+                      ? `hydrate_miss:${dossier.coverage.hydrateMisses.slice(0, 4).join(",")}`
+                      : ""
+                  ]
+                    .filter(Boolean)
+                    .join(";");
+                  if (!ragRetrievalStatusRows.some((row) => row.symbol === normalizeSymbol(sym))) {
+                    ragRetrievalStatusRows.push({
+                      symbol: normalizeSymbol(sym),
+                      status: chunks.length > 0 ? "ok" : "no_memory",
+                      reason
+                    });
+                  }
+                }
+              } else {
+                chunks = await retrieveContextDetailed(query, sym, limit, userId, retrieveOptions);
+              }
 
               // Structured facts and Form 4 transactions use SQLite, not semantic retrieval.
               // Their inclusion is declared by the routing plan above, so a future caller cannot
@@ -6437,9 +6473,10 @@ async function proposeTrades(input: {
     // pack, learned context and the reflection summary to a reviewer that judges ONE finalized
     // proposal — re-sent per opening, multiplied by the openings in a run.  Evidence parity is
     // preserved by `evidenceManifest`, whose `greenRedParityHash` is the actual proof both stages
-    // judged the same pack; the bodies were never what made that provable.
+    // judged the same pack.  `reviewerFilingsPack` is a CAPPED slice for proposed names only.
     ...projectRedTeamReviewContext(userContent as unknown as Record<string, unknown>),
-    candidatesUnderReview
+    candidatesUnderReview,
+    reviewerFilingsPack: sliceRagDossierForSymbols(budgetedRagContext, [...proposedSymbols])
   };
 
   return {

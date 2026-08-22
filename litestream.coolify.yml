@@ -82,3 +82,16 @@ dbs:
         force-path-style: true
         access-key-id: ${AWS_ACCESS_KEY_ID}
         secret-access-key: ${AWS_SECRET_ACCESS_KEY}
+        # Mega L2 catch-up uploads (multi-day L1 backlog compacted into ONE L2 object) were
+        # failing on B2 with connection reset / "extract timestamp from LTX header: EOF".
+        # Larger multipart parts cut request count on those big objects; stay on pinned
+        # 0.5.12 (do NOT add verify-compaction; do NOT upgrade litestream -- tcp_mem).
+        # Supported on 0.5.12 ReplicaConfig: yaml part-size / concurrency.
+        part-size: 10MB
+        # Cap parallel part uploads so the 6g Coolify container does not spike RSS during
+        # a large L2 multipart (default concurrency is 5).
+        concurrency: 2
+        # Leftover ops (NOT applied here): Coolify stop_grace_period cannot be raised while
+        # we refuse to bounce prod mid-heal. Document only -- do not PATCH Coolify from this
+        # change. After the L1-suffix heal lands and a planned non-RTH bounce is allowed,
+        # consider a longer stop_grace so in-flight multipart L2 uploads are not SIGKILL'd.

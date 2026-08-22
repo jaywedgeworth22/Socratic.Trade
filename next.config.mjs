@@ -48,6 +48,7 @@ const nextConfig = {
         "voyageai": false,
         "node:fs": false,
         "node:path": false,
+        "node:http": false,
         "node:crypto": false,
         "node:zlib": false,
         "node:stream": false,
@@ -64,6 +65,7 @@ const nextConfig = {
         stream: false,
         dns: false,
         net: false,
+        http: false,
         // node:http2 is the APNs provider transport (src/lib/apns.ts, reachable from the
         // src/lib/db.ts barrel). Server-only — stubbed out for client/edge bundles.
         http2: false

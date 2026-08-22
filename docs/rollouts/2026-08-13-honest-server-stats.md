@@ -220,7 +220,7 @@ in a touched file.
 **Follow-ups in this repo:**
 
 3. Wire Coolify **Sentinel** for host memory / uptime / OS / disk capacity. It is already
-   enabled and reporting on `jxzqcs3h6g1wiipnnblhismp`; confirm the response shape against a
+   enabled and reporting on `<HETZNER_COOLIFY_SERVER_UUID>`; confirm the response shape against a
    real call before mapping fields.
 4. Settle the **CPU divide-by-cores** question with one live Hetzner sample, then either delete
    the divide or document the evidence at the call site and in
@@ -290,6 +290,6 @@ in a touched file.
   `COOLIFY_SERVER_STATS`, `COOLIFY_API_TOKEN`, `COOLIFY_SERVER_UUID`,
   `SERVER_METRICS_TARGET_ENVIRONMENT` are **present** in ST prod;
   `GH_TOKEN` / `GITHUB_TOKEN` / `GITHUB_MCP_TOKEN` are **absent**.
-- Coolify server `jxzqcs3h6g1wiipnnblhismp`: `server_metadata: null`,
+- Coolify server `<HETZNER_COOLIFY_SERVER_UUID>`: `server_metadata: null`,
   `is_metrics_enabled: false`, `is_sentinel_enabled: true` with a fresh `sentinel_updated_at`.
   Its own record is named `localhost` with ip `host.docker.internal`.

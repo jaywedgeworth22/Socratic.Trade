@@ -103,6 +103,11 @@ export interface RedTeamReviewContext {
    * place.
    */
   evidenceManifest?: unknown;
+  /**
+   * Thin per-proposal filings slice (proposed symbols only, capped).  Not the
+   * full Green 24k hose.  Lets Red fact-check a 1A sentence Green cited.
+   */
+  reviewerFilingsPack?: string;
 }
 
 /**
@@ -129,7 +134,8 @@ export const RED_TEAM_REVIEW_CONTEXT_KEYS = [
   "comboOutcomes",
   "closestHistoricalAnalogs",
   "ownerCoaching",
-  "evidenceManifest"
+  "evidenceManifest",
+  "reviewerFilingsPack"
 ] as const satisfies readonly (keyof RedTeamReviewContext)[];
 
 /**

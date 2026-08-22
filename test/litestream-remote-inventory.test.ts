@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  analyzeLitestreamLtxContiguity,
   collectLitestreamRemoteInventory,
   getLitestreamRemoteInventory,
   resolveLitestreamRemoteInventoryConfig,
@@ -11,7 +12,11 @@ import {
   summarizeLitestreamLtxPayload,
   LITESTREAM_REMOTE_LEVELS
 } from "../src/lib/litestream-remote-inventory";
-import { assessLitestreamTierFreshness } from "../src/lib/runtime-health";
+import {
+  assessLitestreamTierFreshness,
+  litestreamCatchUpSpanTxids,
+  LITESTREAM_CATCH_UP_SPAN_HUGE_TXIDS
+} from "../src/lib/runtime-health";
 
 // Covers the collector that closes defect cause #1: Litestream 0.5.12 keeps only level 0 on
 // local disk, so levels 1/2/3/9 can be observed ONLY by listing the remote replica. See
@@ -74,12 +79,17 @@ describe("summarizeLitestreamLtxPayload", () => {
 
   it("reduces a real litestream payload to the newest file's timestamp and txid", () => {
     const summary = summarizeLitestreamLtxPayload(PRODUCTION_LEVEL_2_SAMPLE, 2);
-    expect(summary).toEqual({
+    expect(summary).toMatchObject({
       level: 2,
       newestAt: "2026-08-08T00:15:07.000Z",
       newestTxid: "00000000000053ac",
       fileCount: 3
     });
+    // Old fields still present; contiguity fields are additive.
+    expect(summary.holeCount).toBe(0);
+    expect(summary.twinCount).toBe(0);
+    expect(summary.suffixMinTxid).toBe("0000000000005249");
+    expect(summary.catchUpSpanTxids).toBeNull();
   });
 
   it("pairs the reported txid with the newest timestamp even when entries arrive out of order", () => {
@@ -97,7 +107,17 @@ describe("summarizeLitestreamLtxPayload", () => {
   });
 
   it("reports an empty level as zero files rather than inventing activity", () => {
-    expect(summarizeLitestreamLtxPayload([], 3)).toEqual({ level: 3, newestAt: "", newestTxid: null, fileCount: 0 });
+    expect(summarizeLitestreamLtxPayload([], 3)).toMatchObject({
+      level: 3,
+      newestAt: "",
+      newestTxid: null,
+      fileCount: 0,
+      holeCount: 0,
+      twinCount: 0,
+      firstHole: null,
+      suffixMinTxid: null,
+      catchUpSpanTxids: null
+    });
   });
 
   it("tolerates a non-array, null, or junk-entry payload without throwing", () => {
@@ -120,7 +140,7 @@ describe("summarizeLitestreamLtxPayload", () => {
       ],
       2
     );
-    expect(summary).toEqual({ level: 2, newestAt: "", newestTxid: null, fileCount: 2 });
+    expect(summary).toMatchObject({ level: 2, newestAt: "", newestTxid: null, fileCount: 2 });
   });
 
   it("ignores entries belonging to a different compaction level", () => {
@@ -132,6 +152,187 @@ describe("summarizeLitestreamLtxPayload", () => {
       2
     );
     expect(summary).toMatchObject({ level: 2, newestTxid: "000000000000e5ad", fileCount: 1 });
+  });
+});
+
+describe("analyzeLitestreamLtxContiguity", () => {
+  it("reports holeCount=0 for a contiguous sample", () => {
+    const contiguous = [
+      { level: 1, min_txid: "0000000000004a86", max_txid: "0000000000004aa5" },
+      { level: 1, min_txid: "0000000000004aa6", max_txid: "0000000000004ac5" },
+      { level: 1, min_txid: "0000000000004ac6", max_txid: "0000000000004ae5" }
+    ];
+    const result = analyzeLitestreamLtxContiguity(contiguous, 1);
+    expect(result.holeCount).toBe(0);
+    expect(result.twinCount).toBe(0);
+    expect(result.firstHole).toBeNull();
+    expect(result.suffixMinTxid).toBe("0000000000004a86");
+    expect(result.suffixFileCount).toBe(3);
+  });
+
+  it("detects the classic hole (431e5-43206)->(43225-43247)", () => {
+    const classicHole = [
+      { level: 1, min_txid: "00000000000431e5", max_txid: "0000000000043206" },
+      { level: 1, min_txid: "0000000000043225", max_txid: "0000000000043247" }
+    ];
+    const result = analyzeLitestreamLtxContiguity(classicHole, 1);
+    expect(result.holeCount).toBe(1);
+    expect(result.firstHole).toEqual({
+      prevMaxTxid: "0000000000043206",
+      nextMinTxid: "0000000000043225"
+    });
+    // Newest contiguous suffix is only the tip file after the hole.
+    expect(result.suffixMinTxid).toBe("0000000000043225");
+    expect(result.suffixFileCount).toBe(1);
+  });
+
+  it("counts twins (same max_txid, different min_txid) without treating them as holes", () => {
+    const withTwins = [
+      { level: 1, min_txid: "0000000000000100", max_txid: "00000000000001ff" },
+      { level: 1, min_txid: "0000000000000150", max_txid: "00000000000001ff" },
+      { level: 1, min_txid: "0000000000000200", max_txid: "00000000000002ff" }
+    ];
+    const result = analyzeLitestreamLtxContiguity(withTwins, 1);
+    expect(result.twinCount).toBe(1);
+    expect(result.holeCount).toBe(0);
+    expect(result.suffixFileCount).toBe(3);
+  });
+
+  it("never analyzes level 0 (returns empty contiguity)", () => {
+    const payload = [
+      { level: 0, min_txid: "0000000000000001", max_txid: "0000000000000002" },
+      { level: 0, min_txid: "0000000000000010", max_txid: "0000000000000011" }
+    ];
+    expect(analyzeLitestreamLtxContiguity(payload, 0)).toEqual({
+      holeCount: 0,
+      twinCount: 0,
+      firstHole: null,
+      suffixMinTxid: null,
+      suffixFileCount: 0
+    });
+  });
+});
+
+describe("litestreamCatchUpSpanTxids", () => {
+  it("computes L1 tip minus L2 tip and flags the huge mega-file threshold", () => {
+    // Live-shaped: L2 last at 8323f, L1 far ahead.
+    const l2Tip = "000000000008323f";
+    expect(litestreamCatchUpSpanTxids(l2Tip, l2Tip)).toBe(0);
+
+    const l1Ahead = "0000000000085a40"; // 0x85a40 - 0x8323f = 10241 decimal
+    const span = litestreamCatchUpSpanTxids(l1Ahead, l2Tip);
+    expect(span).toBe(0x85a40 - 0x8323f);
+    expect(span).toBeGreaterThan(LITESTREAM_CATCH_UP_SPAN_HUGE_TXIDS);
+  });
+});
+
+describe("assessLitestreamTierFreshness contiguity reasons", () => {
+  it("degrades when L1 holeCount>0 even if ages look fine", () => {
+    const now = Date.parse("2026-08-22T12:00:00.000Z");
+    const report = assessLitestreamTierFreshness(undefined, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: new Date(now - 60_000).toISOString(),
+        status: "ok",
+        levels: {
+          "1": {
+            level: 1,
+            newestAt: new Date(now - 120_000).toISOString(),
+            newestTxid: "0000000000043247",
+            fileCount: 2,
+            holeCount: 1,
+            twinCount: 0,
+            firstHole: { prevMaxTxid: "0000000000043206", nextMinTxid: "0000000000043225" },
+            suffixMinTxid: "0000000000043225",
+            catchUpSpanTxids: null
+          },
+          "2": {
+            level: 2,
+            newestAt: new Date(now - 120_000).toISOString(),
+            newestTxid: "0000000000043206",
+            fileCount: 1,
+            holeCount: 0,
+            twinCount: 0,
+            firstHole: null,
+            suffixMinTxid: "00000000000431e5",
+            catchUpSpanTxids: 0x43247 - 0x43206
+          },
+          "3": {
+            level: 3,
+            newestAt: new Date(now - 120_000).toISOString(),
+            newestTxid: "0000000000043206",
+            fileCount: 1
+          },
+          "9": {
+            level: 9,
+            newestAt: new Date(now - 120_000).toISOString(),
+            newestTxid: "0000000000043206",
+            fileCount: 1
+          }
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    expect(report.degraded).toBe(true);
+    expect(report.degradedReasons.some((r) => r.includes("hole") && r.includes("Level 1"))).toBe(true);
+  });
+
+  it("mentions mega-file catch-up when L2 is stale and the L1-L2 span is huge", () => {
+    const now = Date.parse("2026-08-22T12:00:00.000Z");
+    const l2Tip = "000000000008323f";
+    const l1Tip = "0000000000085a40";
+    const span = litestreamCatchUpSpanTxids(l1Tip, l2Tip)!;
+    expect(span).toBeGreaterThan(LITESTREAM_CATCH_UP_SPAN_HUGE_TXIDS);
+
+    const report = assessLitestreamTierFreshness(undefined, {
+      nowMs: now,
+      remoteInventory: {
+        collectedAt: new Date(now - 60_000).toISOString(),
+        status: "ok",
+        levels: {
+          "1": {
+            level: 1,
+            newestAt: new Date(now - 60_000).toISOString(),
+            newestTxid: l1Tip,
+            fileCount: 13000,
+            holeCount: 0,
+            twinCount: 0,
+            firstHole: null,
+            suffixMinTxid: "0000000000080000",
+            catchUpSpanTxids: null
+          },
+          "2": {
+            level: 2,
+            // Older than the 2h L2 threshold while L1 is fresh.
+            newestAt: new Date(now - 3 * 3600_000).toISOString(),
+            newestTxid: l2Tip,
+            fileCount: 10,
+            holeCount: 0,
+            twinCount: 0,
+            firstHole: null,
+            suffixMinTxid: "0000000000080000",
+            catchUpSpanTxids: span
+          },
+          "3": {
+            level: 3,
+            newestAt: new Date(now - 60_000).toISOString(),
+            newestTxid: l2Tip,
+            fileCount: 1
+          },
+          "9": {
+            level: 9,
+            newestAt: new Date(now - 60_000).toISOString(),
+            newestTxid: l1Tip,
+            fileCount: 1
+          }
+        },
+        levelErrors: {},
+        skippedReason: null
+      }
+    });
+    expect(report.degraded).toBe(true);
+    expect(report.degradedReasons.some((r) => r.toLowerCase().includes("mega-file"))).toBe(true);
   });
 });
 

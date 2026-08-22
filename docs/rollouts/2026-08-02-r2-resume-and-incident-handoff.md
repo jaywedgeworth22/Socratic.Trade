@@ -116,7 +116,7 @@ marker-guarded separately, so a restart with the DB present never re-restores.
 ## 6. Zero-Code Findings / gotchas recorded
 
 - `~/.ssh/config`'s `Host coolify` alias still points at the DELETED Hetzner box
-  (135.181.192.190) — direct `ssh ubuntu@<ORACLE_IP_RETIRED>` works (host `usagemonitor`).
+  (<HETZNER_OLD_IP_RETIRED>) — direct `ssh ubuntu@<ORACLE_IP_RETIRED>` works (host `usagemonitor`).
   Worth fixing the alias.
 - This Coolify version has no `/applications/{uuid}/execute` API — in-container work
   goes over SSH + `docker exec`.

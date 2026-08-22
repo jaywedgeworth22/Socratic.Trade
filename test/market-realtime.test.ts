@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { barAt, fetchIntradayBars, normalizeTimeframe, toRobinhoodInterval, type IntradayBar } from "@/lib/market-realtime";
 import { resolveAlpacaHistoryCredential } from "@/lib/history";
+import { getStoredMcpOAuthTokens } from "@/lib/mcp-oauth";
 import { fetchRobinhoodHistoricals, robinhoodMcpDataEnabled } from "@/lib/robinhood";
 
 vi.mock("@/lib/history", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/history")>();
   return { ...actual, resolveAlpacaHistoryCredential: vi.fn() };
+});
+
+vi.mock("@/lib/mcp-oauth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/mcp-oauth")>();
+  return { ...actual, getStoredMcpOAuthTokens: vi.fn(() => undefined) };
 });
 
 vi.mock("@/lib/robinhood", async (importOriginal) => {
@@ -20,6 +26,7 @@ vi.mock("@/lib/robinhood", async (importOriginal) => {
 const mockResolveAlpaca = vi.mocked(resolveAlpacaHistoryCredential);
 const mockRhEnabled = vi.mocked(robinhoodMcpDataEnabled);
 const mockRhHistoricals = vi.mocked(fetchRobinhoodHistoricals);
+const mockStoredTokens = vi.mocked(getStoredMcpOAuthTokens);
 
 const bars: IntradayBar[] = [
   { t: "2026-08-06T15:05:00Z", c: 100 },
@@ -98,8 +105,10 @@ describe("fetchIntradayBars provider failure vs confirmed empty", () => {
   beforeEach(() => {
     mockRhEnabled.mockReturnValue(false);
     mockRhHistoricals.mockReset();
+    mockStoredTokens.mockReturnValue(undefined);
     mockResolveAlpaca.mockReturnValue({ apiKey: "PK-TEST", secretKey: "SK-TEST", source: "env" });
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   afterEach(() => {
@@ -164,5 +173,37 @@ describe("fetchIntradayBars provider failure vs confirmed empty", () => {
     mockResolveAlpaca.mockReturnValue({ source: "env" });
     const result = await fetchIntradayBars("AAPL", start, end);
     expect(result).toEqual({ kind: "unavailable", reason: "no history credential" });
+  });
+
+  it("does not use Robinhood from ROBINHOOD_MCP_AUTH_TOKEN alone, even on the peer path", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTH_TOKEN", "env-operator-token");
+    mockRhEnabled.mockReturnValue(true);
+    mockStoredTokens.mockReturnValue(undefined);
+    mockResolveAlpaca.mockReturnValue({ source: "env" });
+    const result = await fetchIntradayBars("AAPL", start, end, "1Min", undefined, { operatorPeerRead: true });
+    expect(mockRhHistoricals).not.toHaveBeenCalled();
+    expect(result).toEqual({ kind: "unavailable", reason: "no history credential" });
+  });
+
+  it("does not use operator Robinhood unless operatorPeerRead is set", async () => {
+    mockRhEnabled.mockReturnValue(true);
+    mockStoredTokens.mockReturnValue({ accessToken: "local-stored", tokenType: "Bearer" });
+    vi.stubEnv("ROBINHOOD_MCP_AUTH_TOKEN", "env-operator-token");
+    mockResolveAlpaca.mockReturnValue({ source: "env" });
+    const result = await fetchIntradayBars("AAPL", start, end);
+    expect(mockRhHistoricals).not.toHaveBeenCalled();
+    expect(result).toEqual({ kind: "unavailable", reason: "no history credential" });
+  });
+
+  it("uses the operator stored token on the CT peer path, not the env var", async () => {
+    mockRhEnabled.mockReturnValue(true);
+    mockStoredTokens.mockReturnValue({ accessToken: "local-stored", tokenType: "Bearer" });
+    mockRhHistoricals.mockResolvedValue([{ time: "2026-08-20T14:43:00Z", close: 1.5, open: 1, high: 2, low: 1, volume: 10 }]);
+    const result = await fetchIntradayBars("AAPL", start, end, "1Min", undefined, { operatorPeerRead: true });
+    expect(mockRhHistoricals).toHaveBeenCalledWith("AAPL", expect.objectContaining({ userId: "local", startTime: start, endTime: end }));
+    expect(result).toEqual({
+      kind: "ok",
+      bars: [{ t: "2026-08-20T14:43:00Z", o: 1, h: 2, l: 1, c: 1.5, v: 10 }]
+    });
   });
 });
