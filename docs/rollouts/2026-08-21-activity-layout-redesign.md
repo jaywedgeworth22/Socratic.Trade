@@ -101,15 +101,19 @@ CI `ios-build` on SHA `9abde5cd` (Mac run 32537949489): BUILD SUCCEEDED, TEST SU
 
 CI `verify` on the same SHA failed three tests: sentence-gap on the Strategy Runs tooltip (two ASCII spaces, which HTML collapses), and operator-diagnostics still expecting `AuditLogPanel` on `activity/page.tsx` after it moved behind Audit Log's Raw Events.  Fixed on the next SHA.
 
+CI `verify` on `0e2d4dcf` (run 32539289575): classify + verify-hosted + verify all success.
+
+Merged to `main` as squash `d588387b` at 2026-08-22T00:47:48Z.
+
 A full local `npm test` pass was started earlier and then stopped after ~15m: unrelated files were timing out on network (history/Yahoo, strategy gather, RAG coverage).
 
 ## 5. Next Steps & Blockers
 
-- Rematched onto `origin/main` `cd4c700d` (PR #3018 keyed Finnhub abort), after an earlier rematch onto `ffb4ea1b` (#3030 + #2990).  Both GitHub `DIRTY` reports were phantoms (`git merge-tree --write-tree` exit 0).  Overlap was `STATUS.md` / `PLAN.md` / `docs/EFFORT-LOG.md` (`merge=union`).
-- Cloud-proxy pushes often skip `pull_request`.  `ios-build` already green on `9abde5cd` (233/0).  Re-dispatch `verify` after each rematch SHA.
-- TestFlight after merge if the owner wants the iOS Activity rail on devices.  Website half ships with the after-close auto-deploy (or HOTFIX).
+- Merged.  Website half auto-deploys off `main` (watch_paths include `app/**` + `src/**`).  Live `/api/health` at 00:49Z still showed `c6f33086` (#3032) — do not claim this SHA is in production until `checks.release.sha` contains `d588387b`.
+- iOS Activity rail ships only via TestFlight (`ios/**` is outside Coolify watch_paths).
 - Other agent's notification deep-link pairing can keep adding destinations; catch-all remains Notifications.
 - Pushover remains available as an extra channel in Settings.  It is no longer the primary system-alert path when APNs can reach an admin.
+- Optional follow-up: extract `deliverSystemAlertToAdmins` for vector-db / llm-provider-cooldown / usage-limit-alerts / provider-tier (primary admin already gets APNs via `channelsForNotify` when tokens exist on `"local"`).
 
 ## 6. Zero-Code Findings
 
