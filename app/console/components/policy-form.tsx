@@ -355,7 +355,7 @@ export function PolicySaveBar({
 
   return (
     <>
-      <div className="sticky bottom-16 z-40 lg:bottom-4">
+      <div className="sticky bottom-[calc(3.75rem+env(safe-area-inset-bottom,0px))] z-40 lg:bottom-4">
         <div className="con-card flex items-center justify-between gap-3 border-[color:var(--con-warn)] px-4 py-2.5">
           <span className="text-[length:var(--con-fs-sm)] font-semibold">
             {changeCount} uncommitted {changeCount === 1 ? "change" : "changes"}

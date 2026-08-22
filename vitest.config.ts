@@ -32,6 +32,7 @@ export default defineConfig({
     maxWorkers: 1,
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    onConsoleLog: () => false,
     globalSetup: "./test/global-setup.ts",
     setupFiles: ["./test/setup-peer-lane-cleanup.ts"],
     // Force isTradingDay()'s no-argument "today" check true so strategy/scheduler tests don't flake

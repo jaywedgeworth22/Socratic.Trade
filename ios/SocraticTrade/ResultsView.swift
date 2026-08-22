@@ -9,6 +9,7 @@ struct ResultsView: View {
         SnapshotScaffold { snapshot in
             headline(snapshot)
                 .cardSpansAllColumns()
+            equityCurveSection(snapshot)
             metrics(snapshot)
             benchmark(snapshot)
             taxNote(snapshot)
@@ -97,6 +98,18 @@ struct ResultsView: View {
                 title: "Avg. Return",
                 value: AppFormat.percent(avgReturn(snapshot), signed: true)
             )
+        }
+    }
+
+    @ViewBuilder
+    private func equityCurveSection(_ snapshot: MobileSnapshot) -> some View {
+        let isLive = usesLiveMetrics(snapshot)
+        let points = (isLive ? snapshot.performance?.liveEquityCurve : snapshot.performance?.paperEquityCurve) ?? []
+        if !points.isEmpty {
+            AppCard {
+                EquityChartView(points: points, title: "Historical Equity", isLive: isLive)
+            }
+            .cardSpansAllColumns()
         }
     }
 

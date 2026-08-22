@@ -3199,6 +3199,28 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE llm_usage ADD COLUMN cost_source TEXT");
       }
     }
+  },
+  {
+    // Composite query indexes on performance-critical ledger and notification scan paths.
+    // 1. notification_events: speed up user notifications timeline ordered fetches.
+    // 2. fill_events: speed up ordered trade history queries per user/account.
+    // 3. historical_fundamentals: speed up latest fundamental metrics per symbol & field.
+    version: 87,
+    name: "composite_query_indexes",
+    up: (database) => {
+      const hasNotifications = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_events'").get();
+      if (hasNotifications) {
+        database.exec("CREATE INDEX IF NOT EXISTS idx_notification_events_user_created ON notification_events (user_id, created_at DESC)");
+      }
+      const hasFills = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fill_events'").get();
+      if (hasFills) {
+        database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_user_account_filled ON fill_events (user_id, account_number, filled_at DESC)");
+      }
+      const hasFundamentals = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='historical_fundamentals'").get();
+      if (hasFundamentals) {
+        database.exec("CREATE INDEX IF NOT EXISTS idx_historical_fundamentals_symbol_field_effective ON historical_fundamentals (symbol, field, effective_at DESC)");
+      }
+    }
   }
 ];
 

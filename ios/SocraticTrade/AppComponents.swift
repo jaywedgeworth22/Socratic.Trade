@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 enum AppPalette {
     static let background = Color(uiColor: .systemGroupedBackground)
@@ -729,21 +730,12 @@ struct SnapshotScaffold<Content: View>: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    // `from: scheduleAnchor`, not `from: .now`.  `.now` is re-read every
-                    // time this body is evaluated, which inside a ScrollView is constantly,
-                    // and each rebuild pushes the next entry a fresh 30s into the future —
-                    // so the banner's "updated N seconds ago" could sit frozen on whatever
-                    // it first rendered.  Same defect the login wordmark had (see
-                    // CandleWordmarkView); a @State anchor is what makes the schedule
-                    // actually periodic.
-                    TimelineView(.periodic(from: scheduleAnchor, by: 30)) { context in
-                        cards(now: context.date)
-                            .padding(.horizontal, ContentColumns.horizontalPadding)
-                            .padding(.vertical, 12)
-                            .frame(maxWidth: ContentColumns.maximumContentWidth)
-                            // Second frame centres the clamped column in a wide window.
-                            .frame(maxWidth: .infinity)
-                    }
+                    cards()
+                        .padding(.horizontal, ContentColumns.horizontalPadding)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: ContentColumns.maximumContentWidth)
+                        // Second frame centres the clamped column in a wide window.
+                        .frame(maxWidth: .infinity)
                 }
                 .refreshable {
                     await store.load()
@@ -769,11 +761,11 @@ struct SnapshotScaffold<Content: View>: View {
     /// iPhone rendering or its laziness moves.  Two or three columns switch to the card flow,
     /// which only an iPad or a wide Mac window ever reaches.
     @ViewBuilder
-    private func cards(now: Date) -> some View {
+    private func cards() -> some View {
         if columns > 1 {
             CardColumns(columns: columns) {
                 if let snapshot = store.snapshot {
-                    SnapshotStatusBanner(snapshot: snapshot, now: now)
+                    SnapshotStatusBanner(snapshot: snapshot)
                         .cardSpansAllColumns()
                     content(snapshot)
                 }
@@ -781,7 +773,7 @@ struct SnapshotScaffold<Content: View>: View {
         } else {
             LazyVStack(spacing: 14) {
                 if let snapshot = store.snapshot {
-                    SnapshotStatusBanner(snapshot: snapshot, now: now)
+                    SnapshotStatusBanner(snapshot: snapshot)
                     content(snapshot)
                 }
             }
@@ -835,35 +827,76 @@ private struct SnapshotStatusBanner: View {
     @EnvironmentObject private var store: MobileStore
 
     let snapshot: MobileSnapshot
-    let now: Date
+    @State private var scheduleAnchor = Date()
 
     var body: some View {
-        let stale = store.isSnapshotStale(at: now)
-        HStack(spacing: 8) {
-            StatusPill(
-                stale ? "Stale" : "Updated",
-                color: stale ? AppPalette.warning : AppPalette.positive,
-                systemImage: stale ? "clock.badge.exclamationmark" : "checkmark.circle.fill"
-            )
-            Text("\(AppFormat.relative(store.lastUpdatedAt))")
-                .font(.appCaption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            if store.isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("Refreshing")
-            } else {
-                Image(systemName: store.isStreamConnected ? "dot.radiowaves.left.and.right" : "arrow.triangle.2.circlepath")
-                    .foregroundStyle(store.isStreamConnected ? AppPalette.positive : .secondary)
-                    .accessibilityLabel(store.isStreamConnected ? "Live" : "Updating")
+        TimelineView(.periodic(from: scheduleAnchor, by: 30)) { context in
+            let stale = store.isSnapshotStale(at: context.date)
+            HStack(spacing: 8) {
+                StatusPill(
+                    stale ? "Stale" : "Updated",
+                    color: stale ? AppPalette.warning : AppPalette.positive,
+                    systemImage: stale ? "clock.badge.exclamationmark" : "checkmark.circle.fill"
+                )
+                Text("\(AppFormat.relative(store.lastUpdatedAt))")
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if store.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Refreshing")
+                } else {
+                    Image(systemName: store.isStreamConnected ? "dot.radiowaves.left.and.right" : "arrow.triangle.2.circlepath")
+                        .foregroundStyle(store.isStreamConnected ? AppPalette.positive : .secondary)
+                        .accessibilityLabel(store.isStreamConnected ? "Live" : "Updating")
+                }
+                // Keep the circlepath / radio glyph; label is "Market Closed" etc. on every tab.
+                Text(AppFormat.marketSessionBannerLabel(snapshot.marketSession))
+                    .font(.appCaption.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
-            // Keep the circlepath / radio glyph; label is "Market Closed" etc. on every tab.
-            Text(AppFormat.marketSessionBannerLabel(snapshot.marketSession))
-                .font(.appCaption.weight(.medium))
-                .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 4)
+    }
+}
+
+/// Centralized haptic feedback helper for iOS touch actions.
+enum AppHaptics {
+    static func success() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(.success)
+    }
+
+    static func warning() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(.warning)
+    }
+
+    static func error() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(.error)
+    }
+
+    static func light() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+
+    static func medium() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+
+    static func heavy() {
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.prepare()
+        generator.impactOccurred()
     }
 }
 
@@ -1545,5 +1578,147 @@ extension View {
         phoneDetents: Set<PresentationDetent> = [.large]
     ) -> some View {
         modifier(AdaptiveWideSheet(phoneDetents: phoneDetents))
+    }
+}
+
+// MARK: - Equity Chart Component
+
+struct EquityChartView: View {
+    let points: [EquityCurvePoint]
+    var title: String = "Equity Curve"
+    var isLive: Bool = true
+
+    @State private var selectedPoint: EquityCurvePoint?
+
+    private var chartColor: Color {
+        isLive ? AppPalette.positive : AppPalette.accent
+    }
+
+    private var gradientFill: LinearGradient {
+        LinearGradient(
+            colors: [
+                chartColor.opacity(0.35),
+                chartColor.opacity(0.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let selected = selectedPoint {
+                    HStack(spacing: 4) {
+                        Text(selected.date)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text(AppFormat.money(selected.equity))
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(chartColor)
+                    }
+                } else if let last = points.last {
+                    Text(AppFormat.money(last.equity))
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(chartColor)
+                }
+            }
+
+            if points.isEmpty {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(uiColor: .tertiarySystemFill))
+                    .frame(height: 120)
+                    .overlay {
+                        Text("No equity history recorded yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+            } else {
+                Chart {
+                    ForEach(points) { point in
+                        AreaMark(
+                            x: .value("Date", point.date),
+                            y: .value("Equity", point.equity)
+                        )
+                        .foregroundStyle(gradientFill)
+                        .interpolationMethod(.monotone)
+
+                        LineMark(
+                            x: .value("Date", point.date),
+                            y: .value("Equity", point.equity)
+                        )
+                        .foregroundStyle(chartColor)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                        .interpolationMethod(.monotone)
+                    }
+
+                    if let selected = selectedPoint {
+                        RuleMark(x: .value("Date", selected.date))
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+                        PointMark(
+                            x: .value("Date", selected.date),
+                            y: .value("Equity", selected.equity)
+                        )
+                        .foregroundStyle(chartColor)
+                        .symbolSize(36)
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) {
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.2))
+                        AxisTick()
+                        AxisValueLabel()
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.2))
+                        AxisTick()
+                        if let val = value.as(Double.self) {
+                            AxisValueLabel {
+                                Text(AppFormat.money(val, compact: true))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        guard let plotFrame = proxy.plotFrame else { return }
+                                        let origin = geo[plotFrame].origin
+                                        let location = CGPoint(
+                                            x: value.location.x - origin.x,
+                                            y: value.location.y - origin.y
+                                        )
+                                        if let date: String = proxy.value(atX: location.x) {
+                                            selectedPoint = points.first(where: { $0.date == date }) ?? points.last
+                                        }
+                                    }
+                                    .onEnded { _ in
+                                        selectedPoint = nil
+                                    }
+                            )
+                    }
+                }
+                .frame(height: 140)
+            }
+        }
     }
 }

@@ -154,38 +154,35 @@ jobs:
         run: |
           set -o pipefail
           # Prefer iPhone 17 Pro (AGENTS.md).  Fall back to any available iPhone so a
-          # missing named device cannot skip the lane.  Do not share a human-booted
-          # simulator when a dedicated match exists — pick by name from `available`.
-          iphone=$(
+          # missing named device cannot skip the lane.  Select by UUID ($sim_id) to avoid
+          # ambiguity when multiple simulators share the same display name.
+          sim_id=$(
             xcrun simctl list devices available \
-              | awk -F '[()]' '/iPhone / {
-                  name=$1
-                  gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
-                  print name
-                }' \
-              | awk '
-                  $0 == "iPhone 17 Pro" { p17 = $0 }
-                  $0 == "iPhone 16 Pro" { p16 = $0 }
-                  $0 ~ /^iPhone / { if (first == "") first = $0 }
+              | awk -F '[()]' '
+                  /iPhone 17 Pro/ && /Booted/ { booted17 = $2 }
+                  /iPhone 17 Pro/ && p17 == "" { p17 = $2 }
+                  /iPhone 16 Pro/ && p16 == "" { p16 = $2 }
+                  /iPhone / && first == "" { first = $2 }
                   END {
-                    if (p17 != "") print p17
+                    if (booted17 != "") print booted17
+                    else if (p17 != "") print p17
                     else if (p16 != "") print p16
                     else print first
                   }
                 '
           )
-          if [ -z "$iphone" ]; then
+          if [ -z "$sim_id" ]; then
             echo "::error::No available iPhone simulator on this runner."
             xcrun simctl list devices available
             exit 1
           fi
-          echo "Using simulator: $iphone"
+          echo "Using simulator ID: $sim_id"
           log="$RUNNER_TEMP/xcodebuild-test.log"
           set +e
           xcodebuild test \
             -project 'ios/Socratic Trade.xcodeproj' \
             -scheme SocraticTrade \
-            -destination "platform=iOS Simulator,name=$iphone" \
+            -destination "platform=iOS Simulator,id=$sim_id" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             > "$log" 2>&1 < /dev/null

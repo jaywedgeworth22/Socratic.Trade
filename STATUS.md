@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-08-22 ANTIGRAVITY — Full system fixes & native iOS website parity (PR pending)
+
+- Pruned dead dependencies (`@xyflow/react`, `lightweight-charts`) from `package.json`.
+- Fixed `/console/settings` stale link in assistant chat to `/console/connections#api-keys`.
+- Adjusted mobile safe-area bottom offset for `PolicySaveBar` in policy form.
+- Standardized API error payloads to `{ error, message }` in proposals approve/reject routes.
+- Appended Migration 87 (`composite_query_indexes`) for composite query index optimization across fill events, notification events, and historical fundamentals.
+- Embedded interactive `EquityChartView` using native Swift Charts (`import Charts`) into `PortfolioOverviewCard` and `ResultsView`.
+- Added haptic sensory feedback (`AppHaptics`) on proposal actions & order cancellations, and exponential backoff with jitter on SSE stream reconnection.
+- Verified full verification gates: `npm run lint` (0 errors), `npx tsc --noEmit` (0 errors), `npm test` (677 files / 7,504 tests pass), `npm run build` (succeeded), `xcodebuild build` (BUILD SUCCEEDED).
+- Rollout: `docs/rollouts/2026-08-22-full-system-fixes-and-ios-parity.md`.
 ## 2026-08-22 CURSOR — Owner ST favicon + ASC listing + Android master
 
 Website tab icon is the owner transparent candlestick ST.  ASC listing PNG is opaque black (`graphics/asc-app-icon-1024.png`).  Android launcher master is the same transparent 1024.  iOS home-screen App Icon is unchanged.  GitHub login callback remains `https://socratictrade.com/api/auth/callback/github` on an OAuth App.  Branch `cursor/favicon-asc-android`.  Rollout: `docs/rollouts/2026-08-22-favicon-asc-android.md`.

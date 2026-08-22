@@ -501,8 +501,19 @@ struct PerformanceSummary: Decodable {
     /// empty lot list, so a real "no data yet" state must be read off this count, not the value.
     let liveClosedLotCount: Int?
     let paperClosedLotCount: Int?
+    let liveEquityCurve: [EquityCurvePoint]?
+    let paperEquityCurve: [EquityCurvePoint]?
     let benchmark: BenchmarkComparison?
     let fills: [FillEvent]?
+}
+
+struct EquityCurvePoint: Decodable, Identifiable, Equatable {
+    var id: String { date }
+    let date: String
+    let equity: Double
+    let cash: Double?
+    let pnl: Double?
+    let returnPct: Double?
 }
 
 struct BenchmarkComparison: Decodable {

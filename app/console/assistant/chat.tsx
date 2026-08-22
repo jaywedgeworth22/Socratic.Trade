@@ -585,11 +585,11 @@ export function AssistantChat() {
             <AlertTriangle size={13} aria-hidden />
             No {providerDisplayName(provider)} key is connected — this model can&apos;t answer.
             <Link
-              href="/console/settings"
+              href="/console/connections#api-keys"
               className="font-semibold underline decoration-dotted"
-              title="Open Settings to connect an LLM provider key."
+              title="Open Connections to configure an LLM provider API key."
             >
-              Connect one in Settings
+              Connect one in Connections
             </Link>
             or pick a different model above.
           </p>

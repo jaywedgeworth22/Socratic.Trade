@@ -355,6 +355,7 @@ final class MobileStore: ObservableObject {
     func startEvents() {
         eventTask?.cancel()
         eventTask = Task { [weak self, client] in
+            var retryDelay: Double = 1.0
             while !Task.isCancelled {
                 do {
                     // onConnect fires on stream establishment and every received line (incl.
@@ -369,6 +370,7 @@ final class MobileStore: ObservableObject {
                             self?.scheduleReload()
                         }
                     })
+                    retryDelay = 1.0
                     if !Task.isCancelled {
                         self?.isStreamConnected = false
                     }
@@ -384,10 +386,13 @@ final class MobileStore: ObservableObject {
                         self?.applyAuthAwareError(error, preserveTransientMessage: true)
                     }
                     if self?.isAuthenticated != true { return }
+                    retryDelay = min(30.0, retryDelay * 1.5)
                 }
 
+                let jitter = Double.random(in: 0.1...0.5)
+                let delayNanoseconds = UInt64((retryDelay + jitter) * 1_000_000_000)
                 do {
-                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
                 } catch {
                     return
                 }

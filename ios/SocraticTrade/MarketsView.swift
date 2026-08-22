@@ -236,7 +236,8 @@ private struct OrderRow: View {
                 if showsCancel {
                     HStack {
                         Spacer()
-                        Button(role: .destructive) {
+                        Button {
+                            AppHaptics.warning()
                             confirmingCancel = true
                         } label: {
                             HStack(spacing: 7) {
@@ -266,6 +267,7 @@ private struct OrderRow: View {
             tint: AppPalette.negative,
             isEnabled: showsCancel && canCancel
         ) {
+            AppHaptics.warning()
             confirmingCancel = true
         }
         .confirmationDialog(
@@ -281,6 +283,7 @@ private struct OrderRow: View {
     }
 
     private func cancelOrder() {
+        AppHaptics.heavy()
         Task {
             await store.submit(
                 OrderCancellation.commandType,
