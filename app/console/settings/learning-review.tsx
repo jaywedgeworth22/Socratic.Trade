@@ -17,6 +17,7 @@ import type { LlmReasoningEffort } from "@/lib/types";
 import { normalizeReasoningEffortForModel, reasoningCapabilityForModel } from "@/lib/llm-request";
 import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/lib/model-reasoning-recommendations";
 import { savePolicy, ConsoleApiError } from "../lib/api";
+import { resolveLearningReviewNumberCommit } from "../lib/number-commit";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Card, Field, RawNumInput, Select, Toggle } from "../ui/primitives";
@@ -54,7 +55,7 @@ export function LearningReviewCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState<{ learningReviewMinNewLessons?: number; learningReviewMaxWaitDays?: number }>({});
+  const [rawDrafts, setRawDrafts] = useState<{ learningReviewMinNewLessons?: string; learningReviewMaxWaitDays?: string }>({});
 
   const policy = snapshot?.policy;
   if (!snapshot || !policy) return null;
@@ -72,8 +73,8 @@ export function LearningReviewCard() {
     policy.learningReviewReasoningEffort ?? recommendedEffort
   );
   const reasoningAdvice = reasoningAdviceForModel(model);
-  const minNewLessons = draft.learningReviewMinNewLessons ?? policy.learningReviewMinNewLessons ?? DEFAULT_MIN_NEW_LESSONS;
-  const maxWaitDays = draft.learningReviewMaxWaitDays ?? policy.learningReviewMaxWaitDays ?? DEFAULT_MAX_WAIT_DAYS;
+  const minNewLessons = policy.learningReviewMinNewLessons ?? DEFAULT_MIN_NEW_LESSONS;
+  const maxWaitDays = policy.learningReviewMaxWaitDays ?? DEFAULT_MAX_WAIT_DAYS;
 
   /** Returns whether the save succeeded, so numeric-field callers can revert their optimistic draft. */
   const save = async (patch: Record<string, unknown>, saved: string): Promise<boolean> => {
@@ -95,14 +96,20 @@ export function LearningReviewCard() {
   // Numeric trigger knobs: local text while typing, commit on blur (mirrors Market-scan shape).
   const commitNumber = (
     key: "learningReviewMinNewLessons" | "learningReviewMaxWaitDays",
-    next: number,
     saved: number,
     label: string
   ) => {
-    if (next === saved) return;
-    void save({ [key]: next }, label).then((ok) => {
-      if (!ok) setDraft((d) => ({ ...d, [key]: saved }));
+    const raw = rawDrafts[key];
+    setRawDrafts((d) => {
+      if (!(key in d)) return d;
+      const copy = { ...d };
+      delete copy[key];
+      return copy;
     });
+    if (raw === undefined) return;
+    const next = resolveLearningReviewNumberCommit(raw, saved);
+    if (next === null) return;
+    void save({ [key]: next }, label);
   };
 
   return (
@@ -142,15 +149,14 @@ export function LearningReviewCard() {
             >
               <RawNumInput
                 id="learning-review-min-new-lessons"
-                value={String(minNewLessons)}
-                emptyValue={DEFAULT_MIN_NEW_LESSONS}
+                value={rawDrafts.learningReviewMinNewLessons ?? String(minNewLessons)}
+                emptyValue={minNewLessons}
                 disabled={busy}
                 title="Skips the review entirely until at least this many learned facts or pending items have appeared since the last successful review."
-                onValueChange={(parsed) => setDraft((d) => ({ ...d, learningReviewMinNewLessons: parsed }))}
+                onValueChange={(_parsed, raw) => setRawDrafts((d) => ({ ...d, learningReviewMinNewLessons: raw }))}
                 onBlur={() =>
                   commitNumber(
                     "learningReviewMinNewLessons",
-                    minNewLessons,
                     policy.learningReviewMinNewLessons ?? DEFAULT_MIN_NEW_LESSONS,
                     "Threshold saved"
                   )
@@ -164,15 +170,14 @@ export function LearningReviewCard() {
             >
               <RawNumInput
                 id="learning-review-max-wait-days"
-                value={String(maxWaitDays)}
-                emptyValue={DEFAULT_MAX_WAIT_DAYS}
+                value={rawDrafts.learningReviewMaxWaitDays ?? String(maxWaitDays)}
+                emptyValue={maxWaitDays}
                 disabled={busy}
                 title="Even below the threshold, the review still runs once the oldest un-reviewed lesson has waited this many days."
-                onValueChange={(parsed) => setDraft((d) => ({ ...d, learningReviewMaxWaitDays: parsed }))}
+                onValueChange={(_parsed, raw) => setRawDrafts((d) => ({ ...d, learningReviewMaxWaitDays: raw }))}
                 onBlur={() =>
                   commitNumber(
                     "learningReviewMaxWaitDays",
-                    maxWaitDays,
                     policy.learningReviewMaxWaitDays ?? DEFAULT_MAX_WAIT_DAYS,
                     "Max wait saved"
                   )
