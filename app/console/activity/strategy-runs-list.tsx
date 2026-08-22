@@ -140,7 +140,7 @@ export function StrategyRunsList({
                               <Chip tone={activityStatusTone(p.status)}>{feedStatusLabel(p.status)}</Chip>
                               <Chip tone={r.tone}>{r.word}</Chip>
                               {typeof p.performanceSinceProposalPct === "number" && (
-                                <Tooltip content="Raw side-adjusted move since the proposal's reference price, not benchmark-relative.  For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
+                                <Tooltip content={`Raw side-adjusted move since the proposal's reference price, not benchmark-relative.${SENTENCE_GAP}For a rejected idea this is the counterfactual; SPY comparison lives in Results.`}>
                                   <span>
                                     <SignedText value={p.performanceSinceProposalPct}>
                                       since: {fmtPct(p.performanceSinceProposalPct, 2, true)}

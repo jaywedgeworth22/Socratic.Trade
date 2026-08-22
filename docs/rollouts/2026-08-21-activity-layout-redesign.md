@@ -97,9 +97,11 @@ npx vitest run test/activity-tabs.test.ts test/admin-user-ids.test.ts \
 npm run build         # Next.js 16.3.1 webpack build succeeded
 ```
 
-A full `npm test` pass was started and then stopped after ~15m: unrelated files were timing out on network (history/Yahoo, strategy gather, RAG coverage).  The Activity/notify/quotes suites above are the ones this change owns.
+CI `ios-build` on SHA `9abde5cd` (Mac run 32537949489): BUILD SUCCEEDED, TEST SUCCEEDED, 233 XCTests / 0 failures.
 
-Swift: not compiled here.  First compile is CI `ios-build`.
+CI `verify` on the same SHA failed three tests: sentence-gap on the Strategy Runs tooltip (two ASCII spaces, which HTML collapses), and operator-diagnostics still expecting `AuditLogPanel` on `activity/page.tsx` after it moved behind Audit Log's Raw Events.  Fixed on the next SHA.
+
+A full local `npm test` pass was started earlier and then stopped after ~15m: unrelated files were timing out on network (history/Yahoo, strategy gather, RAG coverage).
 
 ## 5. Next Steps & Blockers
 
