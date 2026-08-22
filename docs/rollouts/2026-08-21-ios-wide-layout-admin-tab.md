@@ -117,14 +117,30 @@ Activity sections and this PR's `NotificationsInboxView` (Unread/All bell
 sheet).  Assets More copy stays "Holdings, orders, and watchlist." (no price
 alerts).  Activity More copy takes #3031's five-section line.
 
+`ios-build` run 32536626553 (head `b747872d00fd92853ddba6b47a41b3eea1a5fd51`): BUILD
+SUCCEEDED, TEST SUCCEEDED, 237 XCTests / 0 failures (confirmed from the job log).
+
+After the #3031 rematch, `ios-build` 32541612565 on `8471509c` failed with
+`invalid redeclaration of 'NotificationHistoryRow'` in `ActivityView.swift`
+(lines 329 and 835).  Owner fix `ac9bafd5` dropped the duplicate.
+
+PR #3028 squash-merged to `main` as `a851a68da16b9c7ec722897a3ab4f378e0117111`
+(`a851a68d`) at 2026-08-22 01:14:36Z (`gh pr view 3028`).  PR head `04300371`:
+CI run 32541767856 success (`verify` + `verify-hosted` jobs); `ios-build`
+32541767843 success.  Push of the squash: `ios-build` 32542852732 success
+(unsigned xcodebuild job concluded success; XCTest count not re-read from that
+log).  Merge-push CI 32542852729 cancelled.  TestFlight ship workflow 32542852734
+failed; not retried.  `ios/**` is outside Coolify `watch_paths`; this is not
+Deployed to production.
+
 ## 5. Next Steps & Blockers
 
-- Re-run `verify` + `ios-build` on the #3031 merge head; confirm
-  `testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin` still passes.
+- Merged to `main`.  Do not reopen the iOS feature.
+- TestFlight only if the owner asks (`scripts/ios-ship-testflight.sh`).  Do not
+  bounce Coolify.
 - Confirm Admin rail SF Symbols render on device/simulator.
 - Screenshot iPad Air 11" portrait/landscape and a dragged Mac window (still open from
   the adaptive-tabs follow-ups).
-- TestFlight ship is separate (`scripts/ios-ship-testflight.sh`); this PR does not ship.
 - Website Watchlist still has price alerts; delete there only if the owner wants parity
   the other way.
 
