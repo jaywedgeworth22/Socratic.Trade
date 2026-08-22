@@ -250,6 +250,7 @@ describe("WU-breaker gate ordering", () => {
     expect(await stageRowCount()).toBe(2);
 
     // Trip the monthly breaker; every store call must now refuse BEFORE embeds AND the stage.
+    process.env.PINECONE_MONTHLY_WU_BUDGET = "2000000";
     const { tripPineconeWuBreaker } = await import("../src/lib/pinecone-wu-breaker");
     const { until } = await tripPineconeWuBreaker(
       {

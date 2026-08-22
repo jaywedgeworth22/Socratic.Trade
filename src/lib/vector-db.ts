@@ -1554,6 +1554,10 @@ async function alertRagConnectionFailure(
     // Transient engine-overload (often wrapped as HTTP 429) is the provider being busy, not a
     // broken integration and not our quota. Skip Sentry + Pushover + usage-limit — retries own it.
     if (limitStatus === "transient") return;
+    // Monthly write-unit 429s are routed by withRagApiHealth to the WU breaker.  If that
+    // matcher used to miss (body without the word "429"), this path paged hourly
+    // "Pinecone connection failed" plus a usage-limit while the Standard trial is unlimited.
+    if (service === "pinecone" && isPineconeWuExhaustedError(message)) return;
     if (limitStatus !== "rate_limited") {
       await captureRagSentryMessage("warning", title, {
         provider: activeProvider ?? service,
