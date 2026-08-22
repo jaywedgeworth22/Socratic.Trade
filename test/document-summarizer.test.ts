@@ -11,6 +11,7 @@ import {
   splitTextBySecItems,
   tradeHighlightChunksFromText
 } from "../src/lib/rag/document-summarizer";
+import { hashContent } from "../src/lib/rag/chunk";
 import { getDb } from "../src/lib/db";
 
 describe("Document Abstracts & Summarizer", () => {
@@ -70,6 +71,26 @@ describe("Document Abstracts & Summarizer", () => {
     expect(joined).toMatch(/litigation|investigation|impairment|risk/);
     // At least one highlight is tagged with a section label
     expect(chunks.some((c) => c.text.startsWith("["))).toBe(true);
+    expect(chunks.every((c) => !c.id.startsWith("hl:"))).toBe(true);
+  });
+
+  it("uses sourceChunks content_hash instead of synthetic hl: ids when known", () => {
+    const mdna =
+      "We raised full-year revenue guidance to 12% growth and expanded operating margins by 180 basis points year-over-year.";
+    const hash = hashContent(mdna);
+    const chunks = tradeHighlightChunksFromText("ignored", {
+      maxChunks: 1,
+      formHint: "10-K",
+      sections: [
+        {
+          itemCode: "7",
+          itemTitle: "Management's Discussion and Analysis",
+          text: mdna
+        }
+      ],
+      sourceChunks: [{ content_hash: hash, text: mdna, itemCode: "7", section: "7. Management's Discussion and Analysis" }]
+    });
+    expect(chunks[0]?.id).toBe(hash);
   });
 
   it("splitTextBySecItems finds 8-K item boundaries", () => {

@@ -52,33 +52,31 @@ import { parseFilingHtml } from "./sec-parser";
 import { buildSecDocument } from "../rag/sec-document";
 import { normalizeSymbol } from "../money";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
-import * as fs from "fs";
-import * as path from "path";
+import {
+  readFirstExisting,
+  secArtifactReadPaths,
+  secArtifactWritePath,
+  writeCorpusFile
+} from "../rag/corpus-layout";
 
-function getLocalArtifactPath(cik: string, accession: string, sequence: number, documentName: string): string {
-  const paddedCik = padCik(cik);
-  const cleanDocName = documentName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const dataDir = process.env.DATA_DIR ?? "data";
-  return path.join(dataDir, "sec-artifacts", paddedCik, accession, `${sequence}-${cleanDocName}`);
+export function getLocalArtifactPath(cik: string, accession: string, sequence: number, documentName: string): string {
+  return secArtifactWritePath(cik, accession, sequence, documentName);
 }
 
 export async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
-  const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
+  const candidates = secArtifactReadPaths(cik, accession, sequence, documentName);
   try {
-    if (fs.existsSync(filePath)) {
-      return await fs.promises.readFile(filePath, "utf8");
-    }
+    return await readFirstExisting(candidates);
   } catch (err) {
-    console.warn(`[sec-filings] readLocalArtifact failed for ${filePath}:`, err);
+    console.warn(`[sec-filings] readLocalArtifact failed for ${candidates[0]}:`, err);
+    return null;
   }
-  return null;
 }
 
 export async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
-  const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
+  const filePath = secArtifactWritePath(cik, accession, sequence, documentName);
   try {
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.promises.writeFile(filePath, content, "utf8");
+    await writeCorpusFile(filePath, content);
   } catch (err) {
     console.warn(`[sec-filings] writeLocalArtifact failed for ${filePath}:`, err);
   }
@@ -666,6 +664,11 @@ export async function ingestFiling(
           itemCode: s.itemCode,
           itemTitle: s.itemTitle,
           text: s.text
+        })),
+        sourceChunks: localChunks.map((chunk) => ({
+          content_hash: chunk.content_hash,
+          text: chunk.text,
+          section: chunk.section
         }))
       }),
       publishedAt: filingRef.filedAt,

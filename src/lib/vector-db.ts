@@ -20,6 +20,7 @@ import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocu
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { ROIC_TRANSCRIPT_SOURCE, roicTranscriptsEnabled } from "./roic-transcripts-gate";
 import { envFlagOn } from "./rag/env-flag";
+import { bareSecAccession } from "./rag/pinecone-write-class";
 import { resolveSourceBool } from "./source-settings";
 import { serverKnobBool } from "./server-knobs";
 import { expandPostRerankParentContext } from "./rag/parent-context";
@@ -6112,6 +6113,8 @@ export function formatChunkWithProvenance(chunk: RetrievedChunk, symbol?: string
   if (chunk.section) parts.push(chunk.section);
   const sym = symbol ? canonicalTicker(symbol) : "";
   if (sym) parts.push(sym);
+  const accession = bareAccessionFromChunkMetadata(chunk);
+  if (accession) parts.push(accession);
   if (chunk.as_of) {
     const dateOnly = String(chunk.as_of).slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) parts.push(dateOnly);
@@ -6120,6 +6123,17 @@ export function formatChunkWithProvenance(chunk: RetrievedChunk, symbol?: string
   if (typeof relevance === "number" && Number.isFinite(relevance)) parts.push(`rel ${relevance.toFixed(2)}`);
   if (parts.length === 0) return chunk.text;
   return `[${parts.join(" · ")}]\n${chunk.text}`;
+}
+
+function bareAccessionFromChunkMetadata(chunk: RetrievedChunk): string | null {
+  const md = chunk.metadata ?? {};
+  const candidates = [md.accession, md.accession_or_event_id, md.document_key, md.doc_id];
+  for (const raw of candidates) {
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const bare = bareSecAccession(raw);
+    if (bare) return bare;
+  }
+  return null;
 }
 
 /**

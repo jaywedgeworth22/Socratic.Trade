@@ -114,6 +114,7 @@ import {
 } from "./operation-lease";
 import type { VectorStoreLeaseGuard } from "./vector-db";
 import { getTechnicalWatchlist } from "./web-sources/technical";
+import { writesFullBodyToPinecone } from "./rag/pinecone-write-class";
 import fs from "fs";
 import path from "path";
 
@@ -871,30 +872,38 @@ async function ingestCachedTranscript(
 ): Promise<boolean> {
   if (!row.content) return false;
   const accession = accessionFor(row);
-  const { storeDocument } = await import("./vector-db");
-  const stored = await storeDocument(
-    {
-      text: row.content,
-      doc_id: accession,
-      ticker: row.symbol,
-      title: `${row.symbol} earnings call ${row.fiscalYear} Q${row.fiscalQuarter}`,
-      doc_type: EARNINGSCALLS_TRANSCRIPT_DOC_TYPE,
-      published_at: row.eventDate ?? row.fetchedAt,
-      acceptance_datetime: row.fetchedAt,
-      source: EARNINGSCALLS_TRANSCRIPT_SOURCE,
-      url: row.eventId ? `${EARNINGSCALLS_BASE}/transcripts/${row.eventId}` : `${EARNINGSCALLS_BASE}/search/by_ticker`
-    },
-    "local",
-    { parserRevision: "earningscalls-transcript-v1", documentKey: accession, leaseGuard }
-  );
-  const reusedCommitted =
-    stored.reusedCommitted === true && stored.documentComplete === true && stored.attempted > 0;
-  const complete = !stored.error && !stored.unconfigured &&
-    stored.documentComplete === true &&
-    (reusedCommitted || stored.indexed === stored.attempted);
-  if (!complete) return false;
+  const writeFullBody = writesFullBodyToPinecone();
+  let attempted = 0;
+  if (writeFullBody) {
+    const { storeDocument } = await import("./vector-db");
+    const stored = await storeDocument(
+      {
+        text: row.content,
+        doc_id: accession,
+        ticker: row.symbol,
+        title: `${row.symbol} earnings call ${row.fiscalYear} Q${row.fiscalQuarter}`,
+        doc_type: EARNINGSCALLS_TRANSCRIPT_DOC_TYPE,
+        published_at: row.eventDate ?? row.fetchedAt,
+        acceptance_datetime: row.fetchedAt,
+        source: EARNINGSCALLS_TRANSCRIPT_SOURCE,
+        url: row.eventId ? `${EARNINGSCALLS_BASE}/transcripts/${row.eventId}` : `${EARNINGSCALLS_BASE}/search/by_ticker`
+      },
+      "local",
+      { parserRevision: "earningscalls-transcript-v1", documentKey: accession, leaseGuard }
+    );
+    const reusedCommitted =
+      stored.reusedCommitted === true && stored.documentComplete === true && stored.attempted > 0;
+    const complete = !stored.error && !stored.unconfigured &&
+      stored.documentComplete === true &&
+      (reusedCommitted || stored.indexed === stored.attempted);
+    if (!complete) return false;
+    attempted = stored.attempted;
+  }
+  // Non-full-body write-class: row.content stays in earningscalls_transcripts (local).
+  // Do not dump the full transcript into Pinecone.  Default write-class is still
+  // full-body, so this branch is inert until the post-PR-B Infisical flip.
   const at = new Date().toISOString();
-  recordIngestedLedgerRow(accession, normalizeSymbol(row.symbol), stored.attempted, at);
+  recordIngestedLedgerRow(accession, normalizeSymbol(row.symbol), attempted, at);
   markEarningsCallsTranscriptIngested(row.symbol, row.fiscalYear, row.fiscalQuarter, at);
 
   // Compact earnings-summary for LLM trade use (full earnings-transcript stays in the corpus).
