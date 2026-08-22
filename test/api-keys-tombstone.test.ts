@@ -1,4 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+
+process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-api-keys-tombstone-${randomUUID()}.db`)}`;
+
 import {
   deleteUserApiKey,
   getUserApiKey,

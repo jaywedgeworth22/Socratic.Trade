@@ -9,6 +9,12 @@ Live `/api/health` still `storageDegraded` (L2/L3 since 2026-08-18).  B2 L1-suff
 Cascade: Yahoo `analystBySource` now fills `analystRating` so Wave B is not ghost-open; headlines/sentiment dropped from WAVE_B (Alpaca owns news); RapidAPI last-resort no longer spends on news-only holes; Wave B paid providers intersect WAVE_B fields only.
 
 RAG: PR B hydrate/dossier + 8-K sidecar + EarningsCalls signal/FTS + analog compact cards + thin Red `reviewerFilingsPack` + hydrate attach cap 4k + live `ingestFiling` writes `chunks.json`/`sections.json`.  Write-class still `full-body`.
+## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
+
+- Isolated test SQLite DB in `test/api-keys-tombstone.test.ts` per repo convention (`agentic-api-keys-tombstone-${randomUUID()}.db`).
+- Added `afterAll` hook in `test/encryption-key-guard.test.ts` to unstub envs and reset modules cleanly.
+- Resolved React gradient ID collision in `ServerMetricsClient` sparkline chart by switching static `chartGrad` to dynamic `useId()`.
+- Rollout: `docs/rollouts/2026-08-22-test-isolation-and-ui-cleanup.md`.
 
 ## 2026-08-22 GROK — 5M WU snap + RAG panel MERGED (#3037 `f5500b610`)
 
