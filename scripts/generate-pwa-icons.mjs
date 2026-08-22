@@ -8,7 +8,7 @@
  *
  *  Website only.  Do not write the iOS App Icon
  *  (ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png).
- *  That asset is the offset candlestick ST and is owned by the native app.
+ *  That asset stays the native home-screen mark.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -21,15 +21,19 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SOURCE_PNG = path.join(ROOT, "public", "icon.png");
 
 async function main() {
-  for (const { file, size } of websitePngTargets()) {
+  for (const { file, size, flattenBlack } of websitePngTargets()) {
     if (file.includes("AppIcon") || file.includes(`${path.sep}ios${path.sep}`)) {
       throw new Error("website icon generator must not write the iOS App Icon");
     }
     await mkdir(path.dirname(file), { recursive: true });
-    await sharp(SOURCE_PNG)
-      .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .png()
-      .toFile(file);
+    let pipeline = sharp(SOURCE_PNG).resize(size, size, {
+      fit: "contain",
+      background: flattenBlack ? { r: 0, g: 0, b: 0, alpha: 1 } : { r: 0, g: 0, b: 0, alpha: 0 }
+    });
+    if (flattenBlack) {
+      pipeline = pipeline.flatten({ background: { r: 0, g: 0, b: 0 } });
+    }
+    await pipeline.png().toFile(file);
     console.log(`wrote ${path.relative(ROOT, file)} (${size}x${size})`);
   }
 }

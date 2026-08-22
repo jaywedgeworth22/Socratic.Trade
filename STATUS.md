@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-22 CURSOR — Owner ST favicon + ASC listing + Android master
+
+Website tab icon is the owner transparent candlestick ST.  ASC listing PNG is opaque black (`graphics/asc-app-icon-1024.png`).  Android launcher master is the same transparent 1024.  iOS home-screen App Icon is unchanged.  GitHub login callback remains `https://socratictrade.com/api/auth/callback/github` on an OAuth App.  Branch `cursor/favicon-asc-android`.  Rollout: `docs/rollouts/2026-08-22-favicon-asc-android.md`.
+
 ## 2026-08-22 GROK — Litestream L2/L3 + cascade last-resort + RAG hydrate (IN PR #3041)
 
 Branch `grok/litestream-cascade-rag` in `~/apps/trading-grok-litestream-cascade`.  Boards 1e3df744 / b88b6675 / f7ffb62f.  Diagnosis: `docs/audits/2026-08-22-cascade-rag-diagnosis.md`.
