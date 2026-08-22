@@ -158,13 +158,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f package.json ]; then
-            echo "::error::package.json missing after refresh checkout — refusing to run npm install on an empty workspace."
+            echo "::error::package.json missing after refresh checkout — refusing to run npm ci on an empty workspace."
             ls -la
             exit 1
           fi
       - name: Install dependencies
         if: needs.classify.outputs.docs-only != 'true'
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       # Cache the Playwright browser download (chromium, ~130MB) keyed on the lockfile
       # (which pins the playwright version). On a hit, the install step below skips the
       # multi-minute download and only re-applies system deps.
@@ -173,7 +173,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
       - name: Install Playwright browser

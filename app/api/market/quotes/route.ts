@@ -39,6 +39,8 @@ export async function GET(req: Request) {
   }
 
   const allowDelayed = ["1", "true", "yes"].includes((sp.get("allowDelayed") ?? "").toLowerCase());
+  // Live quotes stay Alpaca (then opt-in delayed Yahoo). Operator Robinhood is
+  // bound to /api/market/intraday only — removing it there would starve CT backfill.
   const quotes = await fetchRealtimeQuotes(symbols, undefined, { allowDelayed });
   return NextResponse.json({
     ok: true,

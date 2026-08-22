@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-08-20 CURSOR - Kimi fleet audit D/E/F (Robinhood peer path, CI, pin-check)
+
+Removing the operator Robinhood env bypass would not break CT **live quotes** (Alpaca/Yahoo only) but **would starve CT intraday backfill** (Robinhood-first 15s bars vs Alpaca 1m IEX). Kept operator Robinhood, bound to `/api/market/intraday` after `APP_B_INGEST_TOKEN`, using the operator stored token — not a live `ROBINHOOD_MCP_AUTH_TOKEN` skip of `getMcpAccessToken`.
+
+CI verify/e2e now `npm ci`. cleanup-caches SHA-pins gh CLI 2.98.0. Dependabot `github-actions` added. Shared package pinned to commit `b2847eb9…` (was tag `v2.5.2`). `check-pin` is being restored as a required ruleset check; it already runs on every PR.
+
+Rollout: `docs/rollouts/2026-08-20-kimi-audit-def.md`.
+
 ## 2026-08-20 DEEPSEEK - full-stack review: desktop web, mobile web, iOS (zero-code)
 
 New fleet seat; lane `~/apps/trading-deepseek` on `deepseek/lane`; board umbrella `682e7e3467cd4def97a13ee67335cbb1`.  Top-to-bottom review of the console site (desktop + phone widths) and the native iOS app, complementing the 2026-08-18 expert review and the open Kimi board findings.  Headlines: (1) prod is 8 commits behind main (live `e0a4959a` vs `41a7a438d`; live login page still ships the 1 MB pre-crop icon — mobile LCP 8.3 s vs desktop 1.0 s); (2) the merge ruleset requires only `verify` — ios-build is not a gate (board 830c892f, fix is a one-line ruleset change); (3) CSP is report-only with unsafe-inline/unsafe-eval; (4) no custom 404 pages — `/console/proposals` renders Next's stock 404; (5) all three OAuth providers hardcode `redirectTo: "/"` so sign-in drops deep-link destinations; (6) state checks: riskRules decoder fix + sign-out session clearing are on main (89249c60/3b343933 need board state updates); privacy manifest still absent (410bda84).  New findings filed: da8a93bf (404s), 34b8fbe7 (CSP), 436a9b98 (prod lag + icon).  Full outline: `docs/reviews/2026-08-20-deepseek-full-review.md`.  Docs-only PR; no code changed.

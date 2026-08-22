@@ -29,9 +29,10 @@ name: Shared package pin check
 # (The shared package repo itself, congress-trading-shared, is PUBLIC, so ref-resolution calls
 # against it succeed regardless of GH_PACKAGES_TOKEN's scopes -- verified 2026-07-12.)
 #
-# NOTE: this workflow is intentionally NOT part of the branch-protection ruleset, so a red result
-# flags divergence loudly without hard-blocking a coordinated two-repo bump (bump one repo, open
-# its PR, then the other). Promote it to a required check once bumps always land as a matched pair.
+# NOTE: `check-pin` is a REQUIRED status check on the main-protection ruleset.
+# It must emit a check-run on every PR (no paths: filter) so auto-merge cannot
+# stall. This repo pins the shared package by commit SHA; peer comparison
+# resolves Congress.Trade's npm spec or app/vendor copy to a SHA before matching.
 #
 # Keep this file ASCII-only (AGENTS.md) -- no em dashes / arrows near shell $VARs.
 
@@ -39,6 +40,7 @@ on:
   # The check must emit a status on every PR. A path filter leaves untouched PRs
   # without a check-run, which can strand required-context merges indefinitely.
   pull_request:
+  merge_group:
   push:
     branches: [main]
   schedule:
@@ -49,6 +51,7 @@ env:
   PKG: '@jaywedgeworth22/congress-trading-shared'
   PEER_REPO: jaywedgeworth22/Congress.Trade
   PEER_PACKAGE_JSON_PATH: app/package.json
+  PEER_VENDOR_PACKAGE_JSON_PATH: app/vendor/congress-trading-shared/package.json
   LOCAL_PACKAGE_JSON_PATH: package.json
   # The repo both consumers' git-dependency refs (tags/SHAs) point into. Ref resolution below
   # queries THIS repo, not PEER_REPO (which only hosts the consumer's package.json).
@@ -213,6 +216,12 @@ jobs:
           fi
           echo "Local spec (${LOCAL_PACKAGE_JSON_PATH}): $LOCAL_SPEC"
 
+          LOCAL_REF=$(git_ref "$LOCAL_SPEC")
+          if ! printf '%s' "$LOCAL_REF" | grep -qE '^[0-9a-fA-F]{40}$'; then
+            echo "::error::${PKG} must be pinned to a 40-character git SHA (tags can move). This repo pins '${LOCAL_SPEC}'."
+            exit 1
+          fi
+
           if [ -z "${GH_PACKAGES_TOKEN:-}" ]; then
             echo "::notice::GH_PACKAGES_TOKEN is unset - skipping the peer divergence check (it needs read access to ${PEER_REPO})."
             exit 0
@@ -226,7 +235,17 @@ jobs:
           fi
           PEER_SPEC=$(printf '%s' "$PEER_JSON" | PKG="$PKG" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log((JSON.parse(s).dependencies||{})[process.env.PKG]||'')}catch{console.log('')}})")
           if [ -z "$PEER_SPEC" ]; then
-            echo "::warning::${PKG} not found in ${PEER_REPO}/${PEER_PACKAGE_JSON_PATH} - cannot compare"
+            echo "No npm dependency ${PKG} in ${PEER_REPO}/${PEER_PACKAGE_JSON_PATH}; trying vendored copy."
+            if VENDOR_JSON=$(GH_TOKEN="$GH_PACKAGES_TOKEN" gh api "repos/${PEER_REPO}/contents/${PEER_VENDOR_PACKAGE_JSON_PATH}" -H "Accept: application/vnd.github.raw" 2>/dev/null); then
+              VENDOR_VER=$(printf '%s' "$VENDOR_JSON" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version||'')}catch{console.log('')}})")
+              if [ -n "$VENDOR_VER" ]; then
+                PEER_SPEC="github:${SHARED_REPO}#v${VENDOR_VER}"
+                echo "Peer vendored version ${VENDOR_VER} -> ${PEER_SPEC}"
+              fi
+            fi
+          fi
+          if [ -z "$PEER_SPEC" ]; then
+            echo "::warning::${PKG} not found in ${PEER_REPO} npm deps or vendor - cannot compare"
             exit 0
           fi
           echo "Peer spec  (${PEER_REPO}/${PEER_PACKAGE_JSON_PATH}): $PEER_SPEC"

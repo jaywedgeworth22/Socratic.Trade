@@ -28,19 +28,21 @@ jobs:
             gh --version
             exit 0
           fi
-          # No sudo: Coolify systemd runners lack passwordless sudo. Download a
-          # release binary into the runner home PATH.
-          ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          # Pin gh CLI. Do not follow /releases/latest. Checksums from
+          # https://github.com/cli/cli/releases/tag/v2.98.0
+          GH_VERSION=2.98.0
           arch="$(uname -m)"
           case "$arch" in
-            x86_64|amd64) arch=amd64 ;;
-            aarch64|arm64) arch=arm64 ;;
+            x86_64|amd64) arch=amd64; sha=3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de ;;
+            aarch64|arm64) arch=arm64; sha=cf689084f3a3618f7eae4a2420d335d74626d65f5e594b9828d125d69f800d86 ;;
             *) echo "::error::unsupported arch $arch"; exit 1 ;;
           esac
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz" \
-            | tar -xz -C /tmp
-          install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          tarball="/tmp/gh_${GH_VERSION}_linux_${arch}.tar.gz"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" -o "$tarball"
+          echo "${sha}  ${tarball}" | sha256sum -c -
+          tar -xz -C /tmp -f "$tarball"
+          install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/gh" --version
       - name: Delete every cache scoped to this PR's ref
@@ -66,19 +68,21 @@ jobs:
             gh --version
             exit 0
           fi
-          # No sudo: Coolify systemd runners lack passwordless sudo. Download a
-          # release binary into the runner home PATH.
-          ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          # Pin gh CLI. Do not follow /releases/latest. Checksums from
+          # https://github.com/cli/cli/releases/tag/v2.98.0
+          GH_VERSION=2.98.0
           arch="$(uname -m)"
           case "$arch" in
-            x86_64|amd64) arch=amd64 ;;
-            aarch64|arm64) arch=arm64 ;;
+            x86_64|amd64) arch=amd64; sha=3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de ;;
+            aarch64|arm64) arch=arm64; sha=cf689084f3a3618f7eae4a2420d335d74626d65f5e594b9828d125d69f800d86 ;;
             *) echo "::error::unsupported arch $arch"; exit 1 ;;
           esac
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz" \
-            | tar -xz -C /tmp
-          install -m 0755 "/tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          tarball="/tmp/gh_${GH_VERSION}_linux_${arch}.tar.gz"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" -o "$tarball"
+          echo "${sha}  ${tarball}" | sha256sum -c -
+          tar -xz -C /tmp -f "$tarball"
+          install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/gh" --version
       - name: Keep only the newest entry per cache key prefix

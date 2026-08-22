@@ -1064,8 +1064,9 @@ export function robinhoodMcpDataEnabled(): boolean {
  * a missing userId used to silently resolve the operator's ('local') broker token for
  * every tenant (cross-user credential leak). Background/shared callers that have no
  * user in scope must NOT call this at all (see `fetchDailyOHLC`, which omits the
- * private broker tier when no userId is provided). When `ROBINHOOD_MCP_AUTH_TOKEN`
- * is set the per-user lookup is bypassed anyway.
+ * private broker tier when no userId is provided). `ROBINHOOD_MCP_AUTH_TOKEN` is a
+ * boot seed into the operator (`local`) stored row, not a live getMcpAccessToken
+ * bypass. Peer intraday may pass userId `local` only after APP_B_INGEST_TOKEN.
  */
 export async function fetchRobinhoodHistoricals(
   symbol: string,
@@ -1164,8 +1165,8 @@ export function parseRobinhoodHistoricals(raw: unknown, symbol: string): OHLCBar
  * the request-scoped identity. There is deliberately no `DEV_USER_ID` default: a missing
  * userId used to silently resolve the operator's ('local') broker token for every tenant
  * (cross-user credential leak). Enrichment callers with no user in scope must fail closed
- * rather than borrow 'local' (see `RobinhoodEnrichmentProvider`). When
- * `ROBINHOOD_MCP_AUTH_TOKEN` is set the per-user lookup is bypassed anyway.
+ * rather than borrow 'local' (see `RobinhoodEnrichmentProvider`). There is no
+ * env-token bypass of getMcpAccessToken.
  */
 export async function fetchRobinhoodFundamentals(symbols: string[], userId: string): Promise<Record<string, Record<string, unknown>>> {
   if (!robinhoodMcpDataEnabled()) return {};

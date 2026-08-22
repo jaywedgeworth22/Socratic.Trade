@@ -30,6 +30,7 @@
 
 import { getConnectedAccountByBroker } from "./db";
 import { resolveAlpacaHistoryCredential } from "./history";
+import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
 import { fetchRobinhoodHistoricals, robinhoodMcpDataEnabled } from "./robinhood";
 import { fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
@@ -203,10 +204,21 @@ export async function fetchRealtimeQuotes(
 
 const ALPACA_TIMEFRAMES = new Set(["1Min", "5Min", "15Min", "30Min", "1Hour"]);
 
-/** True when an operator-scoped Robinhood market-data credential is configured, letting a peer route
- *  (which has no request user) read market data without borrowing a tenant's per-user token. */
-function operatorRobinhoodBypassConfigured(): boolean {
-  return Boolean(String(process.env.ROBINHOOD_MCP_AUTH_TOKEN ?? "").trim());
+/**
+ * Operator Robinhood for the Congress.Trade peer INTRADAY route only.
+ *
+ * `getMcpAccessToken` is already per-user (no env-token skip). Deleting operator Robinhood
+ * from this module would still interfere with CT: `/api/market/quotes` never uses Robinhood
+ * (Alpaca, then opt-in delayed Yahoo), but `/api/market/intraday` is Robinhood-first because
+ * CT backfills past due_at times and RH 15s bars beat Alpaca's 1-minute IEX feed. A peer
+ * handler has no tenant userId; using some other user's token is the leak robinhood.ts
+ * forbids. So the operator (`local`) *stored* token is used here, and only when the caller
+ * passes `operatorPeerRead` after `APP_B_INGEST_TOKEN`. `ROBINHOOD_MCP_AUTH_TOKEN` is a boot
+ * seed (`migrateLocalRobinhoodToken`), not a per-request bypass, and is never read here.
+ */
+function operatorRobinhoodForPeerRead(): boolean {
+  if (!robinhoodMcpDataEnabled()) return false;
+  return Boolean(getStoredMcpOAuthTokens("local")?.accessToken?.trim());
 }
 
 /** Alpaca timeframe -> Robinhood interval. Robinhood names the 1-minute bar `minute`, NOT `1minute`;
@@ -250,17 +262,15 @@ export async function fetchIntradayBars(
   startIso: string,
   endIso: string,
   timeframe = "1Min",
-  userId?: string
+  userId?: string,
+  opts?: { operatorPeerRead?: boolean }
 ): Promise<IntradayBarsResult> {
   const symbol = normalizeSymbol(rawSymbol);
   if (!symbol) return { kind: "unavailable", reason: "symbol required" };
 
-  // Robinhood first: finer granularity than Alpaca (down to 15-second bars vs a 1-minute floor) and it
-  // answered ~100 consecutive research calls without a quota refusal while FMP rate-limited on the
-  // first one. Only usable here when the OPERATOR-level bypass is configured: the Robinhood token is
-  // PER-USER, and a peer route has no user in scope, so calling it with the operator identity from a
-  // shared path would be exactly the cross-user credential leak robinhood.ts warns about.
-  if (robinhoodMcpDataEnabled() && operatorRobinhoodBypassConfigured()) {
+  // Robinhood first (15s vs Alpaca 1m) only on the token-gated CT peer path. See
+  // operatorRobinhoodForPeerRead: env ROBINHOOD_MCP_AUTH_TOKEN is not a live bypass.
+  if (opts?.operatorPeerRead && operatorRobinhoodForPeerRead()) {
     const rhBars = await fetchRobinhoodHistoricals(symbol, {
       userId: "local",
       interval: toRobinhoodInterval(timeframe),

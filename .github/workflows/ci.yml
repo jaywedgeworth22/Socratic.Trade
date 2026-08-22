@@ -259,9 +259,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
             ${{ runner.os }}-nextjs-
       # The long-lived Linux runner has twice lost its checkout between the
       # initial checkout and npm install while another runner job was cleaning
@@ -272,10 +272,10 @@ jobs:
       - name: Refresh checkout before package operations
         uses: actions/checkout@v4
       # verify-hosted only runs when docs-only is false (job-level `if` above), so per-step
-      # docs-only guards are unnecessary here. Tokenless `npm install` — the shared dependency
-      # resolves over public HTTPS now (no deploy key), matching main's verify + deploy.yml.
+      # docs-only guards are unnecessary here. Tokenless `npm ci` — lockfile is tracked, and
+      # the shared git dependency is SHA-pinned (HTTPS in the lockfile resolved URL).
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       # The scheduled ios-ship cron has no `paths:` filter of its own, so
       # scripts/ios-scheduled-ship-gate.sh is the only thing keeping a
       # backend-only commit from becoming a TestFlight build (run 31723515355
@@ -319,7 +319,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
 
   # THE required check. Pure gate: interprets the lanes above and reports under the exact
   # context name the ruleset requires. Fail-closed in every ambiguous state; annotates which
