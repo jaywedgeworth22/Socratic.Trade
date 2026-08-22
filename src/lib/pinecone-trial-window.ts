@@ -201,6 +201,10 @@ export function assessPineconeTrialWindow(input: {
   const leftoverTrialFuse = !isPineconeTrialCalendarOff()
     && input.configuredDailyWriteUnits >= PINECONE_TRIAL_DAILY_FUSE_HINT;
   if (endsMs != null || leftoverTrialFuse) {
+    // Owner 2026-08-21: do not invent a Starter 2M / 1.6M monthly wall after the
+    // trial calendar.  Infisical already holds the live plan (prod daily fuse 5M,
+    // monthly budget off).  Snapping to free-tier here paged "max 2M write units"
+    // and parked ingest on an org that is still a Standard trial / pay-as-you-go.
     return {
       active: false,
       endsAt: endsMs != null ? new Date(endsMs).toISOString() : PINECONE_CURRENT_TRIAL_ENDS_AT,
@@ -210,13 +214,11 @@ export function assessPineconeTrialWindow(input: {
       remainingUsd,
       remainingWriteUnits,
       pacedDailyWriteUnits: 0,
-      effectiveDailyWriteUnits: PINECONE_FREE_TIER_WU_PER_DAY,
-      effectiveTextsPerDay: Math.min(input.configuredTextsPerDay, PINECONE_FREE_TIER_TEXTS_PER_DAY),
-      effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits > 0
-        ? input.configuredMonthlyWriteUnits
-        : PINECONE_FREE_TIER_MONTHLY_WU,
+      effectiveDailyWriteUnits: input.configuredDailyWriteUnits,
+      effectiveTextsPerDay: input.configuredTextsPerDay,
+      effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits,
       phase: "idle",
-      mode: "free",
+      mode: "configured",
       localMtdUntrusted: false
     };
   }
