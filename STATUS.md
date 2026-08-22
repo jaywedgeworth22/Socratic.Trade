@@ -1,10 +1,10 @@
 # Current Status
 
-## 2026-08-21 GROK — 5M WU this week, free-tier snap 2026-08-27 + RAG panel
+## 2026-08-22 GROK — 5M WU snap + RAG panel MERGED (#3037 `f5500b610`)
 
-Owner set monthly to 5M.  Infisical: `PINECONE_MONTHLY_WU_BUDGET=5000000`, `PINECONE_TRIAL_ENDS_AT=2026-08-27T00:00:00.000Z`.  Runtime honors 5M until then, then snaps to 60k WU/day / 20k texts / 1.6M month.  Leftover 2M 429s do not park.  Branch `grok/pinecone-free-snap`.  Board `603fef7b`.
+Honor 5M monthly until 2026-08-27, then snap 60k/20k/1.6M.  Cursor #3038 stacked (numberless monthly-WU 429s ignored during trial).  Live `/api/health` still `a84ce0bed` — not Deployed yet.
 
-Expert panel (board `596abb59`): Pinecone holds extractive highlights + form-aware signal + analog cards.  Full 10-K/Q/transcripts, fill ledgers, and scorecards stay on our server.  Do not flip `RAG_PINECONE_WRITE_CLASS` until PR B hydrate.  Builder only if synthesis §5 quality gates pass.  Cut: `docs/audits/2026-08-22-panel-synthesis.md`.  Rollout: `docs/rollouts/2026-08-21-pinecone-free-snap.md`.
+Expert panel: highlights/signal/analog in Pinecone; full files local.  Cut: `docs/audits/2026-08-22-panel-synthesis.md`.  Do not flip write-class until PR B.  Builder only if §5 gates pass.  Boards 603fef7b / 596abb59 completed.
 
 ## 2026-08-21 CURSOR — local Grok kickoff for adaptive-tabs screenshots
 
