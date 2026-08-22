@@ -16,6 +16,7 @@ import { useState } from "react";
 import type { IraWashSaleHandling, TaxationType } from "@/lib/types";
 import { savePolicy } from "../lib/api";
 import { activeConnectedAccount } from "../lib/derive";
+import { resolveTaxRateCommit } from "../lib/number-commit";
 import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Card, Chip, Field, RawNumInput, Select, Toggle } from "../ui/primitives";
@@ -42,18 +43,36 @@ export function TaxSettingsCard() {
   // Sticky optimistic overlay: each field's own edits persist immediately; on a
   // write failure useAutoSave's onError restores just that field.
   const [draft, setDraft] = useState<TaxDraft>({});
+  const [rawRates, setRawRates] = useState<{ shortTermRatePct?: string; longTermRatePct?: string }>({});
   if (!snapshot) return null;
 
   const current = snapshot.policy.taxSettings;
 
   // Persist one tax field. Selects/toggles call on change; number rates call on blur
-  // (their transient text lives in `draft` until then). `next` is the value already
+  // (their transient text lives in `rawRates` until then). `next` is the value already
   // applied to `draft` optimistically; `prev` is what to restore if the write fails.
   const commit = <K extends keyof TaxDraft>(key: K, next: TaxDraft[K], prev: TaxDraft[K]) => {
     autoSave.save(() => savePolicy({ taxSettings: { [key]: next } }, snapshot.policy.connectedAccountId).then(() => refresh()), {
       onError: () => setDraft((d) => ({ ...d, [key]: prev }))
     });
   };
+
+  const commitRate = (key: "shortTermRatePct" | "longTermRatePct", defaultVal: number) => {
+    const raw = rawRates[key];
+    setRawRates((r) => {
+      if (!(key in r)) return r;
+      const copy = { ...r };
+      delete copy[key];
+      return copy;
+    });
+    if (raw === undefined) return;
+    const saved = current?.[key] ?? defaultVal;
+    const next = resolveTaxRateCommit(raw, saved);
+    if (next === null) return;
+    setDraft((d) => ({ ...d, [key]: next }));
+    commit(key, next, saved);
+  };
+
   // The connected account's own taxationType (set when it was linked) WINS over
   // policy.taxSettings server-side (dashboard tax summary reads
   // activeAccount.taxationType ?? policy.taxSettings.taxationType), and no API
@@ -117,29 +136,21 @@ export function TaxSettingsCard() {
           <Field label="Short-term rate %" htmlFor="st-rate">
             <RawNumInput
               id="st-rate"
-              value={String(shortTermRatePct)}
-              emptyValue={0}
+              value={rawRates.shortTermRatePct ?? String(shortTermRatePct)}
+              emptyValue={shortTermRatePct}
               title="Your estimated tax rate on gains from positions held one year or less.  Used only for the tax estimates — not advice.  Saves when you click away."
-              onValueChange={(parsed) => setDraft((d) => ({ ...d, shortTermRatePct: parsed }))}
-              onBlur={() => {
-                if ((draft.shortTermRatePct ?? current?.shortTermRatePct ?? 24) !== (current?.shortTermRatePct ?? 24)) {
-                  commit("shortTermRatePct", shortTermRatePct, undefined);
-                }
-              }}
+              onValueChange={(_parsed, raw) => setRawRates((r) => ({ ...r, shortTermRatePct: raw }))}
+              onBlur={() => commitRate("shortTermRatePct", 24)}
             />
           </Field>
           <Field label="Long-term rate %" htmlFor="lt-rate">
             <RawNumInput
               id="lt-rate"
-              value={String(longTermRatePct)}
-              emptyValue={0}
+              value={rawRates.longTermRatePct ?? String(longTermRatePct)}
+              emptyValue={longTermRatePct}
               title="Your estimated tax rate on gains from positions held more than one year.  Used only for the tax estimates — not advice.  Saves when you click away."
-              onValueChange={(parsed) => setDraft((d) => ({ ...d, longTermRatePct: parsed }))}
-              onBlur={() => {
-                if ((draft.longTermRatePct ?? current?.longTermRatePct ?? 15) !== (current?.longTermRatePct ?? 15)) {
-                  commit("longTermRatePct", longTermRatePct, undefined);
-                }
-              }}
+              onValueChange={(_parsed, raw) => setRawRates((r) => ({ ...r, longTermRatePct: raw }))}
+              onBlur={() => commitRate("longTermRatePct", 15)}
             />
           </Field>
         </div>

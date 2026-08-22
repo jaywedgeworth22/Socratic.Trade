@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { Card, Chip, RawNumInput, Toggle, Btn, type ChipTone } from "../../console/ui/primitives";
+import { resolveServerKnobNumberCommit } from "../../console/lib/number-commit";
 import { describeProbeStatus } from "../lib/probe-error";
 
 interface ServerKnobRow {
@@ -61,6 +62,7 @@ export function OperationsClient() {
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [numberDrafts, setNumberDrafts] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setError(null);
@@ -108,6 +110,20 @@ export function OperationsClient() {
     },
     []
   );
+
+  const commitNumberRow = async (row: ServerKnobRow) => {
+    const raw = numberDrafts[row.id];
+    setNumberDrafts((d) => {
+      if (!(row.id in d)) return d;
+      const copy = { ...d };
+      delete copy[row.id];
+      return copy;
+    });
+    if (raw === undefined) return;
+    const next = resolveServerKnobNumberCommit(raw, Number(row.value), row.min, row.max);
+    if (next === null) return;
+    await save(row.id, next);
+  };
 
   const groupIds = data ? Object.keys(data.groups) : [];
 
@@ -207,14 +223,13 @@ export function OperationsClient() {
                       ) : (
                         <RawNumInput
                           className="w-24"
-                          value={String(row.value)}
-                          emptyValue={Number(row.defaultValue) || 0}
+                          value={numberDrafts[row.id] ?? String(row.value)}
+                          emptyValue={Number(row.value) || 0}
                           min={row.min}
                           max={row.max}
                           disabled={busyId === row.id}
-                          onValueChange={(n) => {
-                            if (Number.isFinite(n) && n !== Number(row.value)) void save(row.id, n);
-                          }}
+                          onValueChange={(_n, raw) => setNumberDrafts((d) => ({ ...d, [row.id]: raw }))}
+                          onBlur={() => void commitNumberRow(row)}
                           aria-label={row.label}
                         />
                       )}
