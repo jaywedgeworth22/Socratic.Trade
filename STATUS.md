@@ -9,6 +9,9 @@ Live `/api/health` still `storageDegraded` (L2/L3 since 2026-08-18).  Mac heal p
 Cascade: Yahoo `analystBySource` aliases `analystRating`; WAVE_B drops news; RapidAPI skips news-only; paid Wave B intersects WAVE_B only.  `/api/quote` returns the Yahoo floor after 1.5s quoteSummary grace instead of waiting the 6s cascade.
 
 RAG: PR B + 8-K sidecar + EarningsCalls signal/FTS + analog cards + thin Red pack that **prioritizes 1A/MD&A over facts/Form 4 cards** + hydrate 4k cap + live `chunks.json` + Form4/13F/ARK corpus snapshots.  Deep dossier reserves Item 7 MD&A.  Scout hydrates a capped 1A when local text exists.  Full-body ingest skips extra signal-section Pinecone writes (no write-class flip).  Webpack land blocker: `runtime-health.ts` uses bare `fs`/`http`/`path`.
+## 2026-08-22 GROK — Kimi leftover: CT peer intraday uses stored operator token
+
+Re-landed the only unique slice from retired-KIMI ST #3044.  CI/pin-check/lockfile/png deletes from that PR are already on main or harmful.  Peer `/api/market/intraday` now passes `operatorPeerRead` and uses the operator (`local`) *stored* MCP token, not a live `ROBINHOOD_MCP_AUTH_TOKEN` env bypass.  Board `6a7fbecc`.  Branch `grok/kimi-integrate`.
 
 ## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
 

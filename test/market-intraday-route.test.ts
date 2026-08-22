@@ -38,6 +38,14 @@ describe("GET /api/market/intraday/[symbol] failure contract", () => {
     );
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ ok: false, error: "alpaca bars HTTP 403" });
+    expect(mockFetchIntradayBars).toHaveBeenCalledWith(
+      "AAPL",
+      "2026-08-20T14:40:00.000Z",
+      "2026-08-20T15:40:00.000Z",
+      "1Min",
+      undefined,
+      { operatorPeerRead: true }
+    );
   });
 
   it("returns 200 with empty bars when a provider confirmed no prints", async () => {
