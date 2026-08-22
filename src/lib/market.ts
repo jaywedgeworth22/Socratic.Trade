@@ -513,6 +513,11 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
           .map((quote) => rescoredBySymbol.get(quote.symbol) ?? applySeedBaseline(quote))
           .sort(compareMarketQuotes);
       } catch (error) {
+        if (options?.signal?.aborted) {
+          throw options.signal.reason instanceof Error
+            ? options.signal.reason
+            : new Error("Market scan cancelled.");
+        }
         warnings.push(error instanceof Error ? `Enrichment failed: ${error.message}` : "Enrichment failed.");
         // Fall back to durable seed so a cascade throw never blanks the table.
         const seededBySymbol = new Map(
