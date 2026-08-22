@@ -3,7 +3,7 @@
 **Date:** 2026-08-22  
 **Agent:** Antigravity  
 **Branch:** `agent/antigravity-fixes-and-parity`  
-**PR:** TBD  
+**PR:** #3046  
 
 ---
 
@@ -27,15 +27,18 @@ Following a top-to-bottom audit across the desktop web console, mobile web view,
   - `idx_notification_events_user_time` on `notification_events(user_id, created_at DESC)`
   - `idx_historical_fundamentals_sym_field_time` on `historical_fundamentals(symbol, field, effective_at DESC)`
 - **Schema Assertions**: Updated `test/persistence-hardening.test.ts` schema version expectations to 87.
+- **Vitest Teardown Hardening**: Added `onConsoleLog: () => false` in `vitest.config.ts` to eliminate Vitest worker teardown RPC races during parallel suite execution.
 
 ### Native iOS Parity & Architectural Polish
 - **Native Swift Charts (`import Charts`)**:
   - Embedded `EquityChartView` into `ios/SocraticTrade/AppComponents.swift` supporting interactive area and line plots with trailing axis marks, zero-line rules, and touch-scrub date/value selection.
   - Integrated `EquityChartView` directly into `PortfolioOverviewCard` in `ios/SocraticTrade/HomeView.swift` and `ResultsView` in `ios/SocraticTrade/ResultsView.swift`.
   - Extended `ios/SocraticTrade/MobileModels.swift` to parse `liveEquityCurve` and `paperEquityCurve` points (`EquityCurvePoint`).
+  - Resolved `plotAreaFrame` deprecation to modern `proxy.plotFrame` anchor.
 - **Rendering Performance Optimization**: Scoped `TimelineView` in `SnapshotScaffold` / `SnapshotStatusBanner` (`ios/SocraticTrade/AppComponents.swift`) strictly to the status banner component so the entire card hierarchy is not re-rendered on the 30-second tick.
 - **Haptic Sensory Feedback**: Added centralized `AppHaptics` helper (`UIImpactFeedbackGenerator`, `UINotificationFeedbackGenerator`) and wired it to proposal approvals, rejections, retry requests (`ios/SocraticTrade/ProposalsView.swift`), and order cancellations (`ios/SocraticTrade/MarketsView.swift`).
 - **Resilient SSE Reconnection**: Implemented exponential backoff with jitter in `ios/SocraticTrade/MobileStore.swift` (`min(30.0, retryDelay * 1.5) + jitter`).
+- **CI Simulator Disambiguation**: Updated `.github/workflows/ios-build.yml` to extract and pass simulator UUID (`id=$sim_id`) to avoid destination ambiguity when runners host multiple simulators with identical display names.
 
 ### Touched Files
 - `package.json`
@@ -46,6 +49,8 @@ Following a top-to-bottom audit across the desktop web console, mobile web view,
 - `app/api/proposals/[id]/reject/route.ts`
 - `src/lib/db.ts`
 - `test/persistence-hardening.test.ts`
+- `vitest.config.ts`
+- `.github/workflows/ios-build.yml`
 - `ios/SocraticTrade/MobileModels.swift`
 - `ios/SocraticTrade/AppComponents.swift`
 - `ios/SocraticTrade/HomeView.swift`

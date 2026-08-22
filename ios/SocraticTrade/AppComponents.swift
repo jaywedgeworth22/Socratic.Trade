@@ -1701,7 +1701,8 @@ struct EquityChartView: View {
                             .gesture(
                                 DragGesture(minimumDistance: 0)
                                     .onChanged { value in
-                                        let origin = geo[proxy.plotAreaFrame].origin
+                                        guard let plotFrame = proxy.plotFrame else { return }
+                                        let origin = geo[plotFrame].origin
                                         let location = CGPoint(
                                             x: value.location.x - origin.x,
                                             y: value.location.y - origin.y
