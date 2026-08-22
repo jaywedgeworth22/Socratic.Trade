@@ -190,8 +190,11 @@ export function assessPineconeTrialWindow(input: {
       pacedDailyWriteUnits,
       effectiveDailyWriteUnits: Math.min(MAX_TRIAL_DAILY_WU, rawDaily),
       effectiveTextsPerDay: Math.max(input.configuredTextsPerDay, PINECONE_MIN_USABLE_TEXTS_PER_DAY),
-      // Standard trial has no monthly write-unit cap. Ignore a leftover Starter 2M env budget.
-      effectiveMonthlyWriteUnits: 0,
+      // Honor Builder-sized monthly budgets (owner 5M this week).  Ignore a
+      // leftover Starter 2M so it cannot park ingest during the remaining trial.
+      effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits >= 5_000_000
+        ? input.configuredMonthlyWriteUnits
+        : 0,
       phase,
       mode: "trial",
       localMtdUntrusted
@@ -201,10 +204,10 @@ export function assessPineconeTrialWindow(input: {
   const leftoverTrialFuse = !isPineconeTrialCalendarOff()
     && input.configuredDailyWriteUnits >= PINECONE_TRIAL_DAILY_FUSE_HINT;
   if (endsMs != null || leftoverTrialFuse) {
-    // Owner 2026-08-21: do not invent a Starter 2M / 1.6M monthly wall after the
-    // trial calendar.  Infisical already holds the live plan (prod daily fuse 5M,
-    // monthly budget off).  Snapping to free-tier here paged "max 2M write units"
-    // and parked ingest on an org that is still a Standard trial / pay-as-you-go.
+    // Owner 2026-08-21: automatically snap to free/Starter fuses when the
+    // calendar ends (2026-08-27, six days from the ask).  Infisical can keep
+    // the 5M trial numbers; runtime uses these until the owner sets
+    // PINECONE_TRIAL_ENDS_AT=off and pays for Builder.
     return {
       active: false,
       endsAt: endsMs != null ? new Date(endsMs).toISOString() : PINECONE_CURRENT_TRIAL_ENDS_AT,
@@ -214,11 +217,11 @@ export function assessPineconeTrialWindow(input: {
       remainingUsd,
       remainingWriteUnits,
       pacedDailyWriteUnits: 0,
-      effectiveDailyWriteUnits: input.configuredDailyWriteUnits,
-      effectiveTextsPerDay: input.configuredTextsPerDay,
-      effectiveMonthlyWriteUnits: input.configuredMonthlyWriteUnits,
+      effectiveDailyWriteUnits: PINECONE_FREE_TIER_WU_PER_DAY,
+      effectiveTextsPerDay: Math.min(input.configuredTextsPerDay, PINECONE_FREE_TIER_TEXTS_PER_DAY),
+      effectiveMonthlyWriteUnits: PINECONE_FREE_TIER_MONTHLY_WU,
       phase: "idle",
-      mode: "configured",
+      mode: "free",
       localMtdUntrusted: false
     };
   }

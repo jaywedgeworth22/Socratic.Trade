@@ -165,6 +165,26 @@ describe("pinecone monthly write-unit breaker", () => {
     delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
   });
 
+  it("does not trip a leftover 2M 429 while a 5M Builder budget is configured", async () => {
+    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-27T00:00:00.000Z";
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "5000000";
+    process.env.PINECONE_MONTHLY_WU_BUDGET = "5000000";
+    const { tripPineconeWuBreaker, pineconeWuExhaustedUntil } = await loadBreaker();
+    const now = Date.UTC(2026, 7, 22, 12, 0, 0);
+    const twoM = await tripPineconeWuBreaker({ message: PROD_WU_ERROR, operation: "upsert" }, now);
+    expect(twoM.tripped).toBe(false);
+    expect(pineconeWuExhaustedUntil(now)).toBeNull();
+    expect(mocks.alertStorageWarning).not.toHaveBeenCalled();
+    const fiveM = await tripPineconeWuBreaker({
+      message: "You've reached your write unit limit for the current month (5000000). Status: 429.",
+      operation: "upsert"
+    }, now);
+    expect(fiveM.tripped).toBe(true);
+    expect(mocks.alertStorageWarning).toHaveBeenCalledTimes(1);
+    delete process.env.PINECONE_TRIAL_ENDS_AT;
+    delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
+  });
+
   it("does not trip or page when the app monthly budget is off (pay-as-you-go)", async () => {
     process.env.PINECONE_MONTHLY_WU_BUDGET = "0";
     delete process.env.PINECONE_TRIAL_ENDS_AT;

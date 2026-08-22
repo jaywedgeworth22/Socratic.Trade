@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-08-21 GROK — 5M WU this week, free-tier snap 2026-08-27 + RAG panel
+
+Owner set monthly to 5M.  Infisical: `PINECONE_MONTHLY_WU_BUDGET=5000000`, `PINECONE_TRIAL_ENDS_AT=2026-08-27T00:00:00.000Z`.  Runtime honors 5M until then, then snaps to 60k WU/day / 20k texts / 1.6M month.  Leftover 2M 429s do not park.  Branch `grok/pinecone-free-snap`.  Board `603fef7b`.
+
+Expert panel (board `596abb59`): Pinecone holds extractive highlights + form-aware signal + analog cards.  Full 10-K/Q/transcripts, fill ledgers, and scorecards stay on our server.  Do not flip `RAG_PINECONE_WRITE_CLASS` until PR B hydrate.  Builder only if synthesis §5 quality gates pass.  Cut: `docs/audits/2026-08-22-panel-synthesis.md`.  Rollout: `docs/rollouts/2026-08-21-pinecone-free-snap.md`.
+
 ## 2026-08-21 CURSOR — local Grok kickoff for adaptive-tabs screenshots
 
 Cursor local is down.  Paste-ready Mac brief: `docs/rollouts/2026-08-21-ios-adaptive-tabs-mac-qa.md`.  Grok starts from `origin/main` in a new `~/apps/trading-grok-tabs` worktree (do not clobber `~/apps/trading-grok-drain`).  Launch DEBUG with `-ASCScreenshots`.  Do not redo B/C/D.  #3027 is optional (`origin/main` merged onto it) -- shots do not wait on it.

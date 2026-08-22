@@ -85,18 +85,24 @@ function clearWuBreakerMarker(reason: string, operation?: string | null): void {
  * Starter 429 (or a mis-attributed 2M error) must not keep parking writes — the gate runs
  * BEFORE any upsert, so `notePineconeWriteSuccess` can never clear it.
  */
-function shouldIgnoreMonthlyWuWall(nowMs: number): boolean {
-  // Standard trial is usage-billed ($300, unlimited WUs).  A leftover Starter 2M 429
-  // must not park writes or page.  Same when the app monthly budget is off (0): Infisical
-  // is not running a Starter wall, so a 2M vendor error is not our plan.
-  if (isPineconeTrialActive(nowMs)) return true;
-  return pineconeMonthlyWuBudget(nowMs) <= 0;
+function shouldIgnoreMonthlyWuWall(nowMs: number, message?: string): boolean {
+  const budget = pineconeMonthlyWuBudget(nowMs);
+  // Budget off: never park on a Starter 2M 429.
+  if (budget <= 0) return true;
+  // Vendor said 2M but the app budget is 5M (Builder week): not our wall.
+  if (message) {
+    const limit = pineconeWuLimitFromMessage(message);
+    if (limit != null && limit < budget) return true;
+  }
+  return false;
 }
 
 export function pineconeWuExhaustedUntil(nowMs: number = Date.now()): string | null {
   try {
     if (shouldIgnoreMonthlyWuWall(nowMs)) {
-      clearWuBreakerMarker(isPineconeTrialActive(nowMs) ? "standard-trial-active" : "monthly-wu-budget-off");
+      clearWuBreakerMarker(
+        isPineconeTrialActive(nowMs) ? "standard-trial-active" : "monthly-wu-budget-off"
+      );
       return null;
     }
     const until = getInternalSetting<string>(PINECONE_WU_EXHAUSTED_UNTIL_KEY);
@@ -122,7 +128,7 @@ export async function tripPineconeWuBreaker(
   nowMs: number = Date.now()
 ): Promise<{ tripped: boolean; until: string }> {
   try {
-    if (shouldIgnoreMonthlyWuWall(nowMs)) {
+    if (shouldIgnoreMonthlyWuWall(nowMs, input.message)) {
       clearWuBreakerMarker(
         isPineconeTrialActive(nowMs)
           ? "standard-trial-ignores-monthly-wu-429"
