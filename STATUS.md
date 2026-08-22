@@ -7,6 +7,11 @@ Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now fiv
 PR #3031 on `cursor/activity-layout-redesign-085b`, rematched onto `origin/main` `cd4c700d` (#3018 keyed Finnhub abort).  `ios-build` green (233/0).  Tooltip sentence-gap + AuditLogPanel wiring marker fixed; re-dispatching `verify`.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
 
 # Current Status
+## 2026-08-21 GROK — Stop paging Starter 2M Pinecone write units
+
+Owner: the 2M monthly write-unit pages keep firing and ingest should continue.  Live Pinecone is a Standard trial (unlimited WUs, $300, 21 days from 2026-08-09).  Infisical daily fuse is already 5M; monthly budget was unset (off).  #2799 ignored 2M only when the error body contained `429`; Pinecone's official monthly-quota text often does not, so hourly `Pinecone connection failed` still went out.
+
+Matcher now treats the monthly-quota phrase as WU exhaustion.  Breaker parks only when `PINECONE_MONTHLY_WU_BUDGET` is set.  After the trial calendar, Infisical knobs stay (no invented 1.6M Starter wall).  Branch `grok/pinecone-wu-cap`, worktree `~/apps/trading-grok-pinecone-wu`, board `7b0bf414`.  Rollout: `docs/rollouts/2026-08-21-pinecone-wu-no-starter-wall.md`.
 ## 2026-08-21 GROK — website login provider family (leftover after #3008)
 
 Owner: make Apple / Google / GitHub one branded family.  iOS did that in #3008

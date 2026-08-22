@@ -20,6 +20,7 @@
 
 import { audit, deleteInternalSetting, getInternalSetting, setInternalSetting } from "./db";
 import { alertStorageWarning } from "./db-health";
+import { pineconeMonthlyWuBudget } from "./pinecone-monthly-pace";
 import { isPineconeTrialActive } from "./pinecone-trial-window";
 
 /** Internal-settings key holding the ISO instant writes may resume (first day of next month UTC). */
@@ -28,15 +29,20 @@ export const PINECONE_WU_EXHAUSTED_UNTIL_KEY = "pinecone:wuExhaustedUntil";
 const PINECONE_WU_GATE_AUDIT_DAY_KEY = "pinecone:wuGateLastAuditDay";
 
 /**
- * True only for Pinecone's MONTHLY write-unit exhaustion (e.g. "You've reached your write unit
- * limit for the current month (2000000). ... Status: 429."). Deliberately narrow: per-second
- * rate limits, read-unit limits, and other 429s must keep their ordinary retry behavior —
- * only the calendar-month quota is unwinnable before the reset date.
+ * True only for Pinecone's MONTHLY write-unit exhaustion.
+ *
+ * Pinecone's documented body is:
+ *   "You've reached your write unit limit for the current month (2000000).
+ *    To continue writing data, upgrade your plan."
+ * The HTTP status is 429.  The SDK sometimes copies "Status: 429" into the message and
+ * sometimes does not.  Requiring 429 in the *body* let the official text fall through to
+ * hourly "Pinecone connection failed" + usage-limit pages while the Standard trial has
+ * no monthly cap.  Per-second 429s (no monthly-quota phrase) stay out of this matcher.
  */
 export function isPineconeWuExhaustedError(message: string | null | undefined): boolean {
   if (!message) return false;
-  if (!/write unit limit for the current month/i.test(message)) return false;
-  return /\b429\b/.test(message) || /rate.?limit|too many requests/i.test(message);
+  if (/write unit limit for the current month/i.test(message)) return true;
+  return /write units?/i.test(message) && /\b(?:2|5)000000\b/.test(message) && /(?:current|this) month/i.test(message);
 }
 
 /** First day of the NEXT UTC month after `fromMs`, as an ISO instant (the quota reset moment). */
@@ -79,10 +85,18 @@ function clearWuBreakerMarker(reason: string, operation?: string | null): void {
  * Starter 429 (or a mis-attributed 2M error) must not keep parking writes — the gate runs
  * BEFORE any upsert, so `notePineconeWriteSuccess` can never clear it.
  */
+function shouldIgnoreMonthlyWuWall(nowMs: number): boolean {
+  // Standard trial is usage-billed ($300, unlimited WUs).  A leftover Starter 2M 429
+  // must not park writes or page.  Same when the app monthly budget is off (0): Infisical
+  // is not running a Starter wall, so a 2M vendor error is not our plan.
+  if (isPineconeTrialActive(nowMs)) return true;
+  return pineconeMonthlyWuBudget(nowMs) <= 0;
+}
+
 export function pineconeWuExhaustedUntil(nowMs: number = Date.now()): string | null {
   try {
-    if (isPineconeTrialActive(nowMs)) {
-      clearWuBreakerMarker("standard-trial-active");
+    if (shouldIgnoreMonthlyWuWall(nowMs)) {
+      clearWuBreakerMarker(isPineconeTrialActive(nowMs) ? "standard-trial-active" : "monthly-wu-budget-off");
       return null;
     }
     const until = getInternalSetting<string>(PINECONE_WU_EXHAUSTED_UNTIL_KEY);
@@ -108,8 +122,13 @@ export async function tripPineconeWuBreaker(
   nowMs: number = Date.now()
 ): Promise<{ tripped: boolean; until: string }> {
   try {
-    if (isPineconeTrialActive(nowMs)) {
-      clearWuBreakerMarker("standard-trial-ignores-monthly-wu-429", input.operation ?? null);
+    if (shouldIgnoreMonthlyWuWall(nowMs)) {
+      clearWuBreakerMarker(
+        isPineconeTrialActive(nowMs)
+          ? "standard-trial-ignores-monthly-wu-429"
+          : "monthly-wu-budget-off",
+        input.operation ?? null
+      );
       return { tripped: false, until: firstDayOfNextMonthUtc(nowMs) };
     }
     const active = pineconeWuExhaustedUntil(nowMs);

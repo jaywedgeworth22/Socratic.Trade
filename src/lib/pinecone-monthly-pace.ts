@@ -86,8 +86,8 @@ export function pineconeMonthWindow(nowMs: number = Date.now()): PineconeMonthWi
  */
 export function pineconeMonthlyWuBudget(nowMs: number = Date.now()): number {
   // Standard trial is usage-billed against the $300 credit, not the Starter 2M monthly wall.
-  // A leftover PINECONE_MONTHLY_WU_BUDGET=2000000 (or the post-trial 1.6M snap) must not
-  // park ingest or page "free-tier monthly write units" while the trial is still open.
+  // A leftover PINECONE_MONTHLY_WU_BUDGET=2000000 must not park ingest or page while the
+  // trial is still open.  After the trial, 0 stays off — do not invent a 1.6M Starter cap.
   if (isPineconeTrialActive(nowMs)) return 0;
   const raw = process.env.PINECONE_MONTHLY_WU_BUDGET;
   let configured = 0;
@@ -95,8 +95,6 @@ export function pineconeMonthlyWuBudget(nowMs: number = Date.now()): number {
     const parsed = Number(raw);
     if (Number.isFinite(parsed) && parsed > 0) configured = Math.floor(parsed);
   }
-  // After the Standard trial, Infisical often still has 0 (off). Snap to the free-tier
-  // monthly pace so bulk backfill cannot walk into the Starter 2M-WU wall.
   return pineconeTrialState(nowMs).effectiveMonthlyWriteUnits || configured;
 }
 

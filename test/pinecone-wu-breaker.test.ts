@@ -67,6 +67,8 @@ describe("pinecone monthly write-unit breaker", () => {
     getDb().prepare("DELETE FROM api_health_log").run();
     mocks.alertStorageWarning.mockClear();
     mocks.storeDocument.mockReset();
+    // Breaker only parks when an app monthly budget is configured.  0 = pay-as-you-go.
+    process.env.PINECONE_MONTHLY_WU_BUDGET = "2000000";
   });
 
   afterEach(() => {
@@ -80,8 +82,11 @@ describe("pinecone monthly write-unit breaker", () => {
     const { isPineconeWuExhaustedError } = await loadBreaker();
     expect(isPineconeWuExhaustedError(PROD_WU_ERROR)).toBe(true);
     expect(isPineconeWuExhaustedError("you've reached your WRITE UNIT LIMIT FOR THE CURRENT MONTH — rate limited")).toBe(true);
-    // Month-quota text without any 429/rate-limit signal: not the breaker's condition.
-    expect(isPineconeWuExhaustedError("You've reached your write unit limit for the current month (2000000).")).toBe(false);
+    // Official Pinecone body often omits "Status: 429" — HTTP status is 429, text is the quota phrase.
+    expect(isPineconeWuExhaustedError("You've reached your write unit limit for the current month (2000000).")).toBe(true);
+    expect(isPineconeWuExhaustedError(
+      "Request failed. You've reached your write unit limit for the current month. To continue writing data, upgrade your plan."
+    )).toBe(true);
     // Ordinary 429s (per-second rate limits, embed providers) must keep normal retry behavior.
     expect(isPineconeWuExhaustedError("HTTP 429 Too Many Requests")).toBe(false);
     expect(isPineconeWuExhaustedError("")).toBe(false);
@@ -160,6 +165,17 @@ describe("pinecone monthly write-unit breaker", () => {
     delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
   });
 
+  it("does not trip or page when the app monthly budget is off (pay-as-you-go)", async () => {
+    process.env.PINECONE_MONTHLY_WU_BUDGET = "0";
+    delete process.env.PINECONE_TRIAL_ENDS_AT;
+    delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
+    const { tripPineconeWuBreaker, pineconeWuExhaustedUntil } = await loadBreaker();
+    const res = await tripPineconeWuBreaker({ message: PROD_WU_ERROR, operation: "upsert" }, Date.UTC(2026, 8, 1));
+    expect(res.tripped).toBe(false);
+    expect(pineconeWuExhaustedUntil(Date.UTC(2026, 8, 1))).toBeNull();
+    expect(mocks.alertStorageWarning).not.toHaveBeenCalled();
+  });
+
   it("clears the marker eagerly on a successful Pinecone WRITE, but never on reads", async () => {
     const { tripPineconeWuBreaker, notePineconeWriteSuccess, pineconeWuExhaustedUntil } = await loadBreaker();
     await tripPineconeWuBreaker({ message: PROD_WU_ERROR }, Date.now());
@@ -199,6 +215,7 @@ describe("sec-ingest clean deferral under the WU breaker", () => {
     deleteInternalSetting("pinecone:wuGateLastAuditDay");
     mocks.storeDocument.mockReset();
     mocks.alertStorageWarning.mockClear();
+    process.env.PINECONE_MONTHLY_WU_BUDGET = "2000000";
   });
 
   async function makeRunningJobWithTask() {
