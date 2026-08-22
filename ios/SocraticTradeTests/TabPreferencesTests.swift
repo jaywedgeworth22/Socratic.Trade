@@ -186,6 +186,34 @@ final class TabPreferencesTests: XCTestCase {
         XCTAssertEqual(TabPreferences.autoFill(capacity: 99).count, TabPreferences.maxTabs)
     }
 
+    func testAutoFillPutsAdminInTheFirstExtraSlotForOperators() {
+        XCTAssertEqual(
+            TabPreferences.autoFill(capacity: 6, isAdmin: true),
+            [.home, .proposals, .markets, .activity, .admin, .insights]
+        )
+        XCTAssertEqual(
+            TabPreferences.autoFill(capacity: 4, isAdmin: true),
+            TabPreferences.defaultTabs
+        )
+        XCTAssertFalse(TabPreferences.autoFill(capacity: 8, isAdmin: false).contains(.admin))
+    }
+
+    func testAdminTabAppearsOnlyAfterTheSessionIsMarkedAdmin() {
+        let prefs = TabPreferences(userDefaults: defaults, capacity: 6)
+        XCTAssertFalse(prefs.visibleTabs.contains(.admin))
+        prefs.setShowsAdminTab(true)
+        XCTAssertEqual(prefs.visibleTabs, [.home, .proposals, .markets, .activity, .admin, .insights])
+        prefs.setShowsAdminTab(false)
+        XCTAssertFalse(prefs.visibleTabs.contains(.admin))
+    }
+
+    func testPromoteAdminIsANoOpWithoutAdminAccess() {
+        let prefs = TabPreferences(userDefaults: defaults)
+        prefs.promote(.admin)
+        XCTAssertNil(prefs.dynamicTab)
+        XCTAssertFalse(prefs.visibleTabs.contains(.admin))
+    }
+
     func testTheFirstPinOrUnpinStopsTheAutoFill() {
         let prefs = TabPreferences(userDefaults: defaults)
         prefs.setCapacity(6)

@@ -8,10 +8,37 @@ Cursor local is down.  Paste-ready Mac brief: `docs/rollouts/2026-08-21-ios-adap
 
 Independent re-check of `docs/rollouts/2026-08-21-ios-adaptive-tabs-followups.md`: items C, D, and the XCTest half of A were already on `main` (#3023 `7ba178e1`, #3012 `c614391c`, Mac job 32529663287 `success`, 232/0).  Item B was still open.  PR #3027: file is `ios/SocraticTradeTests/LayoutMathTests.swift` (class names unchanged).  Mac job 32534166394 `success` (xcodegen 2.46.0, BUILD/TEST SUCCEEDED); generated pbxproj committed from the artifact.  Merged `origin/main` `b2ca4c14` into this branch (`a37a7b2e`); GitHub DIRTY state was an auto-merge of EFFORT-LOG + `.gitleaksignore`, both sides kept.  Do not block screenshots on it.  Screenshots / auto-fill veto / knobs need a local Grok Mac seat (Cursor local is down).  Paste-ready brief: `docs/rollouts/2026-08-21-ios-adaptive-tabs-mac-qa.md` -- start from `origin/main` in `~/apps/trading-grok-tabs`, not the drain worktree.  Rollout: `docs/rollouts/2026-08-21-ios-layout-math-tests-rename.md`.
 
+## 2026-08-21 CURSOR — iOS wide layout, Admin tab, gear/bell chrome
+
+Owner ask: iPad Air 11" / variable Mac windows, settings gear top-right on every tab, larger
+settings sheet on iPad/Mac, Admin Portal as an admin-only tab on all devices, delete Assets
+price alerts, bell top-left for notifications, and stop Admin "Back to Console" from loading
+the website inside the native webview.
+
+PR #3028 (`cursor/ios-wide-layout-admin-tab-0e2b`).  Regular width uses `.sidebarAdaptable` TabView
+plus the existing card-column scaffold (reflows when a Mac window is dragged).  Compact keeps
+the phone bar.  Gear is `gearshape` on every tab; bell opens the same notification inbox as
+Activity.  Admin is a first-class `AppTab` gated on `currentUser.isAdmin`; native rail of the
+eleven website admin pages with a fenced WKWebView that intercepts `/console`.  Linux VM has
+no xcodebuild — first Swift compile is CI.  iOS-only; no Coolify deploy.
+
+Head after owner `origin/main` merges: `472f3cfe` (pulled in #3032).  CI on that SHA was green:
+`verify`/`verify-hosted` run 32540455277 success; `ios-build` run 32540455303 success (unsigned
+xcodebuild + simulator tests).  Auto-merge is armed.  While that CI ran, #3031 landed on
+`main` (`d588387b`) and GitHub went CONFLICTING.  Real conflicts in `ActivityView.swift` and
+`MobileControlView.swift`.  Resolution: keep #3031's five Activity sections; keep this PR's
+`NotificationsInboxView` (Unread/All bell sheet); Assets More copy stays without price alerts.
+Do not TestFlight from this PR.
+
+Rollout: `docs/rollouts/2026-08-21-ios-wide-layout-admin-tab.md`.
+Local receipts: `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm run build` ok.
+Local `npm test` aborted (network 404s / single worker); CI `verify` is the JS test of
+record.
 ## 2026-08-21 CURSOR — Activity layout redesign (Alerts Center first)
 
 Owner: Activity/Runs were headache-inducing.  Website + iOS Activity are now five Title Case tabs in this order: Alerts Center, Notifications, Strategy Runs, Order Fills, Audit Log.  Default Alerts Center.  Former All unified feed is Audit Log.  Failed runs show wrapping English.  APNs is auto-included when the user has a live device.  Admins get system alerts.  Alpaca session close is no longer stamped Delayed Quote.  Push `?tab=` is additive so another agent's deep-link pairing is not smashed.
 
+PR #3031 on `cursor/activity-layout-redesign-085b`, squash `d588387b` on `main`.  `ios-build` green (233/0).  Merged.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
 PR #3031 merged to `main` as squash `d588387b` at 00:47:48Z.  `verify` + `ios-build` were green on `0e2d4dcf` (233 XCTests / 0 failures).  Live `/api/health` at 00:49Z still served `c6f33086` (#3032) — website auto-deploy is queued, not claimed.  iOS ships only via TestFlight.  Rollout: `docs/rollouts/2026-08-21-activity-layout-redesign.md`.
 
 # Current Status

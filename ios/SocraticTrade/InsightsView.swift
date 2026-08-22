@@ -32,7 +32,7 @@ struct InsightsView: View {
             insights.append(.init(
                 id: "account",
                 title: "Choose an Execution Account",
-                detail: "Open Account & Settings from Home to connect or select the account the agent should use.",
+                detail: "Open Account & Settings from the gear to connect or select the account the agent should use.",
                 systemImage: "person.crop.circle.badge.exclamationmark",
                 tone: .warning
             ))
@@ -79,22 +79,11 @@ struct InsightsView: View {
             ))
         }
 
-        let triggeredAlerts = snapshot.alerts.filter { $0.status == "triggered" }
-        if !triggeredAlerts.isEmpty {
-            insights.append(.init(
-                id: "triggered-alerts",
-                title: "\(triggeredAlerts.count) price alert\(triggeredAlerts.count == 1 ? " has" : "s have") triggered",
-                detail: "Review current prices and remove alerts you no longer need under Assets.",
-                systemImage: "bell.badge.fill",
-                tone: .attention
-            ))
-        }
-
         if insights.isEmpty {
             insights.append(.init(
                 id: "clear",
                 title: "No Immediate Action Needed",
-                detail: "The selected account is ready, the proposal queue is clear, and no tracked threshold needs attention.",
+                detail: "The selected account is ready and the proposal queue is clear.",
                 systemImage: "checkmark.seal.fill",
                 tone: .positive
             ))

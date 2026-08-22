@@ -32,20 +32,11 @@ struct HomeView: View {
         }
         .navigationTitle("Home")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    presentedSheet = .settings
-                } label: {
-                    Image(systemName: "person.crop.circle")
-                }
-                .accessibilityLabel("Account and settings")
-            }
-        }
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .settings:
                 AccountSettingsView()
+                    .adaptiveWideSheet(phoneDetents: [.large])
             }
         }
     }
@@ -101,7 +92,7 @@ private struct ReadinessChecklistHero: View {
 
                 if needsAccount {
                     Button(action: openSettings) {
-                        Label("Account & Settings", systemImage: "person.crop.circle")
+                        Label("Account & Settings", systemImage: "gearshape")
                             .font(.appBody.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .frame(minHeight: 44)
@@ -585,6 +576,7 @@ private struct PortfolioOverviewCard: View {
 }
 
 private struct DeskShortcutsCard: View {
+    @EnvironmentObject private var store: MobileStore
     @Binding var selectedTab: AppTab
 
     var body: some View {
@@ -596,6 +588,9 @@ private struct DeskShortcutsCard: View {
                     shortcut("Scan", systemImage: "tablecells", tab: .scan)
                     shortcut("Guardrails", systemImage: "shield.checkered", tab: .guardrails)
                     shortcut("Results", systemImage: "chart.xyaxis.line", tab: .results)
+                    if store.snapshot?.currentUser?.isAdmin == true {
+                        shortcut("Admin", systemImage: "wrench.and.screwdriver", tab: .admin)
+                    }
                 }
             }
         }
@@ -756,10 +751,6 @@ private struct HomeAttentionCard: View {
     let snapshot: MobileSnapshot
     @Binding var selectedTab: AppTab
 
-    private var armedAlerts: Int {
-        snapshot.alerts.filter { $0.status == "armed" }.count
-    }
-
     private var commandsInFlight: Int {
         snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running
     }
@@ -775,13 +766,6 @@ private struct HomeAttentionCard: View {
                     emphasize: snapshot.pendingProposals.count > 0
                 ) {
                     selectedTab = .proposals
-                }
-                AttentionRow(
-                    title: "Armed Price Alerts",
-                    value: "\(armedAlerts)",
-                    emphasize: armedAlerts > 0
-                ) {
-                    selectedTab = .markets
                 }
                 AttentionRow(
                     title: "Open Orders",
@@ -829,7 +813,7 @@ private struct AttentionRow: View {
     }
 }
 
-private struct AccountSettingsView: View {
+struct AccountSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var store: MobileStore
@@ -837,7 +821,6 @@ private struct AccountSettingsView: View {
 
     @State private var deleteIdentity = ""
     @State private var deletePhrase = ""
-    @State private var showingAdminPortal = false
 
     var body: some View {
         NavigationStack {
@@ -850,7 +833,6 @@ private struct AccountSettingsView: View {
                 LlmBudgetSection()
                 DataSourcesSection()
                 legalSection
-                adminSection
                 sessionSection
                 deletionSection
             }
@@ -878,24 +860,7 @@ private struct AccountSettingsView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingAdminPortal) {
-                AdminPortalView()
-            }
             .storeTransientAlerts()
-        }
-    }
-
-    /// Owner-only row — rendered solely when the server marks the session admin.
-    @ViewBuilder
-    private var adminSection: some View {
-        if store.snapshot?.currentUser?.isAdmin == true {
-            Section("Admin") {
-                Button {
-                    showingAdminPortal = true
-                } label: {
-                    Label("Admin Portal", systemImage: "wrench.and.screwdriver")
-                }
-            }
         }
     }
 

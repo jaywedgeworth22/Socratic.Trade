@@ -121,7 +121,7 @@ enum DeepLink {
             }
             return nil
         case "orders", "watchlist":
-            // Holdings, orders, watchlist, and alerts all live on the Assets tab.
+            // Holdings, orders, and watchlist live on the Assets tab.
             // A `?symbol=` query still lands here; path-only stays `.tab(.markets)` so
             // the APNs contract rows that only assert the tab keep passing.
             guard segments.count == 2 else { return nil }

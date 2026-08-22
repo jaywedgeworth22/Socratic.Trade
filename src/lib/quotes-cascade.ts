@@ -13,8 +13,7 @@ import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-fi
 import { normalizeSymbol } from "./money";
 import {
   isDelayedYahooFallbackQuote,
-  isYahooFallbackProvider,
-  SESSION_CLOSE_PROVIDER
+  isYahooFallbackProvider
 } from "./quote-delayed-fallback";
 import type { BrokerQuote, ConnectedAccount, TradingPolicy } from "./types";
 
@@ -93,7 +92,13 @@ export function isQuoteFresh(
   return ageMs <= maxAgeMs;
 }
 
-/** Broker tape the cascade should keep: live-fresh, or last-session close (not Yahoo delayed). */
+/**
+ * Broker tape the cascade should keep now.  Last-session close stays in
+ * `bestQuotes` for the end-of-cascade fallback — it must not stop Level 2/3.
+ * After #3031, an IEX 0-print filled by `fillMissingQuotesWithClose` was tagged
+ * `session-close` and treated as usable, so RTH names never reached snapshots
+ * or Yahoo and were sized at yesterday's close.
+ */
 export function isUsableBrokerQuote(
   quote: {
     asOf?: string;
@@ -107,10 +112,7 @@ export function isUsableBrokerQuote(
   nowMs: number,
   maxAgeMs: number = cascadeFreshMaxAgeMs()
 ): boolean {
-  if (isQuoteFresh(quote, nowMs, maxAgeMs)) return true;
-  const priced =
-    (typeof quote.price === "number" && quote.price > 0) || isTwoSidedLiveNbbo(quote);
-  return priced && quote.provider === SESSION_CLOSE_PROVIDER;
+  return isQuoteFresh(quote, nowMs, maxAgeMs);
 }
 
 /**
