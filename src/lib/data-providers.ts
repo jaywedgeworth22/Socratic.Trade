@@ -73,6 +73,11 @@ import {
   type ProviderFailureReceipt,
   type UpstreamFamilyCandidate
 } from "./evidence-facts";
+import {
+  AV_RAPIDAPI_OVERVIEW_CORE_FIELDS,
+  WAVE_B_GAP_FIELDS,
+  scarceProviderHasUsefulGap
+} from "./enrichment-coverage";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -1116,14 +1121,15 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   providers.push(new YahooFinanceEnrichmentProvider());
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Finnhub/AV so it supplies headlines/sentiment quickly and prevents rate limit exhaustion.
-  if (alpacaData.apiKey && alpacaData.secretKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId), alpacaData.source));
+  // Exactly one instance: apiKey-only still registers (secret optional on this news endpoint).
+  // Do not also push a second copy later when both key+secret are present.
+  if (alpacaData.apiKey) {
+    providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
+  }
   if (tiingo.key) providers.push(withHealthLane(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId), tiingo.source));
   if (fintech.key) providers.push(withHealthLane(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId), fintech.source));
   if (finnhub.key) providers.push(withHealthLane(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId), finnhub.source));
   if (twelvedata.key) providers.push(withHealthLane(new TwelveDataEnrichmentProvider(twelvedata.key, twelvedata.source, userId), twelvedata.source));
-  // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
-  // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
-  if (alpacaData.apiKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
   // AV supplies NEWS_SENTIMENT (sentiment/headlines) plus, as of 2026-08-02, a market-wide
   // EARNINGS_CALENDAR fallback for daysToEarnings (see AlphaVantageEnrichmentProvider.enrich).
   // When Alpaca news is already configured (the availability check above — apiKey presence), it
@@ -1220,10 +1226,14 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
     // Additional RapidAPI free-tier failover lanes. Working Pricing page (verified):
     //   real-time-finance-data: https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-finance-data/pricing
     // yh-finance / seeking-alpha hub listings currently return API not found (delisted);
-    // providers stay as scarce failover if a key gains access.
-    providers.push(withHealthLane(new YhFinanceApiDojoEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    // RapidAPI listing 403 / API not found — do not register unless explicitly re-enabled.
+    if (flagEnabled(process.env.YH_FINANCE_APIDOJO_ENABLED)) {
+      providers.push(withHealthLane(new YhFinanceApiDojoEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    }
     providers.push(withHealthLane(new RealTimeFinanceDataEnrichmentProvider(rapidApiKey, "env", userId), "env"));
-    providers.push(withHealthLane(new SeekingAlphaRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    if (flagEnabled(process.env.SEEKING_ALPHA_RAPIDAPI_ENABLED)) {
+      providers.push(withHealthLane(new SeekingAlphaRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    }
   }
   // Opt-in active circuit breaker: skip a lane whose db-health lane is currently `stoppedWorking`,
   // re-probing only after the backoff window. Default OFF so it can't silently black out a
@@ -1477,7 +1487,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       if (paidIndexes.length > 0) {
         const filledAfterFree = buildFilledBySymbol(freeIndexes);
         const gapSymbols = normalized.filter((symbol) =>
-          symbolHasCoverageGap(filledAfterFree.get(symbol) ?? new Set())
+          symbolHasCoverageGap(filledAfterFree.get(symbol) ?? new Set(), WAVE_B_GAP_FIELDS)
         );
         if (gapSymbols.length > 0) {
           const coveredFields = coveredFieldsFrom(filledAfterFree);
@@ -1566,8 +1576,9 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           const provider = this.providers[providerIndex];
           const fields = provider.suppliesFields ?? [];
           const gaps = normalized.filter((symbol) => {
-            const filled = filledBySymbol.get(symbol);
-            return fields.some((field) => !filled?.has(field as string));
+            const filled = filledBySymbol.get(symbol) ?? new Set<string>();
+            if (!fields.some((field) => !filled.has(field as string))) return false;
+            return scarceProviderHasUsefulGap(provider.name, fields as readonly string[], filled);
           });
           if (gaps.length === 0) return { providerIndex, run: { name: provider.name, data: {} } as ProviderRun };
           return { providerIndex, run: await run(provider, gaps, scarceContext) };
@@ -5101,27 +5112,30 @@ export class SteadyApiEnrichmentProvider implements MarketEnrichmentProvider {
     now: number,
     result: Record<string, SymbolEnrichment>
   ): Promise<void> {
-    // Short-circuit coverage hint (see EnrichmentContext doc comment): only skip the modules call
-    // when a free upstream already filled BOTH fields it would supply. The quote call has no such
-    // skip — App A's coverage hint never includes price-family fields, so checking would be a no-op.
+    // Skip the quote call when a prior wave already filled price (volume is optional extra).
+    // Wave C often arrives only because sector/industry is missing — modules can fill that
+    // without burning a RapidAPI quote reservation.  Do not reserve a quote unit when skipping.
     const covered = context?.coveredFields?.[symbol];
     const wantModules = !covered || !covered.has("sector") || !covered.has("industry");
+    const wantQuote = !covered || !covered.has("price");
 
     let quoteData: SymbolEnrichment = {};
-    const quoteAdmitted = tryReserveRapidApiCalls(this.name, 1, now) > 0;
-    if (quoteAdmitted) {
-      const tracker = { dispatched: false };
-      try {
-        const payload = await rapidApiGetJson(
-          this.host,
-          `${this.apiPathPrefix}/v1/markets/quote?${this.quoteSymbolParam}=${encodeURIComponent(symbol)}&type=STOCKS`,
-          this.apiKey,
-          { service: this.name, keySource: this.keySource, userId: this.userId },
-          tracker
-        );
-        quoteData = parseSteadyApiQuote(payload);
-      } catch {
-        if (!tracker.dispatched) refundRapidApiCalls(this.name, 1, now);
+    if (wantQuote) {
+      const quoteAdmitted = tryReserveRapidApiCalls(this.name, 1, now) > 0;
+      if (quoteAdmitted) {
+        const tracker = { dispatched: false };
+        try {
+          const payload = await rapidApiGetJson(
+            this.host,
+            `${this.apiPathPrefix}/v1/markets/quote?${this.quoteSymbolParam}=${encodeURIComponent(symbol)}&type=STOCKS`,
+            this.apiKey,
+            { service: this.name, keySource: this.keySource, userId: this.userId },
+            tracker
+          );
+          quoteData = parseSteadyApiQuote(payload);
+        } catch {
+          if (!tracker.dispatched) refundRapidApiCalls(this.name, 1, now);
+        }
       }
     }
 
@@ -5365,17 +5379,13 @@ export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentP
     }
     if (misses.length === 0) return result;
 
-    const overviewFields = [
-      "peRatio", "dividendYield", "eps", "sector", "industry", "pbRatio", "beta",
-      "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "epsGrowth", "analystBySource"
-    ] as const;
-
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
           const covered = context?.coveredFields?.[symbol];
-          const needOverview = !covered || overviewFields.some((f) => !covered.has(f));
+          // epsGrowth / analystBySource alone must not burn an OVERVIEW reservation.
+          const needOverview = !covered || AV_RAPIDAPI_OVERVIEW_CORE_FIELDS.some((f) => !covered.has(f));
           const needNews = !covered || !covered.has("sentiment") || !covered.has("headlines");
           if (!needOverview && !needNews) {
             result[symbol] = {};
@@ -6940,7 +6950,7 @@ export class YhFinanceApiDojoEnrichmentProvider implements MarketEnrichmentProvi
     this.keySource = keySource;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
     const now = Date.now();
@@ -6956,6 +6966,17 @@ export class YhFinanceApiDojoEnrichmentProvider implements MarketEnrichmentProvi
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
+          const covered = context?.coveredFields?.[symbol];
+          if (
+            covered &&
+            covered.has("price") &&
+            covered.has("volume") &&
+            covered.has("sector") &&
+            covered.has("industry")
+          ) {
+            result[symbol] = {};
+            return;
+          }
           const admitted = tryReserveRapidApiCalls("yh-finance-apidojo", 1, now) > 0;
           if (!admitted) { result[symbol] = {}; return; }
           const tracker = { dispatched: false };

@@ -239,6 +239,48 @@ describe("wave-two gate against the real SteadyApiEnrichmentProvider", () => {
   const buildMboum = () =>
     new SteadyApiEnrichmentProvider("mboum-finance", "mboum-finance.p.rapidapi.com", "", "symbol", "symbol", false, "test-key", "env");
 
+  it("does not call a scarce provider when all of its suppliesFields are already filled", async () => {
+    const yahoo = freeStub("yahoo-finance", {
+      AAPL: {
+        companyName: "Apple Inc.",
+        price: 200,
+        intradayChangePct: 1.1,
+        volume: 1_000_000,
+        headlines: ["Apple news"],
+        sentiment: 60
+      }
+    });
+    const scarce = scarceStub("real-time-finance-data", [
+      "companyName",
+      "price",
+      "intradayChangePct",
+      "volume",
+      "headlines",
+      "sentiment"
+    ]);
+    await new CascadingEnrichmentProvider([yahoo, scarce]).enrich(["AAPL"]);
+    expect(scarce.calls).toEqual([]);
+  });
+
+  it("does not call SteadyAPI when price-family + sector/industry are filled (leftover 52w is not enough)", async () => {
+    const yahoo = freeStub("yahoo-finance", {
+      AAPL: {
+        price: 200,
+        volume: 1_000_000,
+        sector: "Technology",
+        industry: "Consumer Electronics",
+        companyName: "Apple Inc."
+      }
+    });
+    const scarce = scarceStub(
+      "yahoo-finance15",
+      ["price", "intradayChangePct", "volume", "companyName", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "sector", "industry"],
+      { AAPL: { fiftyTwoWeekHigh: 260 } }
+    );
+    await new CascadingEnrichmentProvider([yahoo, scarce]).enrich(["AAPL"]);
+    expect(scarce.calls).toEqual([]);
+  });
+
   it("issues no request and reserves no quota when wave one covered every field", async () => {
     process.env.PROVIDER_QUOTA_MBOUM_PER_DAY = "5";
     let fetchCount = 0;
@@ -285,5 +327,33 @@ describe("wave-two gate against the real SteadyApiEnrichmentProvider", () => {
     expect(result.AAPL?.price).toBe(200);
     // Some of the 5-call allowance is now spent.
     expect(tryReserveRapidApiCalls("mboum-finance", 5)).toBeLessThan(5);
+  });
+
+  it("fetches modules only (zero quote reserves) when price+volume are covered and sector is missing", async () => {
+    process.env.PROVIDER_QUOTA_MBOUM_PER_DAY = "5";
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ sector: "Technology", industry: "Consumer Electronics" }), { status: 200 });
+    });
+
+    const yahoo = freeStub("yahoo-finance", {
+      AAPL: {
+        price: 200,
+        volume: 1_000_000,
+        companyName: "Apple Inc.",
+        fiftyTwoWeekHigh: 260,
+        fiftyTwoWeekLow: 160
+      }
+    });
+    const result = await new CascadingEnrichmentProvider([yahoo, buildMboum()]).enrich(["AAPL"]);
+
+    expect(urls.some((u) => u.includes("/v1/markets/quote"))).toBe(false);
+    expect(urls.some((u) => u.includes("/v1/markets/stock/modules"))).toBe(true);
+    expect(result.AAPL?.sector).toBe("Technology");
+    // Quote was not reserved; remaining budget is 5 minus the modules attempt(s).
+    const remaining = tryReserveRapidApiCalls("mboum-finance", 5);
+    expect(remaining).toBeGreaterThan(0);
+    expect(remaining).toBeLessThan(5);
   });
 });

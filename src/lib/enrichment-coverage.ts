@@ -101,6 +101,95 @@ export const COVERAGE_GAP_FIELDS: readonly string[] = [
   "headlines"
 ];
 
+/**
+ * Scan-useful fields that justify Wave B (keyed non-scarce) spend.  The gate
+ * drops quote microstructure (bid/ask/vwap/asOf) and rare specialty (leverage,
+ * ROA/ROE, FCF, institution %) so Yahoo filling the scan core does not force
+ * Finnhub/ROIC on every symbol.  Keep COVERAGE_GAP_FIELDS for reports — those
+ * still track bid/ask/vwap/asOf and specialty leftovers.
+ */
+export const WAVE_B_GAP_FIELDS: readonly string[] = [
+  "price",
+  "intradayChangePct",
+  "sentiment",
+  "peRatio",
+  "analystRating",
+  "sector",
+  "industry",
+  "volume",
+  "dividendYield",
+  "eps",
+  "companyName",
+  "pbRatio",
+  "shortPercentOfFloat",
+  "beta",
+  "fiftyTwoWeekHigh",
+  "fiftyTwoWeekLow",
+  "insiderSentiment",
+  "epsGrowth",
+  "daysToEarnings",
+  "headlines"
+];
+
+/** Price-family + profile fields that justify a SteadyAPI / YH-15 quote or modules call. */
+export const STEADY_API_USEFUL_FIELDS: readonly string[] = ["price", "volume", "sector", "industry"];
+
+/** AV RapidAPI OVERVIEW spend is justified by these core fund fields, not epsGrowth alone. */
+export const AV_RAPIDAPI_OVERVIEW_CORE_FIELDS: readonly string[] = [
+  "peRatio",
+  "dividendYield",
+  "eps",
+  "sector",
+  "industry",
+  "pbRatio",
+  "beta",
+  "fiftyTwoWeekHigh",
+  "fiftyTwoWeekLow"
+];
+
+const WAVE_B_GAP_FIELD_SET = new Set<string>(WAVE_B_GAP_FIELDS);
+
+/**
+ * Narrow field subset that justifies dispatching a scarce Wave C provider.
+ * Full `suppliesFields` is too wide (52w, companyName, epsGrowth, targets) and
+ * burns RapidAPI quote-only calls after Yahoo already filled the scan core.
+ */
+export function scarceProviderUsefulFields(
+  providerName: string,
+  suppliesFields: readonly string[]
+): readonly string[] {
+  const supply = new Set(suppliesFields);
+  const pick = (keys: readonly string[]): string[] => keys.filter((key) => supply.has(key));
+  if (
+    providerName === "mboum-finance" ||
+    providerName === "yahoo-finance15" ||
+    providerName === "yh-finance-apidojo"
+  ) {
+    return pick(STEADY_API_USEFUL_FIELDS);
+  }
+  if (providerName === "alpha-vantage-rapidapi") {
+    return pick([...AV_RAPIDAPI_OVERVIEW_CORE_FIELDS, "sentiment", "headlines"]);
+  }
+  if (providerName === "filingapi") {
+    // Insiders RapidAPI already owns insiderSentiment; do not double-spend the
+    // FilingAPI trial key on the same gap.
+    return pick(["companyName", "sector", "industry", "daysToEarnings"]);
+  }
+  const useful = suppliesFields.filter((field) => WAVE_B_GAP_FIELD_SET.has(field));
+  return useful.length > 0 ? useful : suppliesFields;
+}
+
+/** True when a scarce provider can still add a scan-useful field for this symbol. */
+export function scarceProviderHasUsefulGap(
+  providerName: string,
+  suppliesFields: readonly string[],
+  filled: ReadonlySet<string>
+): boolean {
+  const useful = scarceProviderUsefulFields(providerName, suppliesFields);
+  if (useful.length === 0) return suppliesFields.some((field) => !filled.has(field));
+  return useful.some((field) => !filled.has(field));
+}
+
 export interface EnrichmentFieldCoverage {
   field: string;
   filledCount: number;
