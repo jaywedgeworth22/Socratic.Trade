@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 /** Resize public/icon.png to the website PNG sizes Safari and some
- *  Android installers need.  Re-run after the master favicon changes:
+ *  Android installers need.  Prefer the master generator, which keeps
+ *  the transparent canvas (on purpose) and also writes the Android
+ *  foreground + favicon.ico:
  *
  *    node scripts/generate-favicon-st.mjs
- *    node scripts/generate-pwa-icons.mjs
  *
  *  Website only.  Do not write the iOS App Icon
  *  (ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png).
