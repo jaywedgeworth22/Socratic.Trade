@@ -70,7 +70,7 @@ Per subscription element (`provider{id,name,displayName}`, `name`, `status`,
 `sync-provider-knobs.sh` reaches Infisical exactly like `scripts/infisical-run.mjs`
 / `scripts/infisical-prod-cutover.sh`:
 
-1. `ssh -i ~/.ssh/hetzner root@135.181.192.190` to the Coolify box.
+1. `ssh -i ~/.ssh/hetzner root@<HETZNER_OLD_IP_RETIRED>` to the Coolify box.
 2. On the box, read `INFISICAL_CLIENT_ID/CLIENT_SECRET/PROJECT_ID/ENV/PATH` from
    `/data/coolify/applications/m1os7ijf31bg3fanil152e4b/.env` (creds never leave the
    box, never printed).

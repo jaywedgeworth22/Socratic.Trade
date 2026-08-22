@@ -30,7 +30,7 @@ The production app on socratictrade.com is fine.
 1. **Verify** the app is reachable: `curl -I https://socratictrade.com/api/health` — expect 200.
 2. **Coolify dashboard fix options:**
    - Hard-refresh the Coolify dashboard (`host.jays.services`) — often clears the stale pane.
-   - If the pane still hangs, SSH to `135.181.192.190` and check:
+   - If the pane still hangs, SSH to `<HETZNER_OLD_IP_RETIRED>` and check:
      ```bash
      docker stats --no-stream
      free -h

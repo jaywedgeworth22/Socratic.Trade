@@ -1,4 +1,4 @@
-# 2026-07-09 — Hetzner server migration: 91.98.44.8 (4GB fsn1) → 135.181.192.190 (8GB hel1)
+# 2026-07-09 — Hetzner server migration: 91.98.44.8 (4GB fsn1) → <HETZNER_OLD_IP_RETIRED> (8GB hel1)
 
 ## Summary
 
@@ -6,7 +6,7 @@ Owner-directed migration of the entire production hosting box. The 4 GB Falkenst
 server (`ubuntu-4gb-fsn1-1`, `91.98.44.8`) that ran Coolify + `socratic-trade-prod`
 (= socratictrade.com) + the `github-runner` service repeatedly hit memory/disk limits
 (OOM-wedged builds 2026-07-07/08, disk-full 500s, 76%-disk pages). The owner provisioned
-an 8 GB Helsinki server (`ubuntu-8gb-hel1-2`, `135.181.192.190`, 75 GB disk, 4 vCPU,
+an 8 GB Helsinki server (`ubuntu-8gb-hel1-2`, `<HETZNER_OLD_IP_RETIRED>`, 75 GB disk, 4 vCPU,
 same `~/.ssh/hetzner` key) and asked CLAUDE (this session) to move everything and flip
 Cloudflare DNS.
 
@@ -36,7 +36,7 @@ via the API recipe would have re-introduced the owner-interactive GitHub App ste
    (restore marker travels with it, so boot skips the R2 restore); start traefik +
    the app from Coolify's generated compose; flip six Cloudflare A records
    (`jays.services` apex + `*` + `prod`; `socratictrade.com` apex + `*` + `admin`) from
-   `91.98.44.8` → `135.181.192.190`; verify health through the edge.
+   `91.98.44.8` → `<HETZNER_OLD_IP_RETIRED>`; verify health through the edge.
 4. **Decommission-standby:** all old-box containers stopped with `--restart=no`
    (a reboot must NOT resurrect the old scheduler — double-trading risk). Box left
    intact as rollback until the owner deletes it in the Hetzner console.
@@ -85,7 +85,7 @@ All run 2026-07-09 ~18:10–18:20 CDT (23:10–23:20Z), after cutover:
 errors in 3 h). Root cause: the `congress.trade` zone runs Bot Fight Mode and had a
 Cloudflare **IP Access Rule whitelisting `91.98.44.8`** ("CI self-hosted runner …
 bypass Bot Fight Mode for deploy health/migrate"). The new IP needs the same rule:
-whitelist `135.181.192.190` on the `congress.trade` zone (then delete the old-IP rule
+whitelist `<HETZNER_OLD_IP_RETIRED>` on the `congress.trade` zone (then delete the old-IP rule
 at decommission). The permission classifier declined to let this session create a
 firewall rule on a zone outside the migration scope — deliberate, surfaced to owner.
 Also affects Congress.Trade CI health checks from the relocated deploy runners.
@@ -117,7 +117,7 @@ box's `authorized_keys` at decommission time.
 ## Same-evening follow-ups (2026-07-09 ~19:00–21:00 CDT)
 
 - **congress.trade fixed:** owner authorized the IP Access Rule (whitelist
-  `135.181.192.190`, Bot Fight Mode bypass, rule id `00ce7036ca114749a31cdcc0bc031503`);
+  `<HETZNER_OLD_IP_RETIRED>`, Bot Fight Mode bypass, rule id `00ce7036ca114749a31cdcc0bc031503`);
   congress-stream SSE and the health dependency went `ok:true` immediately.
 - **First 8 GB build proven:** AG took the deployer seat (CLAUDE's trigger was
   permission-blocked; claim withdrawn on #agent-sync); the deploy built main HEAD from

@@ -135,10 +135,12 @@ if [ "$nudge_ok" -eq 0 ] && [ -n "${COOLIFY_DEPLOY_WEBHOOK_URL:-}" ]; then
   fi
 fi
 
-# Coolify 4.x deploy API.  Bearer lives in the environment, never in the URL,
-# never logged.  UUID defaults to the live ST application on host.jays.services.
 if [ "$nudge_ok" -eq 0 ] && [ -n "${COOLIFY_DEPLOY:-}" ]; then
-  APP_UUID="${COOLIFY_ST_APP_UUID:-d83b1aykr03uwr32yhgzaiay}"
+  APP_UUID="${COOLIFY_ST_APP_UUID:-${COOLIFY_APP_UUID:-}}"
+  if [ -z "$APP_UUID" ]; then
+    log "COOLIFY_ST_APP_UUID not set; skipping Coolify deploy API trigger"
+    exit 0
+  fi
   DEPLOY_HOST="${COOLIFY_API_HOST:-https://host.jays.services}"
   http_code="$(curl -sS --max-time 20 -o /tmp/rth-drain-deploy.out -w '%{http_code}' \
     -X POST \
