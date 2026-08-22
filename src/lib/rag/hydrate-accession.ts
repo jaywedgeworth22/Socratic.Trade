@@ -1,12 +1,13 @@
 // Local-only money-path hydrate (PR B).  No EDGAR, no fetch, fail-open.
-// Order: worker chunks.json -> local artifact/sections.json -> FTS on the bare
-// SEC accession -> earningscalls_transcripts / ROIC sidecar.
+// Order: worker chunks.json -> local artifact/sections.json -> eight-k sidecar
+// -> FTS on the bare SEC accession (filter then limit) -> earningscalls / ROIC.
 
 import fs from "fs";
 import path from "path";
 import { getDb } from "../db";
 import { readRoicTranscriptArtifact } from "../roic-archive-artifacts";
 import {
+  eightKReadPaths,
   listSecAccessionDirs,
   padCik10,
   readFirstExistingSync,
@@ -22,7 +23,7 @@ export type HydrateMissReason =
   | "empty_text"
   | "invalid_accession";
 
-export type HydrateSource = "chunks.json" | "artifact" | "fts" | "transcript";
+export type HydrateSource = "chunks.json" | "artifact" | "eight-k" | "fts" | "transcript";
 
 export interface HydrateAccessionInput {
   accession: string;
@@ -175,21 +176,29 @@ function lookupCik(accession: string, symbol?: string): string | null {
   return null;
 }
 
-function loadChunksJson(accession: string, cik: string | null): string | null {
-  const candidates: string[] = [];
-  if (cik) {
-    candidates.push(...secArtifactReadPaths(cik, accession, 1, "chunks.json"));
-  }
+function collectNamedJsonFromAccessionDirs(accession: string, suffix: string, exactName: string): string[] {
+  const found: string[] = [];
   for (const dir of listSecAccessionDirs(accession)) {
     try {
       for (const name of fs.readdirSync(dir)) {
-        if (name.endsWith("-chunks.json") || name === "chunks.json") {
-          candidates.push(path.join(dir, name));
+        if (name.endsWith(suffix) || name === exactName) {
+          found.push(path.join(dir, name));
         }
       }
     } catch {
       // skip
     }
+  }
+  return found;
+}
+
+function loadChunksJson(accession: string, cik: string | null): string | null {
+  const candidates: string[] = [];
+  if (cik) {
+    // Known CIK: only the deterministic corpus/legacy paths.  Do not walk every CIK dir.
+    candidates.push(...secArtifactReadPaths(cik, accession, 1, "chunks.json"));
+  } else {
+    candidates.push(...collectNamedJsonFromAccessionDirs(accession, "-chunks.json", "chunks.json"));
   }
   return readFirstExistingSync(candidates);
 }
@@ -198,19 +207,14 @@ function loadSectionsJson(accession: string, cik: string | null): string | null 
   const candidates: string[] = [];
   if (cik) {
     candidates.push(...secArtifactReadPaths(cik, accession, 1, "sections.json"));
-  }
-  for (const dir of listSecAccessionDirs(accession)) {
-    try {
-      for (const name of fs.readdirSync(dir)) {
-        if (name.endsWith("-sections.json") || name === "sections.json") {
-          candidates.push(path.join(dir, name));
-        }
-      }
-    } catch {
-      // skip
-    }
+  } else {
+    candidates.push(...collectNamedJsonFromAccessionDirs(accession, "-sections.json", "sections.json"));
   }
   return readFirstExistingSync(candidates);
+}
+
+function loadEightKSidecar(accession: string): string | null {
+  return readFirstExistingSync(eightKReadPaths(accession, "main.txt"));
 }
 
 function hydrateFromFts(
@@ -220,33 +224,35 @@ function hydrateFromFts(
   try {
     const db = getDb();
     const hash = String(input.content_hash ?? "").trim();
+    const item = wantedItemCode(input.itemCode);
     const params: string[] = [accession, accession, accession];
     let sql = `
       SELECT content_hash, text FROM document_chunks_fts
-      WHERE accession = ?
+      WHERE (accession = ?
          OR accession GLOB ('*:' || ? || ':*')
-         OR accession GLOB (? || ':*')
+         OR accession GLOB (? || ':*'))
     `;
     if (hash && HEX32_RE.test(hash)) {
       sql += " AND content_hash = ?";
       params.push(hash);
     }
-    sql += " LIMIT 24";
+    if (item) {
+      // Filter item in SQL before LIMIT so a flood of other items cannot displace the hit.
+      sql += " AND (text LIKE ? OR text LIKE ? OR text LIKE ?)";
+      params.push(`%item ${item}%`);
+      params.push(`%item${item}%`);
+      params.push(`[${item}%`);
+    }
+    if (hash && HEX32_RE.test(hash) && !item) {
+      sql += " ORDER BY content_hash";
+    }
+    sql += " LIMIT 8";
     const rows = db.prepare(sql).all(...params) as Array<{ content_hash?: string; text?: string }>;
     const texts = rows.map((row) => String(row.text ?? "").trim()).filter(Boolean);
     if (texts.length === 0) return null;
-    const item = wantedItemCode(input.itemCode);
-    if (item) {
-      const filtered = rows
-        .map((row) => String(row.text ?? "").trim())
-        .filter((text) => new RegExp(`\\bitem\\s*${item.replace(".", "\\.")}\\b`, "i").test(text) || text.startsWith(`[${item}`));
-      if (filtered.length > 0) {
-        return hit(filtered.join("\n\n"), "fts", { contentHash: hash || undefined, itemCode: item });
-      }
-    }
     return hit(texts.join("\n\n"), "fts", {
       contentHash: hash || rows[0]?.content_hash,
-      itemCode: input.itemCode
+      itemCode: item || input.itemCode
     });
   } catch {
     return null;
@@ -330,6 +336,13 @@ export async function hydrateAccession(input: HydrateAccessionInput): Promise<Hy
     if (sectionsRaw) {
       const picked = pickFromLocalChunks(parseSectionsJson(sectionsRaw), input);
       if (picked?.text) return hit(picked.text, "artifact", picked);
+    }
+
+    if (timedOut(started, input)) return miss("hydrate_budget");
+    const eightKRaw = loadEightKSidecar(accession);
+    if (eightKRaw) {
+      const eightKHit = hit(eightKRaw, "eight-k");
+      if (!eightKHit.missedReason) return eightKHit;
     }
 
     if (timedOut(started, input)) return miss("hydrate_budget");

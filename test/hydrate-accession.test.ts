@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyVersionedMigrations, getDb } from "../src/lib/db";
-import { insertDocumentChunkFts } from "../src/lib/db-learning";
+import { insertDocumentChunkFts, insertSecFiling } from "../src/lib/db-learning";
 import { hashContent } from "../src/lib/rag/chunk";
+import { eightKWritePath, writeCorpusFileSync } from "../src/lib/rag/corpus-layout";
 import { hydrateAccession } from "../src/lib/rag/hydrate-accession";
 import { writeLocalArtifact } from "../src/lib/web-sources/sec-filings";
 
@@ -15,6 +16,10 @@ const PARENT_1A =
   "Item 1A. Risk Factors. Export-control changes could reduce data-center demand and impair a going-concern assumption.";
 const ITEM7 =
   "Item 7. MD&A. Revenue grew and we raised full-year guidance on data-center demand.";
+const ITEM8_TABLE =
+  "Item 8. Financial Statements. Table of cash flows for the quarter ended June 30.";
+const EIGHT_K_BODY =
+  "Item 5.02. Departure of Directors. The CFO resigned effective immediately and the board named an interim CFO.";
 
 describe("hydrateAccession", () => {
   const dataDir = mkdtempSync(join(tmpdir(), "hydrate-acc-"));
@@ -30,6 +35,7 @@ describe("hydrateAccession", () => {
     getDb().exec(`
       DELETE FROM document_chunks_fts_index;
       DELETE FROM document_chunks_fts;
+      DELETE FROM sec_filings;
     `);
   });
 
@@ -79,6 +85,104 @@ describe("hydrateAccession", () => {
     });
     expect(fromHash.text).toContain("Export-control");
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("reads 8-K sidecar without fetch", async () => {
+    const accession = "0001045810-26-000801";
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("hydrate must not hit the network");
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    writeCorpusFileSync(eightKWritePath(accession, "main.txt"), EIGHT_K_BODY);
+    const result = await hydrateAccession({ accession, symbol: "NVDA" });
+    expect(result.missedReason).toBeUndefined();
+    expect(result.source).toBe("eight-k");
+    expect(result.text).toContain("interim CFO");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("FTS with itemCode does not return a non-matching Item 8 table as the 1A hit", async () => {
+    const accession = "0001045810-26-000802";
+    const hash1A = hashContent(PARENT_1A);
+    for (let i = 0; i < 30; i += 1) {
+      const table = `${ITEM8_TABLE} row ${i}`;
+      insertDocumentChunkFts(hashContent(table), "NVDA", "sec-edgar", accession, table);
+    }
+    insertDocumentChunkFts(hash1A, "NVDA", "sec-edgar", accession, PARENT_1A);
+
+    const result = await hydrateAccession({
+      accession,
+      itemCode: "1A",
+      symbol: "NVDA"
+    });
+    expect(result.missedReason).toBeUndefined();
+    expect(result.source).toBe("fts");
+    expect(result.text).toContain("Risk Factors");
+    expect(result.text).toContain("going-concern");
+    expect(result.text).not.toContain("Financial Statements");
+  });
+
+  it("does not need listSecAccessionDirs when cik is known", async () => {
+    const accession = "0001045810-26-000803";
+    insertSecFiling({
+      accession,
+      cik: CIK,
+      ticker: "NVDA",
+      form: "10-K",
+      filedAt: "2026-01-15",
+      acceptedAt: "2026-01-15T21:00:00.000Z",
+      status: "parsed",
+      chunkCount: 0
+    });
+
+    // Decoy under a different CIK — only a blind walk would find it.
+    const otherCik = "0000320193";
+    const decoyDir = join(dataDir, "corpus", "sec", otherCik, accession);
+    mkdirSync(decoyDir, { recursive: true });
+    writeFileSync(
+      join(decoyDir, "1-chunks.json"),
+      JSON.stringify([
+        {
+          text: PARENT_1A,
+          parent_text: PARENT_1A,
+          content_hash: hashContent(PARENT_1A),
+          section: "1A. Risk Factors",
+          itemCode: "1A"
+        }
+      ]),
+      "utf8"
+    );
+
+    const missedWalk = await hydrateAccession({
+      accession,
+      itemCode: "1A",
+      symbol: "NVDA"
+    });
+    expect(missedWalk.source).not.toBe("chunks.json");
+
+    await writeLocalArtifact(
+      CIK,
+      accession,
+      1,
+      "chunks.json",
+      JSON.stringify([
+        {
+          text: PARENT_1A,
+          parent_text: PARENT_1A,
+          content_hash: hashContent(PARENT_1A),
+          section: "1A. Risk Factors",
+          itemCode: "1A"
+        }
+      ])
+    );
+    const fromKnownCik = await hydrateAccession({
+      accession,
+      itemCode: "1A",
+      symbol: "NVDA"
+    });
+    expect(fromKnownCik.source).toBe("chunks.json");
+    expect(fromKnownCik.text).toContain("Risk Factors");
   });
 
   it("fail-opens on a miss without throwing", async () => {

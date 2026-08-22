@@ -92,6 +92,36 @@ export function secArtifactReadPaths(
   return paths;
 }
 
+/** Bare accession directory name for 8-K sidecars (digits-digits-digits). */
+export function eightKAccessionDir(accession: string): string {
+  const trimmed = String(accession ?? "").trim();
+  const match = trimmed.match(/\d{10}-\d{2}-\d{6}/);
+  return match ? match[0] : trimmed;
+}
+
+export type EightKSidecarFile = "main.txt" | "main.html";
+
+export function eightKWritePath(
+  accession: string,
+  fileName: EightKSidecarFile = "main.txt",
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  return path.join(corpusKindDir("eight-k", env), eightKAccessionDir(accession), fileName);
+}
+
+/** New corpus path first, then legacy DATA_DIR/sec-artifacts/{accession}/. */
+export function eightKReadPaths(
+  accession: string,
+  fileName: EightKSidecarFile = "main.txt",
+  env: NodeJS.ProcessEnv = process.env
+): string[] {
+  const relative = path.join(eightKAccessionDir(accession), fileName);
+  const paths = [path.join(corpusKindDir("eight-k", env), relative)];
+  const legacy = legacyKindDir("eight-k", env);
+  if (legacy) paths.push(path.join(legacy, relative));
+  return paths;
+}
+
 export function roicArtifactWriteRoot(dataRootArg?: string, env: NodeJS.ProcessEnv = process.env): string {
   return corpusKindDir("roic", envWithDataDir(dataRootArg, env));
 }
