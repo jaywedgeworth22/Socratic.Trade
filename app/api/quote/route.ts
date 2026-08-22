@@ -10,6 +10,12 @@ import {
 import { resolveRequestUser } from "@/lib/request-user";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { runQuoteEnrichmentSingleFlight } from "@/lib/quote-singleflight";
+import {
+  CASCADE_BUDGET_MS,
+  YAHOO_SUMMARY_GRACE_MS,
+  startCascadeBudget,
+  withinBudget
+} from "@/lib/quote-cascade-budget";
 import { fetchYahooFinanceQuote } from "@/lib/yahoo-finance";
 
 export const dynamic = "force-dynamic";
@@ -28,67 +34,16 @@ export const dynamic = "force-dynamic";
 // symbol against the scan's candidate universe and would be fabricated for a symbol
 // fetched outside a scan run.
 //
-// CASCADE_BUDGET_MS stops waiting AND aborts the enrich AbortSignal so Wave C does not
-// keep spending after the client already has a Yahoo (+ durable) returnable floor.
+// Yahoo chart + quoteSummary grace (YAHOO_SUMMARY_GRACE_MS) is the HTTP floor.  The 6s
+// CASCADE_BUDGET_MS still aborts Wave C, but the response does not wait for it when the
+// floor is already returnable.
 
 const SYMBOL_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
-const CASCADE_BUDGET_MS = 6_000;
 
 type EnrichmentOutcome =
   | { status: "ready"; data: SymbolEnrichment }
   | { status: "failed"; error: unknown };
 type BudgetedOutcome = EnrichmentOutcome | { status: "timed-out" };
-
-/** AbortController + timer for the on-demand enrichment cascade budget. */
-export function startCascadeBudget(budgetMs: number = CASCADE_BUDGET_MS): {
-  signal: AbortSignal;
-  abort: (reason?: unknown) => void;
-  clear: () => void;
-} {
-  const controller = new AbortController();
-  const abort = (reason?: unknown) => {
-    if (controller.signal.aborted) return;
-    const err =
-      reason instanceof Error
-        ? reason
-        : Object.assign(new Error(String(reason ?? "cascade aborted")), { name: "AbortError" });
-    controller.abort(err);
-  };
-  const timer = setTimeout(() => abort(new Error("cascade budget elapsed")), budgetMs);
-  return {
-    signal: controller.signal,
-    abort,
-    clear: () => clearTimeout(timer)
-  };
-}
-
-/** Resolve when the promise settles, the budget elapses, or `signal` aborts — whichever first. */
-export function withinBudget(
-  promise: Promise<EnrichmentOutcome>,
-  budgetMs: number,
-  signal?: AbortSignal
-): Promise<BudgetedOutcome> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (outcome: BudgetedOutcome) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (signal) signal.removeEventListener("abort", onAbort);
-      resolve(outcome);
-    };
-    const timer = setTimeout(() => finish({ status: "timed-out" }), budgetMs);
-    const onAbort = () => finish({ status: "timed-out" });
-    if (signal) {
-      if (signal.aborted) {
-        finish({ status: "timed-out" });
-        return;
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-    void promise.then((outcome) => finish(outcome));
-  });
-}
 
 export async function GET(request: Request) {
   const raw = new URL(request.url).searchParams.get("symbol") ?? "";
@@ -112,6 +67,17 @@ export async function GET(request: Request) {
     )
       .then((data) => ({ status: "ready" as const, data }))
       .catch((error) => ({ status: "failed" as const, error }));
+    // Capture rich as soon as it settles so a fast cascade still merges, without holding
+    // the HTTP response for the 6s Wave C budget when Yahoo already has a floor.
+    let richPeek: EnrichmentOutcome | { status: "timed-out" } = { status: "timed-out" };
+    void richPromise.then(
+      (outcome) => {
+        richPeek = outcome;
+      },
+      (error) => {
+        richPeek = { status: "failed", error };
+      }
+    );
     const fastPromise = fetchYahooFinanceQuote(symbol)
       .then((quote): EnrichmentOutcome =>
         quote
@@ -123,16 +89,24 @@ export async function GET(request: Request) {
       .then((data) => ({ status: "ready" as const, data }))
       .catch((error) => ({ status: "failed" as const, error }));
 
-    const [durable, fast, yahoo, rich] = await Promise.all([
-      loadDurableQuoteSeed(symbol),
-      fastPromise,
-      withinBudget(yahooPromise, CASCADE_BUDGET_MS),
-      // budget.signal: timer abort at CASCADE_BUDGET_MS cancels waiting AND CascadingEnrichmentProvider
-      // throwIfEnrichmentAborted checkpoints so Wave C stops spending after the client deadline.
-      withinBudget(richPromise, CASCADE_BUDGET_MS, budget.signal)
-    ]);
+    const [durable, fast] = await Promise.all([loadDurableQuoteSeed(symbol), fastPromise]);
+    const yahoo = await withinBudget(yahooPromise, YAHOO_SUMMARY_GRACE_MS);
+    // One extra tick so a fast cascade's then-handler can populate richPeek before we peek.
+    await Promise.resolve();
     const fastData = fast.status === "ready" ? fast.data : {};
     const yahooData = yahoo.status === "ready" ? yahoo.data : {};
+    const floorReady =
+      fast.status === "ready"
+      || enrichmentHasValues(durable)
+      || (yahoo.status === "ready" && enrichmentHasValues(yahooData));
+
+    let rich: BudgetedOutcome;
+    if (floorReady) {
+      rich = richPeek;
+      budget.abort(new Error("yahoo floor ready"));
+    } else {
+      rich = await withinBudget(richPromise, CASCADE_BUDGET_MS, budget.signal);
+    }
     const richData = rich.status === "ready" ? rich.data : {};
     const enrichment = composeOnDemandQuote([durable, fastData, yahooData, richData]);
 

@@ -30,4 +30,18 @@ describe("sliceRagDossierForSymbols", () => {
     expect(sliceRagDossierForSymbols(pack, ["TSLA"])).toBe("");
     expect(sliceRagDossierForSymbols("", ["AAPL"])).toBe("");
   });
+
+  it("keeps Item 1A when facts/Form 4 cards would otherwise fill the 4k cap", () => {
+    const cards = `[SEC Structured Financial Facts for CIK 0000320193]\n${"- Assets: 1\n".repeat(120)}`;
+    const form4 = `[SEC Insider Transactions (Form 4) for AAPL]\n${"- 2026-08-01: CEO BUY 1\n".repeat(40)}`;
+    const section = [
+      "### RAG Dossier for AAPL",
+      cards,
+      form4,
+      "Item 1A. Supply-chain concentration and China export controls."
+    ].join("\n\n");
+    const sliced = sliceRagDossierForSymbols(section, ["AAPL"]);
+    expect(sliced).toContain("Item 1A. Supply-chain concentration");
+    expect(sliced.indexOf("Item 1A")).toBeLessThan(sliced.indexOf("[SEC Structured"));
+  });
 });

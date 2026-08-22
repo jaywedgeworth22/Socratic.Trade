@@ -3,14 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  arkWritePath,
   corpusKindDir,
   corpusRoot,
   eightKReadPaths,
   eightKWritePath,
   firstExistingPath,
+  form4WritePath,
+  persistCorpusSnapshot,
   readFirstExistingSync,
   secArtifactReadPaths,
-  secArtifactWritePath
+  secArtifactWritePath,
+  thirteenFWritePath
 } from "../src/lib/rag/corpus-layout";
 
 describe("corpus-layout", () => {
@@ -81,5 +85,28 @@ describe("corpus-layout", () => {
     expect(reads[0]).toBe(writePath);
     expect(reads[1]).toBe(join(legacyDir, "main.txt"));
     expect(readFirstExistingSync(reads)).toBe("legacy eight-k body");
+  });
+
+  it("writes Form 4, 13F, and ARK snapshots under CORPUS_DIR", () => {
+    const root = mkdtempSync(join(tmpdir(), "corpus-idea-"));
+    process.env.CORPUS_DIR = join(root, "corpus");
+    delete process.env.DATA_DIR;
+    const accession = "0000320193-26-000044";
+    expect(form4WritePath(accession, "ownership.xml")).toBe(
+      join(root, "corpus", "form4", accession, "ownership.xml")
+    );
+    expect(thirteenFWritePath("320193", "2026-03-31")).toBe(
+      join(root, "corpus", "thirteen-f", "0000320193", "2026-03-31.json")
+    );
+    expect(arkWritePath("ARKK", "2026-08-21")).toBe(
+      join(root, "corpus", "ark", "ARKK", "2026-08-21.json")
+    );
+
+    expect(persistCorpusSnapshot(form4WritePath(accession), "<XML>form4</XML>")).toBe(true);
+    expect(readFirstExistingSync([form4WritePath(accession)])).toBe("<XML>form4</XML>");
+    expect(persistCorpusSnapshot(thirteenFWritePath("320193", "2026-03-31"), "{\"holdings\":[]}")).toBe(true);
+    expect(readFirstExistingSync([thirteenFWritePath("320193", "2026-03-31")])).toContain("holdings");
+    expect(persistCorpusSnapshot(arkWritePath("ARKK", "2026-08-21"), "{\"fund\":\"ARKK\"}")).toBe(true);
+    expect(readFirstExistingSync([arkWritePath("ARKK", "2026-08-21")])).toContain("ARKK");
   });
 });

@@ -21,7 +21,7 @@ Yahoo quoteSummary is a healthy floor for PE/EPS/div/beta/52w/sector/D/E/FCF.  L
 | SteadyAPI quote after Yahoo price | Paid RapidAPI quote reservation. | Already skipped when `price` covered (prior commit). |
 | Marketstack before Yahoo history | Last-resort OHLCV on a healthy Yahoo chart. | Yahoo first (prior commit). |
 | FilingAPI 401 | In-memory only; retried forever. | Durable fingerprint (prior commit). |
-| Quote sheet waits on 6s cascade | Chart floor is ready early. | AbortSignal exists; returning the floor first is still P1. |
+| Quote sheet waits on 6s cascade | Chart floor is ready early. | `/api/quote` returns Yahoo (+ durable + 1.5s quoteSummary) without waiting Wave C. |
 
 Keepout: do not retune gather's 8-minute wall (`06df80cf`).
 
@@ -33,7 +33,7 @@ Green already runs `assembleProposerDossier` (default ON).  That is not enough f
 | --- | --- | --- |
 | Red never saw filings | `RED_TEAM_REVIEW_CONTEXT_KEYS` omitted RAG bodies on purpose.  Hash parity ≠ text.  Green can cite 1A; Red cannot read it. | Thin `reviewerFilingsPack`: proposed symbols only, 4k/name, 8k total.  Not the 24k hose. |
 | Hydrate replaced chunks with unbounded FTS joins | One 1A ate the 24k filings family.  Later deep names vanished. | Cap attach at 4,000 chars. |
-| Live 10-K path has no `chunks.json` | Hydrate's first sources miss unless the worker ran. | 8-K sidecar + FTS filter (sibling slice).  Full `sections.json` on `ingestFiling` is still P1. |
+| Live 10-K path has no `chunks.json` | Hydrate's first sources miss unless the worker ran. | Live `ingestFiling` writes `sections.json` + `chunks.json`.  Already-ledgered accessions still miss sidecars (P1 leftover). |
 | EarningsCalls no signal extras | ROIC writes management + 8 Q&A; EarningsCalls dumped full body under default write-class. | Sibling slice: `storeSignalSectionDocuments` + local FTS. |
 | Analogs dumped as fat case files | Learning family crowded.  Green had no analog job line. | Sibling slice: compact analog cards + Green job. |
 | Default `full-body` | New 10-K/Q still double-write processed **plus** body. | Do **not** flip this week.  Flip only after hydrate is live-proven. |
@@ -41,7 +41,7 @@ Green already runs `assembleProposerDossier` (default ON).  That is not enough f
 ## What Green vs Red actually see (after this PR)
 
 - Green: scout k=1 stub (1,200 chars) / deep k=8, one 24k filings hose, facts/Form 4/13F/ARK SQLite cards, analog cards, coaching.
-- Red: structured `candidatesUnderReview` + **thin filings pack for proposed names** + analogs + scorecards.  Still not the full Green hose.
+- Red: structured `candidatesUnderReview` + **thin filings pack for proposed names** (1A/MD&A first, then cards, 4k/name, 8k total) + analogs + scorecards.  Still not the full Green hose.
 
 The models will not "read weeks of 10-Ks."  They will read a bounded dossier, recover 1A/MD&A locally, and let Red dissent on the same sentences Green used.
 

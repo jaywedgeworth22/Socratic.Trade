@@ -22,7 +22,7 @@ Code: `part-size: 10MB` + `concurrency: 2` on the B2 replica; inventory now meas
 - FilingAPI 401 fingerprint is durable across restarts.
 - One Alpaca news provider, not two.
 - History: Yahoo floor before Marketstack last_resort; faster Yahoo 429 fail when Marketstack can still answer.
-- `/api/quote` passes AbortSignal and aborts the cascade at the 6s budget.
+- `/api/quote` returns the Yahoo chart floor after a 1.5s quoteSummary grace.  It does not wait the 6s Wave C budget.  Helpers live in `src/lib/quote-cascade-budget.ts` so the route file only exports `GET`.
 
 ### RAG
 
@@ -36,6 +36,11 @@ PR B without flipping `RAG_PINECONE_WRITE_CLASS` (still `full-body`):
 - Analog inject uses compact cards (situation / return_pct / holding_days / risk_exit) plus a Green analog job line (`agentic-strategy@2.17.0`).
 - Red gets `reviewerFilingsPack` (proposed symbols only, 4k/name, 8k total).  Not the 24k Green hose.
 - Hydrate attach capped at 4,000 chars.  Live `ingestFiling` writes `chunks.json` + `sections.json`.  8-K summary ingest writes `corpus/eight-k/{accession}/main.txt`.
+- Form 4 XML + summary, 13F JSON, and ARK JSON snapshots write under `data/corpus/{form4,thirteen-f,ark}` (moveable `CORPUS_DIR`).
+- Red `reviewerFilingsPack` reorders 1A/MD&A/8-K ahead of facts/Form 4/13F cards so the 4k cap cannot hide the sentences Green used.
+- Deep dossier reserves Item 7 MD&A as well as 1A.  Scout hydrates a 2k 1A when local text exists.
+- Default `full-body` ingest skips extra signal-section Pinecone writes (still no write-class flip).
+- `runtime-health.ts` uses bare `fs`/`http`/`path` so Next webpack no longer dies on `node:` UnhandledSchemeError.
 
 Follow-up slice (same branch, no write-class flip):
 
@@ -50,9 +55,9 @@ Follow-up slice (same branch, no write-class flip):
 - `scripts/litestream-l1-suffix-heal.py`
 - `src/lib/litestream-remote-inventory.ts`, `src/lib/runtime-health.ts`
 - `src/lib/data-providers.ts`, `src/lib/enrichment-coverage.ts`, `src/lib/filingapi-auth.ts`, `src/lib/history.ts`
-- `app/api/quote/route.ts`
-- `src/lib/rag/corpus-layout.ts`, `hydrate-accession.ts`, `proposer-dossier.ts`, `document-summarizer.ts`
-- `src/lib/web-sources/sec-filings.ts`, `src/lib/roic-archive-artifacts.ts`, `src/lib/earningscalls-transcripts.ts`
+- `app/api/quote/route.ts`, `src/lib/quote-cascade-budget.ts`, `next.config.mjs`
+- `src/lib/rag/corpus-layout.ts`, `hydrate-accession.ts`, `proposer-dossier.ts`, `reviewer-filings-pack.ts`, `document-summarizer.ts`
+- `src/lib/web-sources/sec-filings.ts`, `sec.ts`, `thirteen-f.ts`, `ark-holdings.ts`, `src/lib/roic-archive-artifacts.ts`, `src/lib/earningscalls-transcripts.ts`
 - `src/lib/strategy.ts`, `src/lib/vector-db.ts`
 - Tests listed in Verification State
 
@@ -95,13 +100,26 @@ cd ~/apps/trading-grok-litestream-cascade
 
 Heal dry-run: L1 holes 0; keep 48 L1; delete 13533 L1 + 403 L2 + 35 L3.
 
+Follow-up slice (quote floor + corpus + Red 1A, 2026-08-22):
+
+```bash
+npx tsc --noEmit
+./node_modules/.bin/vitest run \
+  test/quote-route.test.ts \
+  test/corpus-layout.test.ts \
+  test/web-sources-sec.test.ts \
+  test/reviewer-filings-pack.test.ts \
+  test/proposer-dossier.test.ts
+# tsc clean; 5 files / 36 tests passed
+```
+
 ## Next Steps & Blockers
 
-- Confirm L2 `fileCount >= 1` after heal + next compaction.
+- Confirm L2 `fileCount >= 1` after heal + next compaction.  Mac heal python is stuck SYN_SENT to api003.backblaze.com; run heal from the Hetzner box, not this Mac.
 - Coolify `stop_grace_period` on the next planned non-RTH bounce.
 - After a live strategy run proves hydrate 1A from local files: operator may set Infisical `RAG_PINECONE_WRITE_CLASS=highlight+signal`.  Not this week.
-- Quote route still waits on the full 6s cascade before returning the Yahoo chart floor (P1).
-- Form 4 XML / 13F / ARK files are still SQLite-only (declared corpus kinds unused).
+- Already-ledgered 10-K/Q still miss `chunks.json`/`sections.json` until worker/backfill (P1 leftover).
+- Companyfacts JSON is still SQLite-only (not a corpus kind).
 - Claude gather-budget P0 remains that seat's.
 
 ## Zero-Code Findings

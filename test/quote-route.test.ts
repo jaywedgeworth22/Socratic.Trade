@@ -83,6 +83,28 @@ describe("/api/quote", () => {
     });
   });
 
+  it("returns the Yahoo chart floor without waiting the 6s cascade budget", async () => {
+    const enrich = vi.fn((_symbols: string[], context?: { signal?: AbortSignal }) => {
+      void context;
+      return new Promise<Record<string, never>>(() => undefined);
+    });
+    vi.mocked(getEnrichmentProvider).mockReturnValue({ name: "slow-test", configured: true, enrich });
+    const { GET } = await import("../app/api/quote/route");
+
+    const response = await GET(new Request("http://localhost/api/quote?symbol=LRCX"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      symbol: "LRCX",
+      companyName: "Lam Research Corporation",
+      price: 77.5,
+      volume: 2_500_000
+    });
+    expect(enrich).toHaveBeenCalledTimes(1);
+    expect(enrich.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
   it("returns the fast company identity and current quote when the rich cascade exceeds its budget", async () => {
     vi.useFakeTimers();
     let seenSignal: AbortSignal | undefined;
@@ -130,7 +152,8 @@ describe("/api/quote", () => {
       configured: true,
       enrich
     });
-    const { GET, startCascadeBudget, withinBudget } = await import("../app/api/quote/route");
+    const { GET } = await import("../app/api/quote/route");
+    const { startCascadeBudget, withinBudget } = await import("../src/lib/quote-cascade-budget");
 
     const pending = GET(new Request("http://localhost/api/quote?symbol=LRCX"));
     await vi.advanceTimersByTimeAsync(6_000);

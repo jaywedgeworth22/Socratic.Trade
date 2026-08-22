@@ -717,21 +717,23 @@ export async function ingestFiling(
     );
   }
   assertSecFilingLease(leaseGuard);
-  const signal = await storeSignalSectionDocuments({
-    ticker,
-    accession: filingRef.accession,
-    form: filingRef.docType,
-    title: document.title,
-    publishedAt: filingRef.filedAt,
-    acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt,
-    source: "sec-edgar",
-    url: filingRef.url,
-    chunks: localChunks,
-    userId,
-    ...(leaseGuard ? { leaseGuard } : {})
-  }, storeDocument);
-  assertSecFilingLease(leaseGuard);
+  // Default full-body already upserts the whole filing.  Extra signal-section
+  // documents would double WU this week (write-class flip still forbidden).
   if (!writesFullBodyToPinecone()) {
+    const signal = await storeSignalSectionDocuments({
+      ticker,
+      accession: filingRef.accession,
+      form: filingRef.docType,
+      title: document.title,
+      publishedAt: filingRef.filedAt,
+      acceptanceDatetime: filingRef.acceptanceDateTime ?? filingRef.filedAt,
+      source: "sec-edgar",
+      url: filingRef.url,
+      chunks: localChunks,
+      userId,
+      ...(leaseGuard ? { leaseGuard } : {})
+    }, storeDocument);
+    assertSecFilingLease(leaseGuard);
     insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, localChunks.length, {
       pineconeWriteClass: writeClass,
       pineconeVectorCount: signal.indexed
@@ -810,7 +812,7 @@ export async function ingestFiling(
     runWithActiveVectorCommitProof(result.managedCommitProof, () => {
       insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted, {
         pineconeWriteClass: writeClass,
-        pineconeVectorCount: result.attempted + signal.indexed
+        pineconeVectorCount: result.attempted
       });
       audit("sec_filing_ingest", {
         ticker,
@@ -820,7 +822,7 @@ export async function ingestFiling(
         chunks: result.attempted,
         attempted: result.attempted,
         pinecone_write_class: writeClass,
-        pinecone_vector_count: result.attempted + signal.indexed
+        pinecone_vector_count: result.attempted
       });
     });
   } catch (err) {

@@ -168,6 +168,13 @@ function chunkLooksLike1A(chunk: RetrievedChunk): boolean {
   return /\b1a\b/i.test(section);
 }
 
+function chunkLooksLikeMda(chunk: RetrievedChunk): boolean {
+  const section = String(chunk.section ?? "");
+  const item = parseItemCodeFromSection(section).toUpperCase();
+  if (item === "7" || item === "7A") return true;
+  return /\bmd&a\b|management.?s discussion|\bitem\s*7\b/i.test(section);
+}
+
 function hashFromChunk(chunk: RetrievedChunk): string | undefined {
   const md = chunk.metadata ?? {};
   const raw = md.content_hash ?? md.contentHash;
@@ -237,7 +244,15 @@ export async function assembleProposerDossier(
 
   const tenKAbstract = abstracts.find((row) => coverageKey(row.sourceType) === "10-k");
   const hydrateMisses: string[] = [];
-  if (depth === "deep" && tenKAbstract && !combined.some(chunkLooksLike1A)) {
+  const pushReserved = (reservedChunk: RetrievedChunk) => {
+    if (depth === "scout") {
+      combined = [reservedChunk];
+      return;
+    }
+    if (combined.length >= limit) combined = [...combined.slice(0, limit - 1), reservedChunk];
+    else combined.push(reservedChunk);
+  };
+  if (tenKAbstract && !combined.some(chunkLooksLike1A)) {
     const reserved = await hydrateAccession({
       accession: tenKAbstract.accession,
       itemCode: "1A",
@@ -245,19 +260,38 @@ export async function assembleProposerDossier(
       nowMs: input.nowMs
     });
     if (reserved.text) {
-      const reservedChunk: RetrievedChunk = {
+      pushReserved({
         id: `hydrate:1A:${tenKAbstract.accession}`,
-        text: reserved.text,
+        text: depth === "scout" ? capHydrateAttach(reserved.text, 2_000) : reserved.text,
         score: 0.99,
         source: "local-hydrate",
         doc_type: "10-k",
         section: "1A. Risk Factors",
         metadata: { accession: tenKAbstract.accession, itemCode: "1A" }
-      };
-      if (combined.length >= limit) combined = [...combined.slice(0, limit - 1), reservedChunk];
-      else combined.push(reservedChunk);
+      });
     } else {
       hydrateMisses.push(`1A:${tenKAbstract.accession}`);
+    }
+  }
+  if (depth === "deep" && tenKAbstract && !combined.some(chunkLooksLikeMda)) {
+    const reserved = await hydrateAccession({
+      accession: tenKAbstract.accession,
+      itemCode: "7",
+      symbol,
+      nowMs: input.nowMs
+    });
+    if (reserved.text) {
+      pushReserved({
+        id: `hydrate:7:${tenKAbstract.accession}`,
+        text: reserved.text,
+        score: 0.98,
+        source: "local-hydrate",
+        doc_type: "10-k",
+        section: "7. MD&A",
+        metadata: { accession: tenKAbstract.accession, itemCode: "7" }
+      });
+    } else {
+      hydrateMisses.push(`7:${tenKAbstract.accession}`);
     }
   }
 

@@ -18,6 +18,7 @@ import { normalizeSymbol } from "../money";
 import { resolveSourceNumber } from "../source-settings";
 import { retryBackoffMs } from "./congress";
 import { BROWSER_UA, politeFetchText } from "./http";
+import { arkWritePath, persistCorpusSnapshot } from "../rag/corpus-layout";
 import type { WebSourceRefreshResult } from "./types";
 
 const DATASET_KEY = "webSource:ark:dataset";
@@ -286,6 +287,10 @@ export async function refreshArkHoldings(now: number = Date.now(), force = false
         };
       });
       replaceArkFundDay(rows);
+      persistCorpusSnapshot(
+        arkWritePath(rows[0].fund, asOf),
+        JSON.stringify({ fund: rows[0].fund, asOf, fetchedAt, holdings: rows })
+      );
       freshRows += rows.length;
     } catch (error) {
       warning = error instanceof Error ? error.message : "ark fetch failed";

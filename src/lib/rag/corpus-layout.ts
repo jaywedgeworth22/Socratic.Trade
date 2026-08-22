@@ -122,6 +122,73 @@ export function eightKReadPaths(
   return paths;
 }
 
+export type Form4SidecarFile = "ownership.xml" | "summary.json";
+
+export function form4WritePath(
+  accession: string,
+  fileName: Form4SidecarFile = "ownership.xml",
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  return path.join(corpusKindDir("form4", env), eightKAccessionDir(accession), fileName);
+}
+
+export function form4ReadPaths(
+  accession: string,
+  fileName: Form4SidecarFile = "ownership.xml",
+  env: NodeJS.ProcessEnv = process.env
+): string[] {
+  return [form4WritePath(accession, fileName, env)];
+}
+
+export function thirteenFWritePath(
+  filerCik: string,
+  periodEnd: string,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const period = String(periodEnd ?? "").trim().replace(/[^0-9-]/g, "") || "unknown";
+  return path.join(corpusKindDir("thirteen-f", env), padCik10(filerCik), `${period}.json`);
+}
+
+export function thirteenFReadPaths(
+  filerCik: string,
+  periodEnd: string,
+  env: NodeJS.ProcessEnv = process.env
+): string[] {
+  return [thirteenFWritePath(filerCik, periodEnd, env)];
+}
+
+export function arkWritePath(
+  fund: string,
+  asOf: string,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const safeFund = String(fund ?? "").trim().replace(/[^A-Za-z0-9._-]/g, "_") || "unknown";
+  const day = String(asOf ?? "").trim().replace(/[^0-9-]/g, "") || "unknown";
+  return path.join(corpusKindDir("ark", env), safeFund, `${day}.json`);
+}
+
+export function arkReadPaths(
+  fund: string,
+  asOf: string,
+  env: NodeJS.ProcessEnv = process.env
+): string[] {
+  return [arkWritePath(fund, asOf, env)];
+}
+
+/** Best-effort corpus snapshot.  Never throws into an ingest path. */
+export function persistCorpusSnapshot(filePath: string, content: string): boolean {
+  try {
+    writeCorpusFileSync(filePath, content);
+    return true;
+  } catch (err) {
+    console.warn(
+      `[corpus] snapshot failed ${filePath}:`,
+      err instanceof Error ? err.message : err
+    );
+    return false;
+  }
+}
+
 export function roicArtifactWriteRoot(dataRootArg?: string, env: NodeJS.ProcessEnv = process.env): string {
   return corpusKindDir("roic", envWithDataDir(dataRootArg, env));
 }

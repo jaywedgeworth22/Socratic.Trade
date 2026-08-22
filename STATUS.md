@@ -1,14 +1,14 @@
 # Current Status
 
-## 2026-08-22 GROK — Litestream L2/L3 + cascade last-resort + RAG hydrate (IN PROGRESS)
+## 2026-08-22 GROK — Litestream L2/L3 + cascade last-resort + RAG hydrate (IN PR #3041)
 
-Branch `grok/litestream-cascade-rag` in `~/apps/trading-grok-litestream-cascade`.  Boards 1e3df744 / b88b6675 / f7ffb62f.  Diagnosis: `docs/audits/2026-08-22-cascade-rag-diagnosis.md`.  PR #3041.
+Branch `grok/litestream-cascade-rag` in `~/apps/trading-grok-litestream-cascade`.  Boards 1e3df744 / b88b6675 / f7ffb62f.  Diagnosis: `docs/audits/2026-08-22-cascade-rag-diagnosis.md`.
 
-Live `/api/health` still `storageDegraded` (L2/L3 since 2026-08-18).  B2 L1-suffix heal still applying.  Do not bounce Coolify.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Keepout: Claude gather-budget 06df80cf.
+Live `/api/health` still `storageDegraded` (L2/L3 since 2026-08-18).  Mac heal python is stuck SYN_SENT to B2 after ~2h — do not bounce Coolify.  Do not flip `RAG_PINECONE_WRITE_CLASS`.  Keepout: Claude gather-budget 06df80cf.
 
-Cascade: Yahoo `analystBySource` now fills `analystRating` so Wave B is not ghost-open; headlines/sentiment dropped from WAVE_B (Alpaca owns news); RapidAPI last-resort no longer spends on news-only holes; Wave B paid providers intersect WAVE_B fields only.
+Cascade: Yahoo `analystBySource` aliases `analystRating`; WAVE_B drops news; RapidAPI skips news-only; paid Wave B intersects WAVE_B only.  `/api/quote` returns the Yahoo floor after 1.5s quoteSummary grace instead of waiting the 6s cascade.
 
-RAG: PR B hydrate/dossier + 8-K sidecar + EarningsCalls signal/FTS + analog compact cards + thin Red `reviewerFilingsPack` + hydrate attach cap 4k + live `ingestFiling` writes `chunks.json`/`sections.json`.  Write-class still `full-body`.
+RAG: PR B + 8-K sidecar + EarningsCalls signal/FTS + analog cards + thin Red pack that **prioritizes 1A/MD&A over facts/Form 4 cards** + hydrate 4k cap + live `chunks.json` + Form4/13F/ARK corpus snapshots.  Deep dossier reserves Item 7 MD&A.  Scout hydrates a capped 1A when local text exists.  Full-body ingest skips extra signal-section Pinecone writes (no write-class flip).  Webpack land blocker: `runtime-health.ts` uses bare `fs`/`http`/`path`.
 
 ## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
 

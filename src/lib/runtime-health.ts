@@ -1,6 +1,13 @@
-import { request } from "node:http";
-import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+// Bare specifiers (not `node:`-prefixed): this module is reachable from
+// litestream-remote-inventory -> scheduler -> background-worker-startup, which Next's
+// webpack build traverses.  A `node:`-scheme request is handled by webpack's scheme
+// plugin BEFORE resolve.alias, so `"node:fs": false` cannot neutralize it and the
+// build dies with UnhandledSchemeError.  Bare specifiers go through resolve.fallback
+// (next.config.mjs maps fs/path/http to false for client/edge).  Same pattern as
+// src/lib/apns.ts and src/lib/kalshi.ts.
+import { request } from "http";
+import { closeSync, openSync, readSync, readdirSync, statSync } from "fs";
+import { basename, dirname, join } from "path";
 import { getGitSha } from "./git-sha";
 
 export interface RuntimeReleaseIdentity {
