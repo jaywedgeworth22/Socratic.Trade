@@ -1526,10 +1526,10 @@ describe("broker-held short buy-stops (Alpaca)", () => {
     symbol, quantity, averageCost, marketValue: quantity * averageCost
   });
 
-  it("is enabled on Alpaca when short selling is on, and off on Robinhood", () => {
+  it("is enabled on Alpaca even when shortSellingEnabled is off, and off on Robinhood or when explicitly disabled", () => {
     expect(brokerStopsForShortsEnabled(alpacaShortPolicy("S"))).toBe(true);
     expect(brokerStopsForShortsEnabled(alpacaShortPolicy("S", { brokerStopsForShorts: false }))).toBe(false);
-    expect(brokerStopsForShortsEnabled(alpacaShortPolicy("S", { shortSellingEnabled: false }))).toBe(false);
+    expect(brokerStopsForShortsEnabled(alpacaShortPolicy("S", { shortSellingEnabled: false }))).toBe(true);
     expect(brokerStopsForShortsEnabled({ ...alpacaShortPolicy("S"), activeBroker: "robinhood" })).toBe(false);
   });
 
@@ -1555,7 +1555,7 @@ describe("broker-held short buy-stops (Alpaca)", () => {
     });
   });
 
-  it("does not place a short buy-stop when short selling is off", async () => {
+  it("places a short buy-stop even when short selling is off (existing shorts remain protected)", async () => {
     const r = await reconcileBrokerProtectiveStops({
       userId: "local",
       policy: alpacaShortPolicy("SS-2", { shortSellingEnabled: false }),
@@ -1565,8 +1565,8 @@ describe("broker-held short buy-stops (Alpaca)", () => {
       executionMode: "broker/paper",
       running: true
     });
-    expect(r.placed).toBe(0);
-    expect(gw.placed).toHaveLength(0);
+    expect(r.placed).toBe(1);
+    expect(gw.placed).toHaveLength(1);
   });
 
   it("cancels the cover stop when the short is closed", async () => {

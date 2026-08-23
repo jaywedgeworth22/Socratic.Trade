@@ -46,8 +46,8 @@ export const ESSENTIALS: FieldDef[] = [
     hint: `What a per-symbol lock does.  Advisory (default) is a receipt the agent can override.  Block still honors autonomyOverride — never a hard cage.`
   },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
-  { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on", hint: "Allows the system to run scheduled or event-triggered strategy scans during extended hours (pre-market and after-hours)." },
-  { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on", hint: "Permits the agent to place orders configured to fill outside regular market hours." }
+  { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on", hint: "Allows the system to run scheduled or event-triggered strategy scans during extended hours (pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET)." },
+  { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on", hint: "Permits the agent to place orders configured to fill outside regular market hours (pre-market 4:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET)." }
 ];
 
 export const SOCRATIC_OVERRIDE: FieldDef[] = [
@@ -109,7 +109,7 @@ export const PROTECTIVE_STOPS: FieldDef[] = [
   { path: "brokerBracketsEnabled", label: "Broker-held brackets", kind: "bool", hint: `Stop/take-profit legs rest at the broker (where supported) so protection survives app downtime.  Turning this OFF is looser.  ${ADVISORY_NOTE}`, looserWhen: "off" },
   { path: "brokerTrailingStops", label: "Broker-held trailing stops", kind: "bool", looserWhen: "off", hint: `With a trailing % set: on Alpaca REST, a native trailing_stop order (the broker moves the trigger itself, even while the app is down); an Alpaca MCP-endpoint account instead gets the SAME app-ratcheted resting stop as Robinhood (MCP has no native trailing parameter, so the trigger only moves on the app's own tick cadence, not continuously); on live Robinhood a resting stop the app ratchets upward each cycle (needs Robinhood resting stops ON).  Turning this OFF keeps trailing app-managed only.  ${ADVISORY_NOTE}` },
   { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", looserWhen: "off", hint: "Opt-in true broker-side stop for live Robinhood positions (Robinhood cannot hold OCO brackets).  Also the gate for broker-held trailing on Robinhood." },
-  { path: "allowExtendedHoursSyntheticStops", label: "App stops in extended hours", kind: "bool", looserWhen: "on" },
+  { path: "allowExtendedHoursSyntheticStops", label: "App stops in extended hours", kind: "bool", looserWhen: "on", hint: "Continues monitoring and executing synthetic stop-losses during extended hours (pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET)." },
   { path: "riskRules.protectWhileHalted", label: "Protect while halted", kind: "bool", looserWhen: "off", hint: "Allows synthetic stops to continue monitoring and executing protective exits even while trading is halted." }
 ];
 
@@ -121,8 +121,8 @@ export const PANIC_BRAKE: FieldDef[] = [
 ];
 
 export const SHORTS: FieldDef[] = [
-  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account.  Live shorts are Alpaca-only.  Every short must carry a short stop-loss.  ${ADVISORY_NOTE}` },
-  { path: "brokerStopsForShorts", label: "Broker-held short buy-stops", kind: "bool", looserWhen: "off", hint: `On Alpaca, rest a GTC buy-stop above the market for each open short so a cover survives app downtime.  Default on when shorting is on.  Off keeps shorts on the app monitor only.  ${ADVISORY_NOTE}` },
+  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account.  Live shorts are Alpaca-only.  Every short must carry a short stop-loss.  Turning off short selling blocks opening new short positions; existing shorts remain protected.  ${ADVISORY_NOTE}` },
+  { path: "brokerStopsForShorts", label: "Broker-held short buy-stops", kind: "bool", looserWhen: "off", hint: `On Alpaca, rest a GTC buy-stop above the market for each open short so a cover survives app downtime.  Default on.  Off keeps shorts on the app monitor only.  ${ADVISORY_NOTE}` },
   { path: "maxShortOrderNotional", label: "Max short order", kind: "money", optional: true, looserWhen: "up" },
   { path: "maxShortExposurePct", label: "Max short exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
   { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Defaults to 8%.  Every short carries a stop — a short without one is rejected." }

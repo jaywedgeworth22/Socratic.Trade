@@ -464,7 +464,6 @@
   .con-bar-ctl,
   .con-cmdk-trigger,
   .con-icon-btn,
-  .con-toggle,
   .con-nav-item,
   .con-scope-row,
   .con-cmdk-item,
@@ -477,7 +476,6 @@
   .con-bar-ctl:not(.con-bar-ctl-scope),
   .con-cmdk-trigger,
   .con-icon-btn,
-  .con-toggle,
   .con-watch-btn,
   .con-toast-dismiss {
     min-width: 44px;
@@ -763,6 +761,19 @@
 .con-toggle:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Touch hit target without deforming visual pill shape */
+@media (pointer: coarse) {
+  .con-toggle::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* ── Meter (spend / consumption gauges) ── */

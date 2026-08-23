@@ -7729,9 +7729,8 @@ export function generateProactiveRiskProposals(
       }
       exitSide = "sell";
     } else {
-      // Short: profit when price FALLS; exit a breach with a COVER. Only managed when
-      // short selling is enabled (the only path that can open a short in the first place).
-      if (!policy.shortSellingEnabled) continue;
+      // Short: profit when price FALLS; exit a breach with a COVER. Open shorts remain
+      // actively protected with stop-loss covers even if short selling is turned off.
       const returnPct = ((pos.averageCost - currentPrice) / pos.averageCost) * 100;
       const baseShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
       const effShortStop = effectiveStopPct(sym, baseShortStop, beta);
@@ -7837,7 +7836,6 @@ export function planTakeProfitTrims(
     if (!currentPrice || currentPrice <= 0) continue;
 
     const isShort = pos.quantity < 0;
-    if (isShort && !policy.shortSellingEnabled) continue; // only manage shorts the app could have opened
     const returnPct = isShort
       ? ((pos.averageCost - currentPrice) / pos.averageCost) * 100
       : ((currentPrice - pos.averageCost) / pos.averageCost) * 100;

@@ -162,12 +162,11 @@ export function desiredBrokerStopKind(policy: TradingPolicy, executionMode: Exec
 }
 
 /**
- * Broker-held buy-stops for shorts.  Default ON when short selling is on.
+ * Broker-held buy-stops for shorts.  Default ON when on Alpaca.
  * Live shorts stay Alpaca-only — Robinhood MCP cannot short, and unofficial
  * Webull is never a placement venue.
  */
 export function brokerStopsForShortsEnabled(policy: TradingPolicy): boolean {
-  if (policy.shortSellingEnabled !== true) return false;
   if (policy.brokerStopsForShorts === false) return false;
   return policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
 }

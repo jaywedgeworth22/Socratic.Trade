@@ -1,6 +1,8 @@
 # Current Status
 
-## 2026-08-22 — Litestream L2/L3 empty wedge RESOLVED (ops heal)
+## 2026-08-23 — Active Management for Held Short Positions When Short Selling Disabled
+
+Fixed position management across strategy proactive risk exits, take-profit trims, synthetic stop monitor, broker protective stops, and console UI to manage and protect existing short positions (`quantity < 0`) regardless of the `shortSellingEnabled` toggle. The toggle now strictly gates opening new short positions (`proposal.side === "short"`), while held shorts receive full stop-loss protection, trailing stops, and resting broker buy-stops on Alpaca. Rollout: `docs/rollouts/2026-08-23-manage-existing-shorts.md`.
 
 The `litestream tier 2 empty wedged` alert was cleared by the L1-suffix heal.
 Live root cause: B2 L1 had **4 non-contiguous TXID holes** (`85fd4->92b5`,
