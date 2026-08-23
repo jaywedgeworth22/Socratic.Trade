@@ -51,6 +51,7 @@ import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
 import { ModelStatsButton } from "../components/model-stats-drawer";
+import { resolveScoringWeightCommit } from "../lib/number-commit";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
@@ -446,7 +447,7 @@ function AccountScopedStrategyPage() {
   const autoSaveModels = useAutoSave();
   // Scoring weights: local text while typing each factor, persist on blur (per-field patch —
   // the server deep-merges scoringWeights, see commitWeight below).
-  const [weightsOverlay, setWeightsOverlay] = useState<Partial<Record<keyof ScoringWeights, number>>>({});
+  const [weightsDrafts, setWeightsDrafts] = useState<Partial<Record<keyof ScoringWeights, string>>>({});
   const autoSaveWeights = useAutoSave();
   // Presets ("Apply to this account") is a discrete action button, not auto-saved.
   const [busy, setBusy] = useState<string | null>(null);
@@ -625,12 +626,19 @@ function AccountScopedStrategyPage() {
     });
   };
 
-  // Scoring weights: one factor per blur, skip the write if unchanged from the saved value.
-  const commitWeight = (key: keyof ScoringWeights, next: number, saved: number) => {
-    if (next === saved) return;
-    autoSaveWeights.save(() => savePolicy({ scoringWeights: { [key]: next } }, policy.connectedAccountId).then(() => refresh()), {
-      onError: () => setWeightsOverlay((d) => ({ ...d, [key]: saved }))
+  // Scoring weights: one factor per blur, skip the write if unchanged, blank, or unparseable.
+  const commitWeight = (key: keyof ScoringWeights, saved: number) => {
+    const raw = weightsDrafts[key];
+    setWeightsDrafts((d) => {
+      if (!(key in d)) return d;
+      const copy = { ...d };
+      delete copy[key];
+      return copy;
     });
+    if (raw === undefined) return;
+    const next = resolveScoringWeightCommit(raw, saved);
+    if (next === null) return;
+    autoSaveWeights.save(() => savePolicy({ scoringWeights: { [key]: next } }, policy.connectedAccountId).then(() => refresh()));
   };
 
   return (
@@ -882,7 +890,7 @@ function AccountScopedStrategyPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {WEIGHT_KEYS.map((key) => {
             const saved = policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
-            const current = weightsOverlay[key] ?? saved;
+            const raw = weightsDrafts[key];
             const meta = FACTOR_META[key] ?? { name: key, tip: "A scoring factor used to rank market-scan candidates." };
             return (
               <Field
@@ -905,11 +913,11 @@ function AccountScopedStrategyPage() {
                   id={`w-${key}`}
                   step="0.1"
                   min="0"
-                  value={String(current)}
-                  emptyValue={DEFAULT_WEIGHTS[key]}
+                  value={raw ?? String(saved)}
+                  emptyValue={saved}
                   title="Saves when you click away."
-                  onValueChange={(parsed) => setWeightsOverlay((d) => ({ ...d, [key]: parsed }))}
-                  onBlur={() => commitWeight(key, current, saved)}
+                  onValueChange={(_parsed, r) => setWeightsDrafts((d) => ({ ...d, [key]: r }))}
+                  onBlur={() => commitWeight(key, saved)}
                 />
               </Field>
             );

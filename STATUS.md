@@ -21,6 +21,9 @@ Follow-ups: (1) owner refresh native B2 master key OR accept S3 backend for
 `scripts/litestream-l1-suffix-heal.py`; (2) watch L1 stays contiguous (closed
 while Coolify stays stop-old-first/no-rolling).  Rollout:
 `docs/rollouts/2026-08-22-litestream-l2l3-unwedge.md`.
+## 2026-08-23 CURSOR — Full-stack review filed (docs only)
+
+Owner-directed top-to-bottom of website (desktop+mobile), iOS, pipeline, RAG/embed/ingest, recent fills, broker, errors, connections.  Findings on the Mac board + GH #3056–#3067.  Review `docs/reviews/2026-08-23-cursor-full-stack-review.md`.  Live `/api/health` ok sha `2de5856fd`, `tradingLiveness` degraded (~3d).  No product code in this lane.
 
 ## 2026-08-22 ANTIGRAVITY — Full system fixes & native iOS website parity (PR pending)
 
@@ -33,6 +36,13 @@ while Coolify stays stop-old-first/no-rolling).  Rollout:
 - Added haptic sensory feedback (`AppHaptics`) on proposal actions & order cancellations, and exponential backoff with jitter on SSE stream reconnection.
 - Verified full verification gates: `npm run lint` (0 errors), `npx tsc --noEmit` (0 errors), `npm test` (677 files / 7,504 tests pass), `npm run build` (succeeded), `xcodebuild build` (BUILD SUCCEEDED).
 - Rollout: `docs/rollouts/2026-08-22-full-system-fixes-and-ios-parity.md`.
+## 2026-08-22 ANTIGRAVITY — Admin Operations knobs blur-commit & empty-default fallback fix (PR pending)
+
+- Closed Issue #2958: Eliminated per-keystroke PATCH calls and silent fallback overwrites on cleared numeric inputs.
+- Unified `OperationsClient`, `TaxSettingsCard`, `LearningReviewCard`, and `StrategyPage` scoring weights to use raw text drafts and blur-commit.
+- Added pure resolver functions in `app/console/lib/number-commit.ts` with comprehensive unit tests in `test/console-settings-number-commit.test.ts`.
+- Branch: `agent/ag-operations-knobs-blur-commit`. Rollout: `docs/rollouts/2026-08-22-operations-knobs-blur-commit.md`.
+
 ## 2026-08-22 CURSOR — Owner ST favicon + ASC listing + Android master
 
 Website tab icon is the owner transparent candlestick ST.  ASC listing PNG is opaque black (`graphics/asc-app-icon-1024.png`).  Android launcher master is the same transparent 1024.  iOS home-screen App Icon is unchanged.  GitHub login callback remains `https://socratictrade.com/api/auth/callback/github` on an OAuth App.  Branch `cursor/favicon-asc-android`.  Rollout: `docs/rollouts/2026-08-22-favicon-asc-android.md`.
