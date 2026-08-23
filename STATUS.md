@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-23 CURSOR — Full-stack review filed (docs only)
+
+Owner-directed top-to-bottom of website (desktop+mobile), iOS, pipeline, RAG/embed/ingest, recent fills, broker, errors, connections.  Findings on the Mac board + GH #3056–#3067.  Review `docs/reviews/2026-08-23-cursor-full-stack-review.md`.  Live `/api/health` ok sha `2de5856fd`, `tradingLiveness` degraded (~3d).  No product code in this lane.
+
 ## 2026-08-22 ANTIGRAVITY — Full system fixes & native iOS website parity (PR pending)
 
 - Pruned dead dependencies (`@xyflow/react`, `lightweight-charts`) from `package.json`.
