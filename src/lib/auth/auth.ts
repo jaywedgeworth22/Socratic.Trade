@@ -25,6 +25,7 @@ import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
 import Apple from "next-auth/providers/apple";
+import Twitter from "next-auth/providers/twitter";
 import type { Account, Profile, Session, User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import type { Provider } from "next-auth/providers";
@@ -61,6 +62,15 @@ if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
       clientId: process.env.AUTH_GITHUB_ID,
       clientSecret: process.env.AUTH_GITHUB_SECRET,
       authorization: { params: { scope: "read:user user:email" } }
+    })
+  );
+}
+
+if (process.env.AUTH_TWITTER_ID && process.env.AUTH_TWITTER_SECRET) {
+  providers.push(
+    Twitter({
+      clientId: process.env.AUTH_TWITTER_ID,
+      clientSecret: process.env.AUTH_TWITTER_SECRET
     })
   );
 }
@@ -139,7 +149,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       account?: { provider?: string; access_token?: string } | null;
       profile?: { email?: string | null };
     }) {
-      if (!profile?.email) return account?.provider === "github" || account?.provider === "apple" ? false : true;
+      if (!profile?.email) return account?.provider === "github" || account?.provider === "apple" || account?.provider === "twitter" ? false : true;
       if (account?.provider === "github" && account.access_token) {
         const res = await fetch("https://api.github.com/user/emails", {
           headers: { Authorization: `Bearer ${account.access_token}`, "User-Agent": "authjs" }
