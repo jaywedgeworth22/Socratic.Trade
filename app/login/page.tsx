@@ -16,8 +16,9 @@ export const metadata = { title: "Sign in" };
 
 const googleConfigured = !!(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET);
 const githubConfigured = !!(process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET);
+const twitterConfigured = !!(process.env.AUTH_TWITTER_ID && process.env.AUTH_TWITTER_SECRET);
 const appleConfigured = isAppleWebAuthConfigured();
-const anyProviderConfigured = googleConfigured || githubConfigured || appleConfigured;
+const anyProviderConfigured = googleConfigured || githubConfigured || twitterConfigured || appleConfigured;
 
 /** Value props — keep in sync with iOS LoginView feature bullets. */
 const LOGIN_VALUE_BULLETS = [
@@ -81,6 +82,21 @@ export default function LoginPage() {
                 </button>
               </form>
             )}
+            {twitterConfigured && (
+              <form
+                action={async () => {
+                  "use server";
+                  await signIn("twitter", { redirectTo: "/" });
+                }}
+              >
+                <button type="submit" className="login-provider-btn">
+                  <span className="login-provider-mark">
+                    <XIcon />
+                  </span>
+                  Sign in with X
+                </button>
+              </form>
+            )}
             {appleConfigured && (
               <>
                 <form
@@ -96,11 +112,11 @@ export default function LoginPage() {
                     Sign in with Apple
                   </button>
                 </form>
-                {!googleConfigured && !githubConfigured && (
+                {!googleConfigured && !githubConfigured && !twitterConfigured && (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
                     Apple is your only sign-in method.  Apple only sends your email on first
-                    authorization — if your session expires, you will need to add Google or
-                    GitHub as a fallback to sign back in.
+                    authorization — if your session expires, you will need to add Google,
+                    GitHub, or X as a fallback to sign back in.
                   </p>
                 )}
               </>
@@ -113,7 +129,9 @@ export default function LoginPage() {
               Set <code className="font-mono">AUTH_GOOGLE_ID</code> /{" "}
               <code className="font-mono">AUTH_GOOGLE_SECRET</code> for Google,{" "}
               <code className="font-mono">AUTH_GITHUB_ID</code> /{" "}
-              <code className="font-mono">AUTH_GITHUB_SECRET</code> for GitHub, or{" "}
+              <code className="font-mono">AUTH_GITHUB_SECRET</code> for GitHub,{" "}
+              <code className="font-mono">AUTH_TWITTER_ID</code> /{" "}
+              <code className="font-mono">AUTH_TWITTER_SECRET</code> for X, or{" "}
               <code className="font-mono">AUTH_APPLE_ID</code> /{" "}
               <code className="font-mono">AUTH_APPLE_SECRET</code> for Apple sign-in.
             </p>
@@ -176,6 +194,14 @@ function GitHubIcon() {
         clipRule="evenodd"
         d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.342-5.867-16.342-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-2.15.334-2.15.334-2.15 4.934.326 7.523 5.052 7.523 5.052 4.367 8.455 11.374 6.002 14.119 4.525.448-3.584 1.697-6.002 3.112-7.412-10.814-1.155-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.555-.08 11.856-.08 13.437 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"
       />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
     </svg>
   );
 }
