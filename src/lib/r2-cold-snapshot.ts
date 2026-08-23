@@ -39,7 +39,7 @@
 // Bare "fs"/"os"/"path" (not the "node:" scheme) so Next.js webpack can externalize this
 // module for server bundles — same trap as r2-usage.ts / egress-guard.
 import crypto from "crypto";
-import { closeSync, existsSync, openSync, readSync, statSync, unlinkSync } from "fs";
+import { closeSync, existsSync, openSync, readSync, readdirSync, statSync, unlinkSync } from "fs";
 import { dirname, join } from "path";
 import { audit, databasePath, getDb } from "./db";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
@@ -484,10 +484,23 @@ export async function performR2ColdSnapshot(
   const startedAt = Date.now();
   const isoDate = new Date(now).toISOString().slice(0, 10);
   const key = `${R2_COLD_SNAPSHOT_PREFIX}app-${isoDate}.db`;
+  const dbDir = dirname(databasePath());
+
+  // Proactive cleanup: sweep any stale temp snapshot files from crashed or aborted prior runs
+  try {
+    for (const file of readdirSync(dbDir)) {
+      if (file.startsWith(".r2snap-") && (file.endsWith(".tmp") || file.endsWith(".tmp-journal") || file.endsWith(".tmp-wal"))) {
+        try { unlinkSync(join(dbDir, file)); } catch { /* ignore */ }
+      }
+    }
+  } catch {
+    /* non-fatal; continue with snapshot */
+  }
+
   // Snapshot lands beside the live DB on the persistent volume (same filesystem —
   // no cross-device copy, guaranteed writable) rather than the OS temp dir: the
   // edge-flavored instrumentation webpack pass cannot resolve the "os" builtin.
-  const tempPath = join(dirname(databasePath()), `.r2snap-${crypto.randomUUID()}.db.tmp`);
+  const tempPath = join(dbDir, `.r2snap-${crypto.randomUUID()}.db.tmp`);
   const partSizeBytes = deps.partSizeBytes ?? cfg.partSizeBytes;
   let uploadId: string | undefined;
 
@@ -585,6 +598,10 @@ export async function performR2ColdSnapshot(
   } finally {
     try {
       if (existsSync(tempPath)) unlinkSync(tempPath);
+      const journal = `${tempPath}-journal`;
+      if (existsSync(journal)) unlinkSync(journal);
+      const wal = `${tempPath}-wal`;
+      if (existsSync(wal)) unlinkSync(wal);
     } catch {
       /* temp-dir janitor sweeps agentic-* leftovers as the backstop */
     }
