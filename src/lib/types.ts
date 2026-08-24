@@ -826,7 +826,7 @@ export interface ConnectedAccount {
    * Broker identifier. Add new values here when connecting a new venue
    * (e.g. "coinbase" for a crypto exchange) and wire a matching BrokerGateway.
    */
-  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull";
+  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull" | "kalshi";
   environment: "paper" | "live";
   /**
    * @deprecated Use capabilities.accountType instead for new accounts.
@@ -1188,7 +1188,7 @@ export interface TradingPolicy {
   tuning?: TuningSettings;
   triggerSettings?: TriggerSettings;
   activeProfileId?: string;
-  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull";
+  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier" | "etoro" | "public" | "webull" | "kalshi";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally
@@ -1196,31 +1196,19 @@ export interface TradingPolicy {
   // equity shorting via MCP). See docs/phase-7-strategy.md §C.
   shortSellingEnabled?: boolean;
   /**
-   * Broker-held buy-stops for open shorts (Alpaca paper + live). Default ON
+   * Broker-held buy-stops for open shorts (Alpaca). Default ON
    * when short selling is on.  Off keeps shorts on the synthetic monitor only.
    * Robinhood/Webull never get this lane.
    */
   brokerStopsForShorts?: boolean;
   /**
-   * Options place/cancel. Default OFF. Paper Alpaca works when this is on;
-   * live option money also requires `optionsLiveOrdersEnabled`.
+   * Options place/cancel. Default ON.
    */
   optionsTradingEnabled?: boolean;
   /**
-   * Kill switch for LIVE option orders. Default OFF — paper-only until the
-   * owner turns this on after a paper round-trip.
-   */
-  optionsLiveOrdersEnabled?: boolean;
-  /**
-   * Kalshi (and later other venue) event-contract sleeve. Default OFF.
-   * Enables paper/dry-run only until `kalshiLiveOrdersEnabled` is also on.
+   * Kalshi (and later other venue) event-contract sleeve. Default ON.
    */
   eventContractsEnabled?: boolean;
-  /**
-   * Kill switch for LIVE Kalshi orders. Default OFF. Also requires env
-   * `KALSHI_LIVE_ORDERS=on`. Either off = dry-run only.
-   */
-  kalshiLiveOrdersEnabled?: boolean;
   // SHORT_SELLING: Per-order notional cap for short positions. Should be lower
   // than maxOrderNotional per the design doc's risk guidance.
   maxShortOrderNotional?: number;
@@ -1367,6 +1355,8 @@ export interface TradingPolicy {
   fmpRealTimeDataEnabled?: boolean;
   /** Whether the FMP Macro & Commodities data integration is enabled. */
   fmpMacroDataEnabled?: boolean;
+  /** Whether Kalshi macro event data is injected into the context. Default ON. */
+  kalshiMacroEnabled?: boolean;
   /** Whether the FMP Events & News data integration is enabled. */
   fmpEventsDataEnabled?: boolean;
   /** Whether the FMP Deep Fundamentals data integration is enabled. */

@@ -5099,7 +5099,7 @@ async function proposeTrades(input: {
     : {};
   const polymarketMacro = await fetchPolymarketMacroContext().catch(() => ({ lines: [] as string[], markets: [] as PolymarketMarketMatch[] }));
 
-  const kalshiMacro: KalshiMacroContext = await fetchKalshiMacroContext(input.userId).catch(() => ({
+  const kalshiMacro: KalshiMacroContext = await fetchKalshiMacroContext(input.userId, input.policy).catch(() => ({
     series: [],
     lines: [],
     signals: []

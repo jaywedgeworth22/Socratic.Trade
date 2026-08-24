@@ -107,8 +107,8 @@ export const PROTECTIVE_STOPS: FieldDef[] = [
   { path: "riskRules.takeProfitPct", label: "Take profit at", kind: "pct", optional: true, hint: "Profit target (always a flat % — never widened by ATR/beta)." },
   { path: "riskRules.takeProfitTrimPct", label: "Take-profit trim", kind: "pct", optional: true, hint: "How much of the position to sell when take-profit triggers (100 = full exit)." },
   { path: "brokerBracketsEnabled", label: "Broker-held brackets", kind: "bool", hint: `Stop/take-profit legs rest at the broker (where supported) so protection survives app downtime.  Turning this OFF is looser.  ${ADVISORY_NOTE}`, looserWhen: "off" },
-  { path: "brokerTrailingStops", label: "Broker-held trailing stops", kind: "bool", looserWhen: "off", hint: `With a trailing % set: on Alpaca REST, a native trailing_stop order (the broker moves the trigger itself, even while the app is down); an Alpaca MCP-endpoint account instead gets the SAME app-ratcheted resting stop as Robinhood (MCP has no native trailing parameter, so the trigger only moves on the app's own tick cadence, not continuously); on live Robinhood a resting stop the app ratchets upward each cycle (needs Robinhood resting stops ON).  Turning this OFF keeps trailing app-managed only.  ${ADVISORY_NOTE}` },
-  { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", looserWhen: "off", hint: "Opt-in true broker-side stop for live Robinhood positions (Robinhood cannot hold OCO brackets).  Also the gate for broker-held trailing on Robinhood." },
+  { path: "brokerTrailingStops", label: "Broker-held trailing stops", kind: "bool", looserWhen: "off", hint: `With a trailing % set: on Alpaca REST, a native trailing_stop order (the broker moves the trigger itself, even while the app is down); an Alpaca MCP-endpoint account instead gets the SAME app-ratcheted resting stop as Robinhood (MCP has no native trailing parameter, so the trigger only moves on the app's own tick cadence, not continuously); on Robinhood a resting stop the app ratchets upward each cycle (needs Robinhood resting stops ON).  Turning this OFF keeps trailing app-managed only.  ${ADVISORY_NOTE}` },
+  { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", looserWhen: "off", hint: "Opt-in true broker-side stop for Robinhood positions (Robinhood cannot hold OCO brackets).  Also the gate for broker-held trailing on Robinhood." },
   { path: "allowExtendedHoursSyntheticStops", label: "App stops in extended hours", kind: "bool", looserWhen: "on", hint: "Continues monitoring and executing synthetic stop-losses during extended hours (pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET)." },
   { path: "riskRules.protectWhileHalted", label: "Protect while halted", kind: "bool", looserWhen: "off", hint: "Allows synthetic stops to continue monitoring and executing protective exits even while trading is halted." }
 ];
@@ -121,7 +121,7 @@ export const PANIC_BRAKE: FieldDef[] = [
 ];
 
 export const SHORTS: FieldDef[] = [
-  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account.  Live shorts are Alpaca-only.  Every short must carry a short stop-loss.  Turning off short selling blocks opening new short positions; existing shorts remain protected.  ${ADVISORY_NOTE}` },
+  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account.  Shorts are Alpaca-only.  Every short must carry a short stop-loss.  Turning off short selling blocks opening new short positions; existing shorts remain protected.  ${ADVISORY_NOTE}` },
   { path: "brokerStopsForShorts", label: "Broker-held short buy-stops", kind: "bool", looserWhen: "off", hint: `On Alpaca, rest a GTC buy-stop above the market for each open short so a cover survives app downtime.  Default on.  Off keeps shorts on the app monitor only.  ${ADVISORY_NOTE}` },
   { path: "maxShortOrderNotional", label: "Max short order", kind: "money", optional: true, looserWhen: "up" },
   { path: "maxShortExposurePct", label: "Max short exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
@@ -129,10 +129,9 @@ export const SHORTS: FieldDef[] = [
 ];
 
 export const OPTIONS: FieldDef[] = [
-  { path: "optionsTradingEnabled", label: "Options trading", kind: "bool", looserWhen: "on", hint: `Place and cancel single-leg option orders on Alpaca paper.  Robinhood stays display-only.  ${ADVISORY_NOTE}` },
-  { path: "optionsLiveOrdersEnabled", label: "Live option orders", kind: "bool", looserWhen: "on", hint: `Kill switch for live Alpaca option money.  Default off — paper only until this is on.  ${ADVISORY_NOTE}` },
-  { path: "eventContractsEnabled", label: "Event contracts", kind: "bool", looserWhen: "on", hint: `Kalshi event-contract sleeve.  Paper/dry-run only until Live Kalshi Orders is also on.  ${ADVISORY_NOTE}` },
-  { path: "kalshiLiveOrdersEnabled", label: "Live Kalshi orders", kind: "bool", looserWhen: "on", hint: `Kill switch for live Kalshi money.  Also requires env KALSHI_LIVE_ORDERS=on.  Default off.  ${ADVISORY_NOTE}` }
+  { path: "optionsTradingEnabled", label: "Options trading", kind: "bool", looserWhen: "on", hint: `Place and cancel single-leg option orders.  ${ADVISORY_NOTE}` },
+  { path: "eventContractsEnabled", label: "Event contracts", kind: "bool", looserWhen: "on", hint: `Kalshi event-contract sleeve.  ${ADVISORY_NOTE}` },
+  { path: "kalshiMacroEnabled", label: "Kalshi macro data", kind: "bool", hint: "Use Kalshi data for macro/industry/company outlook. Does not require a Kalshi broker connection." }
 ];
 
 export const HYGIENE: FieldDef[] = [

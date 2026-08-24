@@ -386,7 +386,7 @@ export function aggregateCongressSignals(
       windowDays: window,
       lastTradedAt: list[0]?.tradedAt,
       lastDisclosedAt: list[0]?.disclosedAt,
-      bulletin: buildBulletin(symbol, buyMembers, sellMembers, buyCount, sellCount, window)
+      bulletin: buildBulletin(symbol, buyMembers, sellMembers, buyCount, sellCount, window, list)
     };
   }
   return out;
@@ -410,16 +410,32 @@ function buildBulletin(
   sellMembers: string[],
   buyCount: number,
   sellCount: number,
-  window: number
+  window: number,
+  trades: CongressTrade[]
 ): string {
   const names = (m: string[]) => m.slice(0, 3).join(", ") + (m.length > 3 ? `, +${m.length - 3} more` : "");
+  let base = "";
   if (buyCount > 0 && sellCount === 0) {
-    return `Congress: ${buyMembers.length} member(s) disclosed BUYS of ${symbol} in the last ${window}d (${names(buyMembers)}); no sells.`;
+    base = `Congress: ${buyMembers.length} member(s) disclosed BUYS of ${symbol} in the last ${window}d (${names(buyMembers)}); no sells.`;
+  } else if (sellCount > 0 && buyCount === 0) {
+    base = `Congress: ${sellMembers.length} member(s) disclosed SELLS of ${symbol} in the last ${window}d (${names(sellMembers)}); no buys.`;
+  } else {
+    base = `Congress: mixed activity on ${symbol} in last ${window}d — ${buyCount} buy(s) by ${names(buyMembers)} vs ${sellCount} sell(s) by ${names(sellMembers)}.`;
   }
-  if (sellCount > 0 && buyCount === 0) {
-    return `Congress: ${sellMembers.length} member(s) disclosed SELLS of ${symbol} in the last ${window}d (${names(sellMembers)}); no buys.`;
+
+  // Include latency/competitor discovery info for LLM insights.
+  const latencies = trades
+    .filter((t) => t.latencyProbeDelayMs !== undefined)
+    .slice(0, 3); // cap to 3 most recent
+
+  if (latencies.length > 0) {
+    const details = latencies
+      .map((t) => `latency: ${t.latencyProbeDelayMs}ms, health: ${t.latencyProbeHealth ?? "unknown"}, provider_pub: ${t.providerPublishedAt ?? "N/A"}`)
+      .join("; ");
+    base += ` (Competitor tracking stats for latest trades: ${details})`;
   }
-  return `Congress: mixed activity on ${symbol} in last ${window}d — ${buyCount} buy(s) by ${names(buyMembers)} vs ${sellCount} sell(s) by ${names(sellMembers)}.`;
+
+  return base;
 }
 
 /** Read the cached dataset and build signals for the given symbols (no network). */
@@ -758,6 +774,14 @@ export function coerceCongressTrade(raw: unknown): CongressTrade | null {
   if (amountHigh !== undefined) trade.amountHigh = amountHigh;
   const owner = pickStr(o, ["owner", "ownerType", "holder"]);
   if (owner) trade.owner = owner;
+
+  const latencyProbeHealth = pickStr(o, ["latencyProbeHealth"]);
+  if (latencyProbeHealth) trade.latencyProbeHealth = latencyProbeHealth;
+  const latencyProbeDelayMs = pickNum(o, ["latencyProbeDelayMs"]);
+  if (latencyProbeDelayMs !== undefined) trade.latencyProbeDelayMs = latencyProbeDelayMs;
+  const providerPublishedAt = pickStr(o, ["providerPublishedAt"]);
+  if (providerPublishedAt) trade.providerPublishedAt = providerPublishedAt;
+
   return trade;
 }
 

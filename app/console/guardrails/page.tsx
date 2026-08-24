@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatIndexUniverseList, toggleIncludedIndex } from "@/lib/index-universes";
 import { getBrokerMarketHours } from "@/lib/market-hours";
 import type { IndexUniverse, OrderType, TaxationType, TradingPolicy } from "@/lib/types";
+import { mergeAccountCapabilities } from "@/lib/venue-contract-pure";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
 import {
@@ -242,6 +243,9 @@ function AccountScopedGuardrailsPage() {
     }
     return def.path !== "taxSettings.iraWashSaleHandling";
   });
+  
+  const broker = activeConnectedAccount(snapshot)?.broker ?? policy.activeBroker;
+  const caps = mergeAccountCapabilities(broker);
 
   return (
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
@@ -310,24 +314,32 @@ function AccountScopedGuardrailsPage() {
               </div>
             );
           })}
-          <div className="con-card-title pt-3">Short selling</div>
-          {unmanagedShorts && (
-            <p className="py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
-              {unmanagedShorts}
-            </p>
+          {caps.shortSelling && (
+            <>
+              <div className="con-card-title pt-3">Short selling</div>
+              {unmanagedShorts && (
+                <p className="py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
+                  {unmanagedShorts}
+                </p>
+              )}
+              {SHORTS.map((def) => (
+                <div key={def.path}>
+                  <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                  {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" label="Max Short Exposure" />}
+                </div>
+              ))}
+            </>
           )}
-          {SHORTS.map((def) => (
-            <div key={def.path}>
-              <PolicyFieldRow def={def} policy={policy} draft={draft} />
-              {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" label="Max Short Exposure" />}
-            </div>
-          ))}
           <div className="con-card-title pt-3">Options And Event Contracts</div>
-          {OPTIONS.map((def) => (
-            <div key={def.path}>
-              <PolicyFieldRow def={def} policy={policy} draft={draft} />
-            </div>
-          ))}
+          {OPTIONS.map((def) => {
+            if (def.path === "optionsTradingEnabled" && !caps.optionsTrading) return null;
+            if (def.path === "eventContractsEnabled" && broker !== "kalshi") return null;
+            return (
+              <div key={def.path}>
+                <PolicyFieldRow def={def} policy={policy} draft={draft} />
+              </div>
+            );
+          })}
         </div>
       </Card>
 
@@ -743,7 +755,7 @@ function AutonomyCard() {
           note={
             reality.tone === "live"
               ? "Autopilot lets Socratic Trade place orders in this brokerage account without per-trade approval, including approved Socratic overrides of owner-preference gates."
-              : "Autopilot lets Socratic Trade place broker-paper orders itself, including approved Socratic overrides of owner-preference gates."
+              : "Autopilot lets Socratic Trade place orders itself, including approved Socratic overrides of owner-preference gates."
           }
           onConfirm={() => void setAuthority("decide")}
         />

@@ -52,7 +52,7 @@ export const ALPACA_CONNECTED_TOAST_PAPER = `Connected as ${ALPACA_PAPER_LABEL}.
 export const ALPACA_CONNECTED_TOAST_BROKERAGE = "Connected as a brokerage account.";
 
 /** Reality banner / chip word for broker-paper mode (lowercase per FLEET-UI-COPY). */
-export const REALITY_PAPER_WORD = "paper" as const;
+export const REALITY_PAPER_WORD = "PAPER TRADING" as const;
 
 /** Public /framework invariant — sizing default + optional Socratic override. */
 export const FRAMEWORK_SIZING_INVARIANT =

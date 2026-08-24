@@ -29,6 +29,9 @@ export interface CongressTrade {
   tradedAt: string; // ISO date the trade occurred (txDate)
   disclosedAt?: string; // ISO date the report was filed
   source: string; // adapter id that produced this record
+  latencyProbeHealth?: string;
+  latencyProbeDelayMs?: number;
+  providerPublishedAt?: string;
 }
 
 /** Per-symbol aggregate of recent congressional trading (the overlay the scan reads).

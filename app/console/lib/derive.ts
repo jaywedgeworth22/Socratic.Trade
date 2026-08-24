@@ -39,7 +39,7 @@ export interface RealityInfo {
   /** The load-bearing word. */
   word: "NO ACCOUNT" | typeof REALITY_PAPER_WORD | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "nothing connected yet" | "broker practice account" | "live orders";
+  phrase: "nothing connected yet" | "broker provided practice account" | "live orders";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -56,7 +56,7 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         mode,
         tone: "paper",
         word: REALITY_PAPER_WORD,
-        phrase: "broker practice account",
+        phrase: "broker provided practice account",
         clarification:
           "Same broker-mediated trading path as a brokerage account — practice dollars at the broker."
       };
