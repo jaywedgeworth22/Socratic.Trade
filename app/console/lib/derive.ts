@@ -172,7 +172,7 @@ export function deriveStateInfo(
         state: "close_only",
         word: "Exit-only",
         label: "Exit-only",
-        detail: "No new buys.  Protective exits keep working.  This is the state circuit breakers set.",
+        detail: "The agent will not open new risk.  Protective exits keep working.  Approving an opening places it anyway.",
         tone: "warn"
       };
     case "liquidating":
@@ -527,7 +527,7 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       id: "close-only",
       tone: "warn",
       title: "Exit-only mode",
-      detail: "No new buys will happen.  Protective sells still work.  A circuit breaker or a person set this.",
+      detail: "The agent will not open new risk.  Protective sells still work.  Approving an opening places it anyway.",
       href: "/console/activity"
     });
   } else if (state === "liquidating") {

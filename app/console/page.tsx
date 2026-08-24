@@ -1007,6 +1007,7 @@ function ProposalRow({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [liveConfirm, setLiveConfirm] = useState<string | null>(null);
+  const [confirmKey, setConfirmKey] = useState(0);
   const toast = useToast();
 
   const handleApprove = async () => {
@@ -1026,6 +1027,10 @@ function ProposalRow({
         setLiveConfirm(e.expectedText);
       } else {
         toast.push("neg", "Approval failed", e.message || String(e));
+        // Remount the phrase field so a leftover matching value cannot dead-end
+        // the sheet.  Keep Approve disabled while the ritual is showing — enabling
+        // it would send the expected phrase without the owner typing it.
+        setConfirmKey((key) => key + 1);
       }
     } finally {
       setBusy(false);
@@ -1101,9 +1106,10 @@ function ProposalRow({
               {liveConfirm && (
                 <div className="text-[length:var(--con-fs-sm)] p-3 bg-[color:var(--con-warn-soft)] border border-[color:var(--con-warn-border)] rounded-md">
                   <p className="mb-2 font-semibold text-[color:var(--con-warn)]">Live trading requires confirmation.  Type <strong>{liveConfirm}</strong> to proceed.</p>
-                  <input 
-                    type="text" 
-                    className="con-input w-full mb-2" 
+                  <input
+                    key={confirmKey}
+                    type="text"
+                    className="con-input w-full mb-2"
                     placeholder={liveConfirm}
                     onChange={(e) => {
                       if (e.target.value === liveConfirm) {
