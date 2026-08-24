@@ -1,4 +1,6 @@
-import Alpaca from "@alpacahq/alpaca-trade-api";
+import * as AlpacaModule from "@alpacahq/alpaca-trade-api";
+const Alpaca = ((AlpacaModule as any)?.default?.default || (AlpacaModule as any)?.default || (AlpacaModule as any)?.Alpaca || AlpacaModule) as any;
+type Alpaca = any;
 import crypto from "crypto";
 import type {
   AccountCapabilities,
