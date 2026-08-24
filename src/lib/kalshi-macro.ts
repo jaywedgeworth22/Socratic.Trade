@@ -50,7 +50,7 @@ import type { TradingPolicy } from "./types";
 export function kalshiMacroContextEnabled(userId?: string, policy?: TradingPolicy): boolean {
   if (policy && policy.kalshiMacroEnabled === false) return false;
   if (!resolveSourceBool("KALSHI_CONTEXT", userId)) return false;
-  return true;
+  return isKalshiConfigured();
 }
 
 export function formatKalshiLinesForPrompt(signals: KalshiEventSignal[]): string[] {

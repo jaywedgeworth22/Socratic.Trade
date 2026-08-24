@@ -121,23 +121,23 @@ export const PANIC_BRAKE: FieldDef[] = [
 ];
 
 export const SHORTS: FieldDef[] = [
-  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account.  Shorts are Alpaca-only.  Every short must carry a short stop-loss.  Turning off short selling blocks opening new short positions; existing shorts remain protected.  ${ADVISORY_NOTE}` },
-  { path: "brokerStopsForShorts", label: "Broker-held short buy-stops", kind: "bool", looserWhen: "off", hint: `On Alpaca, rest a GTC buy-stop above the market for each open short so a cover survives app downtime.  Default on.  Off keeps shorts on the app monitor only.  ${ADVISORY_NOTE}` },
+  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account.  Shorts are Alpaca-only.  Every short must carry a short stop-loss.  Turning off short selling blocks opening new short positions; existing shorts remain protected.  ${ADVISORY_NOTE}` },
+  { path: "brokerStopsForShorts", label: "Broker-held short buy-stops", kind: "bool", looserWhen: "off", hint: `On Alpaca, rest a GTC buy-stop above the market for each open short so a cover survives app downtime.  Default on.  Off keeps shorts on the app monitor only.  ${ADVISORY_NOTE}` },
   { path: "maxShortOrderNotional", label: "Max short order", kind: "money", optional: true, looserWhen: "up" },
   { path: "maxShortExposurePct", label: "Max short exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
   { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Defaults to 8%.  Every short carries a stop — a short without one is rejected." }
 ];
 
 export const OPTIONS: FieldDef[] = [
-  { path: "optionsTradingEnabled", label: "Options trading", kind: "bool", looserWhen: "on", hint: `Place and cancel single-leg option orders.  ${ADVISORY_NOTE}` },
-  { path: "eventContractsEnabled", label: "Event contracts", kind: "bool", looserWhen: "on", hint: `Kalshi event-contract sleeve.  ${ADVISORY_NOTE}` },
-  { path: "kalshiMacroEnabled", label: "Kalshi macro data", kind: "bool", hint: "Use Kalshi data for macro/industry/company outlook. Does not require a Kalshi broker connection." }
+  { path: "optionsTradingEnabled", label: "Options trading", kind: "bool", looserWhen: "on", hint: `Place and cancel single-leg option orders.  ${ADVISORY_NOTE}` },
+  { path: "eventContractsEnabled", label: "Event contracts", kind: "bool", looserWhen: "on", hint: `Kalshi event-contract sleeve.  ${ADVISORY_NOTE}` },
+  { path: "kalshiMacroEnabled", label: "Kalshi macro data", kind: "bool", hint: "Use Kalshi data for macro/industry/company outlook.  Does not require a Kalshi broker connection." }
 ];
 
 export const HYGIENE: FieldDef[] = [
   { path: "maxProposalsPerRun", label: "Max ideas per run", kind: "int", looserWhen: "up" },
   { path: "maxHourlyNotional", label: "Max spend per hour", kind: "money", optional: true, looserWhen: "up", hint: "Rolling 60-minute ceiling.  Breaching it auto-demotes the account back to Ask-first." },
-  { path: "proposalExpiryMinutes", label: "Proposal expiry", kind: "minutes", optional: true, hint: "Pending proposals older than this auto-expire. 0/blank = no hard expiry." },
+  { path: "proposalExpiryMinutes", label: "Proposal expiry", kind: "minutes", optional: true, hint: "Pending proposals older than this auto-expire.  0/blank = no hard expiry." },
   { path: "proposalRevalidateCadenceHours", label: "Re-validate pending ideas every (hours)", kind: "int", optional: true, hint: "0 = every run." },
   { path: "staleLimitOrderMinutes", label: "Stale limit-order alert (minutes)", kind: "int", optional: true },
   {
