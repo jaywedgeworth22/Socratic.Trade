@@ -159,7 +159,6 @@ describe("copy-rule lint — repo sweep (console + public web pages)", () => {
     // guardrails/page.tsx, admin/page.tsx — nav.tsx and primitives.tsx
     // currently carry none), as of this PR. This is not a silent pass: the
     // count is real, reported here, and in this PR's report to the caller.
-    // It goes to 0 once those files unlock for a follow-up pass — never up.
     const lockedTotal = results.filter((r) => PEER_LOCKED_FILES.has(r.file)).reduce((n, r) => n + r.sentenceGap.length, 0);
     const filesWithViolations = results.filter((r) => r.sentenceGap.length > 0);
     expect(filesWithViolations.every((r) => PEER_LOCKED_FILES.has(r.file))).toBe(true);

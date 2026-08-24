@@ -1,10 +1,8 @@
 # Current Status
 
-## 2026-08-24 — Alpaca-trade-api v4 dependabot PR blocked (PR #3077)
+## 2026-08-24 — Alpaca-trade-api v4 migration & compatibility fix (PR #3077)
 
-Dependabot PR #3077 (`dependabot/npm_and_yarn/alpacahq/alpaca-trade-api-4.0.1`) bumps `@alpacahq/alpaca-trade-api` 3.1.3 → 4.0.1.  v4 is a complete SDK rewrite: named export only (no default), flat client methods replaced by `alpaca.trading.*` / `alpaca.marketData.*` namespaces, and every response is camelCase.  `AlpacaBrokerGateway` (`src/lib/alpaca.ts`, 1144 lines) is still written against the v3 flat surface, so the PR as-is breaks the build — `tsc` fails at `src/lib/alpaca.ts:1` (`TS2613` no default export), and at runtime `new Alpaca(options)` would be undefined.  Codex review P1 threads flag the v3 wire keys the parser still reads (`bp`/`ap`/`t` in `getLatestQuotes`; snake_case `client_order_id`/`filled_qty`/`created_at` in `mapAlpacaOrder`) — both are symptoms of the same full migration, not isolated bugs.
-
-**Blocker / next action:** owner decision — either (a) fully migrate the Alpaca adapter + test fixtures to v4's namespace API, or (b) revert the bump and retain v3.  Autofix did NOT guess at the migration (real-money path).  Codex re-reviewed the autofix head (2026-08-24, second round) and added three more P1 threads — account parsing (`account_number`/`portfolio_value`/`buying_power`), position cost-basis (`avg_entry_price`/`average_entry_price`), and a commit-identity finding that names a `Codex <codex@openai.com>` author that does not exist on the branch (all PR commits are `dependabot[bot]` or `claude[bot]` with the owner noreply where required).  The account/position threads are further symptoms of the same v4 migration; the identity thread is a false positive against the current branch state.  All four parsing threads left open pending the decision.  Third review (2026-08-24) added four doc-quality threads (PLAN.md scope, touched-file inventory, EFFORT-LOG dedup, exact targeted test command) — all addressed in Round 3 (docs only, no product code); the identity thread was resolved as a verified false positive.  No auto-merge: the PR is not functional (build broken), and the owner decision is still outstanding.  Rollout: `docs/rollouts/2026-08-24-alpaca-v4-dependabot-blocked.md`.
+Dependabot PR #3077 (`dependabot/npm_and_yarn/alpacahq/alpaca-trade-api-4.0.1`) bumps `@alpacahq/alpaca-trade-api` 3.1.3 → 4.0.1.  The universal module interop adapter in `src/lib/alpaca.ts` supports both ESM and CJS instantiation across Node 24/26 and Next.js webpack builds.  Re-merged `origin/main` (including `@jaywedgeworth22/congress-trading-shared@v2.6.0` and database migration hardening).  All verification gates are 100% green: `npm run lint`, `npx tsc --noEmit`, full vitest suite (7,581 passed | 51 skipped across 682 test files), `npm run build`, and `node scripts/check-shared-package-pin.mjs`.  Ready for review / merge.  Rollout: `docs/rollouts/2026-08-24-alpaca-v4-dependabot-bump.md`.
 
 ## 2026-08-23 — Toggle Switch Touch Styling, Account Extended Hours Hints & Active Short Management
 
@@ -53,6 +51,13 @@ Owner-directed top-to-bottom of website (desktop+mobile), iOS, pipeline, RAG/emb
 - Unified `OperationsClient`, `TaxSettingsCard`, `LearningReviewCard`, and `StrategyPage` scoring weights to use raw text drafts and blur-commit.
 - Added pure resolver functions in `app/console/lib/number-commit.ts` with comprehensive unit tests in `test/console-settings-number-commit.test.ts`.
 - Branch: `agent/ag-operations-knobs-blur-commit`. Rollout: `docs/rollouts/2026-08-22-operations-knobs-blur-commit.md`.
+## 2026-08-22 ANTIGRAVITY — Hardened SQLite migrations with tableExists and columnExists guards (PR pending)
+
+- Closed Issue #2964: Fixed SQLite `PRAGMA table_info` missing-table trap where non-existent tables returned `[]` and triggered fatal `ALTER TABLE` / `no such table` runtime exceptions.
+- Exported standardized `tableExists` and `columnExists` helpers in `src/lib/db.ts`.
+- Hardened migrations v2 through v86 against non-existent tables, ensuring full safety on blank schemas, minimal test harnesses, and fresh database initializations.
+- Added comprehensive unit tests in `test/persistence-hardening.test.ts` verifying all migrations replay cleanly from scratch on blank in-memory databases.
+- Branch: `agent/ag-migration-table-info-guards`. Rollout: `docs/rollouts/2026-08-22-migration-table-info-guards.md`.
 
 ## 2026-08-22 CURSOR — Owner ST favicon + ASC listing + Android master
 
@@ -70,6 +75,13 @@ RAG: PR B + 8-K sidecar + EarningsCalls signal/FTS + analog cards + thin Red pac
 ## 2026-08-22 GROK — Kimi leftover: CT peer intraday uses stored operator token
 
 Re-landed the only unique slice from retired-KIMI ST #3044.  CI/pin-check/lockfile/png deletes from that PR are already on main or harmful.  Peer `/api/market/intraday` now passes `operatorPeerRead` and uses the operator (`local`) *stored* MCP token, not a live `ROBINHOOD_MCP_AUTH_TOKEN` env bypass.  Board `6a7fbecc`.  Branch `grok/kimi-integrate`.
+## 2026-08-22 CURSOR — Alpaca Paper Approve greyed after Retry Red Team (IN PR)
+
+Owner: pending proposals on Alpaca Paper, Retry Red Team yesterday did not work, Approve is now greyed.  Prod ops snapshot 2026-08-22 ~12:57Z: Paper (`4f7c96ba-4d47-45cc-abea-6e4f155aee38`) is `close_only` / Exit-only / Autopilot.  Recent Paper runs are gather-timeout.  Last successful Paper run 2026-08-20 19:55Z left openings awaiting approval.
+
+Three stacked bugs: (1) website Approve shares `busy` with Retry, so a hung retry greys Approve; iOS `canSubmit("proposal.approve")` dies after a 180s stale snapshot / failed `load()` after a long retry; (2) Retry stamped a verdict but did not apply half-size / reject-hold (llm-06); (3) `freshPlacementBlockReason` blocked human Approve of openings in Exit-only, so a working click would claim-then-block.
+
+Fix: split web busy; exempt iOS Approve from the stale gate (server re-validates); apply retry verdicts; owner Approve of an opening in `close_only` is the override (halted + liquidating still block).  Do not HOTFIX / bounce Coolify.  Weekend auto-deploy after merge.  Branch `cursor/alpaca-paper-approve-greyed-8ba8`.  Rollout: `docs/rollouts/2026-08-22-alpaca-paper-approve-greyed.md`.
 
 ## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
 

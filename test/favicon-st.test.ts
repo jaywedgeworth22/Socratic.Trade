@@ -66,4 +66,13 @@ describe("website favicon ST crop", () => {
     expect(raster).not.toMatch(/file:\s*["']AppIcon-1024/);
     expect(raster).toContain("websitePngTargets");
   });
+
+  it("provides vector SVG of the offset candlestick mark", () => {
+    const svg = read("graphics/st-offset-logo.svg").toString("utf8");
+    expect(svg).toContain("<svg");
+    expect(svg).toContain('viewBox="0 0 1024 1024"');
+    expect(svg).toContain('id="candlesticks"');
+    expect(read("public/st-offset-logo.svg").toString("utf8")).toBe(svg);
+    expect(read("public/icons/st-offset.svg").toString("utf8")).toBe(svg);
+  });
 });

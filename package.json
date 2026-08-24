@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^4.0.1",
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#v2.5.2",
+    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#v2.6.0",
     "@langfuse/otel": "^5.10.1",
     "@langfuse/tracing": "^5.10.1",
     "@opentelemetry/instrumentation": "^0.221.0",
@@ -51,7 +51,7 @@
     "lucide-react": "^1.33.0",
     "motion": "^12.42.2",
     "next": "^16.3.1",
-    "next-auth": "^5.0.0-beta.31",
+    "next-auth": "^5.0.0-beta.32",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

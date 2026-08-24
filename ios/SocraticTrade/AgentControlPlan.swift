@@ -60,7 +60,7 @@ struct AgentControlPlan: Equatable {
         case "close_only":
             return AgentControlPlan(
                 statusTitle: "Exit-only",
-                statusDetail: "No new buys.  Protective exits keep working.  Resume Agent restores scheduled runs.",
+                statusDetail: "The agent will not open new risk.  Protective exits keep working.  Approving an opening places it anyway.  Resume Agent restores scheduled runs.",
                 primary: .resume,
                 showStart: true,
                 showStop: true,
