@@ -50,12 +50,18 @@ npm run build                         # Next.js production build succeeded
 
 PR #3049 CI: `verify` + `verify-hosted` + `ios-build` (unsigned) SUCCESS (runs 32710040803 / 32710040756).
 
-Production: `scripts/verify-deploy-sha.sh 06a5418b` PASS against live sha `dcfd04d72999cfd39bdf8b7351a2e474806944e1` (2026-08-24).
+Production: `scripts/verify-deploy-sha.sh 06a5418b` PASS against live sha `dcfd04d72999cfd39bdf8b7351a2e474806944e1` (2026-08-24).  Re-checked 2026-08-24 23:45Z: still PASS; health ok; schedulerAgeSeconds 50.
+
+Docs handoff #3087 squash `3fcf876e` is on `main` (docs-only; Coolify `watch_paths` omit `docs/**` / `STATUS.md` / `PLAN.md`, so no image deploy expected or needed).
+
+Focused re-run 2026-08-24 23:45Z: `npx vitest run test/retry-red-team.test.ts test/system-state-placement-guard.test.ts test/proposal-action-state.test.ts test/mobile-stop-preemption.test.ts` — 4 files / 13 passed.
 
 ## Next Steps & Blockers
 
-None for the website/API fix — live.  If the owner uses **native iOS**, ship TestFlight (`scripts/ios-ship-testflight.sh`) so `MobileStore` stale-gate + proposal-card copy land on device.  Pull to refresh on Proposals if a card still looks stuck from yesterday's session.  Aug 20 pending openings can be approved or rejected on the website now; Exit-only openings show an honest override banner.
+None for the website/API fix — live.  Pull to refresh on Proposals if a card still looks stuck from an old tab.  Openings on an Exit-only account show an honest override banner; Paper is `active` again as of the 23:45Z ops snapshot.
+
+Native iOS is **not** on TestFlight from this work.  After #3083, `ios-ship.yml` runs on GitHub-hosted `macos-latest` and every scheduled tick fails: `missing /Users/jay/apps/ios-fleet/ship-testflight.sh` (80 red runs in the last window; latest `32788863155`).  No App Store Connect secrets exist on the ST GitHub repo (ASC stays on the Mac).  Do not `workflow_dispatch` ios-ship from a Cloud agent — it will fail the same way.  Restore fleet-ship tooling + ASC on a runner that can archive, or ship from the Mac: `bash scripts/ios-ship-testflight.sh`.
 
 ## Zero-Code Findings
 
-Paper is Exit-only, not halted.  The grey Approve on a leftover Retry tab / stale iOS snapshot is the UI lock.  Even a working click would have been blocked at the placement fence before this change.
+Paper was Exit-only at the original report, not halted; it is `active` / Autopilot in the 2026-08-24 23:45Z snapshot.  The grey Approve on a leftover Retry tab / stale iOS snapshot is the UI lock.  Even a working click would have been blocked at the placement fence before this change.  Ops snapshot `recentAudit` still has no `red_team_retry` rows in the last 40 events (all `strategy_run`).
