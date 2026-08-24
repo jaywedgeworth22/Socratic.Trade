@@ -88,7 +88,11 @@ invariants, and residual gaps.
   down-only haircut; the broker reviews that haircut, and the strategy never bumps it back up.
 - Reject, unavailable, or broker-unplaceable half-size results hold the final broker-adjusted order
   for one explicit owner decision. That second approval is stamped and audited as an override
-  without recursively rerunning Red. Risk-reducing exits remain exempt.
+  without recursively rerunning Red.  Risk-reducing exits remain exempt.  Owner Approve of a
+  still-pending opening on an Exit-only (`close_only`) account is the same override: the agent
+  stays barred from opening new risk; the click places that one opening.  Halted and liquidating
+  still block openings on the human path.  Retry Red Team now applies the same half-size /
+  reject-hold / unavailable-hold receipts as the strategy loop (llm-06).
 - That owner decision is scoped to the broker estimate shown on the pending card. Downward drift
   and upward quote noise no greater than the larger of 1%/$0.01 remain inside the approved risk
   envelope; a larger upward requote persists the new amount and requires one fresh click.
