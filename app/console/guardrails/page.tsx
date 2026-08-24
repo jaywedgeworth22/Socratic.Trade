@@ -314,56 +314,103 @@ function AccountScopedGuardrailsPage() {
               </div>
             );
           })}
-          {caps.shortSelling && (
+          {broker !== "kalshi" && (
             <>
-              <div className="con-card-title pt-3">Short selling</div>
-              {unmanagedShorts && (
-                <p className="py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
-                  {unmanagedShorts}
-                </p>
+              <div className="con-card-title pt-3 flex items-center justify-between">
+                <span>Short selling</span>
+                {caps.shortSelling ? (
+                  <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-pos)]">Fully Supported</span>
+                ) : (
+                  <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Disabled by Broker</span>
+                )}
+              </div>
+              {caps.shortSelling && (
+                <>
+                  {unmanagedShorts && (
+                    <p className="py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
+                      {unmanagedShorts}
+                    </p>
+                  )}
+                  {SHORTS.map((def) => (
+                    <div key={def.path}>
+                      <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                      {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" label="Max Short Exposure" />}
+                    </div>
+                  ))}
+                </>
               )}
-              {SHORTS.map((def) => (
-                <div key={def.path}>
-                  <PolicyFieldRow def={def} policy={policy} draft={draft} />
-                  {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" label="Max Short Exposure" />}
-                </div>
-              ))}
+
+              <div className="con-card-title pt-3 flex items-center justify-between">
+                <span>Options trading</span>
+                {caps.optionsTrading ? (
+                  <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-pos)]">Fully Supported</span>
+                ) : (
+                  <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Disabled by Broker</span>
+                )}
+              </div>
+              {caps.optionsTrading && OPTIONS.map((def) => {
+                if (def.path !== "optionsTradingEnabled") return null;
+                return (
+                  <div key={def.path}>
+                    <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                  </div>
+                );
+              })}
+
+              <div className="con-card-title pt-3 flex items-center justify-between">
+                <span>Macro Data</span>
+              </div>
+              {OPTIONS.map((def) => {
+                if (def.path !== "kalshiMacroEnabled") return null;
+                return (
+                  <div key={def.path}>
+                    <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                  </div>
+                );
+              })}
             </>
           )}
-          <div className="con-card-title pt-3">Options And Event Contracts</div>
-          {OPTIONS.map((def) => {
-            if (def.path === "optionsTradingEnabled" && !caps.optionsTrading) return null;
-            if (def.path === "eventContractsEnabled" && broker !== "kalshi") return null;
-            return (
-              <div key={def.path}>
-                <PolicyFieldRow def={def} policy={policy} draft={draft} />
-              </div>
-            );
-          })}
+          {broker === "kalshi" && (
+            <>
+              <div className="con-card-title pt-3">Event Contracts Trading</div>
+              <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                Fully Supported. This is a Kalshi event-contract account.
+              </p>
+              {OPTIONS.map((def) => {
+                if (def.path !== "eventContractsEnabled" && def.path !== "kalshiMacroEnabled") return null;
+                return (
+                  <div key={def.path}>
+                    <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
       </Card>
 
-      <Card title="Protective stops" collapsible defaultOpen>
-        <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Every rule that exits a losing (or protects a winning) position, in one place. The diagram shows how they
-          compose for this account right now: each lane falls back left → right, trailing runs alongside, and the app
-          monitor backstops whatever the broker can&apos;t hold.
-        </p>
-        <StopFlowDiagram policy={policy} />
-        <div className="mt-3 divide-y divide-[color:var(--con-line)]">
-          {PROTECTIVE_STOPS.map((def) => {
-            const broker = activeConnectedAccount(snapshot)?.broker ?? policy.activeBroker;
-            const brokerHours = getBrokerMarketHours(broker);
-            const hint =
-              def.path === "allowExtendedHoursSyntheticStops"
-                ? `Continues monitoring and executing synthetic stop-losses during extended hours (${brokerHours.syntheticStopHoursHint}).`
-                : undefined;
-            return (
-              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} hint={hint} />
-            );
-          })}
-        </div>
-      </Card>
+      {broker !== "kalshi" && (
+        <Card title="Protective stops" collapsible defaultOpen>
+          <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            Every rule that exits a losing (or protects a winning) position, in one place. The diagram shows how they
+            compose for this account right now: each lane falls back left → right, trailing runs alongside, and the app
+            monitor backstops whatever the broker can&apos;t hold.
+          </p>
+          <StopFlowDiagram policy={policy} />
+          <div className="mt-3 divide-y divide-[color:var(--con-line)]">
+            {PROTECTIVE_STOPS.map((def) => {
+              const brokerHours = getBrokerMarketHours(broker);
+              const hint =
+                def.path === "allowExtendedHoursSyntheticStops"
+                  ? `Continues monitoring and executing synthetic stop-losses during extended hours (${brokerHours.syntheticStopHoursHint}).`
+                  : undefined;
+              return (
+                <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} hint={hint} />
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       {/* Tax treatment — account-scoped like the rest of this page; moved here from
           Strategy in the 2026-07-16 IA restructure, directly above the Advanced
