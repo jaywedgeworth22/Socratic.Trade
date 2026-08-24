@@ -46,7 +46,7 @@
     "cheerio": "^1.2.0",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
-    "jose": "^6.2.8",
+    "jose": "^6.2.9",
     "jsonrepair": "^3.15.0",
     "lucide-react": "^1.33.0",
     "motion": "^12.42.2",
