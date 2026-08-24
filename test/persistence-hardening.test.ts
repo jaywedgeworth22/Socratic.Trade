@@ -64,14 +64,14 @@ describe("runMigrations — versioned schema migrations", () => {
     db.close();
   });
 
-  it("applies all versioned migrations (v2-v86) cleanly on a blank database without baseline tables", async () => {
-    const { applyVersionedMigrations, getSchemaVersion } = await import("../src/lib/db");
+  it("applies all versioned migrations cleanly on a blank database without baseline tables", async () => {
+    const { applyVersionedMigrations, getSchemaVersion, getDb } = await import("../src/lib/db");
     const blankDb = new RawDatabase(":memory:");
     expect(Number(blankDb.pragma("user_version", { simple: true }))).toBe(0);
 
     // Issue #2964: All migrations must execute without throwing "no such table" errors on an empty schema
     expect(() => applyVersionedMigrations(blankDb)).not.toThrow();
-    expect(getSchemaVersion(blankDb)).toBe(86);
+    expect(getSchemaVersion(blankDb)).toBe(getSchemaVersion(getDb()));
     blankDb.close();
   });
 
