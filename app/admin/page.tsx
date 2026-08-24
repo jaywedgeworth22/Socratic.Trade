@@ -498,7 +498,7 @@ export default function OperatorDashboard() {
                 <div className="rounded-md border border-[color:var(--con-warn)]/40 bg-[color:var(--con-warn)]/10 px-2.5 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
                   Socratic Trade litestream→R2 writes are <strong>paused</strong> (free-tier kill-switch).
                   Pace % still reflects month-to-date history and can look alarming even while new Class A
-                  ops are near zero. Resume: <span className="con-mono">POST /api/admin/r2-usage/resume</span>.
+                  ops are near zero.&nbsp; Resume: <span className="con-mono">POST /api/admin/r2-usage/resume</span>.
                 </div>
               )}
               {r2 && r2.snapshots.length > 0 && (

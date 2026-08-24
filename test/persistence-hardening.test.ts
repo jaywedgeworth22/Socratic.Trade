@@ -49,6 +49,32 @@ describe("runMigrations — versioned schema migrations", () => {
     db.close();
   });
 
+  it("safely handles tableExists and columnExists for missing and present tables/columns", async () => {
+    const { tableExists, columnExists } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+
+    expect(tableExists(db, "non_existent_table")).toBe(false);
+    expect(columnExists(db, "non_existent_table", "col")).toBe(false);
+
+    db.exec("CREATE TABLE test_table (id TEXT PRIMARY KEY, alpha INTEGER);");
+    expect(tableExists(db, "test_table")).toBe(true);
+    expect(columnExists(db, "test_table", "id")).toBe(true);
+    expect(columnExists(db, "test_table", "alpha")).toBe(true);
+    expect(columnExists(db, "test_table", "beta")).toBe(false);
+    db.close();
+  });
+
+  it("applies all versioned migrations cleanly on a blank database without baseline tables", async () => {
+    const { applyVersionedMigrations, getSchemaVersion, getDb } = await import("../src/lib/db");
+    const blankDb = new RawDatabase(":memory:");
+    expect(Number(blankDb.pragma("user_version", { simple: true }))).toBe(0);
+
+    // Issue #2964: All migrations must execute without throwing "no such table" errors on an empty schema
+    expect(() => applyVersionedMigrations(blankDb)).not.toThrow();
+    expect(getSchemaVersion(blankDb)).toBe(getSchemaVersion(getDb()));
+    blankDb.close();
+  });
+
   it("recovers a legacy v49 database missing SEC insider transactions before v50 alters it", async () => {
     const { applyVersionedMigrations, getDb } = await import("../src/lib/db");
     const db = getDb();

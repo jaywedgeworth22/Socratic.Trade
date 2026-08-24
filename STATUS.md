@@ -47,6 +47,13 @@ Owner-directed top-to-bottom of website (desktop+mobile), iOS, pipeline, RAG/emb
 - Unified `OperationsClient`, `TaxSettingsCard`, `LearningReviewCard`, and `StrategyPage` scoring weights to use raw text drafts and blur-commit.
 - Added pure resolver functions in `app/console/lib/number-commit.ts` with comprehensive unit tests in `test/console-settings-number-commit.test.ts`.
 - Branch: `agent/ag-operations-knobs-blur-commit`. Rollout: `docs/rollouts/2026-08-22-operations-knobs-blur-commit.md`.
+## 2026-08-22 ANTIGRAVITY — Hardened SQLite migrations with tableExists and columnExists guards (PR pending)
+
+- Closed Issue #2964: Fixed SQLite `PRAGMA table_info` missing-table trap where non-existent tables returned `[]` and triggered fatal `ALTER TABLE` / `no such table` runtime exceptions.
+- Exported standardized `tableExists` and `columnExists` helpers in `src/lib/db.ts`.
+- Hardened migrations v2 through v86 against non-existent tables, ensuring full safety on blank schemas, minimal test harnesses, and fresh database initializations.
+- Added comprehensive unit tests in `test/persistence-hardening.test.ts` verifying all migrations replay cleanly from scratch on blank in-memory databases.
+- Branch: `agent/ag-migration-table-info-guards`. Rollout: `docs/rollouts/2026-08-22-migration-table-info-guards.md`.
 
 ## 2026-08-22 CURSOR — Owner ST favicon + ASC listing + Android master
 
