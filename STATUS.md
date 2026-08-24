@@ -79,7 +79,9 @@ Owner report: Alpaca Paper pending cards, Retry Red Team hung, Approve greyed.  
 
 Fixed: (1) web Approve no longer shares `busy` with Retry; iOS `proposal.approve` stays available on a stale snapshot (server re-validates); (2) Retry applies half-size / reject-hold / unavailable-hold (llm-06); (3) owner Approve of an opening in Exit-only is the override — agent still will not open on its own; halted + liquidating still block openings.
 
-**Website + API are live now.**  Native iOS Approve/stale-gate copy ships on the next TestFlight build (`ios-build` green on #3049; owner has not been asked to ship TF).  Pull to refresh on Proposals if a card still looks stuck.
+**Website + API are live now.**  Docs handoff merged #3087 (`3fcf876e`).  Re-verified 2026-08-24 23:45Z: `verify-deploy-sha.sh 06a5418b` PASS, `/api/health` ok, scheduler 50s.  Alpaca Paper is now `active` / Autopilot (not Exit-only); last Paper runs at 19:54Z are deploy-restart stale-run-sweep failures, separate from this approve fix.
+
+Native iOS Approve/stale-gate + banner cannot ship from this Cloud seat.  `ios-ship.yml` on `macos-latest` dies in ~15s (`missing /Users/jay/apps/ios-fleet/ship-testflight.sh`); last 80 scheduled ticks are red.  Repo GitHub Actions secrets have no App Store Connect key (those stay on the Mac `~/.secrets/appstore-connect.env`).  `ios-build` on #3049 was green (unsigned compile only).  Website / mobile-web Approve is the live path until a Mac or restored fleet-ship runner uploads TestFlight.
 
 Rollout: `docs/rollouts/2026-08-22-alpaca-paper-approve-greyed.md`.
 
