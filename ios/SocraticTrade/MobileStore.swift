@@ -306,6 +306,15 @@ final class MobileStore: ObservableObject {
         if commandType == "order.cancel" {
             return snapshot != nil
         }
+        // Owner Approve is the same class of exemption: a stale or failed snapshot is
+        // exactly when a pending card looks stuck (Retry Red Team is a long LLM, then
+        // `load()` can miss the 30s mobile timeout).  The server re-validates the
+        // `proposed -> placing` claim and the halt / Exit-only / liquidating fence, so a
+        // stale tap collects an honest error instead of placing the wrong order.
+        // Requires any loaded snapshot so we still have a proposal id and account.
+        if commandType == "proposal.approve" {
+            return snapshot != nil
+        }
         guard let snapshot, !isSnapshotStale(at: now) else { return false }
         if Self.readinessDependentCommands.contains(commandType) {
             return snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse

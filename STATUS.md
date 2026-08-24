@@ -71,6 +71,13 @@ RAG: PR B + 8-K sidecar + EarningsCalls signal/FTS + analog cards + thin Red pac
 ## 2026-08-22 GROK — Kimi leftover: CT peer intraday uses stored operator token
 
 Re-landed the only unique slice from retired-KIMI ST #3044.  CI/pin-check/lockfile/png deletes from that PR are already on main or harmful.  Peer `/api/market/intraday` now passes `operatorPeerRead` and uses the operator (`local`) *stored* MCP token, not a live `ROBINHOOD_MCP_AUTH_TOKEN` env bypass.  Board `6a7fbecc`.  Branch `grok/kimi-integrate`.
+## 2026-08-22 CURSOR — Alpaca Paper Approve greyed after Retry Red Team (IN PR)
+
+Owner: pending proposals on Alpaca Paper, Retry Red Team yesterday did not work, Approve is now greyed.  Prod ops snapshot 2026-08-22 ~12:57Z: Paper (`4f7c96ba-4d47-45cc-abea-6e4f155aee38`) is `close_only` / Exit-only / Autopilot.  Recent Paper runs are gather-timeout.  Last successful Paper run 2026-08-20 19:55Z left openings awaiting approval.
+
+Three stacked bugs: (1) website Approve shares `busy` with Retry, so a hung retry greys Approve; iOS `canSubmit("proposal.approve")` dies after a 180s stale snapshot / failed `load()` after a long retry; (2) Retry stamped a verdict but did not apply half-size / reject-hold (llm-06); (3) `freshPlacementBlockReason` blocked human Approve of openings in Exit-only, so a working click would claim-then-block.
+
+Fix: split web busy; exempt iOS Approve from the stale gate (server re-validates); apply retry verdicts; owner Approve of an opening in `close_only` is the override (halted + liquidating still block).  Do not HOTFIX / bounce Coolify.  Weekend auto-deploy after merge.  Branch `cursor/alpaca-paper-approve-greyed-8ba8`.  Rollout: `docs/rollouts/2026-08-22-alpaca-paper-approve-greyed.md`.
 
 ## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
 
