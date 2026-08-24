@@ -15,7 +15,9 @@ import { GUARDRAILS_HEADER_SUFFIX } from "@/lib/guardrail-copy";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { formatIndexUniverseList, toggleIncludedIndex } from "@/lib/index-universes";
+import { getBrokerMarketHours } from "@/lib/market-hours";
 import type { IndexUniverse, OrderType, TaxationType, TradingPolicy } from "@/lib/types";
+import { mergeAccountCapabilities } from "@/lib/venue-contract-pure";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
 import {
@@ -241,6 +243,9 @@ function AccountScopedGuardrailsPage() {
     }
     return def.path !== "taxSettings.iraWashSaleHandling";
   });
+  
+  const broker = activeConnectedAccount(snapshot)?.broker ?? policy.activeBroker;
+  const caps = mergeAccountCapabilities(broker);
 
   return (
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
@@ -294,29 +299,47 @@ function AccountScopedGuardrailsPage() {
             </div>
           ))}
           <div className="con-card-title pt-3">Schedule</div>
-          {ESSENTIALS.filter((def) => SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
-            <div key={def.path}>
-              <PolicyFieldRow def={def} policy={policy} draft={draft} />
-            </div>
-          ))}
-          <div className="con-card-title pt-3">Short selling</div>
-          {unmanagedShorts && (
-            <p className="py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
-              {unmanagedShorts}
-            </p>
+          {ESSENTIALS.filter((def) => SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => {
+            const broker = activeConnectedAccount(snapshot)?.broker ?? policy.activeBroker;
+            const brokerHours = getBrokerMarketHours(broker);
+            const hint =
+              def.path === "permitExtendedHours"
+                ? `Permits the agent to place orders configured to fill outside regular market hours (${brokerHours.orderHoursHint}).`
+                : def.path === "runDuringExtendedHours"
+                  ? `Allows the system to run scheduled or event-triggered strategy scans during extended hours (${brokerHours.scanHoursHint}).`
+                  : undefined;
+            return (
+              <div key={def.path}>
+                <PolicyFieldRow def={def} policy={policy} draft={draft} hint={hint} />
+              </div>
+            );
+          })}
+          {caps.shortSelling && (
+            <>
+              <div className="con-card-title pt-3">Short selling</div>
+              {unmanagedShorts && (
+                <p className="py-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">
+                  {unmanagedShorts}
+                </p>
+              )}
+              {SHORTS.map((def) => (
+                <div key={def.path}>
+                  <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                  {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" label="Max Short Exposure" />}
+                </div>
+              ))}
+            </>
           )}
-          {SHORTS.map((def) => (
-            <div key={def.path}>
-              <PolicyFieldRow def={def} policy={policy} draft={draft} />
-              {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" label="Max Short Exposure" />}
-            </div>
-          ))}
           <div className="con-card-title pt-3">Options And Event Contracts</div>
-          {OPTIONS.map((def) => (
-            <div key={def.path}>
-              <PolicyFieldRow def={def} policy={policy} draft={draft} />
-            </div>
-          ))}
+          {OPTIONS.map((def) => {
+            if (def.path === "optionsTradingEnabled" && !caps.optionsTrading) return null;
+            if (def.path === "eventContractsEnabled" && broker !== "kalshi") return null;
+            return (
+              <div key={def.path}>
+                <PolicyFieldRow def={def} policy={policy} draft={draft} />
+              </div>
+            );
+          })}
         </div>
       </Card>
 
@@ -328,9 +351,17 @@ function AccountScopedGuardrailsPage() {
         </p>
         <StopFlowDiagram policy={policy} />
         <div className="mt-3 divide-y divide-[color:var(--con-line)]">
-          {PROTECTIVE_STOPS.map((def) => (
-            <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
-          ))}
+          {PROTECTIVE_STOPS.map((def) => {
+            const broker = activeConnectedAccount(snapshot)?.broker ?? policy.activeBroker;
+            const brokerHours = getBrokerMarketHours(broker);
+            const hint =
+              def.path === "allowExtendedHoursSyntheticStops"
+                ? `Continues monitoring and executing synthetic stop-losses during extended hours (${brokerHours.syntheticStopHoursHint}).`
+                : undefined;
+            return (
+              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} hint={hint} />
+            );
+          })}
         </div>
       </Card>
 
@@ -724,7 +755,7 @@ function AutonomyCard() {
           note={
             reality.tone === "live"
               ? "Autopilot lets Socratic Trade place orders in this brokerage account without per-trade approval, including approved Socratic overrides of owner-preference gates."
-              : "Autopilot lets Socratic Trade place broker-paper orders itself, including approved Socratic overrides of owner-preference gates."
+              : "Autopilot lets Socratic Trade place orders itself, including approved Socratic overrides of owner-preference gates."
           }
           onConfirm={() => void setAuthority("decide")}
         />

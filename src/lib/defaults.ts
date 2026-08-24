@@ -121,11 +121,10 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // Broker-held buy-stops for shorts (Alpaca). Default ON so enabling short
   // selling also arms the designed protection lane. Owner can turn off.
   brokerStopsForShorts: true,
-  // Options + Kalshi event contracts: paper/dry-run only until the live flags.
-  optionsTradingEnabled: false,
-  optionsLiveOrdersEnabled: false,
-  eventContractsEnabled: false,
-  kalshiLiveOrdersEnabled: false,
+  // Options + Kalshi event contracts:
+  optionsTradingEnabled: true,
+  eventContractsEnabled: true,
+  // Note: Live/Paper flags are removed as UI does not differentiate them for options.
   // Per-symbol stop intelligence ON by default (owner decision 2026-07-07 — no more one-size-fits-all
   // stops). ATR stops scale the protective stop DISTANCE to each name's realized volatility
   // (atrStopMultiple × ATR as a % of entry); beta-scaling widens the stop for high-beta names and
@@ -174,6 +173,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // Congress.Trade; these toggles are legacy / no-op for the cascade.
   fmpRealTimeDataEnabled: false,
   fmpMacroDataEnabled: false,
+  kalshiMacroEnabled: true,
   fmpEventsDataEnabled: false,
   fmpFundamentalsDataEnabled: false
   // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is

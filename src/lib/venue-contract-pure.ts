@@ -68,7 +68,7 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
     case "alpaca-mcp":
       return {
         equityTrading: true,
-        optionsTrading: false,
+        optionsTrading: true,
         optionsOrders: false,
         fractional: true,
         extendedHours: true,
@@ -84,6 +84,7 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
       return {
         equityTrading: true,
         shortSelling: false,
+        optionsTrading: true,
         optionsOrders: false,
         fractional: true,
         extendedHours: true,
@@ -98,6 +99,7 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
     case "tradier":
       return {
         equityTrading: true,
+        optionsTrading: true,
         optionsOrders: false,
         fractional: false,
         extendedHours: true,
@@ -132,6 +134,7 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
       return {
         equityTrading: true,
         shortSelling: true,
+        optionsTrading: true,
         optionsOrders: false,
         fractional: true,
         extendedHours: true,
@@ -148,6 +151,7 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
       return {
         equityTrading: true,
         shortSelling: true,
+        optionsTrading: true,
         optionsOrders: false,
         fractional: true,
         extendedHours: true,
@@ -163,6 +167,8 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
       return {
         equityTrading: true,
         shortSelling: true,
+        optionsTrading: true,
+        optionsOrders: false,
         fractional: true,
         extendedHours: true,
         overnightHours: true,
@@ -170,6 +176,22 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
         nativeBrackets: true,
         orderTypes: ALL_ORDER_TYPES,
         marketHours: ALL_SESSIONS
+      };
+    case "kalshi":
+      return {
+        equityTrading: false,
+        shortSelling: false,
+        optionsTrading: false,
+        optionsOrders: false,
+        fractional: false,
+        extendedHours: false,
+        overnightHours: false,
+        trailingStops: false,
+        nativeBrackets: false,
+        orderTypes: ["market"],
+        marketHours: ALL_SESSIONS,
+        futuresTrading: false,
+        cryptoTrading: false
       };
     default:
       return { equityTrading: true, shortSelling: false, optionsOrders: false };

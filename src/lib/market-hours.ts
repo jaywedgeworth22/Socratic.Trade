@@ -410,3 +410,69 @@ function getGoodFriday(year: number): Date {
   easter.setUTCDate(easter.getUTCDate() - 2);
   return easter;
 }
+
+export interface BrokerMarketHoursInfo {
+  preMarket: string | null;
+  regularHours: string;
+  afterHours: string | null;
+  scanHoursHint: string;
+  orderHoursHint: string;
+  syntheticStopHoursHint: string;
+}
+
+/**
+ * Returns human-readable market hours and extended-hours hints for a given broker.
+ */
+export function getBrokerMarketHours(broker?: string): BrokerMarketHoursInfo {
+  switch (broker) {
+    case "robinhood":
+      return {
+        preMarket: "7:00 AM – 9:30 AM ET",
+        regularHours: "9:30 AM – 4:00 PM ET",
+        afterHours: "4:00 PM – 8:00 PM ET",
+        scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
+        orderHoursHint: "Robinhood pre-market 7:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET (overnight 8:00 PM – 4:00 AM ET for supported symbols)",
+        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+      };
+    case "tradier":
+      return {
+        preMarket: "7:00 AM – 9:30 AM ET",
+        regularHours: "9:30 AM – 4:00 PM ET",
+        afterHours: "4:00 PM – 8:00 PM ET",
+        scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
+        orderHoursHint: "Tradier pre-market 7:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET",
+        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+      };
+    case "public":
+      return {
+        preMarket: "8:00 AM – 9:30 AM ET",
+        regularHours: "9:30 AM – 4:00 PM ET",
+        afterHours: "4:00 PM – 8:00 PM ET",
+        scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
+        orderHoursHint: "Public pre-market 8:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET",
+        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+      };
+    case "etoro":
+      return {
+        preMarket: null,
+        regularHours: "9:30 AM – 4:00 PM ET",
+        afterHours: null,
+        scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
+        orderHoursHint: "Regular market hours only (9:30 AM – 4:00 PM ET; eToro does not support extended-hours trading)",
+        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+      };
+    case "alpaca":
+    case "alpaca-mcp":
+    case "webull":
+    case "test":
+    default:
+      return {
+        preMarket: "4:00 AM – 9:30 AM ET",
+        regularHours: "9:30 AM – 4:00 PM ET",
+        afterHours: "4:00 PM – 8:00 PM ET",
+        scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
+        orderHoursHint: "pre-market 4:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET",
+        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+      };
+  }
+}

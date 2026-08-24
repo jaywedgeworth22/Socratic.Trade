@@ -39,7 +39,7 @@ export interface RealityInfo {
   /** The load-bearing word. */
   word: "NO ACCOUNT" | typeof REALITY_PAPER_WORD | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "nothing connected yet" | "broker practice account" | "live orders";
+  phrase: "nothing connected yet" | "broker provided practice account" | "live orders";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -56,7 +56,7 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         mode,
         tone: "paper",
         word: REALITY_PAPER_WORD,
-        phrase: "broker practice account",
+        phrase: "broker provided practice account",
         clarification:
           "Same broker-mediated trading path as a brokerage account — practice dollars at the broker."
       };
@@ -268,14 +268,7 @@ export function deriveProtection(
   if (base.label === "Broker stop") {
     return { ...base, detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}` };
   }
-  // A short position with short selling turned off: every enforcement layer (synthetic monitor,
-  // proactive risk exits, broker-protective-stops) skips shorts entirely while shortSellingEnabled is
-  // off, regardless of any per-position plan — a "Fixed"/"ATR"/"Trailing plan" label here would show
-  // active protection for a short the app has deliberately stopped managing (Codex review, PR #1371).
-  // Preserve deriveBaseProtection's muted/unsafe state instead of building an active plan label.
-  if (position.quantity < 0 && !policy.shortSellingEnabled) {
-    return { ...base, detail: `Per-position plan: ${planLabel} (would pin this position's stop, but it never takes effect while short selling is off). ${base.detail}` };
-  }
+
   // Otherwise, build the label/tone from the PLAN itself, never from the account-wide base label's
   // CONTENT — that label describes whatever mechanism the ACCOUNT happens to have configured (e.g.
   // "App stop −8%" for a flat stop), which may be an entirely different mechanism than what this
@@ -310,13 +303,6 @@ function deriveBaseProtection(
     };
   }
   const rules = policy.riskRules;
-  if (isShort && !policy.shortSellingEnabled) {
-    return {
-      label: null,
-      detail: "Short position, but short selling is off in policy — the app's stop monitor skips it, and no closing broker stop order is resting.",
-      tone: "muted"
-    };
-  }
   const baseStopPct = isShort
     ? rules.shortStopLossPct && rules.shortStopLossPct > 0
       ? rules.shortStopLossPct
@@ -356,8 +342,8 @@ function deriveBaseProtection(
 export type UnmanagedShortReason = "shorts_disabled" | "broker_unprotected" | "stops_disabled";
 
 /** Count of open shorts the app will not protect with a broker-held buy-stop.
- *  Short selling off: every enforcement layer skips shorts.  Short selling on
- *  but not Alpaca, or brokerStopsForShorts off: synthetic-only / unmanaged. */
+ *  Alpaca resting stops or synthetic app monitors protect open shorts; only
+ *  non-Alpaca venues or brokerStopsForShorts: false are unmanaged. */
 export function deriveUnmanagedShortCount(
   positions: EquityPosition[] | undefined,
   policy: Pick<TradingPolicy, "shortSellingEnabled" | "brokerStopsForShorts" | "activeBroker">
@@ -371,7 +357,6 @@ export function deriveUnmanagedShorts(
 ): { count: number; reason: UnmanagedShortReason | null } {
   const shorts = (positions ?? []).filter((p) => p.quantity < 0);
   if (shorts.length === 0) return { count: 0, reason: null };
-  if (!policy.shortSellingEnabled) return { count: shorts.length, reason: "shorts_disabled" };
   const alpaca = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
   if (!alpaca && policy.activeBroker) return { count: shorts.length, reason: "broker_unprotected" };
   if (policy.brokerStopsForShorts === false) return { count: shorts.length, reason: "stops_disabled" };

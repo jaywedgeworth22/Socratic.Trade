@@ -1,6 +1,11 @@
 # Current Status
 
-## 2026-08-22 — Litestream L2/L3 empty wedge RESOLVED (ops heal)
+## 2026-08-23 — Toggle Switch Touch Styling, Account Extended Hours Hints & Active Short Management
+
+1. **Toggle Switch Styling Fix:** Removed `.con-toggle` from the direct `min-height: 44px; min-width: 44px;` coarse-pointer rule that deformed pill toggles into 44x44px round circles on touch/mobile screens; moved the touch target to a centered `::before` pseudo-element expanding tap area to 44x44px while keeping the 36x20px visual pill and 14px slider thumb intact.
+2. **Account Extended Hours Hints:** Added helper `getBrokerMarketHours(broker)` and injected explicit market hours (pre-market and after-hours) for schedule and protective stop settings, dynamically customized for the active connected account (e.g. Alpaca 4:00 AM – 9:30 AM ET & 4:00 PM – 8:00 PM ET; Robinhood 7:00 AM – 9:30 AM ET & 4:00 PM – 8:00 PM ET; Tradier 7:00 AM – 9:30 AM ET & 4:00 PM – 8:00 PM ET; eToro regular-only).
+3. **Active Open Short Position Management:** Ensured held short positions (`quantity < 0`) remain fully managed with proactive stop-loss covers, take-profit trims, and synthetic stops even when `shortSellingEnabled` is toggled off (which now strictly gates opening new short positions).
+Rollout: `docs/rollouts/2026-08-23-toggle-styling-extended-hours-short-management.md`.
 
 The `litestream tier 2 empty wedged` alert was cleared by the L1-suffix heal.
 Live root cause: B2 L1 had **4 non-contiguous TXID holes** (`85fd4->92b5`,

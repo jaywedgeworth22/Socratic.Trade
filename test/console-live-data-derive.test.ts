@@ -247,19 +247,15 @@ describe("deriveProtection — per-position stop plan annotation (never a silent
     expect(info.detail).toMatch(/deliberate LLM\/owner choice/); // but the plan is still surfaced
   });
 
-  it("does NOT show an active 'Fixed/ATR/Trailing plan' badge for a SHORT while short selling is off — every enforcement layer skips the short, so the muted/unprotected base state is preserved (Codex review, PR #1371)", () => {
-    // A short opened while shorting was enabled (persisting a "fixed" plan at fill), then policy toggled
-    // shortSellingEnabled off. generateProactiveRiskProposals, synthetic-stops, and broker-protective-
-    // stops all skip this short entirely, so the plan is NOT actually protecting it. Pre-fix the final
-    // branch returned { label: "Fixed plan", tone: "pos" } — a green "active protection" badge for a
-    // position with zero enforcement backing it.
+  it("shows an active 'Fixed plan' or 'App short stop' badge for a SHORT even while short selling is off — existing shorts remain protected", () => {
     const shortPos = { symbol: "TSLA", quantity: -10, averageCost: 100, marketValue: -1000 };
     const activePolicy = { riskRules: { stopLossPct: 8 }, shortSellingEnabled: false, systemState: "active" } as TradingPolicy;
-    const info = deriveProtection(shortPos, noOrders, activePolicy, { style: "fixed", avgCost: 100 });
-    expect(info.label).toBeNull(); // muted/unsafe state preserved — renders "—", not a green badge
-    expect(info.tone).toBe("muted");
-    expect(info.detail).toMatch(/never takes effect while short selling is off/); // plan still surfaced in the tooltip
-    expect(info.detail).toMatch(/Short position, but short selling is off/); // base's muted explanation kept
+    const withPlan = deriveProtection(shortPos, noOrders, activePolicy, { style: "fixed", avgCost: 100 });
+    expect(withPlan.label).toBe("Fixed plan");
+    expect(withPlan.tone).toBe("pos");
+    const withoutPlan = deriveProtection(shortPos, noOrders, activePolicy);
+    expect(withoutPlan.label).toBe("App short stop −8%");
+    expect(withoutPlan.tone).toBe("pos");
   });
 });
 
@@ -487,36 +483,34 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
   });
 });
 
-describe("deriveUnmanagedShortCount / unmanagedShortNotice — shorts skipped while short selling is off (#2549)", () => {
+describe("deriveUnmanagedShortCount / unmanagedShortNotice — unmanaged shorts for venues without resting protection", () => {
   const shortPos = (symbol: string): EquityPosition =>
     ({ symbol, quantity: -5, averageCost: 100, marketValue: -450 }) as EquityPosition;
   const longPos = { symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1_100 } as EquityPosition;
 
-  it("counts only shorts, and only while shortSellingEnabled is off", () => {
-    expect(deriveUnmanagedShortCount([shortPos("TSLA"), longPos], { shortSellingEnabled: false })).toBe(1);
-    expect(deriveUnmanagedShortCount([shortPos("TSLA"), shortPos("NVDA")], { shortSellingEnabled: false })).toBe(2);
-    // Short selling ON on Alpaca: every short is managed — never a false alarm.
-    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "alpaca" })).toBe(0);
+  it("identifies unmanaged shorts when broker cannot hold short buy-stops or broker stops are off", () => {
+    // Alpaca protects shorts (even when shortSellingEnabled is off)
+    expect(deriveUnmanagedShortCount([shortPos("TSLA"), longPos], { shortSellingEnabled: false, activeBroker: "alpaca" })).toBe(0);
+    expect(deriveUnmanagedShortCount([shortPos("TSLA"), shortPos("NVDA")], { shortSellingEnabled: true, activeBroker: "alpaca" })).toBe(0);
+    // Robinhood has no broker-held buy-stops
     expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "robinhood" })).toBe(1);
+    // Stops explicitly disabled
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "alpaca", brokerStopsForShorts: false })).toBe(1);
     expect(deriveUnmanagedShortCount([longPos], { shortSellingEnabled: false })).toBe(0);
     expect(deriveUnmanagedShortCount(undefined, { shortSellingEnabled: false })).toBe(0);
   });
 
   it("notice copy is advisory, singular/plural correct, and null when there is nothing to say", () => {
     expect(unmanagedShortNotice(0)).toBeNull();
-    expect(unmanagedShortNotice(1)).toBe(
-      "1 short position is unmanaged while short selling is off — enable shorting to resume protection, or close it."
-    );
-    expect(unmanagedShortNotice(3)).toBe(
-      "3 short positions are unmanaged while short selling is off — enable shorting to resume protection, or close them."
-    );
+    expect(unmanagedShortNotice(1, "broker_unprotected")).toMatch(/1 short position has no broker-held buy-stop/);
+    expect(unmanagedShortNotice(3, "stops_disabled")).toMatch(/3 short positions are unmanaged because broker-held short buy-stops are off/);
   });
 
-  it("agrees with deriveProtection's per-row muted/unsafe state (same rule, aggregated)", () => {
-    const policy = { riskRules: { stopLossPct: 8 }, shortSellingEnabled: false } as TradingPolicy;
+  it("agrees with deriveProtection's per-row active state", () => {
+    const policy = { riskRules: { stopLossPct: 8 }, shortSellingEnabled: false, activeBroker: "alpaca" } as TradingPolicy;
     const perRow = deriveProtection(shortPos("TSLA"), [], policy);
-    expect(perRow.label).toBeNull();
-    expect(perRow.tone).toBe("muted");
-    expect(deriveUnmanagedShortCount([shortPos("TSLA")], policy)).toBe(1);
+    expect(perRow.label).toBe("App short stop −8%");
+    expect(perRow.tone).toBe("pos");
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], policy)).toBe(0);
   });
 });

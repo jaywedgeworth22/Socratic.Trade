@@ -74,10 +74,21 @@ function fmtValue(def: FieldDef, v: unknown): string {
   return String(v);
 }
 
-export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: TradingPolicy; draft: PolicyDraft }) {
+export function PolicyFieldRow({
+  def,
+  policy,
+  draft,
+  hint
+}: {
+  def: FieldDef;
+  policy: TradingPolicy;
+  draft: PolicyDraft;
+  hint?: string;
+}) {
   const current = getAtPath(policy, def.path);
   const touched = def.path in draft.values;
   const value = touched ? draft.values[def.path] : current;
+  const effectiveHint = hint ?? def.hint;
   // While the input is focused we render the raw typed text, so transient
   // states like "0." or "12." survive keystrokes (Number() would collapse
   // them). The parsed number is still committed to the draft on every change;
@@ -92,7 +103,7 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
             {def.label}
             {touched && <span className="ml-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">edited</span>}
           </div>
-          {def.hint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{def.hint}</p>}
+          {effectiveHint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{effectiveHint}</p>}
         </div>
         <Toggle checked={value === true} onChange={(next) => draft.set(def.path, next)} label={def.label} />
       </div>
@@ -136,7 +147,7 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
             </Select>
           </div>
         </div>
-        {def.hint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{def.hint}</p>}
+        {effectiveHint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{effectiveHint}</p>}
       </div>
     );
   }
@@ -176,7 +187,7 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
           {unit && unit !== "$" && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{unit}</span>}
         </div>
       </div>
-      {def.hint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{def.hint}</p>}
+      {effectiveHint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{effectiveHint}</p>}
     </div>
   );
 }

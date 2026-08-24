@@ -527,7 +527,6 @@ export async function runSyntheticStopMonitor(
     const shortTrailFallback = policy.riskRules?.shortStopLossPct ?? 0;
     const anyTrailingPlan = positions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "trailing");
     const anyShorts =
-      policy.shortSellingEnabled === true &&
       positions.some((p) => p.quantity < -0.000001) &&
       shortTrailFallback > 0;
     if (trailPct > 0 || anyTrailingPlan || anyShorts) {
@@ -549,7 +548,6 @@ export async function runSyntheticStopMonitor(
         // review, PR #1371).
         if (planStyle === "none" || planStyle === "fixed" || planStyle === "atr") continue;
         const isShort = pos.quantity < 0;
-        if (isShort && !policy.shortSellingEnabled) continue;
         // Default trail: account trailing %; trailing plan fallback; shorts without trail use shortStopLossPct.
         let effectiveTrailPct =
           planStyle === "trailing" ? (trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT) : trailPct;
@@ -631,7 +629,6 @@ export async function runSyntheticStopMonitor(
       const planStyle = stopPlanBySymbol[sym];
       if (planStyle !== "fixed" && planStyle !== "atr") continue;
       const isShort = pos.quantity < 0;
-      if (isShort && !policy.shortSellingEnabled) continue;
       // Mirrors strategy.ts's generateProactiveRiskProposals `effectiveStopPct` fixed/atr precedence
       // exactly: "fixed" uses the account's flat stop % (fallback when unset); "atr" would prefer a
       // live ATR-derived % but this tick monitor has no historical bars to compute one, so it

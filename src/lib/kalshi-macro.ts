@@ -45,7 +45,10 @@ export function resolveKalshiMacroSeries(userId?: string): string[] {
   return [...new Set(base)];
 }
 
-export function kalshiMacroContextEnabled(userId?: string): boolean {
+import type { TradingPolicy } from "./types";
+
+export function kalshiMacroContextEnabled(userId?: string, policy?: TradingPolicy): boolean {
+  if (policy && policy.kalshiMacroEnabled === false) return false;
   if (!resolveSourceBool("KALSHI_CONTEXT", userId)) return false;
   return isKalshiConfigured();
 }
@@ -64,8 +67,8 @@ export function formatKalshiLinesForPrompt(signals: KalshiEventSignal[]): string
   });
 }
 
-export async function fetchKalshiMacroContext(userId?: string): Promise<KalshiMacroContext> {
-  if (!kalshiMacroContextEnabled(userId)) return { series: [], lines: [], signals: [] };
+export async function fetchKalshiMacroContext(userId?: string, policy?: TradingPolicy): Promise<KalshiMacroContext> {
+  if (!kalshiMacroContextEnabled(userId, policy)) return { series: [], lines: [], signals: [] };
   const series = resolveKalshiMacroSeries(userId);
   const maxPerSeries = Math.max(1, Math.floor(resolveSourceNumber("KALSHI_MAX_MARKETS_PER_SERIES", userId) || 4));
   const signals = await getKalshiEventSignals(series, { maxMarketsPerSeries: maxPerSeries });
