@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-08-24 — Alpaca-trade-api v4 dependabot PR blocked (PR #3077)
+
+Dependabot PR #3077 (`dependabot/npm_and_yarn/alpacahq/alpaca-trade-api-4.0.1`) bumps `@alpacahq/alpaca-trade-api` 3.1.3 → 4.0.1.  v4 is a complete SDK rewrite: named export only (no default), flat client methods replaced by `alpaca.trading.*` / `alpaca.marketData.*` namespaces, and every response is camelCase.  `AlpacaBrokerGateway` (`src/lib/alpaca.ts`, 1144 lines) is still written against the v3 flat surface, so the PR as-is breaks the build — `tsc` fails at `src/lib/alpaca.ts:1` (`TS2613` no default export), and at runtime `new Alpaca(options)` would be undefined.  Codex review P1 threads flag the v3 wire keys the parser still reads (`bp`/`ap`/`t` in `getLatestQuotes`; snake_case `client_order_id`/`filled_qty`/`created_at` in `mapAlpacaOrder`) — both are symptoms of the same full migration, not isolated bugs.
+
+**Blocker / next action:** owner decision — either (a) fully migrate the Alpaca adapter + test fixtures to v4's namespace API, or (b) revert the bump and retain v3.  Autofix did NOT guess at the migration (real-money path).  Quote/order-parsing threads left open pending the decision; handoff-docs thread resolved.  Branch merged with `origin/main` and `npm install`ed so it is current while awaiting direction.  Rollout: `docs/rollouts/2026-08-24-alpaca-v4-dependabot-blocked.md`.
+
 ## 2026-08-23 — Toggle Switch Touch Styling, Account Extended Hours Hints & Active Short Management
 
 1. **Toggle Switch Styling Fix:** Removed `.con-toggle` from the direct `min-height: 44px; min-width: 44px;` coarse-pointer rule that deformed pill toggles into 44x44px round circles on touch/mobile screens; moved the touch target to a centered `::before` pseudo-element expanding tap area to 44x44px while keeping the 36x20px visual pill and 14px slider thumb intact.
