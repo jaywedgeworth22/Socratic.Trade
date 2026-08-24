@@ -71,13 +71,19 @@ RAG: PR B + 8-K sidecar + EarningsCalls signal/FTS + analog cards + thin Red pac
 ## 2026-08-22 GROK — Kimi leftover: CT peer intraday uses stored operator token
 
 Re-landed the only unique slice from retired-KIMI ST #3044.  CI/pin-check/lockfile/png deletes from that PR are already on main or harmful.  Peer `/api/market/intraday` now passes `operatorPeerRead` and uses the operator (`local`) *stored* MCP token, not a live `ROBINHOOD_MCP_AUTH_TOKEN` env bypass.  Board `6a7fbecc`.  Branch `grok/kimi-integrate`.
-## 2026-08-22 CURSOR — Alpaca Paper Approve greyed after Retry Red Team (IN PR)
+## 2026-08-24 CURSOR — Alpaca Paper Approve greyed after Retry Red Team (MERGED + DEPLOYED)
 
-Owner: pending proposals on Alpaca Paper, Retry Red Team yesterday did not work, Approve is now greyed.  Prod ops snapshot 2026-08-22 ~12:57Z: Paper (`4f7c96ba-4d47-45cc-abea-6e4f155aee38`) is `close_only` / Exit-only / Autopilot.  Recent Paper runs are gather-timeout.  Last successful Paper run 2026-08-20 19:55Z left openings awaiting approval.
+PR #3049 squash `06a5418b` merged 2026-08-24 09:29Z.  Live sha `dcfd04d72999cfd39bdf8b7351a2e474806944e1` (2026-08-24 ~20:12Z container start) contains the fix (`scripts/verify-deploy-sha.sh 06a5418b` PASS).  CI: `verify` + `verify-hosted` + `ios-build` (unsigned) SUCCESS on the PR.
 
-Three stacked bugs: (1) website Approve shares `busy` with Retry, so a hung retry greys Approve; iOS `canSubmit("proposal.approve")` dies after a 180s stale snapshot / failed `load()` after a long retry; (2) Retry stamped a verdict but did not apply half-size / reject-hold (llm-06); (3) `freshPlacementBlockReason` blocked human Approve of openings in Exit-only, so a working click would claim-then-block.
+Owner report: Alpaca Paper pending cards, Retry Red Team hung, Approve greyed.  Paper is `close_only` / Exit-only / Autopilot.
 
-Fix: split web busy; exempt iOS Approve from the stale gate (server re-validates); apply retry verdicts; owner Approve of an opening in `close_only` is the override (halted + liquidating still block).  Do not HOTFIX / bounce Coolify.  Weekend auto-deploy after merge.  Branch `cursor/alpaca-paper-approve-greyed-8ba8`.  Rollout: `docs/rollouts/2026-08-22-alpaca-paper-approve-greyed.md`.
+Fixed: (1) web Approve no longer shares `busy` with Retry; iOS `proposal.approve` stays available on a stale snapshot (server re-validates); (2) Retry applies half-size / reject-hold / unavailable-hold (llm-06); (3) owner Approve of an opening in Exit-only is the override — agent still will not open on its own; halted + liquidating still block openings.
+
+**Website + API are live now.**  Native iOS Approve/stale-gate copy ships on the next TestFlight build (`ios-build` green on #3049; owner has not been asked to ship TF).  Pull to refresh on Proposals if a card still looks stuck.
+
+Rollout: `docs/rollouts/2026-08-22-alpaca-paper-approve-greyed.md`.
+
+## 2026-08-22 CURSOR — Alpaca Paper Approve greyed after Retry Red Team (IN PR — superseded)
 
 ## 2026-08-22 ANTIGRAVITY — Test DB isolation & UI sparkline gradient cleanup (PR pending)
 

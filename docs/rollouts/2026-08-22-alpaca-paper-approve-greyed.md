@@ -40,11 +40,21 @@ Owner click is the Exit-only override.  The agent still will not open new risk o
 
 ## Verification State
 
-Focused vitest and the full verify quartet run after this note is committed.  Record the exact commands and counts in a follow-up edit to this file.
+```
+npm run lint                          # 0 errors (773 grandfathered warnings)
+npx tsc --noEmit                      # clean
+npx vitest run test/retry-red-team.test.ts test/system-state-placement-guard.test.ts test/proposal-action-state.test.ts test/mobile-stop-preemption.test.ts
+                                      # 13 passed
+npm run build                         # Next.js production build succeeded
+```
+
+PR #3049 CI: `verify` + `verify-hosted` + `ios-build` (unsigned) SUCCESS (runs 32710040803 / 32710040756).
+
+Production: `scripts/verify-deploy-sha.sh 06a5418b` PASS against live sha `dcfd04d72999cfd39bdf8b7351a2e474806944e1` (2026-08-24).
 
 ## Next Steps & Blockers
 
-Merge when `verify` is green.  Weekend auto-deploy after merge; do not claim production-fixed until the live sha contains this commit.  Yesterday's leftover Aug 20 openings can be approved once this is live.  iOS Approve-on-stale needs `ios-build` CI.  TestFlight only if the owner asks.
+None for the website/API fix — live.  If the owner uses **native iOS**, ship TestFlight (`scripts/ios-ship-testflight.sh`) so `MobileStore` stale-gate + proposal-card copy land on device.  Pull to refresh on Proposals if a card still looks stuck from yesterday's session.  Aug 20 pending openings can be approved or rejected on the website now; Exit-only openings show an honest override banner.
 
 ## Zero-Code Findings
 
