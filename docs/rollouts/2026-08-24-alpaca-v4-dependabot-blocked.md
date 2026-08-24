@@ -146,3 +146,73 @@ threads and the outstanding owner decision.
 
 Same as Round 1: owner decision (migrate adapter + fixtures to v4 vs revert to
 v3).  No new actionable autofix work exists until that call is made.
+
+## Round 3 (2026-08-24, third Codex review)
+
+### Context & Objective
+
+Codex's third review of the autofix head posted four new P1 doc threads
+(PLAN.md scope, exact touched-file inventory, EFFORT-LOG dedup, and the exact
+targeted test command).  All four are handoff-docs quality items, addressed
+this round.  The five earlier P1 threads (quote, order, account, position,
+identity) were re-assessed: the four parsing threads are unchanged and still
+wait on the owner's migrate-vs-revert call, and the identity thread remains a
+false positive (every commit in the PR range is `dependabot[bot]` or
+`claude[bot]` with the owner noreply; no `Codex <codex@openai.com>` author
+exists on the branch).
+
+### Changes Made (Round 3)
+
+Docs only, no product code:
+
+- **`PLAN.md`** — added a top entry recording the blocked v4 migration, the
+  migrate-vs-revert decision, and the next action (owner call).
+- **`docs/EFFORT-LOG.md`** — removed the duplicate lifecycle row for PR #3077
+  (a second `PLANNED/BLOCKED` row existed at line 484 alongside the top-level
+  `BLOCKED` entry at line 1).  One lifecycle row now remains; future
+  transitions move that row in place.
+- **`docs/rollouts/2026-08-24-alpaca-v4-dependabot-blocked.md`** — this note:
+  added the exact touched-file inventory (below) and the exact targeted test
+  command (below).
+- **`STATUS.md`** — updated the top entry with Round 3 state.
+- **`package.json` / `package-lock.json`** — unchanged this round; still the
+  dependabot v4.0.1 bump that defines the PR.
+
+### Decisions & Trade-offs (Round 3)
+
+- Still **did not guess at the migration** and **did not revert the bump**.
+  The owner decision request from Rounds 1-2 is still open; the new threads are
+  doc-quality and do not change it.
+- Resolved the commit-identity thread as a verified false positive (the branch
+  carries no `Codex <codex@openai.com>` commit, and new autofix commits use the
+  owner noreply).  The four parsing threads stay open pending the owner call.
+- No auto-merge: the PR is not functional (build broken), so the
+  "address actionable items then auto-merge" gate does not apply.
+
+### Verification State (Round 3)
+
+- Exact targeted test command from Round 2 (the receipt the reviewer asked to
+  reproduce), run against the four Alpaca fixture files that exercise the
+  `TestBrokerGateway`/mock surface:
+
+  ```bash
+  npx vitest run test/alpaca-brackets.test.ts test/alpaca-order-mapping.test.ts test/alpaca-mcp.test.ts test/data-providers.test.ts
+  ```
+
+  Result on 2026-08-24 Round 3: 4 files passed, **175 passed / 9 skipped**
+  (Round 2's receipt said 148 passed / 9 skipped — the four files have since
+  gained tests; the aggregate figure above is what the exact command produces
+  today).  These fixtures do not exercise the real v4 client, which is why they
+  do not catch the default-import break.
+- `npx tsc --noEmit` → **FAILS** (pre-existing, same spot):
+  `src/lib/alpaca.ts(1,8): error TS2613 ... has no default export`.  Caused by
+  the dependabot v4 bump, not this round's doc changes; the PR cannot build
+  until the owner picks migrate-vs-revert.
+- `npm test` / `npm run build` were not run to completion because the type gate
+  fails first; the failure is in the dependency bump, not this round's docs.
+
+### Next Steps & Blockers (Round 3)
+
+Same as Rounds 1-2: owner decision on PR #3077 — (a) migrate the Alpaca adapter
++ fixtures to v4, or (b) revert the bump and retain v3.  No new actionable
+autofix work exists until that call is made.
