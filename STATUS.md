@@ -2,15 +2,15 @@
 
 ## 2026-08-25 CURSOR — Playwright smoke: dismiss ConsentGate before More
 
-IN PROGRESS.  #3097 (`c2ed2c85`) correctly asserts Scan via the phone More sheet, but `smoke` is still red on `main` (`5a2080cf` run `32802727800`, and #3097's own run).  `more.click()` is intercepted by the first-use ConsentGate (`role="dialog"` "Terms, Privacy, and Shared Data", `z-[200]` scrim).  The smoke DB is fresh, so `/api/legal-notice` + `/api/consent` always need accept.  Spec now waits for that dialog after first paint, clicks Accept & Continue, then opens More.  Not TestFlight.  Do not dispatch `ios-ship.yml`.  Branch `cursor/smoke-dismiss-consent-0e2b`.  Rollout: `docs/rollouts/2026-08-25-smoke-dismiss-consent.md`.
+COMPLETED (merged to `main`) #3100 squash `1662cdcd`.  Hosted Playwright Smoke `32805872756` succeeded (classify + smoke).  Spec accepts the first-use legal dialog, then keeps the #3097 More vs rail Scan asserts.  Not TestFlight.  Do not dispatch `ios-ship.yml`.  Rollout: `docs/rollouts/2026-08-25-smoke-dismiss-consent.md`.
 
 ## 2026-08-25 CURSOR — Console honesty: Discard, approve typed-confirm, Coach chips
 
-COMPLETED (merged to `main`) #3093 squash `5a2080cf`.  Guardrails Discard clears universe + policy drafts.  Approve 409 opens typed-confirm.  Coach chips prefill.  Leftover UX: iOS Open Guardrails, Open Connections copy, Tradier (paper).  Playwright `smoke` red on this sha is the ConsentGate overlay, not this product change.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+COMPLETED (merged to `main`) #3093 squash `5a2080cf`.  Guardrails Discard clears universe + policy drafts.  Approve 409 opens typed-confirm.  Coach chips prefill.  Leftover UX: iOS Open Guardrails, Open Connections copy, Tradier (paper).  Playwright `smoke` on this sha was the ConsentGate overlay; #3100 / run `32805872756` is green.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
 
 ## 2026-08-25 CURSOR — Playwright mobile-chrome smoke: Scan is in More
 
-COMPLETED (merged to `main`) #3097 squash `c2ed2c85`.  Default pins omit Scan; smoke opens More on the phone bar.  Hosted `smoke` stayed red: ConsentGate intercepts the More click (follow-up `cursor/smoke-dismiss-consent-0e2b`).  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
+COMPLETED (merged to `main`) #3097 squash `c2ed2c85`.  Default pins omit Scan; smoke opens More on the phone bar.  Overlay leftover closed by #3100 (`1662cdcd`, smoke `32805872756` green).  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
 
 ## 2026-08-25 CURSOR — Datadog Logs + APM + RUM on the existing us5 account
 

@@ -22,14 +22,13 @@ Did not skip or force-click More through the scrim.  The overlay is real product
 
 - Failed run `32802727800` (`5a2080cf`): `[mobile-chrome]` `locator.click` on `/^More$/` intercepted by `role="dialog"` `aria-labelledby="con-consent-title"`.
 - Same class on #3097's own smoke (`32801121251`).
-- Local gate (this Cloud VM, no Playwright browsers claimed): see commit / PR for `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build`.
-- Hosted `Playwright Smoke` on merge to `main` is the proof.  The workflow does not run on PRs.
+- Merged #3100 squash `1662cdcd`.  Hosted Playwright Smoke `32805872756` on that sha: classify + smoke both success.
+- GitHub `verify` on the PR was green (required merge check).  Local Cloud VM vitest was not the gate.
 
 ## Next Steps & Blockers
 
-- After merge, confirm `Playwright Smoke` on `main` is green.
-- TestFlight 1.0.69 remains the iOS binary; this does not ship a new build.
-- Optional leftover: set `IOS_TF_RELEASE_NOTES=1` on a future ship step (not this PR).
+- None for this locator.  TestFlight 1.0.69 remains the iOS binary; this did not ship a new build.
+- Optional leftover: set `IOS_TF_RELEASE_NOTES=1` on a future ship step (not this change).
 
 ## Zero-Code Findings
 
