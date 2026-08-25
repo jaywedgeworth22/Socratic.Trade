@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-25 CURSOR — Playwright mobile-chrome smoke: Scan is in More
+
+IN PROGRESS.  `smoke` on main (`b9421cbf` #3090 and `46865940` #3096) failed `[mobile-chrome] getByText('Scan').first()` — the locator hit the desktop rail's hidden `<span class="flex-1">Scan</span>` (`hidden lg:flex`).  Default mobile pins are Home / Proposals / Activity / Orders; Scan is behind More.  Test now opens More on the phone bar and asserts the dialog link; desktop still asserts the visible rail.  Not a TestFlight regression.  Branch `cursor/mobile-smoke-scan-more-0e2b`.  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
+
 ## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
 ## 2026-08-25 CURSOR — Datadog Logs + APM + RUM on the existing us5 account
 
