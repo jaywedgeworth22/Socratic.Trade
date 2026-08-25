@@ -186,4 +186,69 @@ describe("assembleProposerDossier", () => {
       else process.env.CORPUS_DIR = previousCorpusDir;
     }
   });
+
+  it("keeps hydrated 1A when Item 7 also reserves a slot at the default deep limit", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "dossier-1a-keep-"));
+    const previousDataDir = process.env.DATA_DIR;
+    const previousCorpusDir = process.env.CORPUS_DIR;
+    process.env.DATA_DIR = dataDir;
+    delete process.env.CORPUS_DIR;
+    try {
+      insertDocumentAbstract({
+        id: `abstract:10k-delta:AAPL:${ACCESSION}`,
+        sourceType: "10k-delta",
+        ticker: "AAPL",
+        accessionOrEventId: ACCESSION,
+        headline: "AAPL 10-K",
+        summaryText: "Abstract only.  Neither 1A nor MD&A is in the retrieved pack.",
+        sourceChunkIds: [],
+        createdAt: "2026-08-22T00:00:00.000Z",
+        modelUsed: "extractive-highlights-v2"
+      });
+      writeCorpusFileSync(
+        secArtifactWritePath("0000320193", ACCESSION, 1, "chunks.json"),
+        JSON.stringify([
+          {
+            text: "Item 1A. Risk factors include export controls and customer concentration.",
+            parent_text: "Item 1A. Risk factors include export controls and customer concentration.",
+            itemCode: "1A",
+            section: "1A. Risk Factors"
+          },
+          {
+            text: "Item 7. MD&A discusses iPhone units and Services growth in detail across regions.",
+            parent_text: "Item 7. MD&A discusses iPhone units and Services growth in detail across regions.",
+            itemCode: "7",
+            section: "7. Management's Discussion and Analysis"
+          }
+        ])
+      );
+      const fillers: RetrievedChunk[] = Array.from({ length: 8 }, (_, index) => ({
+        id: `vec-item8-${index}`,
+        text: `Item 8 note ${index}: tables and footnotes, not risk factors.`,
+        score: 0.8 - index * 0.01,
+        doc_type: "10-k",
+        section: "8. Financial Statements",
+        metadata: { accession: `${ACCESSION}-item8-${index}` }
+      }));
+
+      const dossier = await assembleProposerDossier({
+        symbol: "AAPL",
+        depth: "deep",
+        query: "catalysts",
+        limit: 8,
+        retrieve: async () => fillers
+      });
+
+      expect(dossier.chunks.some((chunk) => chunk.id === "hydrate:1A:" + ACCESSION)).toBe(true);
+      expect(dossier.chunks.some((chunk) => chunk.id === "hydrate:7:" + ACCESSION)).toBe(true);
+      expect(dossier.chunks.some((chunk) => /export controls/i.test(chunk.text))).toBe(true);
+      expect(dossier.chunks.some((chunk) => /iPhone units/i.test(chunk.text))).toBe(true);
+      expect(dossier.chunks).toHaveLength(8);
+    } finally {
+      if (previousDataDir === undefined) delete process.env.DATA_DIR;
+      else process.env.DATA_DIR = previousDataDir;
+      if (previousCorpusDir === undefined) delete process.env.CORPUS_DIR;
+      else process.env.CORPUS_DIR = previousCorpusDir;
+    }
+  });
 });
