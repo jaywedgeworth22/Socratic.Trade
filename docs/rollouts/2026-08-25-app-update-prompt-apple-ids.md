@@ -47,7 +47,7 @@ Touched files:
 
 ## Next Steps & Blockers
 
-- Generated `AppUpdatePromptTests.swift` pbxproj refs from `32808123472` were not in the squash.  Follow-up: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
+- Generated `AppUpdatePromptTests.swift` pbxproj refs from `32808123472` landed via leftover #3103 squash `64a06e78`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
 - Optional: drop `online.dealdex` from public `versions.json` so the stale bundle is not listed as a live app.  Do not add `me.grok.dealdex`.
 - Do not `--force-ship`.  Do not dispatch `ios-ship.yml` from this change unless the owner asks.
 
