@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-25 CURSOR — Playwright mobile-chrome smoke: Scan is in More
+
+IN PROGRESS.  `smoke` on main (`b9421cbf` #3090 and `46865940` #3096) failed `[mobile-chrome] getByText('Scan').first()` — the locator hit the desktop rail's hidden `<span class="flex-1">Scan</span>` (`hidden lg:flex`).  Default mobile pins are Home / Proposals / Activity / Orders; Scan is behind More.  Test now opens More on the phone bar and asserts the dialog link; desktop still asserts the visible rail.  Not a TestFlight regression.  Branch `cursor/mobile-smoke-scan-more-0e2b`.  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
+
 ## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
 
 COMPLETED.  #3089 squash `ef725f26` vendored in-repo `scripts/ios-fleet/` and imported existing ASC/P12 GitHub secrets.  Merge-push ship `32794753487` archived then cancelled mid-upload.  Next hosted `macos-latest` tick `32796413908` (`event: schedule`) uploaded **1.0.69 (202608250109)** for `trade.socratic.app`; ASC `internal=IN_BETA_TESTING` ("TestFlight internal testers can install this build").  Git sha recorded `b9421cbf` (#3090 on top of #3089); `ios/**` was unchanged by #3090 so the binary includes #3028 chrome (gear, bell, Admin tab).  Do not run local `xcodebuild`.  Do not restart `mac-xcode26-socratic`.  Website/Coolify is not this deploy.  Playwright `smoke` failure on `b9421cbf` is #3090, not this ship.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.

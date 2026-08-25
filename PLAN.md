@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-25 CURSOR — Playwright mobile Scan/More smoke (`cursor/mobile-smoke-scan-more-0e2b`).**  `getByText("Scan").first()` matched the hidden desktop rail on iPhone.  Open More on mobile; rail link on desktop.  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
 > **2026-08-25 CURSOR — Hosted TestFlight 1.0.69 COMPLETED (`ef725f26` #3089, ship `32796413908`).**  Do not run `xcodebuild` locally.  Do not restart `mac-xcode26-socratic`.  In-repo `scripts/ios-fleet/` + copied ASC/P12 secrets.  Internal testers can install 1.0.69 (202608250109).  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
 > **2026-08-23 ANTIGRAVITY — Active Management for Held Shorts When Short Selling Disabled (`agent/ag-manage-existing-shorts`).**  Position management across strategy proactive risk exits, take-profit trims, synthetic stop monitor, broker protective stops, and console UI to manage and protect existing short positions (`quantity < 0`) regardless of the `shortSellingEnabled` toggle. The toggle now strictly gates opening new short positions (`proposal.side === "short"`), while held shorts receive full stop-loss protection, trailing stops, and resting broker buy-stops on Alpaca. Rollout: `docs/rollouts/2026-08-23-manage-existing-shorts.md`.
 
