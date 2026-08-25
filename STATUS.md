@@ -18,9 +18,9 @@ Home Coach chips are real buttons that prefill and focus the coach note.
 
 Leftover UX: iOS Open Strategy now opens the Guardrails tab; Home account copy names Open Connections; Tradier paper label matches Alpaca (paper).  Did not reopen Desk subtitle or IRA/Roth wash-sale.  Keepout files from the first three fixes were not re-edited.
 
-Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Do not collide with #3090 or #3077.  Do not deploy/compile/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Rebased onto `origin/main` `46865940` (#3096 TestFlight 1.0.69 docs).  Do not collide with #3094.  Do not deploy/compile/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
 
-## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
+## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
 
 COMPLETED.  #3089 squash `ef725f26` vendored in-repo `scripts/ios-fleet/` and imported existing ASC/P12 GitHub secrets.  Merge-push ship `32794753487` archived then cancelled mid-upload.  Next hosted `macos-latest` tick `32796413908` (`event: schedule`) uploaded **1.0.69 (202608250109)** for `trade.socratic.app`; ASC `internal=IN_BETA_TESTING` ("TestFlight internal testers can install this build").  Git sha recorded `b9421cbf` (#3090 on top of #3089); `ios/**` was unchanged by #3090 so the binary includes #3028 chrome (gear, bell, Admin tab).  Do not run local `xcodebuild`.  Do not restart `mac-xcode26-socratic`.  Website/Coolify is not this deploy.  Playwright `smoke` failure on `b9421cbf` is #3090, not this ship.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
 
