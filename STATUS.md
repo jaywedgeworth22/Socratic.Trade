@@ -18,7 +18,11 @@ Home Coach chips are real buttons that prefill and focus the coach note.
 
 Leftover UX: iOS Open Strategy now opens the Guardrails tab; Home account copy names Open Connections; Tradier paper label matches Alpaca (paper).  Did not reopen Desk subtitle or IRA/Roth wash-sale.  Keepout files from the first three fixes were not re-edited.
 
-Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Rebased onto `origin/main` `46865940` (#3096 TestFlight 1.0.69 docs).  Post-rebase `verify-hosted` failed copy-rules lint on two new strings; both now use `SENTENCE_GAP`.  Do not collide with #3094.  Do not deploy/compile/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Rebased onto `origin/main` `eb7de87c` (#3094 Datadog, after #3096 TestFlight 1.0.69 docs).  Did not edit Datadog files.  Post-rebase `verify-hosted` failed copy-rules lint on two new strings; both now use `SENTENCE_GAP`.  Do not deploy/compile/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+
+## 2026-08-25 CURSOR — Datadog Logs + APM + RUM on the existing us5 account
+
+Owner: reuse the existing Datadog account only.  No new org, API key, or paid add-on.  This repo had zero Datadog SDK wiring; host agent on `fleet-hetzner-nbg1` saw syslog/USM `service:node`, not the Next.js app.  Coolify container stdout was not ingested.  Implementation is fail-closed: missing `DD_API_KEY` / agent host / RUM tokens is a no-op and must not crash prod.  Server logs (warn+) go to the official us5 HTTP intake.  APM uses the host agent when `DD_AGENT_HOST` is set, otherwise official agentless exporter.  Coolify `NODE_OPTIONS --import ./scripts/datadog-preload.mjs` after Infisical so `dd-trace` loads before Next.  Browser RUM boots from `instrumentation-client.ts` plus a hidden runtime boot so Infisical tokens work without a rebuild.  Session Replay / Profiling / AppSec stay off.  Sentry + PagerDuty (Firefighter moderate+) are unchanged.  Designer copy/layout and Oracle RAG/Pinecone are untouched.  Coolify deploy is not this PR.  Branch `cursor/datadog-logs-apm-rum-6ce3`, PR #3094.  Rollout: `docs/rollouts/2026-08-25-datadog-logs-apm-rum.md`.
 
 ## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
 
