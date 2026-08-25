@@ -5,27 +5,15 @@
 **Scheme / module:** `SocraticTrade`
 **Team:** `CC8UTF7ATG`
 **XcodeGen:** `ios/project.yml` — edit this, then `xcodegen generate`. After generate, restore `objectVersion = 100` / `preferredProjectObjectVersion = 100` if XcodeGen emitted 77. Do not hand-edit `project.pbxproj`.
-**Ship:** `bash scripts/ios-ship-testflight.sh` — fleet: `/Users/jay/apps/ios-fleet/README.md`
+**Ship:** GitHub-hosted `macos-latest` via `.github/workflows/ios-ship.yml` (`gh workflow run ios-ship.yml`). Wrapper: `scripts/ios-ship-testflight.sh` -> in-repo `scripts/ios-fleet/`. Do not run `xcodebuild` locally. Do not restart the retired Mac runner.
 
-Binding fleet rule: `/Users/jay/apps/AGENT-SYNC.md` § iOS agent build loop. `xcodebuild` / `xcrun simctl` via bash are pre-approved. Do not ask. Do not stand up or narrate Xcode MCP.
+Binding fleet rule: `/Users/jay/apps/AGENT-SYNC.md` § iOS agent build loop. Do not stand up or narrate Xcode MCP. Do not run local `xcodebuild` / `xcrun simctl`.
 
 ## Build & test
 
-```bash
-xcodebuild -project "ios/Socratic Trade.xcodeproj" -scheme SocraticTrade \
-  -destination 'generic/platform=iOS Simulator' build
+Swift compile + XCTest run on GitHub-hosted `macos-latest` (`.github/workflows/ios-build.yml`). That job generates from `ios/project.yml`, builds unsigned, and runs the simulator test target. Linux / cloud seats cannot compile Swift; wait for that check.
 
-xcodebuild -project "ios/Socratic Trade.xcodeproj" -scheme SocraticTrade \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' test
-```
-
-Discover simulators with `xcrun simctl list devices available`. Do not hardcode a name if that device is missing. After a user-visible change:
-
-```bash
-xcrun simctl io booted screenshot /tmp/st-ios-verify.png
-```
-
-`BUILD SUCCEEDED` is not visual QA.
+`BUILD SUCCEEDED` on `ios-build` is not visual QA.
 
 ## File structure
 

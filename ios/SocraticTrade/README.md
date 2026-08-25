@@ -68,16 +68,11 @@ URL. Provider-side OAuth revocation remains a separate user action.
 
 Agents (and humans) ship device builds to TestFlight from the CLI:
 
-```bash
-# From repo root (agent worktree)
-bash scripts/ios-ship-testflight.sh
+## Ship (TestFlight)
 
-# IPA only
-bash scripts/ios-ship-testflight.sh --export-only
-```
+Do not archive from a Linux cloud seat or by restarting a Mac runner. GitHub-hosted
+`macos-latest` runs `.github/workflows/ios-ship.yml` (`gh workflow run ios-ship.yml`).
+The wrapper is `scripts/ios-ship-testflight.sh` -> in-repo `scripts/ios-fleet/`.
 
-Fleet driver (all three apps): `/Users/jay/apps/ios-fleet/README.md`.
-
-Requires team `CC8UTF7ATG` signing on the Mac, an App Store Connect app for
-`trade.socratic.app`, and either an Xcode-signed-in session or
-`~/.secrets/appstore-connect.env` (App Store Connect API key).
+Signing secrets live on the GitHub repo (same five names as Congress.Trade). Never
+mint a new App Store Connect key. Never print secret values.
