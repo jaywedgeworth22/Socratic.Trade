@@ -1,20 +1,16 @@
 # Current Status
 
-## 2026-08-25 CURSOR — Console honesty: Discard, approve typed-confirm, Coach chips (IN PR)
+## 2026-08-25 CURSOR — Playwright smoke: dismiss ConsentGate before More
 
-Three live console bugs from the 2026-08-20 desktop review, plus three leftover-UX honesty fixes on the same PR.  Designer discard hypothesis confirmed: Guardrails Discard only called `draft.clear()`, so Universe edits stayed in `universeDraft` and could persist on the next commit.  One `discardAll` now clears both drafts.
+IN PROGRESS.  #3097 (`c2ed2c85`) correctly asserts Scan via the phone More sheet, but `smoke` is still red on `main` (`5a2080cf` run `32802727800`, and #3097's own run).  `more.click()` is intercepted by the first-use ConsentGate (`role="dialog"` "Terms, Privacy, and Shared Data", `z-[200]` scrim).  The smoke DB is fresh, so `/api/legal-notice` + `/api/consent` always need accept.  Spec now waits for that dialog after first paint, clicks Accept & Continue, then opens More.  Not TestFlight.  Do not dispatch `ios-ship.yml`.  Branch `cursor/smoke-dismiss-consent-0e2b`.  Rollout: `docs/rollouts/2026-08-25-smoke-dismiss-consent.md`.
 
-Approve cards and bulk approve now resolve `row.executionMode ?? currentMode` (same as the server).  A 409 `LIVE_CONFIRMATION_REQUIRED` opens the typed phrase instead of toasting.  Home Proposal Details no longer titles a toast Approved unless placement actually succeeded.
+## 2026-08-25 CURSOR — Console honesty: Discard, approve typed-confirm, Coach chips
 
-Home Coach chips are real buttons that prefill and focus the coach note.
-
-Leftover UX: iOS Open Strategy now opens the Guardrails tab; Home account copy names Open Connections; Tradier paper label matches Alpaca (paper).  Did not reopen Desk subtitle or IRA/Roth wash-sale.  Keepout files from the first three fixes were not re-edited.
-
-Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Rebased onto `origin/main` `c2ed2c85` (#3097 mobile smoke Scan-via-More, after #3094 Datadog and #3096 TestFlight 1.0.69 docs).  Kept the e2e assertion from main.  Did not edit Datadog files.  Do not deploy/compile/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+COMPLETED (merged to `main`) #3093 squash `5a2080cf`.  Guardrails Discard clears universe + policy drafts.  Approve 409 opens typed-confirm.  Coach chips prefill.  Leftover UX: iOS Open Guardrails, Open Connections copy, Tradier (paper).  Playwright `smoke` red on this sha is the ConsentGate overlay, not this product change.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
 
 ## 2026-08-25 CURSOR — Playwright mobile-chrome smoke: Scan is in More
 
-IN PROGRESS.  `smoke` on main (`b9421cbf` #3090 and `46865940` #3096) failed `[mobile-chrome] getByText('Scan').first()` — the locator hit the desktop rail's hidden `<span class="flex-1">Scan</span>` (`hidden lg:flex`).  Default mobile pins are Home / Proposals / Activity / Orders; Scan is behind More.  Test now opens More on the phone bar and asserts the dialog link; desktop still asserts the visible rail.  Not a TestFlight regression.  Branch `cursor/mobile-smoke-scan-more-0e2b`.  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
+COMPLETED (merged to `main`) #3097 squash `c2ed2c85`.  Default pins omit Scan; smoke opens More on the phone bar.  Hosted `smoke` stayed red: ConsentGate intercepts the More click (follow-up `cursor/smoke-dismiss-consent-0e2b`).  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
 
 ## 2026-08-25 CURSOR — Datadog Logs + APM + RUM on the existing us5 account
 
