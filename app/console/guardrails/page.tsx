@@ -16,7 +16,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { formatIndexUniverseList, toggleIncludedIndex } from "@/lib/index-universes";
 import { getBrokerMarketHours } from "@/lib/market-hours";
-import type { IndexUniverse, OrderType, TaxationType, TradingPolicy } from "@/lib/types";
+import type { TaxationType, TradingPolicy } from "@/lib/types";
 import { mergeAccountCapabilities } from "@/lib/venue-contract-pure";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
@@ -64,13 +64,12 @@ import {
   VOL_TARGETING
 } from "./field-defs";
 import { StopFlowDiagram } from "./stop-flow";
-
-function parseSymbols(text: string): string[] {
-  return text
-    .split(/[\s,]+/)
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
-}
+import {
+  buildUniverseExtraPatch,
+  discardAllDrafts,
+  emptyUniverseDraft,
+  type UniverseDraft
+} from "./universe-draft";
 
 function isIraTaxation(taxationType: TaxationType | undefined): boolean {
   return taxationType === "roth_ira" || taxationType === "traditional_ira";
@@ -198,13 +197,7 @@ export default function GuardrailsPage() {
 function AccountScopedGuardrailsPage() {
   const { snapshot } = useConsoleData();
   const draft = usePolicyDraft();
-  const [universeDraft, setUniverseDraft] = useState<{
-    includedIndices?: IndexUniverse[];
-    additionalSymbols?: string;
-    blocklist?: string;
-    permittedOrderTypes?: OrderType[];
-    sellToFundBuy?: string;
-  }>({});
+  const [universeDraft, setUniverseDraft] = useState<UniverseDraft>(emptyUniverseDraft);
 
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
   if (!snapshot || !reality) return null;
@@ -216,22 +209,8 @@ function AccountScopedGuardrailsPage() {
   const unmanagedShorts = unmanagedShortNotice(unmanaged.count, unmanaged.reason ?? undefined);
 
   // Universe / arrays are replace-whole-value fields → extraPatch.
-  const extraPatch: PolicyPatchBody = {};
-  if (universeDraft.includedIndices && universeDraft.includedIndices.join() !== policy.includedIndices.join()) {
-    extraPatch.includedIndices = universeDraft.includedIndices;
-  }
-  if (universeDraft.additionalSymbols !== undefined && parseSymbols(universeDraft.additionalSymbols).join() !== (policy.additionalSymbols ?? []).join()) {
-    extraPatch.additionalSymbols = parseSymbols(universeDraft.additionalSymbols);
-  }
-  if (universeDraft.blocklist !== undefined && parseSymbols(universeDraft.blocklist).join() !== (policy.blocklist ?? []).join()) {
-    extraPatch.blocklist = parseSymbols(universeDraft.blocklist);
-  }
-  if (universeDraft.permittedOrderTypes && universeDraft.permittedOrderTypes.join() !== policy.permittedOrderTypes.join()) {
-    extraPatch.permittedOrderTypes = universeDraft.permittedOrderTypes;
-  }
-  if (universeDraft.sellToFundBuy !== undefined && universeDraft.sellToFundBuy !== (policy.sellToFundBuy ?? "off")) {
-    extraPatch.sellToFundBuy = universeDraft.sellToFundBuy;
-  }
+  const extraPatch: PolicyPatchBody = buildUniverseExtraPatch(universeDraft, policy);
+  const discardAll = () => discardAllDrafts(() => draft.clear(), setUniverseDraft);
 
   const indices = universeDraft.includedIndices ?? policy.includedIndices;
   const orderTypes = universeDraft.permittedOrderTypes ?? policy.permittedOrderTypes;
@@ -617,6 +596,7 @@ function AccountScopedGuardrailsPage() {
         defs={ALL_DEFS}
         reality={reality}
         extraPatch={Object.keys(extraPatch).length > 0 ? extraPatch : undefined}
+        onDiscard={discardAll}
       />
     </div>
   );

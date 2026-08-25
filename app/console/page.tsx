@@ -3,7 +3,7 @@
 /** Autonomy Desk — "what does Socratic Trade believe, what did it do,
  *  what evidence moved it, and how should the framework improve?" */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -37,7 +37,7 @@ import {
   thesisTagLabel
 } from "./lib/labels";
 import { redTeamFailureMeta, redTeamVerdictLabel } from "./lib/red-team";
-import { decisionActionLabel, deterministicOutcomePresentation, splitThesisRationale } from "./lib/thesis";
+import { decisionActionLabel, deterministicOutcomePresentation, isSuccessfulApprovalResult, splitThesisRationale } from "./lib/thesis";
 import { useConsoleData } from "./lib/useConsoleData";
 import { safeTopCandidates } from "./lib/evidence-rows";
 import { destinationLabel } from "./components/nav";
@@ -45,6 +45,8 @@ import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives"
 import { SymbolButton } from "./ui/symbol-drilldown";
 import { isExecutedStatus, isNotPlacedStatus, isProposalRowApprovable, proposalChipTone, sideVerb } from "./lib/action-verbs";
 import { approveProposal, LiveConfirmationRequiredError } from "./lib/api";
+import { approvalHomeToast } from "./lib/approval-honesty";
+import { applyCoachChipPrefill, COACH_NOTE_CHIPS } from "./lib/coach-chips";
 import { Sheet } from "./ui/sheet";
 import { useToast } from "./ui/toast";
 
@@ -389,11 +391,6 @@ export default function ConsoleHomePage() {
                   ? primaryDecision.coachNotes.at(-1)
                   : "Tell it what it overweighted, underweighted, ignored, or should refocus on.  Coaching attaches to the decision case instead of disappearing into chat."}
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Chip tone="muted">Refocus mandate</Chip>
-                <Chip tone="muted">Critique thesis</Chip>
-                <Chip tone="muted">Promote lesson</Chip>
-              </div>
               <CoachNoteForm decision={primaryDecision} refresh={refresh} />
             </div>
           </Card>
@@ -1019,9 +1016,14 @@ function ProposalRow({
         typedText: liveConfirm
       } : undefined;
       const res = await approveProposal(row.id, confirmBody);
-      toast.push("pos", "Approved", `Order status: ${res.status}`);
-      setOpen(false);
-      refresh();
+      const outcome = approvalHomeToast(res.status, res.reasons);
+      toast.push(outcome.tone, outcome.title, outcome.detail);
+      if (isSuccessfulApprovalResult(res.status)) {
+        setOpen(false);
+        refresh();
+      } else {
+        refresh();
+      }
     } catch (e: any) {
       if (e instanceof LiveConfirmationRequiredError) {
         setLiveConfirm(e.expectedText);
@@ -1174,7 +1176,14 @@ function CoachNoteForm({ decision, refresh }: { decision?: SocraticDecisionCase;
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
   if (!decision) return null;
+
+  const applyChip = (prefill: string) => {
+    setNote((current) => applyCoachChipPrefill(current, prefill));
+    noteRef.current?.focus();
+  };
+
   return (
     <form
       className="mt-3 flex flex-col gap-2"
@@ -1201,7 +1210,20 @@ function CoachNoteForm({ decision, refresh }: { decision?: SocraticDecisionCase;
         }
       }}
     >
+      <div className="flex flex-wrap gap-2">
+        {COACH_NOTE_CHIPS.map((chip) => (
+          <button
+            key={chip.id}
+            type="button"
+            className="con-chip con-chip-muted cursor-pointer"
+            onClick={() => applyChip(chip.prefill)}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
       <textarea
+        ref={noteRef}
         className="con-textarea"
         rows={3}
         value={note}
@@ -1210,7 +1232,7 @@ function CoachNoteForm({ decision, refresh }: { decision?: SocraticDecisionCase;
       />
       <div className="flex flex-wrap items-center gap-2">
         <button type="submit" className="con-btn con-btn-primary con-btn-sm" disabled={busy || !note.trim()}>
-          <MessageSquare size={14} /> Save note
+          <MessageSquare size={14} /> Save Note
         </button>
         {message && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{message}</span>}
       </div>

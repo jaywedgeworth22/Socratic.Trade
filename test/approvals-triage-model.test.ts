@@ -125,6 +125,19 @@ describe("approvals triage helpers", () => {
     });
   });
 
+  it("counts a NULL executionMode row as live when the current account is live", () => {
+    const row = pending({
+      id: "legacy-null-mode",
+      createdAt: "2026-08-25T12:00:00.000Z",
+      estimatedNotional: 1500
+    });
+    expect(row.executionMode).toBeUndefined();
+    expect(approvalIsLive(row)).toBe(false);
+    expect(approvalIsLive(row, "broker/live")).toBe(true);
+    expect(summarizePendingProposals([row], "broker/live").liveCount).toBe(1);
+    expect(summarizeBulkSelection([row], ["legacy-null-mode"], "broker/live").liveCount).toBe(1);
+  });
+
   describe("normalizeModelId", () => {
     it("handles null, undefined, empty inputs", () => {
       expect(normalizeModelId(null)).toBe("");
