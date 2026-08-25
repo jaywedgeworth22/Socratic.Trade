@@ -41,11 +41,13 @@ Touched files:
 
 ## Verification State
 
-Commands run after the first push; see the PR and later commits for receipts.
+- `bash scripts/ios-fleet-pin.sh --check` — OK
+- Focused vitest on the first PR plus hosted `ios-build` run `32808123472` — ** TEST SUCCEEDED ** (242/0)
+- Squash-merged to `main` as `df75ca6f` at 2026-08-25T04:32:24Z
 
 ## Next Steps & Blockers
 
-- Hosted `ios-build` compiles the new XCTest (Linux cannot).  Wait for that check; do not run local `xcodebuild`.
+- Generated `AppUpdatePromptTests.swift` pbxproj refs from `32808123472` were not in the squash.  Follow-up: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
 - Optional: drop `online.dealdex` from public `versions.json` so the stale bundle is not listed as a live app.  Do not add `me.grok.dealdex`.
 - Do not `--force-ship`.  Do not dispatch `ios-ship.yml` from this change unless the owner asks.
 

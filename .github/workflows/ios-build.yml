@@ -92,6 +92,7 @@ jobs:
           p.write_text(text)
           '
           grep -F "LayoutMathTests.swift in Sources" "ios/Socratic Trade.xcodeproj/project.pbxproj"
+          grep -F "AppUpdatePromptTests.swift in Sources" "ios/Socratic Trade.xcodeproj/project.pbxproj"
           grep -F "PrivacyInfo.xcprivacy in Resources" "ios/Socratic Trade.xcodeproj/project.pbxproj"
 
       - name: Upload generated pbxproj
