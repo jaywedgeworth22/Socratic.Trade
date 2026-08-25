@@ -25,6 +25,7 @@ FILES=(
   "appstore-connect.env.example"
   "ExportOptions-appstore.plist"
   "ExportOptions-export-ipa.plist"
+  "AppUpdatePrompt.swift"
 )
 
 if [[ ! -d "$RUNTIME_DIR" ]]; then
