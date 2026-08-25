@@ -22,8 +22,8 @@ function pending(executionMode?: PendingProposal["executionMode"]): PendingPropo
       tradeThesisTag: "Breakout",
       entryMarketRegime: "Risk-On"
     },
-    decision: { shouldTrade: true, reasons: [] }
-  } as PendingProposal;
+    decision: { shouldTrade: true, approved: true, reasons: [] }
+  } as unknown as PendingProposal;
 }
 
 describe("approve honesty: row.executionMode ?? currentMode", () => {

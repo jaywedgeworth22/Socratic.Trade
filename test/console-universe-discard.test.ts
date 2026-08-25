@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_POLICY } from "../src/lib/defaults";
+import type { TradingPolicy } from "../src/lib/types";
 import {
   buildUniverseExtraPatch,
   discardAllDrafts,
@@ -7,13 +7,15 @@ import {
   type UniverseDraft
 } from "../app/console/guardrails/universe-draft";
 
-const policy = {
-  ...DEFAULT_POLICY,
-  includedIndices: ["sp500"] as const,
+const policy: Pick<
+  TradingPolicy,
+  "includedIndices" | "additionalSymbols" | "blocklist" | "permittedOrderTypes" | "sellToFundBuy"
+> = {
+  includedIndices: ["sp500"],
   additionalSymbols: ["AAPL"],
   blocklist: ["GME"],
-  permittedOrderTypes: ["market", "limit"] as const,
-  sellToFundBuy: "off" as const
+  permittedOrderTypes: ["market", "limit"],
+  sellToFundBuy: "off"
 };
 
 describe("Guardrails universe Discard", () => {

@@ -16,7 +16,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { formatIndexUniverseList, toggleIncludedIndex } from "@/lib/index-universes";
 import { getBrokerMarketHours } from "@/lib/market-hours";
-import type { TaxationType, TradingPolicy } from "@/lib/types";
+import type { OrderType, TaxationType, TradingPolicy } from "@/lib/types";
 import { mergeAccountCapabilities } from "@/lib/venue-contract-pure";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
