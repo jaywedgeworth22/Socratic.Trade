@@ -22,7 +22,7 @@ export async function startDatadogRum(config: PublicRumConfig | null | undefined
   rumStarted = true;
   try {
     const imported = await import("@datadog/browser-rum");
-    const datadogRum = imported.datadogRum as RumSdk;
+    const datadogRum = imported.datadogRum as unknown as RumSdk;
     rumSdk = datadogRum;
     datadogRum.init({
       applicationId: config.applicationId,
