@@ -78,7 +78,7 @@ A full `npm test` in this cloud VM was still running after ~17 minutes and had a
 
 This seat does not deploy, compile iOS, or merge.  Auto-merge on #3093 was disabled so a green check cannot land it.
 
-Rebased onto `origin/main` `eb7de87c` (#3094 Datadog, after #3096 docs: TestFlight 1.0.69).  `git merge-tree --write-tree origin/main HEAD` exits 0.  Kept the 1.0.69 TestFlight note, the Datadog note, and this honesty rollout.  Did not edit Datadog files.  No Desk/IRA rewrite.
+Rebased onto `origin/main` `c2ed2c85` (#3097 Scan-via-More smoke, after #3094 Datadog and #3096 docs: TestFlight 1.0.69).  `git merge-tree --write-tree origin/main HEAD` exits 0.  Kept the e2e/smoke note, the Datadog note, and this honesty rollout.  Kept `test/e2e/dashboard-smoke.spec.ts` from main.  Did not edit Datadog files.  No Desk/IRA rewrite.
 
 Post-rebase `verify-hosted` failed `test/copy-rules-lint.test.ts` on two new user-facing strings this PR added: busy-toast detail used two ASCII spaces, and bulk Reject confirm used `? Confirm`.  Both now use `SENTENCE_GAP`.  Did not grow the peer-locked backlog.
 
