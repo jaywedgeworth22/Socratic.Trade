@@ -31,14 +31,15 @@ Touched files:
 - `npm run lint` — 0 errors (774 grandfathered warnings)
 - `npx tsc --noEmit` — clean
 - `npm run build` — Next.js 16.3.1 succeeded
-- Hosted `ios-build` run `32809716228` — ** TEST SUCCEEDED ** (242/0).  Generated pbxproj still includes `AppUpdatePromptTests.swift in Sources`.
-- Full local `npm test` was stopped after unrelated env timeouts (TwelveData / Voyage / Yahoo / RAG coverage).  Those files were not edited.  `verify-hosted` on #3103 is the suite of record.
+- Hosted leftover `ios-build` `32809716228` and head `32810441765` — ** TEST SUCCEEDED ** (242/0).  Generated pbxproj still includes `AppUpdatePromptTests.swift in Sources`.
+- Hosted `verify-hosted` `32809716125` — success (lint, tsc, npm test, next build).
+- Squash-merged to `main` as `64a06e78` at 2026-08-25T05:18:53Z.
 
 ## Next Steps & Blockers
 
-- Wait for hosted `ios-build` on this leftover PR.  Do not run local `xcodebuild`.
 - Optional: drop `online.dealdex` from public `jaywedgeworth22/ios-app-versions` `versions.json`.  Do not add `me.grok.dealdex`.
 - Do not `--force-ship`.  Do not dispatch `ios-ship.yml` unless the owner asks.
+- Do not claim a website deploy.  `ios/**` is outside Coolify `watch_paths`.
 
 ## Zero-Code Findings
 
