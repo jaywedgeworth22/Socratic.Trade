@@ -415,7 +415,7 @@ function ApprovalsPageInner() {
                         : "Rejects each selected proposal through the existing server path.  Click once to arm, then again to confirm."
                   }
                 >
-                  {bulkBusy === "reject" ? "Rejecting..." : rejectArmedEffective ? `Reject ${selection.rejectCount}? Confirm` : `Reject Selected (${selection.rejectCount})`}
+                  {bulkBusy === "reject" ? "Rejecting..." : rejectArmedEffective ? `Reject ${selection.rejectCount}?${SENTENCE_GAP}Confirm` : `Reject Selected (${selection.rejectCount})`}
                 </Btn>
               </div>
             </div>

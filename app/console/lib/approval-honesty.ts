@@ -8,6 +8,7 @@ import type { ExecutionMode } from "@/lib/types";
 import { feedStatusLabel } from "@/lib/dashboard-ui";
 import { isSuccessfulApprovalResult } from "./thesis";
 import { realityForMode } from "./derive";
+import { SENTENCE_GAP } from "./format";
 
 export function resolveApprovalExecutionMode(
   rowMode: ExecutionMode | null | undefined,
@@ -48,7 +49,7 @@ export function approvalHomeToast(status: string, reasons?: string[]): ApprovalH
       title: "Approval is still busy",
       detail:
         (reasons ?? []).join(" ") ||
-        "A strategy run is still in progress after waiting.  Wait for the run to finish (or for its lock to expire, up to ~5 minutes), then Approve again."
+        `A strategy run is still in progress after waiting.${SENTENCE_GAP}Wait for the run to finish (or for its lock to expire, up to ~5 minutes), then Approve again.`
     };
   }
   return {

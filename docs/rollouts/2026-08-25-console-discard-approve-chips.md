@@ -80,6 +80,8 @@ This seat does not deploy, compile iOS, or merge.  Auto-merge on #3093 was disab
 
 Rebased onto `origin/main` `46865940` (#3096 docs: TestFlight 1.0.69).  `git merge-tree --write-tree origin/main HEAD` exits 0.  Kept both the 1.0.69 TestFlight note and this honesty rollout.  No Datadog (#3094).  No Desk/IRA rewrite.
 
+Post-rebase `verify-hosted` failed `test/copy-rules-lint.test.ts` on two new user-facing strings this PR added: busy-toast detail used two ASCII spaces, and bulk Reject confirm used `? Confirm`.  Both now use `SENTENCE_GAP`.  Did not grow the peer-locked backlog.
+
 ## Next Steps & Blockers
 
 - Human review of the PR.  Do not merge from this seat.

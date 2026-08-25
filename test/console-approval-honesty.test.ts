@@ -50,6 +50,7 @@ describe("approve honesty: row.executionMode ?? currentMode", () => {
     expect(approvalHomeToast("paper").title).toBe("Approved");
     expect(approvalHomeToast("busy").title).toBe("Approval is still busy");
     expect(approvalHomeToast("busy").title).not.toBe("Approved");
+    expect(approvalHomeToast("busy").detail).toContain("\u00A0 ");
     expect(approvalHomeToast("blocked").title).toBe("Blocked at approval time");
     expect(approvalHomeToast("blocked").title).not.toBe("Approved");
   });
