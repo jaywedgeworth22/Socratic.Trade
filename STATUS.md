@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-25 CURSOR — CI autofix: exclude node:test ios-fleet suite from vitest
+
+#3091 added `scripts/ios-fleet/publish-ios-versions.test.mjs` for `node --test` and wired that command in `ci.yml`.  Vitest still globbed `**/*.test.mjs`, so `verify-hosted` failed with "No test suite found" after 683 other files passed.  Exclude `scripts/**/*.test.mjs` from vitest; keep the `node --test` CI step.  Branch `cursor/ci-autofix-automation-bcfd`.  Rollout: `docs/rollouts/2026-08-25-vitest-exclude-node-test-ios-versions.md`.
+
 ## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
 
 Owner: `xcodebuild` is GitHub-hosted `macos-latest` only.  Do not run it locally.  Do not restart the retired Mac runner.  #3083 switched `runs-on` but left `scripts/ios-ship-testflight.sh` exec'ing `/Users/jay/apps/ios-fleet/ship-testflight.sh`, so every `ios-ship` tick failed in ~15s.  This change vendors Congress.Trade's in-repo fleet path, imports signing from GitHub Actions secrets (same five names, do not mint a new key), and pins `scripts/ios-fleet`.  PR #3089: hosted unsigned `xcodebuild` green; `verify-hosted` failed because Sentry still observed `iOS build (Mac runner)` / `iOS TestFlight ship (Mac runner)` after the YAML `name:` rename — observer list + `CRON_SCHEDULES` retargeted 2026-08-25.  #3028 iOS UI is already on `main`; TestFlight is the remaining deploy after merge + `gh workflow run ios-ship.yml`.  Website/Coolify does not carry the iOS UI.  Posted #agent-sync to stop local xcodebuild / Mac-runner restarts.  Branch `cursor/ios-hosted-testflight-ship-0e2b`.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.

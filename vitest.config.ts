@@ -63,7 +63,10 @@ export default defineConfig({
       ".codex/**",
       "test/e2e/**",
       "reference/**",
-      ".worktrees/**"
+      ".worktrees/**",
+      // node:test suites (run via `node --test` in ci.yml).  Vitest's default
+      // **/*.test.mjs include otherwise loads them and fails "No test suite found".
+      "scripts/**/*.test.mjs"
     ]
   }
 });
