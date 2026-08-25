@@ -1,8 +1,12 @@
 # Current Status
 
+## 2026-08-25 CURSOR — AppUpdatePromptTests pbxproj leftover after #3102
+
+IN PR (`cursor/app-update-prompt-pbxproj-ddca`).  #3102 squash `df75ca6f` landed the Swift pin/copy + DealDex registry.  Hosted `ios-build` `32808123472` generated `AppUpdatePromptTests.swift` refs that the squash did not include.  This leftover commits that generated pbxproj plus a privacy-manifest assert so TestFlight (no xcodegen) stays in sync.  Do not `--force-ship`.  Do not dispatch `ios-ship.yml` unless the owner asks.  Do not claim website deploy without `scripts/verify-deploy-sha.sh`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
+
 ## 2026-08-25 CURSOR — AppUpdatePrompt Apple IDs off Swift (live DealDex net.dealdex)
 
-IN PROGRESS.  One pinned `AppUpdatePrompt.swift` stays the ios-fleet copy.  Dropped `knownAppleIds` (stale `online.dealdex`).  Prompt reads versions / `appleId` from `jaywedgeworth22/ios-app-versions` and the local `ios-app-versions.json` mirror.  `apps.json` live DealDex is `net.dealdex` 6802474288.  Do not treat `online.dealdex` as live.  Do not upload `me.grok.dealdex`.  No Swift package.  No `testers.json`.  No `--force-ship`.  No spend.  Branch `cursor/app-update-prompt-apple-ids-ddca`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-apple-ids.md`.
+COMPLETED (merged to `main`) #3102 squash `df75ca6f`.  One pinned `AppUpdatePrompt.swift` stays the ios-fleet copy.  Dropped `knownAppleIds` (stale `online.dealdex`).  Prompt reads versions / `appleId` from `jaywedgeworth22/ios-app-versions` and the local `ios-app-versions.json` mirror.  `apps.json` live DealDex is `net.dealdex` 6802474288.  Do not treat `online.dealdex` as live.  Do not upload `me.grok.dealdex`.  No Swift package.  No `testers.json`.  No `--force-ship`.  No spend.  Hosted `ios-build` `32808123472` ** TEST SUCCEEDED ** (242/0).  Generated pbxproj leftover is the stanza above.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-apple-ids.md`.
 
 ## 2026-08-25 CURSOR — Playwright smoke: dismiss ConsentGate before More
 
