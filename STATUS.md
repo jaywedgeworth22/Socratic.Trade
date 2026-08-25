@@ -2,7 +2,7 @@
 
 ## 2026-08-25 CURSOR — AppUpdatePromptTests pbxproj leftover after #3102
 
-IN PR (`cursor/app-update-prompt-pbxproj-ddca`).  #3102 squash `df75ca6f` landed the Swift pin/copy + DealDex registry.  Hosted `ios-build` `32808123472` generated `AppUpdatePromptTests.swift` refs that the squash did not include.  This leftover commits that generated pbxproj plus a privacy-manifest assert so TestFlight (no xcodegen) stays in sync.  Do not `--force-ship`.  Do not dispatch `ios-ship.yml` unless the owner asks.  Do not claim website deploy without `scripts/verify-deploy-sha.sh`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
+IN PR #3103 (`cursor/app-update-prompt-pbxproj-ddca`).  #3102 squash `df75ca6f` landed the Swift pin/copy + DealDex registry.  Hosted `ios-build` `32808123472` generated `AppUpdatePromptTests.swift` refs that the squash did not include.  This leftover commits that generated pbxproj plus a privacy-manifest assert so TestFlight (no xcodegen) stays in sync.  Hosted leftover `ios-build` `32809716228` ** TEST SUCCEEDED ** (242/0).  Do not `--force-ship`.  Do not dispatch `ios-ship.yml` unless the owner asks.  Do not claim website deploy without `scripts/verify-deploy-sha.sh`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
 
 ## 2026-08-25 CURSOR — AppUpdatePrompt Apple IDs off Swift (live DealDex net.dealdex)
 

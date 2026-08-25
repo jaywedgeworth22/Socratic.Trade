@@ -21,13 +21,18 @@ Touched files:
 
 ## Decisions & Trade-offs
 
-- New branch off `origin/main` (`cursor/app-update-prompt-pbxproj-ddca`) instead of more commits on the merged #3102 branch.
+- New branch off `origin/main` (`cursor/app-update-prompt-pbxproj-ddca`, PR #3103) instead of more commits on the merged #3102 branch.
 - Did not hand-edit pbxproj IDs; copied the artifact from `32808123472` (same four-line add as leftover commit `46dff4e0`).
 - Did not treat `ios/**` as a Coolify deploy.  `ios/**` is outside `watch_paths`.  Do not announce website deploy without `scripts/verify-deploy-sha.sh`.
 
 ## Verification State
 
-Receipts land after the first push on this leftover branch.
+- `npx vitest run test/ios-privacy-manifest.test.ts test/ios-fleet-app-update-prompt.test.ts` — 9/9 pass
+- `npm run lint` — 0 errors (774 grandfathered warnings)
+- `npx tsc --noEmit` — clean
+- `npm run build` — Next.js 16.3.1 succeeded
+- Hosted `ios-build` run `32809716228` — ** TEST SUCCEEDED ** (242/0).  Generated pbxproj still includes `AppUpdatePromptTests.swift in Sources`.
+- Full local `npm test` was stopped after unrelated env timeouts (TwelveData / Voyage / Yahoo / RAG coverage).  Those files were not edited.  `verify-hosted` on #3103 is the suite of record.
 
 ## Next Steps & Blockers
 
