@@ -25,6 +25,7 @@ install -m 0644 scripts/ios-fleet/asc-api.mjs /Users/jay/apps/ios-fleet/asc-api.
 install -m 0644 scripts/ios-fleet/appstore-connect.env.example /Users/jay/apps/ios-fleet/appstore-connect.env.example
 install -m 0644 scripts/ios-fleet/ExportOptions-appstore.plist /Users/jay/apps/ios-fleet/ExportOptions-appstore.plist
 install -m 0644 scripts/ios-fleet/ExportOptions-export-ipa.plist /Users/jay/apps/ios-fleet/ExportOptions-export-ipa.plist
+install -m 0644 scripts/ios-fleet/AppUpdatePrompt.swift /Users/jay/apps/ios-fleet/AppUpdatePrompt.swift
 ```
 
 Edit the runtime copy only through this repo: change the file here, land the PR, then re-run the `install` commands above to sync `/Users/jay/apps/ios-fleet/`.
@@ -100,9 +101,22 @@ It exits 0 with a warning (not a failure) when `/Users/jay/apps/ios-fleet/` does
 
 ## In-app update prompt
 
-Every fleet iOS app copies `AppUpdatePrompt.swift` from this directory (canonical
-runtime: `/Users/jay/apps/ios-fleet/AppUpdatePrompt.swift`) and calls
-`.appUpdatePrompt()` on the root view.  TestFlight versions are published to
+Every fleet iOS app copies `AppUpdatePrompt.swift` from this directory (the
+in-repo pin) into its app target and calls `.appUpdatePrompt()` on the root
+view.  Do not fork the file.  Do not make a Swift package.
+
+Apple IDs and marketing versions live in the public fleet manifest
 https://raw.githubusercontent.com/jaywedgeworth22/ios-app-versions/main/versions.json
-by `publish-ios-versions.sh` after a successful ship.
+(and the local mirror `ios-app-versions.json`).  `apps.json` is the ship
+registry.  Live DealDex is `net.dealdex` appleId `6802474288`.
+`online.dealdex` is not the live bundle.  Do not upload `me.grok.dealdex`.
+
+`publish-ios-versions.sh` writes both the local mirror and the public
+`versions.json` after a successful ship.
+
+Copy into this repo's iOS target:
+
+```
+cp scripts/ios-fleet/AppUpdatePrompt.swift ios/SocraticTrade/AppUpdatePrompt.swift
+```
 

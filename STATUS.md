@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-25 CURSOR — AppUpdatePrompt Apple IDs off Swift (live DealDex net.dealdex)
+
+IN PROGRESS.  One pinned `AppUpdatePrompt.swift` stays the ios-fleet copy.  Dropped `knownAppleIds` (stale `online.dealdex`).  Prompt reads versions / `appleId` from `jaywedgeworth22/ios-app-versions` and the local `ios-app-versions.json` mirror.  `apps.json` live DealDex is `net.dealdex` 6802474288.  Do not treat `online.dealdex` as live.  Do not upload `me.grok.dealdex`.  No Swift package.  No `testers.json`.  No `--force-ship`.  No spend.  Branch `cursor/app-update-prompt-apple-ids-ddca`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-apple-ids.md`.
+
 ## 2026-08-25 CURSOR — Playwright smoke: dismiss ConsentGate before More
 
 COMPLETED (merged to `main`) #3100 squash `1662cdcd`.  Hosted Playwright Smoke `32805872756` succeeded (classify + smoke).  Spec accepts the first-use legal dialog, then keeps the #3097 More vs rail Scan asserts.  Not TestFlight.  Do not dispatch `ios-ship.yml`.  Rollout: `docs/rollouts/2026-08-25-smoke-dismiss-consent.md`.

@@ -577,6 +577,12 @@ XCODEGEN_DIR="$(json_get "$APP_KEY" xcodegenDir)"
 DEFAULT_MARKETING="$(json_get "$APP_KEY" marketingVersionDefault)"
 
 [[ -n "$BUNDLE_ID" && -n "$SCHEME" && -n "$PROJECT_REL" ]] || die "unknown app key or incomplete registry: $APP_KEY"
+if [[ "$BUNDLE_ID" == "me.grok.dealdex" ]]; then
+  die "refusing to upload me.grok.dealdex"
+fi
+if [[ "$APP_KEY" == "dealdex" && "$BUNDLE_ID" != "net.dealdex" ]]; then
+  die "DealDex live bundle is net.dealdex, not ${BUNDLE_ID}"
+fi
 
 if [[ -z "$UPLOAD_ONLY_IPA" && "$DRY_RUN" -eq 0 ]]; then
   if [[ "$ALLOW_DIRTY" -eq 0 ]]; then

@@ -50,14 +50,14 @@
     },
     "dealdex": {
       "displayName": "DealDex",
-      "bundleId": "online.dealdex",
+      "bundleId": "net.dealdex",
       "appleId": 6802474288,
       "scheme": "DealDex",
       "projectRel": "native/ios/DealDex.xcodeproj",
       "xcodegenDir": "native/ios",
       "worktreeHint": "~/apps/dealdex-grok",
-      "marketingVersionDefault": "1.0.1",
-      "notes": "Native iPhone app. Bundle ID online.dealdex (resource R2FAW69NPD, not a team id). Team CC8UTF7ATG. ASC app DealDex SKU dealdex id 6802474288. Do not upload me.grok.dealdex."
+      "marketingVersionDefault": "1.0.2",
+      "notes": "Live DealDex is net.dealdex appleId 6802474288. online.dealdex is not the live bundle (legacy resource R2FAW69NPD, not a team id). Do not upload me.grok.dealdex. Team CC8UTF7ATG. ASC app DealDex SKU dealdex."
     },
     "autorotate": {
       "displayName": "Autorotate",
