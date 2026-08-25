@@ -314,7 +314,8 @@ export function PolicySaveBar({
   draft,
   defs,
   reality,
-  extraPatch
+  extraPatch,
+  onDiscard
 }: {
   policy: TradingPolicy;
   draft: PolicyDraft;
@@ -322,6 +323,8 @@ export function PolicySaveBar({
   reality: RealityInfo;
   /** Extra body merged into the PUT (e.g. full arrays that aren't diffable). */
   extraPatch?: PolicyPatchBody;
+  /** Called with draft.clear() so pages that keep a sibling draft (Universe) reset it too. */
+  onDiscard?: () => void;
 }) {
   const { refresh } = useConsoleData();
   const toast = useToast();
@@ -353,7 +356,8 @@ export function PolicySaveBar({
         policy.connectedAccountId
       );
       await refresh();
-      draft.clear();
+      if (onDiscard) onDiscard();
+      else draft.clear();
       setReviewOpen(false);
       setTyped("");
       toast.push("pos", "Guardrails updated", "Takes effect from the next policy-gate evaluation.");
@@ -372,7 +376,14 @@ export function PolicySaveBar({
             {changeCount} uncommitted {changeCount === 1 ? "change" : "changes"}
           </span>
           <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" onClick={() => draft.clear()}>
+            <Btn
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (onDiscard) onDiscard();
+                else draft.clear();
+              }}
+            >
               Discard
             </Btn>
             <Btn variant="primary" size="sm" onClick={() => setReviewOpen(true)}>

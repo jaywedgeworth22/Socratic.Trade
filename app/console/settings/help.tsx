@@ -10,6 +10,7 @@ import { useMemo, useState } from "react";
 import {
   BROKERAGE_ACCOUNT_GLOSSARY_DEFINITION,
   GUARDRAILS_GLOSSARY_DEFINITION,
+  PAPER_ACCOUNT_GLOSSARY_ALIASES,
   PAPER_ACCOUNT_GLOSSARY_DEFINITION,
   PAPER_ACCOUNT_GLOSSARY_TERM
 } from "@/lib/guardrail-copy";
@@ -35,7 +36,7 @@ const GLOSSARY: GlossaryGroup[] = [
     entries: [
       {
         term: PAPER_ACCOUNT_GLOSSARY_TERM,
-        aliases: "paper trading sandbox",
+        aliases: PAPER_ACCOUNT_GLOSSARY_ALIASES,
         definition: PAPER_ACCOUNT_GLOSSARY_DEFINITION
       },
       {

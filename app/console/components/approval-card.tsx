@@ -6,7 +6,7 @@
  *  and an honest three-outcomes block. Brokerage approvals go through the
  *  server's typed-confirmation contract (LIVE_CONFIRMATION_REQUIRED). */
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
 import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { isModelRotationSentinel } from "@/lib/llm-request";
@@ -33,7 +33,8 @@ import {
   resolveProposalStop,
   resolveProposalTarget
 } from "@/lib/proposal-price-review";
-import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, realityForMode } from "../lib/derive";
+import { resolveApprovalExecutionMode, willPromptTypedApproval } from "../lib/approval-honesty";
+import { deriveReality, estimatedClosingPnl, isClosingOrder, positionMarkPrice, realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { modelDisplayName } from "../lib/models";
@@ -264,11 +265,15 @@ export const ApprovalCard = memo(function ApprovalCard({
   const [busy, setBusy] = useState<"approve" | "reject" | "retry" | null>(null);
   const actionBusy = busy === "approve" || busy === "reject";
   const [liveOpen, setLiveOpen] = useState(false);
+  const [forcedExpected, setForcedExpected] = useState<string | null>(null);
+  const [forcedReasons, setForcedReasons] = useState<string[]>([]);
   // PR-A2: default collapsed so Approve/Reject stay reachable; expand for the full receipt.
   const [expanded, setExpanded] = useState(false);
 
   const p = pending.proposal;
-  const reality = realityForMode(pending.executionMode);
+  const currentMode = snapshot ? deriveReality(snapshot).mode : undefined;
+  const resolvedMode = resolveApprovalExecutionMode(pending.executionMode, currentMode);
+  const reality = realityForMode(resolvedMode);
   const live = reality.tone === "live";
   const notional = estNotional(pending);
   const expiresAt = snapshot ? expiryIso(pending, snapshot.policy) : null;
@@ -278,7 +283,7 @@ export const ApprovalCard = memo(function ApprovalCard({
   const policy = snapshot?.policy;
   // Owner preference: when typed confirmation is off, approving a broker order is one-click like any
   // other — no "APPROVE LIVE <SYMBOL>" phrase. The server honors the same flag (assertLiveApprovalConfirmation).
-  const willPromptTyped = live && policy?.requireTypedConfirmation !== false;
+  const willPromptTyped = willPromptTypedApproval(resolvedMode, policy?.requireTypedConfirmation);
   const openingInExitOnly =
     policy?.systemState === "close_only" && (p.side === "buy" || p.side === "short");
   const dailyUsed = finite(pending.decision.dailyNotionalUsed) ? pending.decision.dailyNotionalUsed : snapshot?.dailyStats.notional;
@@ -411,7 +416,13 @@ export const ApprovalCard = memo(function ApprovalCard({
       await refresh();
       finish(result);
     } catch (error) {
-      toast.push("neg", "Approval failed", error instanceof ConsoleApiError ? error.message : String(error));
+      if (error instanceof LiveConfirmationRequiredError) {
+        setForcedExpected(error.expectedText);
+        setForcedReasons(error.reasons);
+        setLiveOpen(true);
+      } else {
+        toast.push("neg", "Approval failed", error instanceof ConsoleApiError ? error.message : String(error));
+      }
     } finally {
       setBusy(null);
     }
@@ -1051,12 +1062,18 @@ export const ApprovalCard = memo(function ApprovalCard({
         </Btn>
       </footer>
 
-      {live && (
+      {(live || liveOpen) && (
         <LiveApproveSheet
           open={liveOpen}
-          onClose={() => setLiveOpen(false)}
+          onClose={() => {
+            setLiveOpen(false);
+            setForcedExpected(null);
+            setForcedReasons([]);
+          }}
           pending={pending}
           notional={notional}
+          seedExpected={forcedExpected}
+          seedReasons={forcedReasons}
           onDone={finish}
         />
       )}
@@ -1074,24 +1091,33 @@ function LiveApproveSheet({
   onClose,
   pending,
   notional,
+  seedExpected,
+  seedReasons,
   onDone
 }: {
   open: boolean;
   onClose: () => void;
   pending: PendingProposal;
   notional: number | undefined;
+  seedExpected?: string | null;
+  seedReasons?: string[];
   onDone: (result: ApproveResult) => void;
 }) {
   const { refresh } = useConsoleData();
   const toast = useToast();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
-  const [serverReasons, setServerReasons] = useState<string[]>([]);
-  const [serverExpected, setServerExpected] = useState<string | null>(null);
+  const [serverReasons, setServerReasons] = useState<string[]>(seedReasons ?? []);
+  const [serverExpected, setServerExpected] = useState<string | null>(seedExpected ?? null);
+
+  useEffect(() => {
+    if (seedExpected) setServerExpected(seedExpected);
+    if (seedReasons && seedReasons.length > 0) setServerReasons(seedReasons);
+  }, [seedExpected, seedReasons]);
 
   const expectedText = useMemo(
-    () => serverExpected ?? `APPROVE LIVE ${pending.proposal.symbol.toUpperCase()}`,
-    [serverExpected, pending.proposal.symbol]
+    () => serverExpected ?? seedExpected ?? `APPROVE LIVE ${pending.proposal.symbol.toUpperCase()}`,
+    [serverExpected, seedExpected, pending.proposal.symbol]
   );
   const matches = typed.trim().toUpperCase() === expectedText;
 

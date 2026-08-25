@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   ADVISORY_NOTE,
+  ALPACA_PAPER_LABEL,
   BREAKER_FIRED_NOTE,
   FRAMEWORK_SIZING_INVARIANT,
   GUARDRAILS_HEADER_SUFFIX,
   HOW_IT_WORKS_AUTHORITY_ITEMS,
+  PAPER_ACCOUNT_GLOSSARY_ALIASES,
   REGIME_BELOW_MEDIAN_CRISIS,
-  REGIME_GATES_ENTRIES
+  REGIME_GATES_ENTRIES,
+  TRADIER_SANDBOX_LABEL
 } from "../src/lib/guardrail-copy";
 
 describe("guardrail-copy — canonical semantics", () => {
@@ -36,5 +39,13 @@ describe("guardrail-copy — canonical semantics", () => {
   it("allows Socratic override in the public sizing invariant", () => {
     expect(FRAMEWORK_SIZING_INVARIANT.toLowerCase()).toContain("socratic override");
     expect(FRAMEWORK_SIZING_INVARIANT.toLowerCase()).not.toContain("cannot reach it");
+  });
+
+  it("labels Tradier paper in the same family as Alpaca (paper)", () => {
+    expect(ALPACA_PAPER_LABEL).toBe("Alpaca (paper)");
+    expect(TRADIER_SANDBOX_LABEL).toBe("Tradier (paper)");
+    expect(TRADIER_SANDBOX_LABEL.toLowerCase()).not.toContain("sandbox");
+    expect(PAPER_ACCOUNT_GLOSSARY_ALIASES.toLowerCase()).not.toContain("sandbox");
+    expect(PAPER_ACCOUNT_GLOSSARY_ALIASES.toLowerCase()).toContain("paper");
   });
 });
