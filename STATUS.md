@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
+
+Owner: `xcodebuild` is GitHub-hosted `macos-latest` only.  Do not run it locally.  Do not restart the retired Mac runner.  #3083 switched `runs-on` but left `scripts/ios-ship-testflight.sh` exec'ing `/Users/jay/apps/ios-fleet/ship-testflight.sh`, so every `ios-ship` tick failed in ~15s.  This change vendors Congress.Trade's in-repo fleet path, imports signing from GitHub Actions secrets (same five names, do not mint a new key), and pins `scripts/ios-fleet`.  PR #3089: hosted unsigned `xcodebuild` green; `verify-hosted` failed because Sentry still observed `iOS build (Mac runner)` / `iOS TestFlight ship (Mac runner)` after the YAML `name:` rename — observer list + `CRON_SCHEDULES` retargeted 2026-08-25.  #3028 iOS UI is already on `main`; TestFlight is the remaining deploy after merge + `gh workflow run ios-ship.yml`.  Website/Coolify does not carry the iOS UI.  Posted #agent-sync to stop local xcodebuild / Mac-runner restarts.  Branch `cursor/ios-hosted-testflight-ship-0e2b`.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
+
 ## 2026-08-23 — Toggle Switch Touch Styling, Account Extended Hours Hints & Active Short Management
 
 1. **Toggle Switch Styling Fix:** Removed `.con-toggle` from the direct `min-height: 44px; min-width: 44px;` coarse-pointer rule that deformed pill toggles into 44x44px round circles on touch/mobile screens; moved the touch target to a centered `::before` pseudo-element expanding tap area to 44x44px while keeping the 36x20px visual pill and 14px slider thumb intact.

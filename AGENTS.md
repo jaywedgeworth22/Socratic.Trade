@@ -113,24 +113,16 @@ down.
 > `ambiguous use of 'Preview'`, pointed at an innocent `#Preview` block that was fine and
 > singular; it only became ambiguous because there were suddenly two initializers.
 >
-> **If your change (or your merge) touches `ios/**`, run the CI command locally before
-> pushing:**
->
-> ```bash
-> xcodebuild build -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
->   -destination 'generic/platform=iOS' \
->   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
-> ```
->
-> To also run the Swift test target (99 tests as of 2026-08-13):
->
-> ```bash
-> xcodebuild test -project 'ios/Socratic Trade.xcodeproj' -scheme SocraticTrade \
->   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO
-> ```
+> **Do not run `xcodebuild` locally.** Linux cloud seats cannot, and Mac seats must
+> not restart local Xcode or the retired self-hosted `mac-xcode26-socratic` runner.
+> Swift compile + XCTest is `.github/workflows/ios-build.yml` on GitHub-hosted
+> `macos-latest`. TestFlight archive + upload is `.github/workflows/ios-ship.yml`
+> on the same hosted image (`scripts/ios-ship-testflight.sh` -> in-repo
+> `scripts/ios-fleet/`). Dispatch those workflows; do not revive
+> `/Users/jay/apps/ios-fleet` as the ship path.
 >
 > A merge is the highest-risk case precisely because it is the one where you did not
-> write the code and have no reason to suspect it.
+> write the code and have no reason to suspect it. Wait for `ios-build` on the PR.
 
 `npm run build` deletes and regenerates `.next/`. If a dev server is running
 (via Claude Code's preview tool or otherwise), it will start erroring with
@@ -207,7 +199,7 @@ script calling `https://jays.services/api/v1/...` must use
 `socratic-app` (Coolify app name; = `socratictrade.com`, see the production stanza below).
 **MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.**
 
-**Fleet CI = GitHub-hosted only (2026-07-29):** Workflows use `ubuntu-latest`. Self-hosted Oracle/Coolify Actions runners (`socratic-ci`, `oracle-ci`, `fleet-ci-*`) are **retired** — do not reintroduce `[self-hosted, …]` labels. (**CORRECTION, 2026-08-13.** An earlier version of this note said the admin server-metrics panel listed these old runner names because of "stale Coolify-side registration cleanup". That was wrong, and the misattribution came from `docs/rollouts/2026-08-11-server-metrics-panel-hetzner-config-repair.md`, which trusted the panel while debugging the panel. Coolify's `/resources` returns exactly THREE entries on this host — `socratic-app`, `congress-trade`, `usage-monitor` — and none of them is a runner. The six extra rows were **string literals hardcoded in our own code**, at two sites in `app/api/admin/server-metrics/route.ts`, returned whenever a GitHub token was absent, the API call failed, the response was not ok, the shape was unexpected, or the live list came back empty. No GitHub token has ever been set in the ST production environment, so that fallback was served on 100% of production requests and reported six machines that do not exist as `running:healthy`. Removed 2026-08-13 — see `docs/rollouts/2026-08-13-honest-server-stats.md`. Real runner truth is `gh api repos/jaywedgeworth22/<repo>/actions/runners`; ST has exactly one registered runner, the Mac `mac-xcode26-socratic`.)
+**Fleet CI = GitHub-hosted only (2026-07-29; iOS 2026-08-24):** Workflows use `ubuntu-latest` for Node, and **GitHub-hosted `macos-latest` for iOS** (`ios-build.yml`, `ios-ship.yml`). Self-hosted Oracle/Coolify Actions runners (`socratic-ci`, `oracle-ci`, `fleet-ci-*`) are **retired** — do not reintroduce `[self-hosted, …]` labels. The Mac `mac-xcode26-socratic` runner is also retired for Actions (`gh api repos/.../actions/runners` → `total_count: 0`). Do not re-register it. Do not run `xcodebuild` locally to compensate. (**CORRECTION, 2026-08-13.** An earlier version of this note said the admin server-metrics panel listed old runner names because of "stale Coolify-side registration cleanup". That was wrong, and the misattribution came from `docs/rollouts/2026-08-11-server-metrics-panel-hetzner-config-repair.md`, which trusted the panel while debugging the panel. Coolify's `/resources` returns exactly THREE entries on this host — `socratic-app`, `congress-trade`, `usage-monitor` — and none of them is a runner. The six extra rows were **string literals hardcoded in our own code**, at two sites in `app/api/admin/server-metrics/route.ts`, returned whenever a GitHub token was absent, the API call failed, the response was not ok, the shape was unexpected, or the live list came back empty. No GitHub token has ever been set in the ST production environment, so that fallback was served on 100% of production requests and reported six machines that do not exist as `running:healthy`. Removed 2026-08-13 — see `docs/rollouts/2026-08-13-honest-server-stats.md`.)
 
 **Old Hetzner boxes (pre-Oracle) DELETED (owner directive, 2026-07-31) — historical, do not
 confuse with the current post-Oracle-suspension Hetzner box above:** the old prod host
@@ -764,28 +756,33 @@ fallback.  Do not mint a second token if both envs already share one value.
 See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md` and
 `docs/runbooks/uptime-health-json-monitors.md`.  Rule: `.cursor/rules/ops-diagnostics.mdc`.
 
-## iOS agent build loop (owner 2026-08-13)
+## iOS agent build loop (owner 2026-08-24: hosted macos-latest only)
 
 Canonical: `/Users/jay/apps/AGENT-SYNC.md` § iOS agent build loop. Onboarding: `ios/CLAUDE.md`.
 
 - Do **not** stand up, debug, or narrate Xcode MCP (`build_sim`, `mcpbridge`).
-- `xcodebuild` / `xcrun simctl` via bash are pre-approved. Run them. Do not ask.
-- User-visible changes need `xcrun simctl io booted screenshot …` before you claim done.
-- Do not hand-edit `.pbxproj` / entitlements / xibs. This app uses XcodeGen: edit `ios/project.yml`, then `xcodegen generate`.
+- Do **not** run `xcodebuild` / `xcrun simctl` locally. Do not restart the Mac
+  runner, local Xcode, or `ship-now-gui`. Compile + XCTest is
+  `.github/workflows/ios-build.yml` on GitHub-hosted `macos-latest`.
+- User-visible iOS changes are verified by that hosted `ios-build` job (unsigned
+  build + simulator XCTest). Linux seats cannot take screenshots; do not fake them.
+- Do not hand-edit `.pbxproj` / entitlements / xibs. This app uses XcodeGen: edit `ios/project.yml`, then let the hosted `ios-build` job run `xcodegen generate`.
 - `@Observable` + `@MainActor`; `NavigationStack`; light theme default.
 
-## iOS native ship (TestFlight, no Xcode UI)
+## iOS native ship (TestFlight, GitHub-hosted macos-latest)
 
-Agents ship the native app without opening Xcode:
+Agents do not archive locally. `.github/workflows/ios-ship.yml` on `macos-latest`
+imports signing from GitHub Actions secrets (same five names as Congress.Trade)
+and runs `scripts/ios-ship-testflight.sh`, which execs in-repo
+`scripts/ios-fleet/ship-testflight.sh`. Dispatch:
 
 ```bash
-bash scripts/ios-ship-testflight.sh
+gh workflow run ios-ship.yml
 ```
 
-Fleet driver + all three apps (Socratic / Congress / Usage Monitor):
-`/Users/jay/apps/ios-fleet/README.md`. Bundle ID `trade.socratic.app`, team
-`CC8UTF7ATG`. Upload needs App Store Connect app record + either Xcode session
-or `~/.secrets/appstore-connect.env` (never print secrets).
+Bundle ID `trade.socratic.app`, team `CC8UTF7ATG`. Do not mint a new App Store
+Connect key. Do not exec `/Users/jay/apps/ios-fleet/ship-testflight.sh` from a
+cloud seat -- that path does not exist on hosted runners.
 
 ## Theme default = light (owner 2026-08-10)
 

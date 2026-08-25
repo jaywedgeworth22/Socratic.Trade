@@ -1,17 +1,12 @@
-name: iOS build (Mac runner)
+name: iOS build
 
-# Compile-check and run XCTests for the iOS app on the self-hosted Mac runner
-# (mac-xcode26-socratic).  xcodebuild output is redirected to a file so
+# Compile-check and run XCTests for the iOS app on GitHub-hosted macos-latest.
+# Do not run xcodebuild locally. Do not restart the retired self-hosted
+# mac-xcode26-socratic runner. xcodebuild output is redirected to a file so
 # SWBBuildService cannot hold the Actions step pipe open after the process exits.
 #
-# XCODE BUILDS ONLY (owner directive, 2026-08-12): this is the sole workflow
-# that may target the mac-runner labels; everything else stays on hosted/Linux
-# runners. Label routing enforces that — nothing lands on the Mac unless a
-# workflow asks for these labels.
-#
-# The Mac carries stable Xcode 26.x and Xcode-beta 27 side by side. A binary
-# built against the beta SDK passes TestFlight upload but is rejected at App
-# Store submission as INVALID_BINARY (Congress.Trade 1.0 hit this twice). CI
+# A binary built against a beta SDK passes TestFlight upload but is rejected at
+# App Store submission as INVALID_BINARY (Congress.Trade 1.0 hit this twice). CI
 # pins DEVELOPER_DIR to stable and asserts the version so a stray xcode-select
 # can never silently move builds onto the beta.
 #
@@ -40,7 +35,7 @@ concurrency:
 jobs:
   build:
     name: xcodebuild (unsigned)
-    # Self-hosted Mac: never run fork PRs on it.
+    # Hosted macos-latest: still skip fork PRs so we do not spend minutes on untrusted code.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository

@@ -1,13 +1,14 @@
-name: iOS TestFlight ship (Mac runner)
+name: iOS TestFlight ship
 
-# Archive + upload on the owned Mac runner so TestFlight (the phone) actually
-# updates when iOS code lands on main. Unsigned compile stays in ios-build.yml.
+# Archive + upload on GitHub-hosted macos-latest so TestFlight (the phone)
+# actually updates when iOS code lands on main. Unsigned compile stays in
+# ios-build.yml. Do not run xcodebuild locally. Do not restart the retired
+# self-hosted mac-xcode26-socratic runner or /Users/jay/apps/ios-fleet.
 #
-# XCODE BUILDS ONLY (owner 2026-08-12): this workflow may target mac-runner
-# labels. Backend jobs stay off this host. Fork PRs never run here.
-#
-# Secrets stay on the Mac (~/.secrets/appstore-connect.env). Nothing is
-# checked into GitHub. The fleet ship script also declares export compliance
+# Signing: scripts/ios-appstore-gm-prepare.sh writes ~/.secrets from GitHub
+# Actions secrets (same names as Congress.Trade: ASC_KEY_ID, ASC_ISSUER_ID,
+# ASC_KEY_P8, IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD). Never mint a new
+# App Store Connect key. The fleet script also declares export compliance
 # so a missing ITSAppUsesNonExemptEncryption cannot leave a VALID-but-unusable
 # build (ST 1.0.1/2, 2026-08-12).
 
@@ -17,6 +18,11 @@ on:
     paths:
       - 'ios/**'
       - '.github/workflows/ios-ship.yml'
+      - 'scripts/ios-ship-testflight.sh'
+      - 'scripts/ios-appstore-gm-prepare.sh'
+      - 'scripts/ios-fleet/**'
+      - 'scripts/ios-fleet-pin.sh'
+      - 'scripts/ios-fleet.sha256'
   workflow_dispatch:
   schedule:
     - cron: '*/30 * * * *'
@@ -36,6 +42,10 @@ on:
 # 39c6acee, a pure-backend alerts fix touching zero files under ios/. The
 # "Scheduled ship gate" step below is what stops that, and it is why this
 # workflow can keep a 30-minute tick without spamming TestFlight.
+#
+# Hosted runners have an empty home directory each job, so ~/.cache/ios-fleet
+# is restored from actions/cache. Without that cache every scheduled tick
+# would look like "no prior ship" and re-archive.
 
 permissions:
   contents: read
@@ -63,6 +73,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Restore iOS ship state
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ios-fleet
+          key: ios-fleet-socratic-${{ github.run_id }}
+          restore-keys: |
+            ios-fleet-socratic-
+
       # Runs FIRST so a tick with nothing to ship costs seconds and cannot go
       # red on an unrelated environment problem. The logic lives in a script,
       # not inline YAML, so CI can unit-test it on every PR -- otherwise it
@@ -75,6 +93,10 @@ jobs:
             --path-prefix 'ios/' \
             --repo-root "$GITHUB_WORKSPACE" \
             socratic
+
+      - name: Verify in-repo ios-fleet pin
+        if: steps.gate.outputs.should_ship == '1'
+        run: bash scripts/ios-fleet-pin.sh --check
 
       - name: Assert stable Xcode (never beta)
         if: steps.gate.outputs.should_ship == '1'
@@ -89,13 +111,35 @@ jobs:
               exit 1
               ;;
           esac
+          os=$(sw_vers -productVersion)
+          build=$(sw_vers -buildVersion)
+          echo "macOS ${os} (${build})"
+          if echo "$build" | grep -Eq '[0-9][a-z]$'; then
+            echo "::error::macOS ${os} build ${build} is a beta host. App Store rejects these as INVALID_BINARY."
+            exit 1
+          fi
 
-      # Route through the in-repo wrapper, not the runtime fleet path directly.
-      # The wrapper verifies scripts/ios-fleet.sha256 first, so a change to the
-      # untracked /Users/jay/apps/ios-fleet tooling cannot silently alter what this
-      # repo ships (it is not a git repo -- no history, no review, and apps.json
-      # there carries this app's version train).
-      #
+      # Do not use `secrets.*` in `if:` -- GitHub's dispatch parser rejects it
+      # (`Unrecognized named-value: secrets`) and the whole workflow dies at 0s.
+      - name: Import signing + ASC key
+        if: steps.gate.outputs.should_ship == '1'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+        run: |
+          if [ -z "${ASC_KEY_ID}" ]; then
+            echo "::error::ASC_KEY_ID is missing on this GitHub repo. Copy ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD from Congress.Trade (same team CC8UTF7ATG). Do not mint a new key. Do not restart a Mac runner."
+            exit 1
+          fi
+          bash "$GITHUB_WORKSPACE/scripts/ios-appstore-gm-prepare.sh"
+
+      - name: Report runtime ios-fleet drift (advisory)
+        if: steps.gate.outputs.should_ship == '1'
+        run: bash "$GITHUB_WORKSPACE/scripts/ios-fleet/check-drift.sh"
+
       # No IOS_TF_MIN_INTERVAL_SEC here. That variable is a PER-RUN override.
       # Standing gate is DEFAULT_MIN_INTERVAL_SEC=3600 (1 hour) in the fleet
       # script (owner 2026-08-14). The 30-minute cron picks up an unbuilt merge
