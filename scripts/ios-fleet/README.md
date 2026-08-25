@@ -106,3 +106,10 @@ runtime: `/Users/jay/apps/ios-fleet/AppUpdatePrompt.swift`) and calls
 https://raw.githubusercontent.com/jaywedgeworth22/ios-app-versions/main/versions.json
 by `publish-ios-versions.sh` after a successful ship.
 
+`publish-ios-versions.sh` must seed from the live
+`jaywedgeworth22/ios-app-versions` `versions.json` (or `--base-json`).
+The in-repo `ios-app-versions.json` is a dated snapshot and is missing
+`net.dealdex` plus newer Usage / Autorotate marketing versions.
+Publishing that file would wipe sibling fleet apps from the shared
+manifest the in-app update prompt reads.
+
