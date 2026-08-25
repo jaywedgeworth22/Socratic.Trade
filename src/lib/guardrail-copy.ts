@@ -39,10 +39,11 @@ export const GUARDRAILS_GLOSSARY_DEFINITION =
 /** FLEET-UI-COPY: paper accounts read `Alpaca (paper)` — no ceremony. */
 export const ALPACA_PAPER_LABEL = "Alpaca (paper)";
 export const ALPACA_BROKERAGE_LABEL = "Alpaca";
-export const TRADIER_SANDBOX_LABEL = "Tradier (sandbox)";
+export const TRADIER_SANDBOX_LABEL = "Tradier (paper)";
 export const TRADIER_PRODUCTION_LABEL = "Tradier";
 
 export const PAPER_ACCOUNT_GLOSSARY_TERM = "Alpaca (paper)";
+export const PAPER_ACCOUNT_GLOSSARY_ALIASES = "paper trading practice account";
 export const PAPER_ACCOUNT_GLOSSARY_DEFINITION =
   "Paper account — the broker's practice endpoints; orders route the same way, dollars are the broker's practice balance.";
 export const BROKERAGE_ACCOUNT_GLOSSARY_DEFINITION =

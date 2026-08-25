@@ -103,8 +103,16 @@ final class UserFacingCopyTests: XCTestCase {
         ] {
             XCTAssertFalse(text.contains("extra symbols"), text)
         }
+        XCTAssertEqual(DeskCopy.openGuardrailsButton, "Open Guardrails")
+        XCTAssertEqual(DeskCopy.openConnectionsButton, "Open Connections")
         XCTAssertTrue(DeskCopy.universeNeedsIndex.contains("S&P 500"))
         XCTAssertTrue(DeskCopy.universeRefreshAfterGuardrails.contains("Guardrails"))
+        XCTAssertFalse(DeskCopy.openGuardrailsButton.contains("Strategy"))
+        XCTAssertFalse(DeskCopy.accountNeedsConnection.contains("Alpaca"))
+        XCTAssertFalse(DeskCopy.accountNeedsConnection.contains("Robinhood"))
+        XCTAssertFalse(DeskCopy.accountNeedsConnection.contains("Account & Settings"))
+        XCTAssertTrue(DeskCopy.accountNeedsConnection.contains(DeskCopy.openConnectionsButton))
+        XCTAssertTrue(DeskCopy.accountNeedsConnectionInline.contains(DeskCopy.openConnectionsButton))
         for text in [
             DeskCopy.universeNeedsIndex,
             DeskCopy.universeRefreshAfterGuardrails,

@@ -12,6 +12,12 @@ Approve cards used `realityForMode(pending.executionMode)` only.  A NULL stamp r
 
 Home Coach chips had no `onClick` / `href`.  They are now Title Case buttons that prefill and focus the coach note.
 
+Same PR leftover-UX honesty (do not start a second PR):
+
+- iOS Home "Open Strategy" opened Safari at `/console/strategy`.  Universe is added on Guardrails.  The button now sets `selectedTab = .guardrails` and is labeled Open Guardrails.  `ConsoleHandoff.strategy` is removed so that URL cannot be reused.
+- Home checklist said Connect Alpaca or Robinhood in Account & Settings.  That sheet only has Open Connections.  Copy now tells people to use Open Connections.  No invented broker connect buttons.
+- `TRADIER_SANDBOX_LABEL` and the Help glossary alias used developer sandbox jargon.  They now use ordinary paper wording in the same family as Alpaca (paper).
+
 Touched files:
 
 - `app/console/guardrails/universe-draft.ts` (new)
@@ -31,6 +37,15 @@ Touched files:
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
 - `docs/rollouts/2026-08-25-console-discard-approve-chips.md`
+- `ios/SocraticTrade/HomeView.swift`
+- `ios/SocraticTrade/DeskModels.swift`
+- `ios/SocraticTrade/DeepLink.swift`
+- `ios/SocraticTradeTests/DeepLinkTests.swift`
+- `ios/SocraticTradeTests/UserFacingCopyTests.swift`
+- `ios/SocraticTradeTests/DeskModelsTests.swift`
+- `src/lib/guardrail-copy.ts`
+- `app/console/settings/help.tsx`
+- `test/guardrail-copy.test.ts`
 
 ## Decisions & Trade-offs
 
@@ -40,6 +55,7 @@ Touched files:
 - Coach chips hide when there is no decision case (the form itself is null).  That avoids fake buttons with nowhere to attach a note.
 - Title Cased the bulk Approve/Reject labels in the same file as the honesty fix (owner button rule).  No Designer visual redesign.
 - Stayed off #3090 (RAG) and #3077 (dependabot).  No Datadog / RUM / Pinecone / RAG edits.
+- Leftover-UX pass did not reopen Desk subtitle or IRA/Roth wash-sale.  Did not edit the keepout files from the first three fixes.  Did not run `xcodebuild` or TestFlight.
 
 ## Verification State
 
@@ -48,14 +64,15 @@ Commands actually run on this seat:
 ```bash
 npm run lint
 npx tsc --noEmit
-npx vitest run test/console-universe-discard.test.ts test/console-approval-honesty.test.ts test/console-coach-chips.test.ts test/approvals-triage-model.test.ts
+npx vitest run test/console-universe-discard.test.ts test/console-approval-honesty.test.ts test/console-coach-chips.test.ts test/approvals-triage-model.test.ts test/guardrail-copy.test.ts
 npm run build
 ```
 
-- `npm run lint`: exit 0 (0 errors; grandfathered warnings only).
-- `npx tsc --noEmit`: exit 0.
-- Targeted vitest: 4 files / 19 tests passed.
-- `npm run build`: exit 0 (Next.js 16.3.1 webpack).
+- `npm run lint`: exit 0 (0 errors; grandfathered warnings only) on the first three fixes.
+- `npx tsc --noEmit`: exit 0 on the first three fixes; re-run after leftover-UX.
+- Targeted vitest (first three): 4 files / 19 tests passed.
+- Leftover-UX: `test/guardrail-copy.test.ts` plus iOS XCTest updates (not compiled on this seat).
+- `npm run build`: exit 0 (Next.js 16.3.1 webpack) on the first three fixes; re-run after leftover-UX.
 
 A full `npm test` in this cloud VM was still running after ~17 minutes and had already failed in untouched files (`vector-db-*`, `corpus-reembed*`, `rag-doc-type-coverage`, `history`, `persistence-notification`, `strategy-held-position-retrieval-scope`, `alpha-vantage-key-pool`, `server-metrics`).  Those are RAG / network / env paths this seat was told not to touch.  They are not in this PR's diff.  Authoritative CI is `verify-hosted` on PR #3093.
 

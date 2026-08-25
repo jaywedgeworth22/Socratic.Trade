@@ -11,7 +11,8 @@ struct HomeView: View {
             if readinessIncomplete {
                 ReadinessChecklistHero(
                     snapshot: snapshot,
-                    openSettings: { presentedSheet = .settings }
+                    openSettings: { presentedSheet = .settings },
+                    openGuardrails: { selectedTab = .guardrails }
                 )
                 .cardSpansAllColumns()
                 // Agent overview only during setup — once ready, ReadyHomeHero already
@@ -42,10 +43,11 @@ struct HomeView: View {
     }
 }
 
-/// Incomplete setup: checklist hero with CTAs (Account & Settings / universe instructions).
+/// Incomplete setup: checklist hero with CTAs (Open Connections / Open Guardrails).
 private struct ReadinessChecklistHero: View {
     let snapshot: MobileSnapshot
     let openSettings: () -> Void
+    let openGuardrails: () -> Void
 
     private var needsAccount: Bool { !snapshot.readiness.hasAccount }
     private var needsUniverse: Bool { !snapshot.readiness.hasUniverse }
@@ -78,7 +80,7 @@ private struct ReadinessChecklistHero: View {
                         done: !needsAccount,
                         title: "Connect a broker account",
                         detail: needsAccount
-                            ? "Connect Alpaca or Robinhood in Account & Settings, then select it here."
+                            ? DeskCopy.accountNeedsConnection
                             : (snapshot.readiness.activeConnectedAccount?.label ?? "Account ready")
                     )
                     ChecklistRow(
@@ -100,7 +102,7 @@ private struct ReadinessChecklistHero: View {
                     .buttonStyle(.borderedProminent)
                     .tint(AppPalette.accent)
                     ConsoleHandoffButton(
-                        title: "Open Connections",
+                        title: DeskCopy.openConnectionsButton,
                         systemImage: "link",
                         url: ConsoleHandoff.connections
                     )
@@ -109,11 +111,14 @@ private struct ReadinessChecklistHero: View {
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    ConsoleHandoffButton(
-                        title: "Open Strategy",
-                        systemImage: "safari",
-                        url: ConsoleHandoff.strategy
-                    )
+                    Button(action: openGuardrails) {
+                        Label(DeskCopy.openGuardrailsButton, systemImage: "shield.checkered")
+                            .font(.appBody.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppPalette.accent)
                 }
             }
         }
@@ -361,7 +366,7 @@ private struct AgentOverviewCard: View {
 
     private var readinessMessage: String {
         if !snapshot.readiness.hasAccount {
-            return "Connect an account in Account & Settings before running the agent."
+            return DeskCopy.accountNeedsConnectionInline
         }
         return "Add an index or symbol universe before requesting a strategy run."
     }
