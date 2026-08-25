@@ -41,7 +41,13 @@ Touched files:
 
 ## Verification State
 
-Commands run after the first push; see the PR and later commits for receipts.
+- `bash scripts/ios-fleet-pin.sh --check` — OK
+- `npx vitest run test/ios-fleet-app-update-prompt.test.ts test/ios-privacy-manifest.test.ts` — 8/8 pass
+- `npm run lint` — 0 errors (grandfathered warnings)
+- `npx tsc --noEmit` — clean
+- `npm run build` — Next.js 16.3.1 succeeded
+- Hosted `ios-build` run `32808123472` — ** TEST SUCCEEDED ** (242 tests / 0 failures).  Generated pbxproj includes `AppUpdatePromptTests.swift`; that file is now committed so the ship path stays in sync.
+- Full local `npm test` was stopped after unrelated env timeouts (TwelveData / Voyage / Yahoo / 18s RAG coverage).  Those files were not edited.  `verify-hosted` on #3102 is the suite of record.
 
 ## Next Steps & Blockers
 
