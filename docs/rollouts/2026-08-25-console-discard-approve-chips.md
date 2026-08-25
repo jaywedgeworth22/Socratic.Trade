@@ -43,13 +43,23 @@ Touched files:
 
 ## Verification State
 
-Targeted tests (run before the full gate):
+Commands actually run on this seat:
 
 ```bash
+npm run lint
+npx tsc --noEmit
 npx vitest run test/console-universe-discard.test.ts test/console-approval-honesty.test.ts test/console-coach-chips.test.ts test/approvals-triage-model.test.ts
+npm run build
 ```
 
-Full gate (lint → tsc → test → build) is recorded in the PR once run.  This seat does not deploy, compile iOS, or merge.
+- `npm run lint`: exit 0 (0 errors; grandfathered warnings only).
+- `npx tsc --noEmit`: exit 0.
+- Targeted vitest: 4 files / 19 tests passed.
+- `npm run build`: exit 0 (Next.js 16.3.1 webpack).
+
+A full `npm test` in this cloud VM was still running after ~17 minutes and had already failed in untouched files (`vector-db-*`, `corpus-reembed*`, `rag-doc-type-coverage`, `history`, `persistence-notification`, `strategy-held-position-retrieval-scope`, `alpha-vantage-key-pool`, `server-metrics`).  Those are RAG / network / env paths this seat was told not to touch.  They are not in this PR's diff.  Authoritative CI is `verify-hosted` on PR #3093.
+
+This seat does not deploy, compile iOS, or merge.  Auto-merge on #3093 was disabled so a green check cannot land it.
 
 ## Next Steps & Blockers
 

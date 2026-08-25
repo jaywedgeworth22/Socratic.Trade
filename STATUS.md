@@ -16,7 +16,7 @@ Approve cards and bulk approve now resolve `row.executionMode ?? currentMode` (s
 
 Home Coach chips are real buttons that prefill and focus the coach note.
 
-Branch `cursor/console-discard-approve-chips-1ffb`.  Do not collide with #3090 or #3077.  Do not deploy/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Local lint / tsc / targeted 19 tests / `npm run build` green.  Do not collide with #3090 or #3077.  Do not deploy/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
 
 ## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
 
