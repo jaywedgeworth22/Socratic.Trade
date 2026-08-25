@@ -18,7 +18,7 @@ Home Coach chips are real buttons that prefill and focus the coach note.
 
 Leftover UX: iOS Open Strategy now opens the Guardrails tab; Home account copy names Open Connections; Tradier paper label matches Alpaca (paper).  Did not reopen Desk subtitle or IRA/Roth wash-sale.  Keepout files from the first three fixes were not re-edited.
 
-Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Rebased onto `origin/main` `46865940` (#3096 TestFlight 1.0.69 docs).  Do not collide with #3094.  Do not deploy/compile/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+Branch `cursor/console-discard-approve-chips-1ffb`, PR #3093.  Rebased onto `origin/main` `46865940` (#3096 TestFlight 1.0.69 docs).  Post-rebase `verify-hosted` failed copy-rules lint on two new strings; both now use `SENTENCE_GAP`.  Do not collide with #3094.  Do not deploy/compile/merge from this seat.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
 
 ## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
 
