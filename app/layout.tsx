@@ -5,6 +5,8 @@ import { ThemeProvider, themeInitScript } from "./ui/theme";
 import { Toaster } from "sonner";
 import { GlobalErrorToasts } from "./ui/global-error-toasts";
 import { pwaUnregisterScript } from "@/lib/pwa-unregister";
+import { resolvePublicRumConfig } from "@/lib/datadog-env";
+import { DatadogRumBoot } from "./ui/datadog-rum-boot";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://socratictrade.com"),
@@ -75,6 +77,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           {children}
+          <DatadogRumBoot config={resolvePublicRumConfig()} />
           <GlobalErrorToasts />
           <Toaster theme="system" position="bottom-right" />
         </ThemeProvider>

@@ -2,9 +2,21 @@
 // See: https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
 
 export async function onRequestError(...args: unknown[]) {
-  if (!process.env.SENTRY_DSN) return;
-  const Sentry = await import("@sentry/nextjs");
-  Sentry.captureRequestError(...(args as Parameters<typeof Sentry.captureRequestError>));
+  if (process.env.SENTRY_DSN) {
+    const Sentry = await import("@sentry/nextjs");
+    Sentry.captureRequestError(...(args as Parameters<typeof Sentry.captureRequestError>));
+  }
+  if (process.env.NEXT_RUNTIME !== "edge") {
+    try {
+      const { datadogLogsEnabled } = await import("./src/lib/datadog-env");
+      if (!datadogLogsEnabled()) return;
+      const { emitDatadogRequestError } = await import("./src/lib/datadog-logs");
+      const [error, request] = args;
+      emitDatadogRequestError(error, request as { path?: string; method?: string } | undefined);
+    } catch {
+      // Datadog is optional telemetry and must never fail the request error hook.
+    }
+  }
 }
 
 export async function register() {
@@ -52,6 +64,12 @@ export async function register() {
 
   if (process.env.SENTRY_DSN) {
     await import("./sentry.server.config");
+  }
+
+  const { datadogApmEnabled, datadogLogsEnabled } = await import("./src/lib/datadog-env");
+  if (datadogApmEnabled() || datadogLogsEnabled()) {
+    const { startDatadogServer } = await import("./src/lib/datadog-server");
+    await startDatadogServer();
   }
 
   // Migrate the operator's env broker/LLM keys into the `local` primary user's stores, so key

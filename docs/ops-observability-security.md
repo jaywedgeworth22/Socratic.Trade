@@ -28,6 +28,21 @@ This app now has opt-in scaffolding for the seven selected tools:
   Unit budget trips, malformed embedding rejections, and retrieval degradations are captured
   as warning/error events tagged `component=rag`, `rag.provider`, `rag.operation`, and
   `rag.key_source`; they stay no-op unless `SENTRY_DSN` is set.
+- **Datadog**: Logs + APM + browser RUM on the existing `us5.datadoghq.com` account
+  (`service:socratic-trade`).  Reuse `DD_API_KEY` / `DATADOG_API_KEY`, `DD_SITE`,
+  `DD_AGENT_HOST` / `DD_TRACE_AGENT_URL`, and the RUM application id + client token
+  (`NEXT_PUBLIC_DD_APPLICATION_ID` / `NEXT_PUBLIC_DD_CLIENT_TOKEN` or the
+  `DD_*` / `*_RUM_*` aliases).  Do not mint a new org, API key, or paid add-on.
+  Missing keys are a no-op (fail-closed) and must not crash boot.  Server logs ship
+  warn+ via the official HTTP intake; APM uses the host agent when
+  `DD_AGENT_HOST` is set, otherwise official `DD_TRACE_EXPERIMENTAL_EXPORTER=agentless`.
+  Coolify arms `NODE_OPTIONS --import ./scripts/datadog-preload.mjs` after Infisical
+  so `dd-trace` loads before Next.js.  Browser RUM boots from `instrumentation-client.ts`
+  and a hidden runtime `<DatadogRumBoot>` so Infisical tokens work without a rebuild.
+  Profiling, AppSec, and Session Replay stay off unless an existing opt-in flag is
+  already set.  Datadog does **not** replace Sentry or PagerDuty: Firefighter still
+  pages moderate+ from Sentry.  `/api/health` and `/api/live` stay independent of
+  Datadog.  Inertness is asserted by `test/datadog-inert.test.ts`.
 - **Sentry Crons scheduler heartbeat**: a dead/hung scheduler still returns 200 from
   `/api/health`, so the scheduler tick can additionally report an "ok" check-in to the
   Sentry Crons monitor `scheduler-tick` every 60s tick (`sendSentrySchedulerCheckIn` in
@@ -86,6 +101,9 @@ The telemetry path treats this as a financial application:
 
 - Sentry `sendDefaultPii` is disabled.
 - Sentry events run through `redactForTelemetry(...)`.
+- Datadog logs and RUM events run through `redactForTelemetry(...)`.  RUM uses
+  `defaultPrivacyLevel: "mask-user-input"`.  Session Replay stays off unless
+  `NEXT_PUBLIC_DD_SESSION_REPLAY_ENABLED=true` is already set on the existing account.
 - Langfuse does not capture full prompts or portfolio/account details unless
   `LANGFUSE_CAPTURE_IO=full` is explicitly set, and even then it redacts common
   credential/account keys and long strings.
