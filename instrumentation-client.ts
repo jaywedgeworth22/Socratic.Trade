@@ -36,6 +36,18 @@ if (dsn) {
   });
 }
 
+const rumApplicationId =
+  process.env.NEXT_PUBLIC_DD_APPLICATION_ID ||
+  process.env.NEXT_PUBLIC_DD_RUM_APPLICATION_ID;
+const rumClientToken =
+  process.env.NEXT_PUBLIC_DD_CLIENT_TOKEN ||
+  process.env.NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN;
+if (rumApplicationId && rumClientToken) {
+  void import("./src/lib/datadog-env").then(({ resolvePublicRumConfig }) =>
+    import("./src/lib/datadog-rum").then(({ startDatadogRum }) => startDatadogRum(resolvePublicRumConfig()))
+  );
+}
+
 // App Router navigation instrumentation. Safe to export unconditionally — it is a
 // no-op when Sentry was not initialized above.
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

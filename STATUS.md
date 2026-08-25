@@ -1,6 +1,11 @@
 # Current Status
 
 ## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
+## 2026-08-25 CURSOR — Datadog Logs + APM + RUM on the existing us5 account
+
+Owner: reuse the existing Datadog account only.  No new org, API key, or paid add-on.  This repo had zero Datadog SDK wiring; host agent on `fleet-hetzner-nbg1` saw syslog/USM `service:node`, not the Next.js app.  Coolify container stdout was not ingested.  Implementation is fail-closed: missing `DD_API_KEY` / agent host / RUM tokens is a no-op and must not crash prod.  Server logs (warn+) go to the official us5 HTTP intake.  APM uses the host agent when `DD_AGENT_HOST` is set, otherwise official agentless exporter.  Coolify `NODE_OPTIONS --import ./scripts/datadog-preload.mjs` after Infisical so `dd-trace` loads before Next.  Browser RUM boots from `instrumentation-client.ts` plus a hidden runtime boot so Infisical tokens work without a rebuild.  Session Replay / Profiling / AppSec stay off.  Sentry + PagerDuty (Firefighter moderate+) are unchanged.  Designer copy/layout and Oracle RAG/Pinecone are untouched.  Coolify deploy is not this PR.  Branch `cursor/datadog-logs-apm-rum-6ce3`, PR #3094.  Rollout: `docs/rollouts/2026-08-25-datadog-logs-apm-rum.md`.
+
+## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
 
 COMPLETED.  #3089 squash `ef725f26` vendored in-repo `scripts/ios-fleet/` and imported existing ASC/P12 GitHub secrets.  Merge-push ship `32794753487` archived then cancelled mid-upload.  Next hosted `macos-latest` tick `32796413908` (`event: schedule`) uploaded **1.0.69 (202608250109)** for `trade.socratic.app`; ASC `internal=IN_BETA_TESTING` ("TestFlight internal testers can install this build").  Git sha recorded `b9421cbf` (#3090 on top of #3089); `ios/**` was unchanged by #3090 so the binary includes #3028 chrome (gear, bell, Admin tab).  Do not run local `xcodebuild`.  Do not restart `mac-xcode26-socratic`.  Website/Coolify is not this deploy.  Playwright `smoke` failure on `b9421cbf` is #3090, not this ship.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
 
