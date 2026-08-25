@@ -1,8 +1,8 @@
 # Current Status
 
-## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
+## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
 
-Owner: `xcodebuild` is GitHub-hosted `macos-latest` only.  Do not run it locally.  Do not restart the retired Mac runner.  #3083 switched `runs-on` but left `scripts/ios-ship-testflight.sh` exec'ing `/Users/jay/apps/ios-fleet/ship-testflight.sh`, so every `ios-ship` tick failed in ~15s.  This change vendors Congress.Trade's in-repo fleet path, imports signing from GitHub Actions secrets (same five names, do not mint a new key), and pins `scripts/ios-fleet`.  PR #3089: hosted unsigned `xcodebuild` green; `verify-hosted` failed because Sentry still observed `iOS build (Mac runner)` / `iOS TestFlight ship (Mac runner)` after the YAML `name:` rename — observer list + `CRON_SCHEDULES` retargeted 2026-08-25.  #3028 iOS UI is already on `main`; TestFlight is the remaining deploy after merge + `gh workflow run ios-ship.yml`.  Website/Coolify does not carry the iOS UI.  Posted #agent-sync to stop local xcodebuild / Mac-runner restarts.  Branch `cursor/ios-hosted-testflight-ship-0e2b`.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
+COMPLETED.  #3089 squash `ef725f26` vendored in-repo `scripts/ios-fleet/` and imported existing ASC/P12 GitHub secrets.  Merge-push ship `32794753487` archived then cancelled mid-upload.  Next hosted `macos-latest` tick `32796413908` (`event: schedule`) uploaded **1.0.69 (202608250109)** for `trade.socratic.app`; ASC `internal=IN_BETA_TESTING` ("TestFlight internal testers can install this build").  Git sha recorded `b9421cbf` (#3090 on top of #3089); `ios/**` was unchanged by #3090 so the binary includes #3028 chrome (gear, bell, Admin tab).  Do not run local `xcodebuild`.  Do not restart `mac-xcode26-socratic`.  Website/Coolify is not this deploy.  Playwright `smoke` failure on `b9421cbf` is #3090, not this ship.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
 
 ## 2026-08-23 — Toggle Switch Touch Styling, Account Extended Hours Hints & Active Short Management
 
