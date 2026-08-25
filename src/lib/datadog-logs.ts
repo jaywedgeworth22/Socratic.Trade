@@ -1,4 +1,3 @@
-import { hostname as osHostname } from "node:os";
 import { redactForTelemetry, safeErrorMessage } from "./telemetry-sanitize";
 import {
   type DatadogLogStatus,
@@ -200,13 +199,12 @@ function buildTags(): string {
 }
 
 function resolveHostname(): string {
-  const fromEnv = process.env.DD_HOSTNAME?.trim();
-  if (fromEnv) return fromEnv;
-  try {
-    return osHostname();
-  } catch {
-    return "unknown";
-  }
+  return (
+    process.env.DD_HOSTNAME?.trim() ||
+    process.env.HOSTNAME?.trim() ||
+    process.env.COMPUTERNAME?.trim() ||
+    "unknown"
+  );
 }
 
 function traceIds(): { "dd.trace_id"?: string; "dd.span_id"?: string } {

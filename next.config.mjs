@@ -54,7 +54,8 @@ const nextConfig = {
         "node:zlib": false,
         "node:stream": false,
         "node:dns": false,
-        "node:net": false
+        "node:net": false,
+        "node:os": false,
       };
       config.resolve.fallback = {
         ...(config.resolve.fallback ?? {}),
@@ -66,6 +67,7 @@ const nextConfig = {
         stream: false,
         dns: false,
         net: false,
+        os: false,
         http: false,
         // node:http2 is the APNs provider transport (src/lib/apns.ts, reachable from the
         // src/lib/db.ts barrel). Server-only — stubbed out for client/edge bundles.

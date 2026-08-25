@@ -47,17 +47,21 @@ Touched files:
 
 ## Verification State
 
-Commands run after install:
+Commands actually run:
 
 ```bash
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint          # 0 errors, 773 grandfathered warnings
+npx tsc --noEmit      # clean after RumPublicApi cast
+npx vitest run test/datadog-env.test.ts test/datadog-logs.test.ts test/datadog-inert.test.ts test/toolchain-policy.test.ts test/sentry-inert.test.ts
+                      # 5 files / 32 tests passed
 node scripts/datadog-preload.mjs
+                      # exit 0 with no keys (fail-closed)
+npm run build         # Next.js 16.3.1 webpack succeeded (41/41 static pages)
 ```
 
-Recorded in the PR once the gate finishes.
+First `npm run build` failed because `src/lib/datadog-logs.ts` imported `node:os` into a webpack graph that does not handle that scheme.  Hostname now comes from `DD_HOSTNAME` / `HOSTNAME` / `COMPUTERNAME`.  Client/edge webpack aliases stub `node:os`.  Rebuild succeeded.
+
+Full `npm test` in this Cloud VM is slow and showed unrelated pre-existing failures (Yahoo/history network, `usesLocalHost` on the Cloud host, RAG coverage timeouts).  Those files were not changed.  CI `verify` is the suite of record.
 
 ## Next Steps & Blockers
 
