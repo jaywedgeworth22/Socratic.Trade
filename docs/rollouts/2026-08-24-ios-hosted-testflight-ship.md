@@ -36,11 +36,13 @@ Vendored the fleet ship tooling in-repo (CT pattern).  Hosted `ios-ship.yml` now
 - `bash scripts/ios-fleet-pin.sh --check`
 - `bash scripts/test-ios-scheduled-ship-gate.sh`
 - `python3` ASCII scan of new operator scripts (`ios-appstore-gm-prepare.sh` em dash replaced)
-- `npm run lint`
-- `npx tsc --noEmit`
-- `npm test`
-- `npm run build`
-- Hosted: `ios-build.yml` / `ios-ship.yml` after merge (`gh workflow run ios-ship.yml`)
+- `npm run lint` (exit 0)
+- `npx tsc --noEmit` (exit 0)
+- Hosted `ios-build.yml` `xcodebuild (unsigned)` SUCCESS on PR #3089 (`32792277819`)
+- Hosted `verify-hosted` FAIL on `3493c341`: `test/sentry-ci-report-workflows.test.ts` still listed `iOS build (Mac runner)` / `iOS TestFlight ship (Mac runner)` after the YAML `name:` rename.  Fixed observer list + `CRON_SCHEDULES`; dropped the duplicate dict key.
+- `npx vitest run test/sentry-ci-report-workflows.test.ts` after the observer fix
+- Full `npm test` / `npm run build` remain the hosted `verify-hosted` lane (local Cloud VM flakes on network-bound suites)
+- After merge: `gh workflow run ios-ship.yml`
 
 ## Next Steps & Blockers
 
