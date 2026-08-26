@@ -3,7 +3,7 @@ import {
   SOCRATIC_DEFAULT_LOGO_SOURCE_ORDER,
   remoteLogoSources,
   sourceOrderFor
-} from "@jaywedgeworth22/congress-trading-shared";
+} from "../src/lib/ticker-logo-policy";
 
 describe("shared ticker logo policy (ST fallback)", () => {
   it("keeps GitHub first for ungraded names", () => {
