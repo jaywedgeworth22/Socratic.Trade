@@ -304,7 +304,7 @@ struct LoginView: View {
                     .padding(.top, 1.5)
                     .accessibilityHidden(true)
 
-                JustifiedText(Self.legalNotice)
+                JustifiedText(Self.legalNotice, font: AppFont.uiFont(10))
             }
             // The lock hangs into the column's 24pt gutter rather than eating paragraph
             // width — owner: "the lock can move left to give more space".  The paragraph
@@ -316,7 +316,7 @@ struct LoginView: View {
                 Link("Terms", destination: URL(string: "https://socratictrade.com/terms-and-conditions")!)
                 Link("Privacy", destination: URL(string: "https://socratictrade.com/privacy-policy")!)
             }
-            .font(.appCaption)
+            .font(.system(size: 10))
             // A Link is a Button underneath, so it picked up the same bordered system style
             // that was ghosting the provider buttons — two grey pills under a paragraph of
             // legal text.  These are text links.
