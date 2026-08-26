@@ -346,20 +346,38 @@ export type UnmanagedShortReason = "shorts_disabled" | "broker_unprotected" | "s
  *  non-Alpaca venues or brokerStopsForShorts: false are unmanaged. */
 export function deriveUnmanagedShortCount(
   positions: EquityPosition[] | undefined,
-  policy: Pick<TradingPolicy, "shortSellingEnabled" | "brokerStopsForShorts" | "activeBroker">
+  policy: Pick<TradingPolicy, "shortSellingEnabled" | "brokerStopsForShorts" | "activeBroker"> & {
+    riskRules?: { stopLossPct?: number; shortStopLossPct?: number; trailingStopPct?: number };
+    positionStopPlans?: Record<string, PositionStopPlan>;
+  }
 ): number {
   return deriveUnmanagedShorts(positions, policy).count;
 }
 
 export function deriveUnmanagedShorts(
   positions: EquityPosition[] | undefined,
-  policy: Pick<TradingPolicy, "shortSellingEnabled" | "brokerStopsForShorts" | "activeBroker">
+  policy: Pick<TradingPolicy, "shortSellingEnabled" | "brokerStopsForShorts" | "activeBroker"> & {
+    riskRules?: { stopLossPct?: number; shortStopLossPct?: number; trailingStopPct?: number };
+    positionStopPlans?: Record<string, PositionStopPlan>;
+  }
 ): { count: number; reason: UnmanagedShortReason | null } {
   const shorts = (positions ?? []).filter((p) => p.quantity < 0);
   if (shorts.length === 0) return { count: 0, reason: null };
   const alpaca = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
   if (!alpaca && policy.activeBroker) return { count: shorts.length, reason: "broker_unprotected" };
   if (policy.brokerStopsForShorts === false) return { count: shorts.length, reason: "stops_disabled" };
+
+  if (policy.riskRules) {
+    const stopLoss = policy.riskRules.stopLossPct ?? 0;
+    const shortStop = policy.riskRules.shortStopLossPct ?? 0;
+    const trail = policy.riskRules.trailingStopPct ?? 0;
+    const hasGlobalStop = stopLoss > 0 || shortStop > 0 || trail > 0;
+    const hasPlans = policy.positionStopPlans && Object.keys(policy.positionStopPlans).length > 0;
+    if (!hasGlobalStop && !hasPlans) {
+      return { count: shorts.length, reason: "stops_disabled" };
+    }
+  }
+
   return { count: 0, reason: null };
 }
 

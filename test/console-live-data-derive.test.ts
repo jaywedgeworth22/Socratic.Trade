@@ -496,6 +496,10 @@ describe("deriveUnmanagedShortCount / unmanagedShortNotice — unmanaged shorts 
     expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "robinhood" })).toBe(1);
     // Stops explicitly disabled
     expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "alpaca", brokerStopsForShorts: false })).toBe(1);
+    // Stops unconfigured (stopLossPct=0, shortStopLossPct=0, trailingStopPct=0)
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "alpaca", riskRules: { stopLossPct: 0, shortStopLossPct: 0, trailingStopPct: 0 } as any })).toBe(1);
+    // Stops configured
+    expect(deriveUnmanagedShortCount([shortPos("TSLA")], { shortSellingEnabled: true, activeBroker: "alpaca", riskRules: { stopLossPct: 5 } as any })).toBe(0);
     expect(deriveUnmanagedShortCount([longPos], { shortSellingEnabled: false })).toBe(0);
     expect(deriveUnmanagedShortCount(undefined, { shortSellingEnabled: false })).toBe(0);
   });

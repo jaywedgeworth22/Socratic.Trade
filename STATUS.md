@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-26 ANTIGRAVITY — Guardrail capabilities, market hours hints, unmanaged shorts, and stop fallbacks
+
+Pass live account capabilities into `mergeAccountCapabilities` in Guardrails page so Alpaca connected accounts preserve live shorting capabilities; align broker-specific `syntheticStopHoursHint` in `market-hours.ts` with executable order windows (Robinhood/Tradier 7:00 AM, Public 8:00 AM, eToro regular-only); fallback `shortTrailFallback` to `stopLossPct` when short stop loss is unconfigured in `src/lib/synthetic-stops.ts`; check effective stop distance configuration in `deriveUnmanagedShorts` in `app/console/lib/derive.ts`.  Rollout: `docs/rollouts/2026-08-26-reviewer-fixes-guardrails-stophours.md`.
+
 ## 2026-08-25 CURSOR — AppUpdatePromptTests pbxproj leftover after #3102
 
 COMPLETED (merged to `main`) #3103 squash `64a06e78`.  #3102 squash `df75ca6f` landed the Swift pin/copy + DealDex registry.  This leftover committed the generated `AppUpdatePromptTests.swift` pbxproj refs so TestFlight (no xcodegen) stays in sync.  Hosted leftover `ios-build` `32809716228` and head `32810441765` ** TEST SUCCEEDED ** (242/0).  `verify-hosted` `32809716125` success.  Do not `--force-ship`.  Do not dispatch `ios-ship.yml` unless the owner asks.  Do not claim website deploy without `scripts/verify-deploy-sha.sh`.  `ios/**` is outside Coolify `watch_paths`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.

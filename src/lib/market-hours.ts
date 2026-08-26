@@ -432,7 +432,7 @@ export function getBrokerMarketHours(broker?: string): BrokerMarketHoursInfo {
         afterHours: "4:00 PM – 8:00 PM ET",
         scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
         orderHoursHint: "Robinhood pre-market 7:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET (overnight 8:00 PM – 4:00 AM ET for supported symbols)",
-        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+        syntheticStopHoursHint: "pre-market 7:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
       };
     case "tradier":
       return {
@@ -441,7 +441,7 @@ export function getBrokerMarketHours(broker?: string): BrokerMarketHoursInfo {
         afterHours: "4:00 PM – 8:00 PM ET",
         scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
         orderHoursHint: "Tradier pre-market 7:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET",
-        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+        syntheticStopHoursHint: "pre-market 7:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
       };
     case "public":
       return {
@@ -450,7 +450,7 @@ export function getBrokerMarketHours(broker?: string): BrokerMarketHoursInfo {
         afterHours: "4:00 PM – 8:00 PM ET",
         scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
         orderHoursHint: "Public pre-market 8:00 AM – 9:30 AM ET, after-hours 4:00 PM – 8:00 PM ET",
-        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+        syntheticStopHoursHint: "pre-market 8:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
       };
     case "etoro":
       return {
@@ -459,7 +459,7 @@ export function getBrokerMarketHours(broker?: string): BrokerMarketHoursInfo {
         afterHours: null,
         scanHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET",
         orderHoursHint: "Regular market hours only (9:30 AM – 4:00 PM ET; eToro does not support extended-hours trading)",
-        syntheticStopHoursHint: "pre-market 4:00 AM – 9:30 AM ET and after-hours 4:00 PM – 8:00 PM ET"
+        syntheticStopHoursHint: "regular market hours only (9:30 AM – 4:00 PM ET)"
       };
     case "alpaca":
     case "alpaca-mcp":

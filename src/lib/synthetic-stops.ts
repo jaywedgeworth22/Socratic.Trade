@@ -523,8 +523,11 @@ export async function runSyntheticStopMonitor(
   if (policy.systemState !== "halted") {
     const trailPct = policy.riskRules?.trailingStopPct ?? 0;
     // Long/short parity: when account-wide trailing is off, still arm synthetic trails on shorts
-    // from shortStopLossPct so short books are not left to strategy-cadence proactive covers only.
-    const shortTrailFallback = policy.riskRules?.shortStopLossPct ?? 0;
+    // from shortStopLossPct (or stopLossPct fallback) so short books are not left to strategy-cadence proactive covers only.
+    const shortTrailFallback =
+      policy.riskRules?.shortStopLossPct && policy.riskRules.shortStopLossPct > 0
+        ? policy.riskRules.shortStopLossPct
+        : (policy.riskRules?.stopLossPct ?? 0);
     const anyTrailingPlan = positions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "trailing");
     const anyShorts =
       positions.some((p) => p.quantity < -0.000001) &&
