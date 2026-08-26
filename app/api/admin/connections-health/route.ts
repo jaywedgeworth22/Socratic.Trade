@@ -39,6 +39,7 @@ const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null 
   { service: "twelvedata", keySource: "env" },
   { service: "massive", keySource: "env" },
   { service: "earningscalls-dev-rapidapi", keySource: "env" },
+  { service: "roic.ai", keySource: "env" },
   { service: "congress.trade", keySource: null },
   { service: "usage-monitor", keySource: null }
 ];
@@ -77,6 +78,9 @@ function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHeal
     if (s.service === "earningscall") {
       s.service = "earningscalls-dev-rapidapi";
       s.keySource = "env";
+    }
+    if (s.service === "roic") {
+      s.service = "roic.ai";
     }
   }
 

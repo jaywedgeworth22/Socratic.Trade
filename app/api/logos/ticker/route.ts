@@ -5,7 +5,7 @@ import {
   SOCRATIC_DEFAULT_LOGO_SOURCE_ORDER,
   remoteLogoSources,
   sourceOrderFor
-} from "@jaywedgeworth22/congress-trading-shared";
+} from "@/lib/ticker-logo-policy";
 import {
   logoDevTickerUrl,
   normalizeTickerLogoSymbol,

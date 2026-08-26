@@ -342,6 +342,7 @@ final class PushDeepLinkContractTests: XCTestCase {
         Row("autonomy_halted_on_boot", "https://socratictrade.com/console/activity?tab=notifications", .activity),
         Row("option_alert", "https://socratictrade.com/console/activity?tab=notifications", .activity),
         Row("earningscalls_entitlement_blocked", "https://socratictrade.com/console/activity?tab=notifications", .activity),
+        Row("roic_status_advisory", "https://socratictrade.com/console/activity?tab=notifications", .activity),
         Row("risk_advisory", "https://socratictrade.com/console/activity?tab=notifications", .activity),
         Row("protective_exit_failing", "https://socratictrade.com/console/activity?tab=notifications", .activity),
         Row("signal_health", "https://socratictrade.com/console/activity?tab=notifications", .activity),

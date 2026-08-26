@@ -318,6 +318,7 @@ const ATTENTION_TYPES: readonly NotificationEventType[] = [
   "budget_alert",
   "provider_degraded",
   "earningscalls_entitlement_blocked",
+  "roic_status_advisory",
   "risk_advisory"
 ];
 

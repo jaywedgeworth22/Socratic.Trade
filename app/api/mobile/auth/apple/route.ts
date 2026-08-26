@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { isEmailAllowed } from "../../../../../src/lib/auth/identity";
 import { encodeSessionToken } from "../../../../../src/lib/auth/session-token";
-import { resolveAppleClientId } from "../../../../../src/lib/auth/apple-client-id";
+import { resolveAppleClientIds } from "../../../../../src/lib/auth/apple-client-id";
 import { APPLE_AUTH_MAX_BYTES, PayloadTooLargeError, readJsonWithLimit } from "../../../../../src/lib/bounded-body";
 
 // Module-scope JWKS: jose caches keys per resolver instance; recreate-per-request
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
     const { payload } = await jwtVerify(identityToken, APPLE_JWKS, {
       issuer: "https://appleid.apple.com",
-      audience: resolveAppleClientId()
+      audience: resolveAppleClientIds()
     });
 
     const email = payload.email as string | undefined;

@@ -55,7 +55,8 @@ export function RealityBanner({ snapshot }: { snapshot: DashboardSnapshot }) {
     <div className={cx("con-reality", `con-reality-${reality.tone}`)}>
       <div className="mx-auto flex max-w-[1400px] items-baseline gap-2 px-4 py-1.5">
         <span className="con-reality-word text-[length:var(--con-fs-sm)]">{reality.word}</span>
-        <span className="font-semibold text-black">• {reality.phrase}</span>
+        <span className="font-semibold text-black">•</span>
+        <span className="font-semibold text-black">{reality.phrase}</span>
         <span className="hidden truncate text-black sm:inline">— {reality.clarification}</span>
       </div>
     </div>

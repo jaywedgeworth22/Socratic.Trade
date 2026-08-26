@@ -28,7 +28,10 @@ const LOGIN_VALUE_BULLETS = [
   "Control the backend agent without moving credentials onto the device"
 ] as const;
 
-export default function LoginPage() {
+export default async function LoginPage(props: { searchParams?: Promise<{ callbackUrl?: string | string[] }> }) {
+  const searchParams = await props.searchParams;
+  const callbackUrl = typeof searchParams?.callbackUrl === "string" ? searchParams.callbackUrl : "/";
+
   return (
     <main className="grid min-h-screen place-items-center bg-bg px-6 text-center">
       <div className="w-full max-w-md space-y-6">
@@ -56,7 +59,7 @@ export default function LoginPage() {
               <form
                 action={async () => {
                   "use server";
-                  await signIn("google", { redirectTo: "/" });
+                  await signIn("google", { redirectTo: callbackUrl });
                 }}
               >
                 <button type="submit" className="login-provider-btn">
@@ -71,7 +74,7 @@ export default function LoginPage() {
               <form
                 action={async () => {
                   "use server";
-                  await signIn("github", { redirectTo: "/" });
+                  await signIn("github", { redirectTo: callbackUrl });
                 }}
               >
                 <button type="submit" className="login-provider-btn">
@@ -86,7 +89,7 @@ export default function LoginPage() {
               <form
                 action={async () => {
                   "use server";
-                  await signIn("twitter", { redirectTo: "/" });
+                  await signIn("twitter", { redirectTo: callbackUrl });
                 }}
               >
                 <button type="submit" className="login-provider-btn">
@@ -102,7 +105,7 @@ export default function LoginPage() {
                 <form
                   action={async () => {
                     "use server";
-                    await signIn("apple", { redirectTo: "/" });
+                    await signIn("apple", { redirectTo: callbackUrl });
                   }}
                 >
                   <button type="submit" className="login-provider-btn login-provider-btn--apple">

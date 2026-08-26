@@ -5,7 +5,7 @@
  *  Lessons handles pending/past learning (without a badge). */
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { useOverlay } from "../ui/use-overlay";
 import {
@@ -199,6 +199,7 @@ function TabsSheet({
   barHeight: number;
   sheetId: string;
 }) {
+  const router = useRouter();
   const sheetRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const overlayId = useId();
@@ -282,7 +283,11 @@ function TabsSheet({
                         aria-current={active ? "page" : undefined}
                         title={d.desc}
                         onClick={(e) => {
-                          if (guardNav(e, d.href)) onClose();
+                          e.preventDefault();
+                          if (guardNav(e, d.href)) {
+                            router.push(d.href);
+                            onClose();
+                          }
                         }}
                       >
                         <Icon size={16} />

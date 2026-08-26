@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-26 CURSOR — CI autofix: APNs contract missing roic_status_advisory
+
+#3107 (`f22b92ed`) registered `roic_status_advisory` on `NOTIFICATION_EVENT_TYPES` so ROIC.ai can sit under EarningsCalls.dev in Settings, but left the iOS contract table in `PushNotificationTests.swift` one row short.  `verify-hosted` failed `test/apns-deep-link-contract.test.ts` (covers every event type exactly once); the required `verify` gate then failed because hosted failed.  Autofix hit its 60-turn cap.  Fix: add the Activity/notifications Row next to `earningscalls_entitlement_blocked`.  `pushDeepLink` already catch-alls that URL.  Branch `cursor/ci-autofix-automation-9634` stacked on `agent/antigravity-ui-fixes`.  Rollout: `docs/rollouts/2026-08-26-roic-apns-contract.md`.
+
 ## 2026-08-26 ANTIGRAVITY — Guardrail capabilities, market hours hints, unmanaged shorts, and stop fallbacks
 
 Pass live account capabilities into `mergeAccountCapabilities` in Guardrails page so Alpaca connected accounts preserve live shorting capabilities; align broker-specific `syntheticStopHoursHint` in `market-hours.ts` with executable order windows (Robinhood/Tradier 7:00 AM, Public 8:00 AM, eToro regular-only); fallback `shortTrailFallback` to `stopLossPct` when short stop loss is unconfigured in `src/lib/synthetic-stops.ts`; check effective stop distance configuration in `deriveUnmanagedShorts` in `app/console/lib/derive.ts`.  Rollout: `docs/rollouts/2026-08-26-reviewer-fixes-guardrails-stophours.md`.
