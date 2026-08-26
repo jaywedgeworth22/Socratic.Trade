@@ -14,3 +14,8 @@ The user noted that they have switched to ROIC.ai, and asked that the EarningsCa
 ## Next Steps
 - Merge to main.
 - `litestream.coolify.yml`: Reduced Litestream `sync-interval` from 60s to 300s to avoid exhausting the Backblaze B2 2,500/day free limit for Class C transactions.
+
+### iOS Login Failures Fixed
+- `app/login/page.tsx`: Replaced hardcoded `{ redirectTo: "/" }` with NextAuth's `callbackUrl` by reading it from `searchParams`. This fixes the Google and GitHub OAuth flow on the iOS app which was getting redirected to the website's dashboard instead of handing off the session token back to the native app via the `socratictrade://auth` scheme.
+- `src/lib/auth/apple-client-id.ts`: Updated `resolveAppleClientId()` to `resolveAppleClientIds()` which returns an array of allowed audiences. It now always includes `trade.socratic.app` (the native app Bundle ID) while appending `APPLE_CLIENT_ID` (the web service ID) if it's set in the environment.
+- `app/api/mobile/auth/apple/route.ts`: Updated the `jwtVerify` audience field to accept the array of valid audiences. This fixes Native Apple Sign In failures which were occurring because the token audience was checking against the web service ID instead of the native app Bundle ID.
