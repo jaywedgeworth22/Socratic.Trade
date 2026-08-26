@@ -40,6 +40,13 @@ describe("iOS release-readiness plist + privacy manifest", () => {
     expect(pbxproj).toMatch(/PBXFileReference;.*path = PrivacyInfo\.xcprivacy;/);
   });
 
+  it("compiles AppUpdatePromptTests.swift from the checked-in pbxproj", () => {
+    // ios-build generates; the ship script does not.  A project.yml folder
+    // glob is not enough for TestFlight.  Keep the generated file committed.
+    expect(pbxproj).toContain("AppUpdatePromptTests.swift in Sources");
+    expect(pbxproj).toMatch(/PBXFileReference;.*path = AppUpdatePromptTests\.swift;/);
+  });
+
   it("compiles LayoutMathTests.swift from the checked-in pbxproj", () => {
     // Renamed from WrappingHStackTests.swift (adaptive-tabs leftover B).  The
     // ship script does not generate; a project.yml folder glob is not enough.

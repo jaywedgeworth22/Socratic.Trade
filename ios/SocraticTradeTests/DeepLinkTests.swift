@@ -83,19 +83,19 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertNil(destination("https://socratictrade.com/console/orders/order-1"))
         XCTAssertNil(destination("https://socratictrade.com/console/approvals/proposal-1/extra"))
         XCTAssertNil(destination("https://socratictrade.com/mobile"))
-        // Broker connect + strategy universe are Safari handoffs — claiming them here
-        // would swallow the tap back into a screen the phone does not have.
+        // Broker connect is a Safari handoff — claiming it here would swallow the tap
+        // back into a screen the phone does not have.  Universe is the Guardrails tab.
         XCTAssertNil(destination("https://socratictrade.com/console/connections"))
         XCTAssertNil(destination("https://socratictrade.com/console/strategy"))
+        XCTAssertEqual(destination("https://socratictrade.com/console/guardrails"), .tab(.guardrails))
     }
 
     func testConsoleHandoffUrlsAreSafariOnlyAndNotInAppRoutes() {
         XCTAssertTrue(ConsoleHandoff.isSafariOnly(ConsoleHandoff.connections))
-        XCTAssertTrue(ConsoleHandoff.isSafariOnly(ConsoleHandoff.strategy))
         XCTAssertEqual(ConsoleHandoff.connections.absoluteString, "https://socratictrade.com/console/connections")
-        XCTAssertEqual(ConsoleHandoff.strategy.absoluteString, "https://socratictrade.com/console/strategy")
         XCTAssertNil(DeepLink.destination(for: ConsoleHandoff.connections))
-        XCTAssertNil(DeepLink.destination(for: ConsoleHandoff.strategy))
+        XCTAssertFalse(ConsoleHandoff.isSafariOnly(URL(string: "https://socratictrade.com/console/guardrails")!))
+        XCTAssertFalse(ConsoleHandoff.isSafariOnly(URL(string: "https://socratictrade.com/console/strategy")!))
         XCTAssertFalse(ConsoleHandoff.isSafariOnly(URL(string: "https://socratictrade.com/console/approvals")!))
         XCTAssertFalse(ConsoleHandoff.isSafariOnly(URL(string: "https://socratictrade.com/console/settings")!))
         XCTAssertFalse(ConsoleHandoff.isSafariOnly(URL(string: "socratictrade://console/connections")!))

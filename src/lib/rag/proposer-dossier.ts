@@ -244,13 +244,27 @@ export async function assembleProposerDossier(
 
   const tenKAbstract = abstracts.find((row) => coverageKey(row.sourceType) === "10-k");
   const hydrateMisses: string[] = [];
+  const isInlinedAbstract = (chunk: RetrievedChunk): boolean =>
+    abstractChunks.some((row) => row.id === chunk.id);
   const pushReserved = (reservedChunk: RetrievedChunk) => {
     if (depth === "scout") {
       combined = [reservedChunk];
       return;
     }
-    if (combined.length >= limit) combined = [...combined.slice(0, limit - 1), reservedChunk];
-    else combined.push(reservedChunk);
+    if (combined.some((chunk) => chunk.id === reservedChunk.id)) return;
+    if (combined.length < limit) {
+      combined.push(reservedChunk);
+      return;
+    }
+    // Evict a retrieved filler, not a prior reserved 1A/MD&A hydrate.  The
+    // previous `slice(0, limit - 1)` dropped Item 1A as soon as Item 7 landed.
+    for (let i = combined.length - 1; i >= 0; i -= 1) {
+      const candidate = combined[i]!;
+      if (candidate.source === "local-hydrate" || isInlinedAbstract(candidate)) continue;
+      combined.splice(i, 1, reservedChunk);
+      return;
+    }
+    combined = [...combined.slice(0, limit - 1), reservedChunk];
   };
   if (tenKAbstract && !combined.some(chunkLooksLike1A)) {
     const reserved = await hydrateAccession({

@@ -785,7 +785,15 @@ enum DeskCopy {
     static let exitOnlyOwnerApproveNote =
         "This account is Exit-only, so the agent will not open new risk on its own.  Approving this opening places it anyway."
 
-    /// Same destination as web readiness (`/console/guardrails`).  iOS has no Strategy tab.
+    static let openConnectionsButton = "Open Connections"
+    static let openGuardrailsButton = "Open Guardrails"
+    static let accountNeedsConnection =
+        "Use Open Connections, then select the account here."
+    static let accountNeedsConnectionInline =
+        "Use Open Connections to connect a broker account, then select it here."
+
+    /// Same destination as web readiness (`/console/guardrails`).  The in-app
+    /// Guardrails tab is the universe editor, not a Strategy Safari handoff.
     /// "always-include symbols" tracks the row label — those names are exempt from the
     /// universe floor, which "extra symbols" made sound like a plain append.
     static let universeNeedsIndex =

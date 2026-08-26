@@ -3,8 +3,8 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ListFilter, ShieldAlert } from "lucide-react";
-import type { PendingProposal } from "@/lib/types";
-import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
+import type { ExecutionMode, PendingProposal } from "@/lib/types";
+import { deriveReality, deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { bulkApproveProposals, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
 import { fmtMoney, SENTENCE_GAP } from "../lib/format";
@@ -70,12 +70,15 @@ function ApprovalsPageInner() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState<"approve" | "reject" | null>(null);
   const [liveApproveBatch, setLiveApproveBatch] = useState<PendingProposal[] | null>(null);
+  const [bulkExpectedText, setBulkExpectedText] = useState<string | null>(null);
+  const [bulkServerReasons, setBulkServerReasons] = useState<string[]>([]);
   // The reject-count this arm was raised for, or null when disarmed. If the
   // selection changes underneath an armed button (filter change, checkbox
   // toggle), rejectArmedEffective below falls false on its own — no effect
   // needed to keep it in sync, and no ref read during render.
   const [rejectArmedCount, setRejectArmedCount] = useState<number | null>(null);
   const rejectArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentMode = snapshot ? deriveReality(snapshot).mode : undefined;
   const pending = useMemo(() => snapshot?.pendingProposals ?? [], [snapshot]);
   const pendingIdSet = useMemo(() => new Set(pending.map((proposal) => proposal.id)), [pending]);
   const effectiveSelectedIds = useMemo(() => {
@@ -86,8 +89,8 @@ function ApprovalsPageInner() {
     return next;
   }, [selectedIds, pendingIdSet]);
   const filtered = useMemo(
-    () => triagePendingProposals(pending, { query, side, reality, sort }),
-    [pending, query, side, reality, sort]
+    () => triagePendingProposals(pending, { query, side, reality, sort }, currentMode),
+    [pending, query, side, reality, sort, currentMode]
   );
   const focusedId = readProposalQuery(searchParams.get("proposal"));
   const focusedProposal = focusedId ? pending.find((proposal) => proposal.id === focusedId) : undefined;
@@ -102,8 +105,8 @@ function ApprovalsPageInner() {
     scrollDeepLinkTarget([proposalElementId(focusedId)]);
   }, [focusedId, visible]);
   const visibleIdSet = useMemo(() => new Set(filtered.map((proposal) => proposal.id)), [filtered]);
-  const summary = useMemo(() => summarizePendingProposals(filtered), [filtered]);
-  const selection = useMemo(() => summarizeBulkSelection(filtered, effectiveSelectedIds), [filtered, effectiveSelectedIds]);
+  const summary = useMemo(() => summarizePendingProposals(filtered, currentMode), [filtered, currentMode]);
+  const selection = useMemo(() => summarizeBulkSelection(filtered, effectiveSelectedIds, currentMode), [filtered, effectiveSelectedIds, currentMode]);
   const bulkApproveOverLimit = selection.approveCount > BULK_APPROVE_MAX_REQUESTS;
   const state = snapshot ? deriveStateInfo(snapshot.policy) : null;
   const stopped = snapshot?.policy.systemState === "halted";
@@ -188,19 +191,28 @@ function ApprovalsPageInner() {
       resetSelection();
       const detailParts = [`${blocked} blocked on re-check`, failed > 0 ? `${failed} failed` : undefined].filter(Boolean);
       const detail = [...detailParts, ...failureDetails.slice(0, 3)].join(" · ");
-      toast.push(
-        failed > 0 ? "warn" : "pos",
-        `Approved ${placed} proposal${placed === 1 ? "" : "s"}`,
-        detail || undefined
-      );
+      if (placed > 0) {
+        toast.push(
+          failed > 0 ? "warn" : "pos",
+          `Approved ${placed} proposal${placed === 1 ? "" : "s"}`,
+          detail || undefined
+        );
+      } else {
+        toast.push(
+          "warn",
+          failed > 0 ? "Approval batch failed" : "Blocked at approval time",
+          detail || "No approvals were placed."
+        );
+      }
     } catch (error) {
+      if (error instanceof LiveConfirmationRequiredError) {
+        setLiveApproveBatch(selected);
+        setBulkExpectedText(error.expectedText);
+        setBulkServerReasons(error.reasons);
+        return;
+      }
       failed += selected.length;
-      const reasons =
-        error instanceof LiveConfirmationRequiredError
-          ? error.reasons.join("; ")
-          : error instanceof Error
-            ? error.message
-            : "request failed";
+      const reasons = error instanceof Error ? error.message : "request failed";
       toast.push("warn", "Approval batch failed", reasons || "No approvals were submitted.");
     } finally {
       setBulkBusy(null);
@@ -214,7 +226,7 @@ function ApprovalsPageInner() {
       toast.push("warn", "Too many approvals selected", `Select ${BULK_APPROVE_MAX_REQUESTS} or fewer proposals per batch to stay inside the order rate limit.`);
       return;
     }
-    if (requiresTypedLiveApproval && selected.some(approvalIsLive)) {
+    if (requiresTypedLiveApproval && selected.some((proposal) => approvalIsLive(proposal, currentMode))) {
       setLiveApproveBatch(selected);
       return;
     }
@@ -229,6 +241,8 @@ function ApprovalsPageInner() {
 
   const closeLiveApproveBatch = useCallback(() => {
     setLiveApproveBatch(null);
+    setBulkExpectedText(null);
+    setBulkServerReasons([]);
   }, []);
 
   const runBulkReject = async () => {
@@ -386,7 +400,7 @@ function ApprovalsPageInner() {
                         : "Approves selected proposals one by one through the existing server path."
                   }
                 >
-                  {bulkBusy === "approve" ? "approving..." : `approve selected (${selection.approveCount})`}
+                  {bulkBusy === "approve" ? "Approving..." : `Approve Selected (${selection.approveCount})`}
                 </Btn>
                 <Btn
                   variant="dangerOutline"
@@ -401,7 +415,7 @@ function ApprovalsPageInner() {
                         : "Rejects each selected proposal through the existing server path.  Click once to arm, then again to confirm."
                   }
                 >
-                  {bulkBusy === "reject" ? "rejecting..." : rejectArmedEffective ? `reject ${selection.rejectCount}? confirm` : `reject selected (${selection.rejectCount})`}
+                  {bulkBusy === "reject" ? "Rejecting..." : rejectArmedEffective ? `Reject ${selection.rejectCount}?${SENTENCE_GAP}Confirm` : `Reject Selected (${selection.rejectCount})`}
                 </Btn>
               </div>
             </div>
@@ -503,7 +517,10 @@ function ApprovalsPageInner() {
       <BulkLiveApproveSheet
         open={liveApproveBatch !== null}
         proposals={liveApproveBatch ?? []}
+        currentMode={currentMode}
         busy={bulkBusy === "approve"}
+        serverExpected={bulkExpectedText}
+        serverReasons={bulkServerReasons}
         onClose={closeLiveApproveBatch}
         onSubmit={(typedText) => void submitLiveApproveBatch(typedText)}
       />
@@ -523,20 +540,26 @@ function bulkLiveApprovalText(live: PendingProposal[]): string {
 function BulkLiveApproveSheet({
   open,
   proposals,
+  currentMode,
   busy,
+  serverExpected,
+  serverReasons,
   onClose,
   onSubmit
 }: {
   open: boolean;
   proposals: PendingProposal[];
+  currentMode?: ExecutionMode;
   busy: boolean;
+  serverExpected: string | null;
+  serverReasons: string[];
   onClose: () => void;
   onSubmit: (typedText: string) => void;
 }) {
   const [typed, setTyped] = useState("");
-  const live = useMemo(() => proposals.filter(approvalIsLive), [proposals]);
+  const live = useMemo(() => proposals.filter((proposal) => approvalIsLive(proposal, currentMode)), [proposals, currentMode]);
   const paperCount = proposals.length - live.length;
-  const expectedText = bulkLiveApprovalText(live);
+  const expectedText = serverExpected ?? bulkLiveApprovalText(live);
   const matches = typed.trim().toUpperCase() === expectedText;
   const liveNotional = live.reduce((sum, proposal) => sum + approvalEstimatedNotional(proposal), 0);
 
@@ -566,6 +589,17 @@ function BulkLiveApproveSheet({
           their own result.
         </p>
       </div>
+
+      {serverReasons.length > 0 && (
+        <div className="mb-3 rounded-control border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
+          <div className="font-semibold text-[color:var(--con-warn)]">The server refused the confirmation:</div>
+          <ul className="mt-1 list-disc pl-4 text-[color:var(--con-muted)]">
+            {serverReasons.map((reason, i) => (
+              <li key={i}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mb-3 max-h-48 overflow-auto rounded-control border border-[color:var(--con-line)]">
         {live.map((proposal) => (
@@ -607,7 +641,7 @@ function BulkLiveApproveSheet({
         <Btn variant="ghost" onClick={close} disabled={busy}>
           Cancel
         </Btn>
-        <Btn variant="primary" disabled={!matches || busy || live.length === 0} onClick={submit}>
+        <Btn variant="primary" disabled={!matches || busy || (live.length === 0 && !serverExpected)} onClick={submit}>
           {busy ? "Approving..." : "Approve live batch"}
         </Btn>
       </div>

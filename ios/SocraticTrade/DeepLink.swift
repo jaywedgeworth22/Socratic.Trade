@@ -191,14 +191,16 @@ enum DeepLink {
     }
 }
 
-/// Website pages the phone cannot edit (broker connect, strategy universe).
+/// Website pages the phone cannot edit (broker connect on Connections).
 ///
-/// These paths are intentionally absent from `DeepLink.destination(for:)` and from the AASA
-/// file (`app/.well-known/apple-app-site-association/route.ts`).  Claiming them would swallow
+/// Universe lives on the in-app Guardrails tab (`DeepLink` → `.tab(.guardrails)`).
+/// `/console/strategy` is not where indices or always-include symbols are added.
+///
+/// Connections is intentionally absent from `DeepLink.destination(for:)` and from the AASA
+/// file (`app/.well-known/apple-app-site-association/route.ts`).  Claiming it would swallow
 /// the tap back into the app and land nowhere.  `openURL` therefore opens Safari.
 enum ConsoleHandoff {
     static let connections = URL(string: "https://socratictrade.com/console/connections")!
-    static let strategy = URL(string: "https://socratictrade.com/console/strategy")!
 
     /// True when this URL is a Safari-only console page, not an in-app universal link.
     static func isSafariOnly(_ url: URL) -> Bool {
@@ -209,7 +211,7 @@ enum ConsoleHandoff {
             .map { $0.lowercased() }
         guard segments.count == 2, segments[0] == "console" else { return false }
         switch segments[1] {
-        case "connections", "strategy":
+        case "connections":
             return true
         default:
             return false

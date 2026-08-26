@@ -2,13 +2,16 @@
 //  AppUpdatePrompt.swift
 //
 //  Portable first-launch update check for every fleet iOS app.
-//  Canonical copy: /Users/jay/apps/ios-fleet/AppUpdatePrompt.swift
+//  Pin: scripts/ios-fleet/AppUpdatePrompt.swift
 //  Copy this file into each app target.  Do not fork behavior.
+//  Do not make a Swift package.
 //
 //  On the first scene of a cold launch the app:
 //    1. Detects Xcode / TestFlight / App Store (StoreKit AppTransaction).
-//    2. Reads the latest marketing version from the public fleet manifest
-//       (TestFlight source of truth) and the iTunes Lookup API (App Store).
+//    2. Reads marketing version + appleId from the public fleet manifest
+//       (jaywedgeworth22/ios-app-versions versions.json) and the iTunes
+//       Lookup API (App Store).  Apple IDs live in that manifest and in
+//       scripts/ios-fleet/apps.json — not in this file.
 //    3. If the installed version is older, asks whether to update.
 //    4. Update opens TestFlight (itms-beta) or the App Store (itms-apps).
 //
@@ -25,16 +28,6 @@ enum AppUpdatePrompt {
     static let defaultManifestURL = URL(
         string: "https://raw.githubusercontent.com/jaywedgeworth22/ios-app-versions/main/versions.json"
     )!
-
-    /// Numeric Apple IDs for TestFlight / App Store deep links.
-    /// Keep in sync with /Users/jay/apps/ios-fleet/apps.json.
-    static let knownAppleIds: [String: Int] = [
-        "trade.socratic.app": 6_799_238_379,
-        "trade.congress.ios": 6_798_076_688,
-        "services.jays.usage.client.monitor": 6_799_230_435,
-        "services.jays.usage.local.monitor": 6_799_230_729,
-        "online.dealdex": 6_802_474_288,
-    ]
 
     private static let skippedVersionKeyPrefix = "appUpdatePrompt.skippedVersion."
 
@@ -53,7 +46,7 @@ enum AppUpdatePrompt {
                 .flatMap(URL.init(string:)) ?? AppUpdatePrompt.defaultManifestURL
             return Config(
                 bundleId: bundleId,
-                appleId: plistAppleId ?? knownAppleIds[bundleId],
+                appleId: plistAppleId,
                 manifestURL: manifest,
                 currentMarketingVersion: (info["CFBundleShortVersionString"] as? String) ?? "0",
                 currentBuild: (info["CFBundleVersion"] as? String) ?? "0"

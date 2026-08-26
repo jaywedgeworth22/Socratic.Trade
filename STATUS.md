@@ -5,8 +5,37 @@
 #3091's `publish-ios-versions.test.mjs` pinned the live vendored `ios-app-versions.json` as a "must stay missing net.dealdex" fixture.  GitHub's pull_request merge with `main` (#3102) added that key, so `verify-hosted` failed and the required `verify` gate followed.  The test now uses a constructed 2026-08-21 stale snapshot as `--base-json` and asserts a publish from that base still omits later fleet keys.  Branch `cursor/ci-autofix-automation-27b6`.  Rollout: `docs/rollouts/2026-08-26-ios-versions-stale-fixture-test.md`.
 
 ## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
+## 2026-08-26 ANTIGRAVITY — Guardrail capabilities, market hours hints, unmanaged shorts, and stop fallbacks
 
-Owner: `xcodebuild` is GitHub-hosted `macos-latest` only.  Do not run it locally.  Do not restart the retired Mac runner.  #3083 switched `runs-on` but left `scripts/ios-ship-testflight.sh` exec'ing `/Users/jay/apps/ios-fleet/ship-testflight.sh`, so every `ios-ship` tick failed in ~15s.  This change vendors Congress.Trade's in-repo fleet path, imports signing from GitHub Actions secrets (same five names, do not mint a new key), and pins `scripts/ios-fleet`.  PR #3089: hosted unsigned `xcodebuild` green; `verify-hosted` failed because Sentry still observed `iOS build (Mac runner)` / `iOS TestFlight ship (Mac runner)` after the YAML `name:` rename — observer list + `CRON_SCHEDULES` retargeted 2026-08-25.  #3028 iOS UI is already on `main`; TestFlight is the remaining deploy after merge + `gh workflow run ios-ship.yml`.  Website/Coolify does not carry the iOS UI.  Posted #agent-sync to stop local xcodebuild / Mac-runner restarts.  Branch `cursor/ios-hosted-testflight-ship-0e2b`.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
+Pass live account capabilities into `mergeAccountCapabilities` in Guardrails page so Alpaca connected accounts preserve live shorting capabilities; align broker-specific `syntheticStopHoursHint` in `market-hours.ts` with executable order windows (Robinhood/Tradier 7:00 AM, Public 8:00 AM, eToro regular-only); fallback `shortTrailFallback` to `stopLossPct` when short stop loss is unconfigured in `src/lib/synthetic-stops.ts`; check effective stop distance configuration in `deriveUnmanagedShorts` in `app/console/lib/derive.ts`.  Rollout: `docs/rollouts/2026-08-26-reviewer-fixes-guardrails-stophours.md`.
+
+## 2026-08-25 CURSOR — AppUpdatePromptTests pbxproj leftover after #3102
+
+COMPLETED (merged to `main`) #3103 squash `64a06e78`.  #3102 squash `df75ca6f` landed the Swift pin/copy + DealDex registry.  This leftover committed the generated `AppUpdatePromptTests.swift` pbxproj refs so TestFlight (no xcodegen) stays in sync.  Hosted leftover `ios-build` `32809716228` and head `32810441765` ** TEST SUCCEEDED ** (242/0).  `verify-hosted` `32809716125` success.  Do not `--force-ship`.  Do not dispatch `ios-ship.yml` unless the owner asks.  Do not claim website deploy without `scripts/verify-deploy-sha.sh`.  `ios/**` is outside Coolify `watch_paths`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
+
+## 2026-08-25 CURSOR — AppUpdatePrompt Apple IDs off Swift (live DealDex net.dealdex)
+
+COMPLETED (merged to `main`) #3102 squash `df75ca6f`.  One pinned `AppUpdatePrompt.swift` stays the ios-fleet copy.  Dropped `knownAppleIds` (stale `online.dealdex`).  Prompt reads versions / `appleId` from `jaywedgeworth22/ios-app-versions` and the local `ios-app-versions.json` mirror.  `apps.json` live DealDex is `net.dealdex` 6802474288.  Do not treat `online.dealdex` as live.  Do not upload `me.grok.dealdex`.  No Swift package.  No `testers.json`.  No `--force-ship`.  No spend.  Hosted `ios-build` `32808123472` ** TEST SUCCEEDED ** (242/0).  Generated pbxproj leftover is the stanza above.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-apple-ids.md`.
+
+## 2026-08-25 CURSOR — Playwright smoke: dismiss ConsentGate before More
+
+COMPLETED (merged to `main`) #3100 squash `1662cdcd`.  Hosted Playwright Smoke `32805872756` succeeded (classify + smoke).  Spec accepts the first-use legal dialog, then keeps the #3097 More vs rail Scan asserts.  Not TestFlight.  Do not dispatch `ios-ship.yml`.  Rollout: `docs/rollouts/2026-08-25-smoke-dismiss-consent.md`.
+
+## 2026-08-25 CURSOR — Console honesty: Discard, approve typed-confirm, Coach chips
+
+COMPLETED (merged to `main`) #3093 squash `5a2080cf`.  Guardrails Discard clears universe + policy drafts.  Approve 409 opens typed-confirm.  Coach chips prefill.  Leftover UX: iOS Open Guardrails, Open Connections copy, Tradier (paper).  Playwright `smoke` on this sha was the ConsentGate overlay; #3100 / run `32805872756` is green.  Rollout: `docs/rollouts/2026-08-25-console-discard-approve-chips.md`.
+
+## 2026-08-25 CURSOR — Playwright mobile-chrome smoke: Scan is in More
+
+COMPLETED (merged to `main`) #3097 squash `c2ed2c85`.  Default pins omit Scan; smoke opens More on the phone bar.  Overlay leftover closed by #3100 (`1662cdcd`, smoke `32805872756` green).  Rollout: `docs/rollouts/2026-08-25-mobile-smoke-scan-more.md`.
+
+## 2026-08-25 CURSOR — Datadog Logs + APM + RUM on the existing us5 account
+
+Owner: reuse the existing Datadog account only.  No new org, API key, or paid add-on.  This repo had zero Datadog SDK wiring; host agent on `fleet-hetzner-nbg1` saw syslog/USM `service:node`, not the Next.js app.  Coolify container stdout was not ingested.  Implementation is fail-closed: missing `DD_API_KEY` / agent host / RUM tokens is a no-op and must not crash prod.  Server logs (warn+) go to the official us5 HTTP intake.  APM uses the host agent when `DD_AGENT_HOST` is set, otherwise official agentless exporter.  Coolify `NODE_OPTIONS --import ./scripts/datadog-preload.mjs` after Infisical so `dd-trace` loads before Next.  Browser RUM boots from `instrumentation-client.ts` plus a hidden runtime boot so Infisical tokens work without a rebuild.  Session Replay / Profiling / AppSec stay off.  Sentry + PagerDuty (Firefighter moderate+) are unchanged.  Designer copy/layout and Oracle RAG/Pinecone are untouched.  Coolify deploy is not this PR.  Branch `cursor/datadog-logs-apm-rum-6ce3`, PR #3094.  Rollout: `docs/rollouts/2026-08-25-datadog-logs-apm-rum.md`.
+
+## 2026-08-25 CURSOR — Hosted TestFlight 1.0.69 installable (PR #3089)
+
+COMPLETED.  #3089 squash `ef725f26` vendored in-repo `scripts/ios-fleet/` and imported existing ASC/P12 GitHub secrets.  Merge-push ship `32794753487` archived then cancelled mid-upload.  Next hosted `macos-latest` tick `32796413908` (`event: schedule`) uploaded **1.0.69 (202608250109)** for `trade.socratic.app`; ASC `internal=IN_BETA_TESTING` ("TestFlight internal testers can install this build").  Git sha recorded `b9421cbf` (#3090 on top of #3089); `ios/**` was unchanged by #3090 so the binary includes #3028 chrome (gear, bell, Admin tab).  Do not run local `xcodebuild`.  Do not restart `mac-xcode26-socratic`.  Website/Coolify is not this deploy.  Playwright `smoke` failure on `b9421cbf` is #3090, not this ship.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.
 
 ## 2026-08-23 — Toggle Switch Touch Styling, Account Extended Hours Hints & Active Short Management
 

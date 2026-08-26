@@ -34,7 +34,7 @@ const nextConfig = {
       }
     ];
   },
-  serverExternalPackages: ["better-sqlite3", "@pinecone-database/pinecone", "voyageai"],
+  serverExternalPackages: ["better-sqlite3", "@pinecone-database/pinecone", "voyageai", "dd-trace"],
   webpack: (config, { isServer, nextRuntime }) => {
     config.resolve.alias = {
       ...(config.resolve.alias ?? {}),
@@ -46,6 +46,7 @@ const nextConfig = {
         "better-sqlite3": false,
         "@pinecone-database/pinecone": false,
         "voyageai": false,
+        "dd-trace": false,
         "node:fs": false,
         "node:path": false,
         "node:http": false,
@@ -53,7 +54,8 @@ const nextConfig = {
         "node:zlib": false,
         "node:stream": false,
         "node:dns": false,
-        "node:net": false
+        "node:net": false,
+        "node:os": false,
       };
       config.resolve.fallback = {
         ...(config.resolve.fallback ?? {}),
@@ -65,11 +67,22 @@ const nextConfig = {
         stream: false,
         dns: false,
         net: false,
+        os: false,
         http: false,
         // node:http2 is the APNs provider transport (src/lib/apns.ts, reachable from the
         // src/lib/db.ts barrel). Server-only — stubbed out for client/edge bundles.
         http2: false
       };
+    }
+    if (isServer && nextRuntime === "nodejs") {
+      config.externals = [
+        ...(Array.isArray(config.externals) ? config.externals : config.externals ? [config.externals] : []),
+        "@datadog/native-metrics",
+        "@datadog/pprof",
+        "@datadog/native-appsec",
+        "@datadog/native-iast-taint-tracking",
+        "@datadog/wasm-js-rewriter"
+      ];
     }
     return config;
   },

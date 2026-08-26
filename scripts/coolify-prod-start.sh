@@ -114,6 +114,35 @@ if [ -z "${COOLIFY_PROD_PHASE2:-}" ]; then
 fi
 
 # --- phase 2: Infisical secrets are in the environment ---
+# Fail-closed Datadog APM preload.  dd-trace must load before Next.js or the
+# Next plugin stays silent.  Use --import (never --require) so
+# test/toolchain-policy.test.ts stays green.  Missing keys = no-op, no crash.
+maybe_arm_datadog() {
+  _dd_flag_off() {
+    case "${1:-}" in
+      0|false|FALSE|no|NO|off|OFF) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+  if _dd_flag_off "${DD_TRACE_ENABLED:-}" || _dd_flag_off "${DD_APM_TRACING_ENABLED:-}"; then
+    log "Datadog APM preload skipped (trace flag off)"
+    return 0
+  fi
+  if [ -z "${DD_API_KEY:-}${DATADOG_API_KEY:-}${DD_AGENT_HOST:-}${DD_TRACE_AGENT_URL:-}${DD_TRACE_AGENT_HOSTNAME:-}${DD_TRACE_URL:-}" ]; then
+    log "Datadog APM preload skipped (no DD_API_KEY / agent host)"
+    return 0
+  fi
+  case " ${NODE_OPTIONS:-} " in
+    *" --import ./scripts/datadog-preload.mjs "*|*" --import=./scripts/datadog-preload.mjs "*)
+      ;;
+    *)
+      export NODE_OPTIONS="${NODE_OPTIONS:-} --import ./scripts/datadog-preload.mjs"
+      ;;
+  esac
+  log "Datadog APM preload armed via NODE_OPTIONS --import (fail-closed if init fails)"
+}
+maybe_arm_datadog
+
 MODE="${DB_BOOTSTRAP:-fresh}"
 
 # Production exit-code contract (docs/rollouts/2026-08-02-exit0-outage-audit.md):

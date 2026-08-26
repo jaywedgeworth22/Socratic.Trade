@@ -38,17 +38,19 @@ Vendored the fleet ship tooling in-repo (CT pattern).  Hosted `ios-ship.yml` now
 - `python3` ASCII scan of new operator scripts (`ios-appstore-gm-prepare.sh` em dash replaced)
 - `npm run lint` (exit 0)
 - `npx tsc --noEmit` (exit 0)
-- Hosted `ios-build.yml` `xcodebuild (unsigned)` SUCCESS on PR #3089 (`32792277819`)
-- Hosted `verify-hosted` FAIL on `3493c341`: `test/sentry-ci-report-workflows.test.ts` still listed `iOS build (Mac runner)` / `iOS TestFlight ship (Mac runner)` after the YAML `name:` rename.  Fixed observer list + `CRON_SCHEDULES`; dropped the duplicate dict key.
-- `npx vitest run test/sentry-ci-report-workflows.test.ts` after the observer fix
-- Full `npm test` / `npm run build` remain the hosted `verify-hosted` lane (local Cloud VM flakes on network-bound suites)
-- After merge: `gh workflow run ios-ship.yml`
+- Hosted `ios-build.yml` `xcodebuild (unsigned)` SUCCESS on PR #3089
+- Hosted `verify-hosted` FAIL on `3493c341` (Sentry still listed `(Mac runner)` names).  Observer + `CRON_SCHEDULES` retargeted; `npx vitest run test/sentry-ci-report-workflows.test.ts` 2/2
+- PR #3089 squash-merged `ef725f26` 2026-08-25 00:43Z
+- Merge-push ship `32794753487`: archive succeeded, export/upload started, then **cancelled** (~3m)
+- Hosted schedule ship `32796413908` SUCCESS 2026-08-25 01:08-01:14Z: **ARCHIVE SUCCEEDED**, upload succeeded, build **1.0.69 (202608250109)**, ASC id `fd1ff0eb-c1c4-4488-b100-db2f9b9791a3`, `internal=IN_BETA_TESTING` ("TestFlight internal testers can install this build").  Recorded sha `b9421cbf` (#3090 after #3089; no `ios/**` in #3090).
+- Release notes were DRY RENDER only (`IOS_TF_RELEASE_NOTES` unset on the hosted job).  Installability does not depend on publishing notes.
 
 ## Next Steps & Blockers
 
-- After merge: `gh workflow run ios-ship.yml` on `main`.  Confirm TestFlight processes a build that includes #3028 chrome (gear, bell, Admin tab).
+- Owner: install TestFlight **1.0.69 (202608250109)** and confirm gear / bell / Admin tab (#3028).
 - Peer seats: do not run local `xcodebuild`.  Do not re-register `mac-xcode26-socratic`.
-- Website/Coolify: `scripts/**` is in watch_paths so this merge can auto-deploy the website image.  The vendored fleet scripts are not production Node.  Website behavior is unchanged.
+- Optional later: set `IOS_TF_RELEASE_NOTES=1` on the hosted ship step so "What's New" publishes.  Do not fire a second ship just for notes.
+- Playwright smoke failure on `b9421cbf` is PR #3090 (RAG), not this ship.  Website/Coolify is a separate auto-deploy from `scripts/**` on #3089; not the iOS binary.
 
 ## Zero-Code Findings
 

@@ -358,6 +358,10 @@ final class DeskModelsTests: XCTestCase {
         XCTAssertEqual(DeskCopy.joinedIndexList(["sp500", "russell2000"]), "S&P 500, Russell 2000")
         XCTAssertTrue(DeskCopy.universeNeedsIndex.contains("S&P 500"))
         XCTAssertFalse(DeskCopy.universeNeedsIndex.contains("Strategy page"))
+        XCTAssertEqual(DeskCopy.openGuardrailsButton, "Open Guardrails")
+        XCTAssertEqual(DeskCopy.accountNeedsConnection, "Use Open Connections, then select the account here.")
+        XCTAssertFalse(DeskCopy.accountNeedsConnection.contains("Alpaca"))
+        XCTAssertFalse(DeskCopy.accountNeedsConnection.contains("Robinhood"))
         XCTAssertEqual(
             DeskCopy.joinedIndexList(["sp500", "nasdaqComposite", "dow30", "nyseComposite"]),
             "S&P 500, Nasdaq Composite, Dow 30, NYSE Composite"
