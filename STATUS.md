@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-26 CURSOR — CI autofix: ios-fleet stale-snapshot test
+
+#3091's `publish-ios-versions.test.mjs` pinned the live vendored `ios-app-versions.json` as a "must stay missing net.dealdex" fixture.  GitHub's pull_request merge with `main` (#3102) added that key, so `verify-hosted` failed and the required `verify` gate followed.  The test now uses a constructed 2026-08-21 stale snapshot as `--base-json` and asserts a publish from that base still omits later fleet keys.  Branch `cursor/ci-autofix-automation-27b6`.  Rollout: `docs/rollouts/2026-08-26-ios-versions-stale-fixture-test.md`.
+
 ## 2026-08-24 CURSOR — Hosted macos-latest TestFlight ship (in-repo ios-fleet)
 
 Owner: `xcodebuild` is GitHub-hosted `macos-latest` only.  Do not run it locally.  Do not restart the retired Mac runner.  #3083 switched `runs-on` but left `scripts/ios-ship-testflight.sh` exec'ing `/Users/jay/apps/ios-fleet/ship-testflight.sh`, so every `ios-ship` tick failed in ~15s.  This change vendors Congress.Trade's in-repo fleet path, imports signing from GitHub Actions secrets (same five names, do not mint a new key), and pins `scripts/ios-fleet`.  PR #3089: hosted unsigned `xcodebuild` green; `verify-hosted` failed because Sentry still observed `iOS build (Mac runner)` / `iOS TestFlight ship (Mac runner)` after the YAML `name:` rename — observer list + `CRON_SCHEDULES` retargeted 2026-08-25.  #3028 iOS UI is already on `main`; TestFlight is the remaining deploy after merge + `gh workflow run ios-ship.yml`.  Website/Coolify does not carry the iOS UI.  Posted #agent-sync to stop local xcodebuild / Mac-runner restarts.  Branch `cursor/ios-hosted-testflight-ship-0e2b`.  Rollout: `docs/rollouts/2026-08-24-ios-hosted-testflight-ship.md`.

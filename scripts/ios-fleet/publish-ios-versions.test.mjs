@@ -115,14 +115,70 @@ test("empty base is refused so a missing local file cannot wipe the fleet", () =
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("stale in-repo snapshot would drop net.dealdex and roll siblings", () => {
-  const stale = JSON.parse(
-    readFileSync(join(ROOT, "scripts/ios-fleet/ios-app-versions.json"), "utf8"),
-  );
-  assert.ok(!stale.apps["net.dealdex"], "vendored snapshot must stay the failing fixture");
-  assert.equal(stale.apps["services.jays.usage.client.monitor"].marketingVersion, "1.0.8");
-  assert.equal(stale.apps["services.jays.usage.local.monitor"].marketingVersion, "1.0.7");
-  assert.equal(stale.apps["codes.autorotate"].marketingVersion, "1.0.1");
+// The 2026-08-21 vendored snapshot (before #3102 added net.dealdex).  Do not
+// read the live ios-app-versions.json -- later ships refresh that file, and
+// GitHub's pull_request merge commit then fails a pin on yesterday's keys.
+const STALE_SNAPSHOT = {
+  schemaVersion: 1,
+  updatedAt: "2026-08-21T19:00:00Z",
+  apps: {
+    "trade.socratic.app": {
+      displayName: "Socratic.Trade",
+      marketingVersion: "1.0.68",
+      appleId: 6799238379,
+    },
+    "trade.congress.ios": {
+      displayName: "Congress.Trade",
+      marketingVersion: "1.0.80",
+      appleId: 6798076688,
+    },
+    "services.jays.usage.client.monitor": {
+      displayName: "Usage Client Monitor",
+      marketingVersion: "1.0.8",
+      appleId: 6799230435,
+    },
+    "services.jays.usage.local.monitor": {
+      displayName: "Usage Local Monitor",
+      marketingVersion: "1.0.7",
+      appleId: 6799230729,
+    },
+    "online.dealdex": {
+      displayName: "DealDex",
+      marketingVersion: "1.0.1",
+      appleId: 6802474288,
+    },
+    "codes.autorotate": {
+      displayName: "Autorotate",
+      marketingVersion: "1.0.1",
+    },
+  },
+};
+
+test("publishing from a stale snapshot omits later fleet apps", () => {
+  const dir = mkdtempSync(join(tmpdir(), "st-ios-versions-stale-"));
+  const base = join(dir, "stale.json");
+  const out = join(dir, "out.json");
+  writeFileSync(base, JSON.stringify(STALE_SNAPSHOT, null, 2) + "\n");
+  const res = run([
+    "--bundle-id",
+    "trade.socratic.app",
+    "--version",
+    "1.0.69",
+    "--base-json",
+    base,
+    "--out-json",
+    out,
+    "--skip-push",
+    "--skip-local-write",
+  ]);
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+  const merged = JSON.parse(readFileSync(out, "utf8"));
+  assert.ok(!merged.apps["net.dealdex"], "stale base must not invent later fleet keys");
+  assert.equal(merged.apps["services.jays.usage.client.monitor"].marketingVersion, "1.0.8");
+  assert.equal(merged.apps["services.jays.usage.local.monitor"].marketingVersion, "1.0.7");
+  assert.equal(merged.apps["codes.autorotate"].marketingVersion, "1.0.1");
+  assert.equal(merged.apps["trade.socratic.app"].marketingVersion, "1.0.69");
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("publish script fetches remote and refuses an empty apps map", () => {
