@@ -68,9 +68,9 @@ dbs:
     replicas:
       - type: s3
         # Litestream 0.5.x can leak sockets at very short sync intervals against some
-        # S3-compatible endpoints (historical R2 outage). 60s RPO is plenty for ST
-        # and keeps Class A volume reasonable on B2.
-        sync-interval: 60s
+        # S3-compatible endpoints (historical R2 outage). 300s RPO (5 min) is plenty for ST
+        # and keeps Class C (ListObjects) volume well under Backblaze's 2,500/day free limit.
+        sync-interval: 300s
         bucket: ${AWS_S3_BUCKET_NAME}
         path: trading-live/app.db
         # Literal region required: litestream substitutes ${VAR} but does NOT support

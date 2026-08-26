@@ -13,3 +13,4 @@ The user noted that they have switched to ROIC.ai, and asked that the EarningsCa
 
 ## Next Steps
 - Merge to main.
+- `litestream.coolify.yml`: Reduced Litestream `sync-interval` from 60s to 300s to avoid exhausting the Backblaze B2 2,500/day free limit for Class C transactions.
