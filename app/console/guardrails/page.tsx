@@ -223,8 +223,9 @@ function AccountScopedGuardrailsPage() {
     return def.path !== "taxSettings.iraWashSaleHandling";
   });
   
-  const broker = activeConnectedAccount(snapshot)?.broker ?? policy.activeBroker;
-  const caps = mergeAccountCapabilities(broker);
+  const account = activeConnectedAccount(snapshot);
+  const broker = account?.broker ?? policy.activeBroker;
+  const caps = mergeAccountCapabilities(broker, account?.capabilities);
 
   return (
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
