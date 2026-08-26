@@ -334,6 +334,7 @@ export const FORCE_INCLUDE_BACKFILL_EVENT_TYPES: readonly NotificationEventType[
   "autonomy_halted_on_boot",
   "budget_alert",
   "earningscalls_entitlement_blocked",
+  "roic_status_advisory",
   "signal_health",
   "lookahead_leak",
   "risk_advisory"

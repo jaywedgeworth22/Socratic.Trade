@@ -96,6 +96,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   "autonomy_halted_on_boot",
   "option_alert",
   "earningscalls_entitlement_blocked",
+  "roic_status_advisory",
   // Advisory guardrail breach (e.g. the drawdown breaker in advisory mode): a configured risk
   // threshold was crossed but NOTHING halted or was blocked — nothing was blocked or changed.
   // Deliberately NOT "kill_switch" (nothing flipped state) so owners don't learn to ignore

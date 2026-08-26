@@ -56,6 +56,7 @@ function alertTone(event: NotificationEvent): AlertCenterRow["tone"] {
     event.type === "budget_alert" ||
     event.type === "provider_degraded" ||
     event.type === "earningscalls_entitlement_blocked" ||
+    event.type === "roic_status_advisory" ||
     event.type === "risk_advisory"
   ) {
     return "warn";
@@ -78,6 +79,7 @@ export function matchesFilter(event: NotificationEvent, filter: AlertCenterFilte
           event.type === "budget_alert" ||
           event.type === "provider_degraded" ||
           event.type === "earningscalls_entitlement_blocked" ||
+          event.type === "roic_status_advisory" ||
           event.type === "risk_advisory" ||
           event.status === "failed")
       );
