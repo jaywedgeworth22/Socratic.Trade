@@ -8,8 +8,18 @@
 # subdirectory and the sandbox drops you one level above it. A bare
 # `bash scripts/cloud-setup.sh` therefore fails with
 # `bash: scripts/cloud-setup.sh: No such file or directory` (exit 127) because
-# that path doesn't resolve from the parent directory. Point the environment's
-# "setup script" field at this instead:
+# that path doesn't resolve from the parent directory.
+#
+# Point the environment's Setup script field at the fleet locator (works for
+# every app; see ai-fleet-coordinator/docs/CLAUDE-CODE-CLOUD-ENVIRONMENTS.md):
+#   set -euo pipefail
+#   if [ -f scripts/cloud-setup.sh ]; then exec bash scripts/cloud-setup.sh; fi
+#   shopt -s nullglob
+#   matches=(*/scripts/cloud-setup.sh)
+#   if [ "${#matches[@]}" -eq 1 ]; then exec bash "${matches[0]}"; fi
+#   echo "ERROR: scripts/cloud-setup.sh not found from $(pwd)" >&2; ls -la >&2; exit 1
+#
+# Equivalent one-liner if you prefer the repo name:
 #   cd Socratic.Trade && bash scripts/cloud-setup.sh
 #
 # (`.devcontainer/devcontainer.json`'s `postCreateCommand` does NOT need the `cd`
@@ -45,7 +55,9 @@ fi
 # redirect setup to an arbitrary credential file.
 unset GLOBAL_API_KEYS_FILE
 echo "==> Checking Infisical bootstrap identity (values stay private)"
-node scripts/infisical-bootstrap-env.mjs
+# Cloud VMs do not have ~/.secrets/global-api-keys. Missing identities are
+# expected; do not fail the whole session setup for a keyless checkout.
+node scripts/infisical-bootstrap-env.mjs || echo "==> Infisical bootstrap skipped (ok in keyless cloud)"
 
 # Install the Slack coordination sync globally (SessionStart hook). No-op at
 # runtime unless SLACK_BOT_TOKEN is set as an environment secret. Non-fatal:
