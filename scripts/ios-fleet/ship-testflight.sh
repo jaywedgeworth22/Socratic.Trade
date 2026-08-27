@@ -6,7 +6,7 @@
 #
 # Options:
 #   --repo-root PATH   Repo root (default: cwd)
-#   --build N          Force CURRENT_PROJECT_VERSION (default: UTC YYYYMMDDHHMM)
+#   --build N          Force CURRENT_PROJECT_VERSION (default: same as MARKETING)
 #   --version X.Y.Z    Force MARKETING_VERSION (optional)
 #   --export-only      Build IPA only; do not upload
 #   --upload-only IPA  Skip archive; upload an existing IPA via ASC API key
@@ -21,9 +21,9 @@
 #
 # Version numbering (owner directive 2026-08-12, revised same day):
 #   MARKETING_VERSION       = 1.0.<seq>          +1 on EVERY rebuild
-#   CURRENT_PROJECT_VERSION = <UTC YYYYMMDDHHMM> when the build was cut
+#   CURRENT_PROJECT_VERSION = 1.0.<seq>          same as MARKETING_VERSION
 # App Store Connect renders "<marketing> (<build>)", so a ship now shows
-# "1.0.8 (202608121315)" instead of the uninformative "1.0.8 (1.0.8)".
+# "1.0.8 (1.0.8)". Both fields increment together on every rebuild.
 # The sequence is max(local cache, App Store Connect, project.pbxproj) + 1, so a
 # lost or reset local counter cannot silently reuse a shipped version.
 #
@@ -190,32 +190,21 @@ link_private_key() {
   chmod 600 "$key_path" 2>/dev/null || true
 }
 
-# Owner directive 2026-08-12: version naming is 1.0.# where EVERY rebuild —
-# including a tiny tweak — adds exactly 1 to the last number. That part is
-# unchanged and is what MARKETING_VERSION carries.
+# Owner directive 2026-08-26: version naming is 1.0.# for BOTH fields.
+# EVERY rebuild — including a tiny tweak — adds exactly 1 to the last number.
+# MARKETING_VERSION (CFBundleShortVersionString) and CURRENT_PROJECT_VERSION
+# (CFBundleVersion) are the same dotted string. ASC shows "1.0.8 (1.0.8)".
 #
-# CFBundleVersion is NOT a copy of it. An earlier revision set both fields to
-# the same dotted string, which App Store Connect renders as "1.0.7 (1.0.7)":
-# the parenthetical carried zero information, and it was a live rejection trap.
 # Apple requires CFBundleVersion to be strictly increasing WITHIN a marketing
-# train, and trade.congress.ios has 15 builds numbered 202608070253 through
-# 202608120521 sitting in the 1.0.0 train. "1.0.7" is numerically far lower
-# than any of them; the dotted scheme only worked because each new marketing
-# version opened a fresh, empty train. Ship into an older train once and Apple
-# rejects it after a full archive + upload.
-#
-# So CFBundleVersion is a UTC timestamp, YYYYMMDDHHMM (what this script did
-# originally):
-#   - the parenthetical now says WHEN the build was cut, which is the useful
-#     information the owner asked for: "1.0.8 (202608121315)"
-#   - it is monotonic by construction, so it can never regress
-#   - it is greater than every existing timestamp build, so it stays legal even
-#     if a ship ever lands back in the 1.0.0 train
-#   - it is demonstrably a legal CFBundleVersion for ASC: those 15 live builds
-#     were all accepted in exactly this format
-# Collisions are not a concern: two ships in the same UTC minute would need to
-# beat both the archive lock and the 1h min interval, and they would carry
-# different marketing versions anyway (Apple's uniqueness is per version+build).
+# train. Trains that already have a YYYYMMDDHHMM timestamp build MUST NOT be
+# reused with a dotted 1.0.N build (1.0.N is numerically far lower). Existing
+# timestamp trains — do not --version back into these:
+#   Congress 1.0.178 / 202608270037
+#   DealDex  1.0.55  / 202608262346
+#   Usage    1.0.14  / 202608250546
+#   Socratic 1.0.72  / 202608250600
+# The script already +1s marketing on every rebuild, so the next *normal* ship
+# opens a fresh train 1.0.(N+1) with matching build 1.0.(N+1).
 #
 # Sequence state: ${STATE_DIR}/build-seq-<app>.txt (atomic-mkdir-guarded).
 # NOTE: flock(1) does not exist on macOS — under `set -e` a flock call would
@@ -236,9 +225,9 @@ local_seq() {
   printf '%s' "$n"
 }
 
-# CFBundleVersion: UTC minute stamp. UTC (not local) so the value cannot go
-# backwards across a daylight-saving fall-back, which would break Apple's
-# strictly-increasing rule for an hour twice a year.
+# Legacy helper. No longer the default CFBundleVersion (owner 2026-08-26:
+# both fields are 1.0.N). Kept so an operator can still --build a stamp
+# if they deliberately need one.
 utc_build_stamp() {
   date -u +%Y%m%d%H%M
 }
@@ -330,11 +319,11 @@ resolve_seq_floor() {
     1) restore ASC access: check ${SECRETS_ENV} and that 'node' is on PATH, then
        run: node ${FLEET_DIR}/asc-api.mjs latest-build-seq ${BUNDLE_ID} ${prefix}
     2) or pass the number explicitly:  --version ${prefix}.<N>   (NOT --build <N>:
-       --version picks the marketing version and lets CFBundleVersion stay an
-       auto UTC timestamp, which is always higher than every build already
-       uploaded. A bare --build leaves MARKETING at ${DEFAULT_MARKETING}, which
-       re-enters an old train where Apple requires a strictly greater build than
-       everything in it -- rejected after the full archive+upload.)
+       --version sets MARKETING and, unless --build is also given, CFBundleVersion
+       to the same 1.0.N string. Do not --version back into a train that already
+       shipped a YYYYMMDDHHMM timestamp build — Apple will reject the lower
+       dotted CFBundleVersion. A bare --build leaves MARKETING at
+       ${DEFAULT_MARKETING}, which re-enters that old train.)
     3) or, only if you are certain this train is empty, re-run with --allow-unverified-seq"
     fi
     if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 1 ]]; then
@@ -658,11 +647,9 @@ if [[ -n "$UPLOAD_ONLY_IPA" ]]; then
   log "version: taken from the existing IPA (--upload-only); sequence neither consulted nor consumed"
 elif [[ -n "$FORCE_BUILD" || -n "$FORCE_VERSION" ]]; then
   # Explicit operator override: honour exactly what was asked. A bare --version
-  # still gets an auto timestamp build number, which is always higher than
-  # anything already uploaded — that is the whole point of the scheme, so an
-  # operator picking the marketing version does not have to reason about it.
+  # also sets CFBundleVersion to that same marketing string.
   MARKETING="${FORCE_VERSION:-$DEFAULT_MARKETING}"
-  BUILD_NUM="${FORCE_BUILD:-$(utc_build_stamp)}"
+  BUILD_NUM="${FORCE_BUILD:-$MARKETING}"
   log "version: operator override (--build/--version); sequence not consulted"
 else
   # resolve_seq_floor runs in a subshell, so its die() cannot exit this script
@@ -679,8 +666,7 @@ else
     SEQ="$(next_build_seq "$SEQ_FLOOR")"
   fi
   MARKETING="${MARKETING_PREFIX}.${SEQ}"
-  # NOT "$MARKETING" — see the CFBundleVersion note above utc_build_stamp.
-  BUILD_NUM="$(utc_build_stamp)"
+  BUILD_NUM="$MARKETING"
 fi
 
 # The project file and the shipped version must never disagree silently. The

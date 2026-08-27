@@ -7,11 +7,10 @@
 #      already been advanced, so a rate-limited attempt burned a version that
 #      shipped nowhere (observed live: skipped at 4392s of a 9000s interval, and
 #      the sequence still went 5 -> 6).
-#   2. SCHEME: CFBundleVersion must be a UTC YYYYMMDDHHMM stamp, not a copy of
-#      the marketing version. App Store Connect renders "<marketing> (<build>)",
-#      so copying made the parenthetical useless AND put a number far lower than
-#      the 15 live timestamp builds into play, which Apple rejects if a ship
-#      lands back in an older marketing train.
+#   2. SCHEME: CFBundleVersion is the same 1.0.N string as the marketing
+#      version. App Store Connect renders "<marketing> (<build>)". Existing
+#      timestamp trains must not be reused; the script +1s marketing so the
+#      next normal ship opens a fresh train.
 #
 # Everything runs offline against scratch state:
 #   HOME                -> scratch (so ~/.secrets is absent and App Store
@@ -190,11 +189,9 @@ check "sequence advanced 5 -> 6" "$([[ "$(seq_now)" == "6" ]] && echo 0 || echo 
 echo
 
 # --- 8. Version scheme, all four fleet apps --------------------------------
-# The highest CFBundleVersion already live on trade.congress.ios (15 timestamp
-# builds run 202608070253 .. 202608120521). A new stamp must exceed it, or a
-# ship that lands back in the 1.0.0 train is rejected by Apple.
-HIGHEST_LIVE_TIMESTAMP_BUILD=202608120521
-echo "8. version scheme: 1.0.N marketing + UTC YYYYMMDDHHMM build, all four apps"
+# Both fields are 1.0.N. Existing timestamp trains must not be reused; the
+# script +1s marketing on every rebuild so the next normal ship is a new train.
+echo "8. version scheme: 1.0.N marketing AND 1.0.N build, all four apps"
 for app in socratic congress usage usage-local; do
   rm -f "${STATE}/build-seq-${app}.txt" "${STATE}/last-ship-${app}.txt"
   printf '5' >"${STATE}/build-seq-${app}.txt"
@@ -205,12 +202,10 @@ for app in socratic congress usage usage-local; do
 
   check "${app}: marketing is a 1.0.N train value (got '${mk}')" \
     "$(printf '%s' "$mk" | grep -Eq '^1\.0\.[0-9]+$' && echo 0 || echo 1)"
-  check "${app}: build is a 12-digit UTC stamp (got '${bn}')" \
-    "$(printf '%s' "$bn" | grep -Eq '^[0-9]{12}$' && echo 0 || echo 1)"
-  check "${app}: build is not a copy of marketing (no more '1.0.N (1.0.N)')" \
-    "$([[ "$bn" != "$mk" ]] && echo 0 || echo 1)"
-  check "${app}: build exceeds the highest live legacy build ${HIGHEST_LIVE_TIMESTAMP_BUILD}" \
-    "$([[ "${bn:-0}" -gt "$HIGHEST_LIVE_TIMESTAMP_BUILD" ]] 2>/dev/null && echo 0 || echo 1)"
+  check "${app}: build equals marketing (got '${bn}')" \
+    "$([[ "$bn" == "$mk" ]] && echo 0 || echo 1)"
+  check "${app}: build is 1.0.N (got '${bn}')" \
+    "$(printf '%s' "$bn" | grep -Eq '^1\.0\.[0-9]+$' && echo 0 || echo 1)"
   check "${app}: reports the App Store Connect rendering" \
     "$(contains "will show this as: ${mk} (${bn})" && echo 0 || echo 1)"
 done
