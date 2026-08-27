@@ -42,6 +42,36 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertNil(snapshot.notifications.first?.channel)
     }
 
+    func testEquityCurveDecodesServerTimestampKeyedPoints() throws {
+        // The live server keys curve points by `timestamp` (src/lib/types.ts
+        // EquityCurvePoint); requiring `date` alone blanked the whole workspace.
+        let json = #"""
+        {"readiness":{"hasAccount":true,"hasUniverse":true,"systemState":"active","strategyAuthority":"decide","commandBacklog":{"queued":0,"running":0}},
+         "policy":{"systemState":"active","strategyAuthority":"decide"},
+         "performance":{"liveRealizedPnl":1,
+           "liveEquityCurve":[{"timestamp":"2026-08-27T12:00:00.000Z","equity":1000,"cash":10,"positionsValue":990,"source":"live"}],
+           "paperEquityCurve":[{"date":"2026-08-26","equity":900}]}}
+        """#
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8))
+        XCTAssertEqual(snapshot.performance?.liveEquityCurve?.first?.date, "2026-08-27T12:00:00.000Z")
+        XCTAssertEqual(snapshot.performance?.liveEquityCurve?.first?.equity, 1000)
+        XCTAssertEqual(snapshot.performance?.paperEquityCurve?.first?.date, "2026-08-26")
+    }
+
+    func testMalformedPerformanceDegradesToNilInsteadOfBlankingSnapshot() throws {
+        // performance is display-only enrichment: a curve point with neither
+        // date nor timestamp (or any other malformed sub-field) must not abort
+        // the whole snapshot decode.
+        let json = #"""
+        {"readiness":{"hasAccount":true,"hasUniverse":true,"systemState":"active","strategyAuthority":"decide","commandBacklog":{"queued":0,"running":0}},
+         "policy":{"systemState":"active","strategyAuthority":"decide"},
+         "performance":{"liveEquityCurve":[{"equity":1000}]}}
+        """#
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8))
+        XCTAssertNil(snapshot.performance)
+        XCTAssertEqual(snapshot.readiness.systemState, "active")
+    }
+
     func testSnapshotDecodesCompactLatestScan() throws {
         let json = Data(#"""
         {

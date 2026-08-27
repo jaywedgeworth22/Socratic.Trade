@@ -1,5 +1,6 @@
 import { getDashboardSnapshot } from "@/lib/dashboard";
 import { listMobileCommands, mobileControlCatalog, mobileReadiness } from "@/lib/mobile-api";
+import { withMobileEquityCurveCompat } from "@/lib/mobile-equity-curve-compat";
 import { compactMobileMarketScan } from "@/lib/mobile-scan";
 import { buildNotificationHistory } from "@/lib/notification-history";
 import { resolveRequestUser } from "@/lib/request-user";
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
     orders: snapshot.orders.filter(o => isWorkingOrderState(o.state)),
     pendingProposals: snapshot.pendingProposals,
     dailyStats: snapshot.dailyStats,
-    performance: snapshot.performance,
+    performance: withMobileEquityCurveCompat(snapshot.performance),
     connectedAccounts: snapshot.connectedAccounts,
     watchlist: listWatchlist(user.userId),
     alerts: listAlerts(user.userId, "all"),

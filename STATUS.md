@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-27 MONET — iOS OAuth return-to-app + workspace decode (owner re-report; grok dispatch dead)
+
+Owner re-reported both iOS auth issues after #3116/#3117.  Re-diagnosed with live production evidence: (A) auth-start clamped callbacks against the INTERNAL container origin, collapsing the mobile handoff to "/" — the OAuth sheet landed on the signed-in website; (B) "Couldn't load your workspace" is a decode failure — server equity-curve points carry `timestamp`, shipped Swift `EquityCurvePoint` required `date`, and the hard-try `performance` decode blanked the whole snapshot.  Fixes: public-origin resolution (`src/lib/mobile-auth-start.ts`), mobile-wire `date` alias (`src/lib/mobile-equity-curve-compat.ts` — fixes installed builds on deploy), Swift dual-key decode + defensive performance decode.  Grok local agent was owner-directed to implement but both headless dispatch modes died (8317 refused; leader-socket silent) — MONET landed directly.  Rollout: `docs/rollouts/2026-08-27-ios-auth-redirect-workspace-decode.md`.
+
 ## 2026-08-27 CLAUDE — iOS workspace-load failure: snapshot latency + first-load retry
 
 Root cause of "Couldn't load your workspace" after Apple sign-in: iOS makes ONE 30s snapshot attempt with no retry while `getDashboardSnapshot` chained three sequential broker deadlines (24s bundle → 16s options → 16s quotes) — past 30s in the current degraded-liveness window, and a fresh sign-in has no cached snapshot.  Fix: options now fetch concurrently with the bundle (helps installed builds on deploy), and iOS retries the first load once (45s window) before failing.  The web console got this hardening 2026-08-12; its "parallelise the broker chain" follow-up is now landed.  Rollout: `docs/rollouts/2026-08-27-ios-snapshot-latency.md`.
