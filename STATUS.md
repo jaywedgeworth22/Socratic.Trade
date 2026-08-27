@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-27 CURSOR — CI autofix: ops-snapshot Pinecone trial calendar
+
+`verify-hosted` on #3110 failed `test/ops-snapshot.test.ts` after `PINECONE_CURRENT_TRIAL_ENDS_AT` (`2026-08-27T00:00:00.000Z`).  The iOS CFBundleVersion commit did not touch this test.  `buildOpsSnapshot` uses `Date.now()`, so `trial.active` flipped false at midnight UTC.  Pin `PINECONE_TRIAL_ENDS_AT` in that case (sibling trial tests already pin or freeze `now`).  `verify` is only the hosted gate.  Branch `cursor/ci-autofix-ops-snapshot-trial`.  Rollout: `docs/rollouts/2026-08-27-ops-snapshot-trial-pin.md`.
+
 ## 2026-08-26 CURSOR — CI autofix: APNs contract missing roic_status_advisory
 
 #3107 (`f22b92ed`) registered `roic_status_advisory` on `NOTIFICATION_EVENT_TYPES` so ROIC.ai can sit under EarningsCalls.dev in Settings, but left the iOS contract table in `PushNotificationTests.swift` one row short.  `verify-hosted` failed `test/apns-deep-link-contract.test.ts` (covers every event type exactly once); the required `verify` gate then failed because hosted failed.  Autofix hit its 60-turn cap.  Fix: add the Activity/notifications Row next to `earningscalls_entitlement_blocked`.  `pushDeepLink` already catch-alls that URL.  Branch `cursor/ci-autofix-automation-9634` stacked on `agent/antigravity-ui-fixes`.  Rollout: `docs/rollouts/2026-08-26-roic-apns-contract.md`.

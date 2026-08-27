@@ -1,5 +1,6 @@
 # Active Implementation Plan
 
+> **2026-08-27 CURSOR — CI autofix: pin ops-snapshot Pinecone trial (`cursor/ci-autofix-ops-snapshot-trial`).**  `trial.active` used wall-clock vs default end `2026-08-27T00:00:00.000Z`.  Pin `PINECONE_TRIAL_ENDS_AT` in the test.  Not an iOS-ship bug.  Rollout: `docs/rollouts/2026-08-27-ops-snapshot-trial-pin.md`.
 > **2026-08-26 CURSOR — CI autofix for #3107 APNs contract (`cursor/ci-autofix-automation-9634`).**  `roic_status_advisory` was added to TS notification types without the iOS contract Row.  Stacked fix on `agent/antigravity-ui-fixes`.  Rollout: `docs/rollouts/2026-08-26-roic-apns-contract.md`.
 > **2026-08-25 CURSOR — AppUpdatePromptTests pbxproj leftover COMPLETED (`64a06e78` #3103).**  Generated `AppUpdatePromptTests.swift` refs committed so TestFlight (no xcodegen) stays in sync.  Leftover `ios-build` `32809716228` / `32810441765` 242/0.  `verify-hosted` `32809716125` success.  Do not `--force-ship`.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-pbxproj.md`.
 > **2026-08-25 CURSOR — AppUpdatePrompt Apple IDs off Swift COMPLETED (`df75ca6f` #3102).**  Keep ios-fleet pin/copy.  Drop `knownAppleIds`.  Live DealDex is `net.dealdex` 6802474288.  No Swift package / `testers.json` / `--force-ship` / spend.  Hosted `ios-build` `32808123472` 242/0.  Rollout: `docs/rollouts/2026-08-25-app-update-prompt-apple-ids.md`.

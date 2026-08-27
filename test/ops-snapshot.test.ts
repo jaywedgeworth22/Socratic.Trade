@@ -211,6 +211,10 @@ describe("ops diagnostic snapshot", () => {
   it("exposes the Pinecone trial window and does not paint soft 429 backups as down", async () => {
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "1";
+    // buildOpsSnapshot uses Date.now(); the default calendar ended 2026-08-27T00:00Z.
+    // Sibling trial tests freeze `now` or pin this env.  Use a far date so the
+    // active-window asserts do not time-bomb again.
+    process.env.PINECONE_TRIAL_ENDS_AT = "2027-12-31T00:00:00.000Z";
     const db = await import("../src/lib/db");
     db.getDb();
     const { logApiHealth } = await import("../src/lib/db-health");
@@ -222,13 +226,17 @@ describe("ops diagnostic snapshot", () => {
       errorText: "[expected-limit] HTTP 429",
       soft: true
     });
-    const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
-    const snapshot = buildOpsSnapshot({ runsPerUser: 1, auditPerUser: 1 });
-    expect(snapshot.pineconeIngest).toBeDefined();
-    expect(snapshot.pineconeIngest!.trial.active).toBe(true);
-    expect(snapshot.pineconeIngest!.trial.effectiveDailyWriteUnits).toBeGreaterThanOrEqual(2_048);
-    expect(snapshot.pineconeIngest!.trial.effectiveTextsPerDay).toBeGreaterThanOrEqual(32);
-    expect(snapshot.dependencies?.["vix-cboe"]?.ok).toBe(true);
-    expect(snapshot.dependencies?.["vix-yahoo"]?.ok).toBe(true);
+    try {
+      const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
+      const snapshot = buildOpsSnapshot({ runsPerUser: 1, auditPerUser: 1 });
+      expect(snapshot.pineconeIngest).toBeDefined();
+      expect(snapshot.pineconeIngest!.trial.active).toBe(true);
+      expect(snapshot.pineconeIngest!.trial.effectiveDailyWriteUnits).toBeGreaterThanOrEqual(2_048);
+      expect(snapshot.pineconeIngest!.trial.effectiveTextsPerDay).toBeGreaterThanOrEqual(32);
+      expect(snapshot.dependencies?.["vix-cboe"]?.ok).toBe(true);
+      expect(snapshot.dependencies?.["vix-yahoo"]?.ok).toBe(true);
+    } finally {
+      delete process.env.PINECONE_TRIAL_ENDS_AT;
+    }
   });
 });
