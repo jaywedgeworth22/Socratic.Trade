@@ -499,6 +499,28 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
       let currentPrices: Record<string, number> = {};
 
       if (targetAccountNumber && gateway) {
+        // Options depend only on the account number, so fetch them concurrently with the
+        // portfolio bundle.  Chaining them after it stacked a second 16s deadline onto the
+        // bundle's 24s worst case, which is what pushed slow-broker loads past the iOS
+        // app's single 30s snapshot attempt (docs/rollouts/2026-08-12-load-screens-and-lato.md
+        // filed this parallelisation as the follow-up).
+        let optionsPromise: Promise<OptionPosition[]> = Promise.resolve([]);
+        if (gateway.getOptionPositions) {
+          try {
+            optionsPromise = withDeadline<OptionPosition[]>(
+              gateway.getOptionPositions(targetAccountNumber),
+              OPTION_POSITIONS_MS,
+              () => [],
+              "gateway.getOptionPositions",
+              timedOutSections
+            ).catch((err) => {
+              console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
+              return [];
+            });
+          } catch (err) {
+            console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
+          }
+        }
         try {
           [portfolio, positions, orders] = await awaitWithFirstCallRetry<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
             () =>
@@ -522,19 +544,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
           handlePortfolioReadFailure(targetAccountNumber, messageFromUnknownError(error));
         }
 
-        if (gateway.getOptionPositions) {
-          try {
-            options = await withDeadline<OptionPosition[]>(
-              gateway.getOptionPositions(targetAccountNumber),
-              OPTION_POSITIONS_MS,
-              () => [],
-              "gateway.getOptionPositions",
-              timedOutSections
-            );
-          } catch (err) {
-            console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
-          }
-        }
+        options = await optionsPromise;
         if (options.length > 0) {
           checkAndDispatchOptionAlerts(userId, policy.connectedAccountId || "", targetAccountNumber, options, gateway).catch((err) =>
             console.warn("[OptionAlerts] failed:", err)

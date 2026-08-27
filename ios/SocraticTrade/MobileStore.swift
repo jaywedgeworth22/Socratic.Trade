@@ -336,7 +336,25 @@ final class MobileStore: ObservableObject {
         let wasLoadFailed = snapshotLoadFailed
         do {
             let timeout: TimeInterval = pendingAccountId == nil ? 30 : 45
-            let (loadedSnapshot, rawData) = try await client.snapshotData(timeout: timeout)
+            var loadedSnapshot: MobileSnapshot
+            var rawData: Data
+            do {
+                (loadedSnapshot, rawData) = try await client.snapshotData(timeout: timeout)
+            } catch let firstError as MobileAPIError {
+                // The snapshot endpoint can legitimately run tens of seconds when broker
+                // dependencies are slow, and a fresh sign-in has no cached snapshot to
+                // soften a single timeout — the first miss used to surface straight as
+                // the full-screen "Couldn't load your workspace" state.  The web console
+                // retries this same class instead of failing
+                // (docs/rollouts/2026-08-12-load-screens-and-lato.md); mirror that for
+                // the no-snapshot case with one longer second attempt.
+                guard snapshot == nil, case .network = firstError, generation == loadGeneration else {
+                    throw firstError
+                }
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+                guard generation == loadGeneration else { return }
+                (loadedSnapshot, rawData) = try await client.snapshotData(timeout: 45)
+            }
             guard generation == loadGeneration else { return }
             snapshot = loadedSnapshot
             Self.saveCachedSnapshot(rawData)
