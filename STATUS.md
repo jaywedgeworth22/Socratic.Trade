@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-27 CLAUDE — iOS workspace-load failure: snapshot latency + first-load retry
+
+Root cause of "Couldn't load your workspace" after Apple sign-in: iOS makes ONE 30s snapshot attempt with no retry while `getDashboardSnapshot` chained three sequential broker deadlines (24s bundle → 16s options → 16s quotes) — past 30s in the current degraded-liveness window, and a fresh sign-in has no cached snapshot.  Fix: options now fetch concurrently with the bundle (helps installed builds on deploy), and iOS retries the first load once (45s window) before failing.  The web console got this hardening 2026-08-12; its "parallelise the broker chain" follow-up is now landed.  Rollout: `docs/rollouts/2026-08-27-ios-snapshot-latency.md`.
+
 ## 2026-08-27 CLAUDE — iOS Google/GitHub sign-in fixed server-side (GET OAuth initiator)
 
 iOS Google/GitHub sign-in never worked: `beginWebAuth` opens `GET /api/auth/signin/<provider>`, but Auth.js v5 initiates OAuth only on POST — the GET throws `UnknownAction`, maps to `error=Configuration`, and parks the auth sheet on `/access-denied` (prod logs show it firing continuously; predates the beta.32 bump).  Fix: new public `app/api/mobile/auth-start/route.ts` calls the server-side `signIn()` (sets PKCE/state cookies, 307s to the provider), `middleware.ts` translates the legacy GET so **already-installed TestFlight builds work without an app update**, and `LoginView.swift` now targets auth-start directly.  Verified live on a dev server: legacy URL → auth-start → 307 `accounts.google.com` with PKCE cookies.  7 new tests in `test/mobile-auth-start.test.ts`.  Related lanes in flight: workspace-load-after-Apple-sign-in root-cause, Usage-Monitor Litestream/B2 retry storm (that is what has been eating the shared Backblaze daily cap — 119 failed multipart compactions in 2h; ST already cut sync-interval to 300s in #3107).  Rollout: `docs/rollouts/2026-08-27-ios-web-oauth-get-initiator.md`.
