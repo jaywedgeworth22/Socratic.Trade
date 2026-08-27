@@ -6,7 +6,9 @@ export const runtime = "nodejs";
 
 // This route acts as the callback destination for Auth.js when initiated from the iOS app.
 // The iOS app launches ASWebAuthenticationSession pointing to:
-// /api/auth/signin/[provider]?callbackUrl=https://socratictrade.com/api/mobile/auth-redirect?code_challenge=...
+// /api/mobile/auth-start?provider=<provider>&callbackUrl=https://socratictrade.com/api/mobile/auth-redirect?code_challenge=...
+// (older shipped builds open GET /api/auth/signin/<provider>, which middleware.ts translates
+// to auth-start — Auth.js v5 only initiates OAuth on POST, so that GET alone dead-ends).
 //
 // Once Auth.js finishes the OAuth flow, it sets the session cookie in the browser and redirects here.
 // The native callback carries an opaque, PKCE-bound one-time code only — never the session JWT.

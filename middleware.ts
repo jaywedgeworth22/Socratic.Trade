@@ -83,6 +83,9 @@ const PUBLIC_PREFIXES = [
   "/privacy-policy",
   "/terms-and-conditions",
   "/api/mobile/auth/apple",
+  // GET OAuth initiator for the native iOS web-auth flow (see the
+  // /api/auth/signin/<provider> translation below) — must be reachable signed-out.
+  "/api/mobile/auth-start",
 ];
 const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
@@ -342,6 +345,21 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
     if (!pathname.startsWith("/console") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
       return NextResponse.redirect(new URL(`/console${pathname}`, req.url));
+    }
+  }
+
+  // The native iOS app's ASWebAuthenticationSession opens GET /api/auth/signin/<provider>
+  // directly, but Auth.js v5 only initiates OAuth on POST — that GET is an UnknownAction
+  // that dead-ends on /access-denied?error=Configuration.  Translate it into the
+  // GET-initiating /api/mobile/auth-start route so already-shipped iOS builds can sign in.
+  if (req.method === "GET" && pathname.startsWith("/api/auth/signin/")) {
+    const provider = pathname.slice("/api/auth/signin/".length);
+    if (provider && !provider.includes("/")) {
+      const target = new URL("/api/mobile/auth-start", req.url);
+      target.searchParams.set("provider", provider);
+      const callbackUrl = new URL(req.url).searchParams.get("callbackUrl");
+      if (callbackUrl) target.searchParams.set("callbackUrl", callbackUrl);
+      return withSecurityHeaders(NextResponse.redirect(target));
     }
   }
 
