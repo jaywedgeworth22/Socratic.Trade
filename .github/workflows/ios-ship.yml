@@ -111,6 +111,10 @@ jobs:
               exit 1
               ;;
           esac
+          if xcodebuild -version | grep -qi beta; then
+            echo "::error::xcodebuild reports a beta Xcode toolchain"
+            exit 1
+          fi
           os=$(sw_vers -productVersion)
           build=$(sw_vers -buildVersion)
           echo "macOS ${os} (${build})"
