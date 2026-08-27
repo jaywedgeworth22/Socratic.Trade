@@ -211,6 +211,7 @@ describe("ops diagnostic snapshot", () => {
   it("exposes the Pinecone trial window and does not paint soft 429 backups as down", async () => {
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "1";
+    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
     const db = await import("../src/lib/db");
     db.getDb();
     const { logApiHealth } = await import("../src/lib/db-health");
@@ -230,5 +231,6 @@ describe("ops diagnostic snapshot", () => {
     expect(snapshot.pineconeIngest!.trial.effectiveTextsPerDay).toBeGreaterThanOrEqual(32);
     expect(snapshot.dependencies?.["vix-cboe"]?.ok).toBe(true);
     expect(snapshot.dependencies?.["vix-yahoo"]?.ok).toBe(true);
+    delete process.env.PINECONE_TRIAL_ENDS_AT;
   });
 });
