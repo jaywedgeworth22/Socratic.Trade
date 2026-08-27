@@ -115,11 +115,19 @@ test("empty base is refused so a missing local file cannot wipe the fleet", () =
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("stale in-repo snapshot would drop net.dealdex and roll siblings", () => {
-  const stale = JSON.parse(
-    readFileSync(join(ROOT, "scripts/ios-fleet/ios-app-versions.json"), "utf8"),
-  );
-  assert.ok(!stale.apps["net.dealdex"], "vendored snapshot must stay the failing fixture");
+test("stale snapshot missing net.dealdex is the failing fixture", () => {
+  const stale = {
+    schemaVersion: 1,
+    apps: {
+      "trade.socratic.app": { marketingVersion: "1.0.68" },
+      "trade.congress.ios": { marketingVersion: "1.0.80" },
+      "services.jays.usage.client.monitor": { marketingVersion: "1.0.8" },
+      "services.jays.usage.local.monitor": { marketingVersion: "1.0.7" },
+      "online.dealdex": { marketingVersion: "1.0.1" },
+      "codes.autorotate": { marketingVersion: "1.0.1" },
+    },
+  };
+  assert.ok(!stale.apps["net.dealdex"], "fixture stays missing net.dealdex");
   assert.equal(stale.apps["services.jays.usage.client.monitor"].marketingVersion, "1.0.8");
   assert.equal(stale.apps["services.jays.usage.local.monitor"].marketingVersion, "1.0.7");
   assert.equal(stale.apps["codes.autorotate"].marketingVersion, "1.0.1");
