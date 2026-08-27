@@ -387,12 +387,17 @@ struct LoginView: View {
         callbackComponents.queryItems = [
             URLQueryItem(name: "code_challenge", value: verifier.challenge)
         ]
+        // /api/mobile/auth-start initiates OAuth on a plain GET.  Auth.js v5 only
+        // initiates on POST, so the old /api/auth/signin/<provider> entry dead-ended
+        // on /access-denied?error=Configuration (middleware translates it for older
+        // builds; new builds go straight to the initiator).
         guard let callbackURL = callbackComponents.url,
-              var components = URLComponents(string: "https://socratictrade.com/api/auth/signin/\(provider)") else {
+              var components = URLComponents(string: "https://socratictrade.com/api/mobile/auth-start") else {
             store.error = "Could not prepare web sign-in."
             return
         }
         components.queryItems = [
+            URLQueryItem(name: "provider", value: provider),
             URLQueryItem(name: "callbackUrl", value: callbackURL.absoluteString)
         ]
         guard let url = components.url else {
