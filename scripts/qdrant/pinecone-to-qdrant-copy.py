@@ -9,7 +9,16 @@ keeps records where embed_model exists and is not voyage-*.
 Env: PINECONE_API_KEY, QDRANT_URL, QDRANT_API_KEY
 Optional: COPY_STATE (state file), COPY_LOG (log file), INDEX_NAME, COLLECTION
 Read-only against Pinecone; writes only to the Qdrant collection.
-Resumable: per-namespace pagination token persisted after every page.
+
+Snapshot semantics: this copies what exists while it runs.  Writes that land in
+Pinecone during or after the run are NOT here — point ids are deterministic
+(uuid5 of namespace + Pinecone id), so re-running (delete the state file, or
+just the namespace from done_ns) is an idempotent delta pass.  Run one before
+any retrieval cutover.
+
+Resumable: pagination state checkpoints only after every queued batch up to
+that cursor has completed (fetch + upsert), so a crash never skips records.
+Exits nonzero if any batch still fails after retries.
 """
 import json, os, sys, time, uuid, threading, queue
 import urllib.request, urllib.error, urllib.parse
@@ -19,9 +28,14 @@ Q_URL = os.environ["QDRANT_URL"].rstrip("/")
 Q_KEY = os.environ["QDRANT_API_KEY"]
 INDEX = os.environ.get("INDEX_NAME", "socratic-trade")
 COLL = os.environ.get("COLLECTION", "socratic-trade")
-STATE_PATH = os.environ.get("COPY_STATE", "qdrant-copy-state.json")
-LOG_PATH = os.environ.get("COPY_LOG", "qdrant-copy.log")
-FETCH_BATCH = 35  # corpus ids are ~155 chars; 99 ids -> 17KB URL -> HTTP 414
+STATE_PATH = os.environ.get("COPY_STATE", f"qdrant-copy-state.{INDEX}.{COLL}.json")
+LOG_PATH = os.environ.get("COPY_LOG", f"qdrant-copy.{INDEX}.{COLL}.log")
+# Corpus ids run ~155 chars; Pinecone 414s somewhere above ~8KB of URL.  Budget
+# the ENCODED length instead of a fixed count so longer id families can never
+# push a fetch back over the limit.
+URL_BUDGET = 6000
+MAX_IDS = 64
+CHECKPOINT_PAGES = 50
 WORKERS = 6
 
 log_lock = threading.Lock()
@@ -36,7 +50,7 @@ def http(method, url, headers, body=None, tries=5):
     for attempt in range(tries):
         try:
             req = urllib.request.Request(url, data=data, method=method, headers=headers)
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with urllib.request.urlopen(req, timeout=90) as r:
                 return json.load(r)
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as e:
             code = getattr(e, "code", None)
@@ -58,8 +72,9 @@ def qd(method, path, body=None):
 def load_state():
     if os.path.exists(STATE_PATH):
         return json.load(open(STATE_PATH))
-    return {"done_ns": [], "current_ns": None, "token": None,
-            "scanned": 0, "copied": 0, "skipped_no_model": 0, "skipped_voyage": 0}
+    return {"index": INDEX, "collection": COLL, "done_ns": [], "current_ns": None,
+            "token": None, "scanned": 0, "copied": 0,
+            "skipped_no_model": 0, "skipped_voyage": 0}
 
 def save_state(st):
     tmp = STATE_PATH + ".tmp"
@@ -81,14 +96,30 @@ def keep(md):
         return "voyage"
     return "keep"
 
+def batches_by_url_budget(ids):
+    """Split ids so each fetch URL stays under URL_BUDGET encoded chars."""
+    batch, size = [], 0
+    for i in ids:
+        enc = len(urllib.parse.quote(i)) + 5  # "&ids="
+        if batch and (size + enc > URL_BUDGET or len(batch) >= MAX_IDS):
+            yield batch
+            batch, size = [], 0
+        batch.append(i)
+        size += enc
+    if batch:
+        yield batch
+
 def main():
+    st = load_state()
+    if st.get("index", INDEX) != INDEX or st.get("collection", COLL) != COLL:
+        sys.exit(f"state file {STATE_PATH} belongs to "
+                 f"{st.get('index')}/{st.get('collection')}, not {INDEX}/{COLL}")
     host = "https://" + pc("GET", f"/indexes/{INDEX}")["host"]
     stats = http("POST", host + "/describe_index_stats",
                  {"Api-Key": PC_KEY, "Content-Type": "application/json",
                   "X-Pinecone-API-Version": "2025-01"}, {})
     namespaces = sorted(stats.get("namespaces", {}).items(),
                         key=lambda kv: kv[1].get("vectorCount", 0))
-    st = load_state()
     log(f"start: {len(namespaces)} namespaces, resume state scanned={st['scanned']}")
 
     work_q, err = queue.Queue(maxsize=WORKERS * 2), []
@@ -115,7 +146,9 @@ def main():
                     else:
                         n_v += 1
                 if points:
-                    qd("PUT", f"/collections/{COLL}/points?wait=false", {"points": points})
+                    # wait=true: acknowledged AND applied — a crash after a
+                    # checkpoint can then never lose acknowledged points.
+                    qd("PUT", f"/collections/{COLL}/points?wait=true", {"points": points})
                 with counts_lock:
                     st["scanned"] += len(ids)
                     st["copied"] += len(points)
@@ -132,12 +165,17 @@ def main():
     for t in threads:
         t.start()
 
-    last_log = 0
+    def checkpoint(ns, token):
+        """Persist the cursor only once everything queued before it is done."""
+        work_q.join()
+        st["current_ns"], st["token"] = ns, token
+        save_state(st)
+
     for ns, meta in namespaces:
         if ns in st["done_ns"]:
             continue
         token = st["token"] if st["current_ns"] == ns else None
-        st["current_ns"] = ns
+        pages = 0
         while True:
             nsq = "?limit=99" + ("&namespace=" + urllib.parse.quote(ns) if ns != "__default__" else "")
             if token:
@@ -145,15 +183,14 @@ def main():
             page = http("GET", f"{host}/vectors/list{nsq}",
                         {"Api-Key": PC_KEY, "X-Pinecone-API-Version": "2025-01"})
             ids = [v["id"] for v in page.get("vectors", [])]
-            for i in range(0, len(ids), FETCH_BATCH):
-                work_q.put((ns, ids[i:i + FETCH_BATCH]))
+            for batch in batches_by_url_budget(ids):
+                work_q.put((ns, batch))
             token = (page.get("pagination") or {}).get("next")
-            st["token"] = token
-            if st["scanned"] - last_log >= 20000:
-                last_log = st["scanned"]
+            pages += 1
+            if pages % CHECKPOINT_PAGES == 0:
+                checkpoint(ns, token)
                 log(f"progress scanned={st['scanned']} copied={st['copied']} "
                     f"no_model={st['skipped_no_model']} voyage={st['skipped_voyage']} ns={ns}")
-                save_state(st)
             if not token:
                 break
         work_q.join()
@@ -167,7 +204,8 @@ def main():
                     work_q.put((ns, bad[j:j + half]))
             work_q.join()
         if any(b[0] == ns for b in err):
-            log(f"NAMESPACE-INCOMPLETE {ns}: {sum(1 for b in err if b[0] == ns)} batches still failing — NOT marking done")
+            log(f"NAMESPACE-INCOMPLETE {ns}: "
+                f"{sum(1 for b in err if b[0] == ns)} batches still failing — NOT marking done")
             st["current_ns"], st["token"] = None, None
             save_state(st)
             continue
@@ -179,15 +217,19 @@ def main():
     work_q.join()
     for _ in threads:
         work_q.put(None)
-    qd("POST", f"/collections/{COLL}/points/count", {"exact": True})
     final = qd("POST", f"/collections/{COLL}/points/count", {"exact": True})
+    incomplete = sorted({b[0] for b in err})
     log(f"DONE scanned={st['scanned']} copied={st['copied']} no_model={st['skipped_no_model']} "
-        f"voyage={st['skipped_voyage']} errors={len(err)} qdrant_count={final.get('result', {}).get('count')}")
+        f"voyage={st['skipped_voyage']} failed_batches={len(err)} "
+        f"incomplete_ns={len(incomplete)} qdrant_count={final.get('result', {}).get('count')}")
     save_state(st)
     print(json.dumps({"scanned": st["scanned"], "copied": st["copied"],
                       "skipped_no_model": st["skipped_no_model"],
-                      "skipped_voyage": st["skipped_voyage"], "errors": len(err),
+                      "skipped_voyage": st["skipped_voyage"],
+                      "failed_batches": len(err), "incomplete_namespaces": incomplete,
                       "qdrant_count": final.get("result", {}).get("count")}))
+    if err:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
