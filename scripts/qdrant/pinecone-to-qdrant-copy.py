@@ -21,7 +21,7 @@ INDEX = os.environ.get("INDEX_NAME", "socratic-trade")
 COLL = os.environ.get("COLLECTION", "socratic-trade")
 STATE_PATH = os.environ.get("COPY_STATE", "qdrant-copy-state.json")
 LOG_PATH = os.environ.get("COPY_LOG", "qdrant-copy.log")
-FETCH_BATCH = 100
+FETCH_BATCH = 35  # corpus ids are ~155 chars; 99 ids -> 17KB URL -> HTTP 414
 WORKERS = 6
 
 log_lock = threading.Lock()
@@ -122,8 +122,9 @@ def main():
                     st["skipped_no_model"] += n_nm
                     st["skipped_voyage"] += n_v
             except Exception as e:
-                err.append(f"{ns}: {type(e).__name__}")
-                log(f"WORKER-ERROR ns={ns} {type(e).__name__}")
+                code = getattr(e, "code", "")
+                err.append((ns, ids))
+                log(f"WORKER-ERROR ns={ns} {type(e).__name__} {code} batch={len(ids)}")
             finally:
                 work_q.task_done()
 
@@ -144,8 +145,8 @@ def main():
             page = http("GET", f"{host}/vectors/list{nsq}",
                         {"Api-Key": PC_KEY, "X-Pinecone-API-Version": "2025-01"})
             ids = [v["id"] for v in page.get("vectors", [])]
-            if ids:
-                work_q.put((ns, ids))
+            for i in range(0, len(ids), FETCH_BATCH):
+                work_q.put((ns, ids[i:i + FETCH_BATCH]))
             token = (page.get("pagination") or {}).get("next")
             st["token"] = token
             if st["scanned"] - last_log >= 20000:
@@ -156,6 +157,20 @@ def main():
             if not token:
                 break
         work_q.join()
+        retries = [b for b in err if b[0] == ns]
+        if retries:
+            log(f"retrying {len(retries)} failed batches for {ns} in halves")
+            err[:] = [b for b in err if b[0] != ns]
+            for _, bad in retries:
+                half = max(1, len(bad) // 2)
+                for j in range(0, len(bad), half):
+                    work_q.put((ns, bad[j:j + half]))
+            work_q.join()
+        if any(b[0] == ns for b in err):
+            log(f"NAMESPACE-INCOMPLETE {ns}: {sum(1 for b in err if b[0] == ns)} batches still failing — NOT marking done")
+            st["current_ns"], st["token"] = None, None
+            save_state(st)
+            continue
         st["done_ns"].append(ns)
         st["current_ns"], st["token"] = None, None
         save_state(st)
