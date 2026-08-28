@@ -16,18 +16,26 @@ export async function GET(request: Request) {
   const cookieStore = await cookies();
   const url = new URL(request.url);
   const codeChallenge = url.searchParams.get("code_challenge") ?? "";
-  // Auth.js uses a prefixed cookie name in production.
+  
+  // Check all known Auth.js and NextAuth session cookie names
   const token = 
     cookieStore.get("__Secure-authjs.session-token")?.value || 
-    cookieStore.get("authjs.session-token")?.value;
+    cookieStore.get("authjs.session-token")?.value ||
+    cookieStore.get("__Secure-next-auth.session-token")?.value ||
+    cookieStore.get("next-auth.session-token")?.value ||
+    cookieStore.getAll().find(c => c.name.includes("session-token"))?.value;
 
   if (!token) {
-    return NextResponse.redirect(new URL("/login?error=MobileAuthFailed", "https://socratictrade.com"));
+    const errorCallback = new URL("socratictrade://auth");
+    errorCallback.searchParams.set("error", "MobileAuthFailed");
+    return NextResponse.redirect(errorCallback);
   }
 
   const code = createMobileAuthHandoff({ sessionToken: token, codeChallenge });
   if (!code) {
-    return NextResponse.redirect(new URL("/login?error=MobileAuthInvalidCallback", "https://socratictrade.com"));
+    const errorCallback = new URL("socratictrade://auth");
+    errorCallback.searchParams.set("error", "MobileAuthInvalidCallback");
+    return NextResponse.redirect(errorCallback);
   }
   const nativeCallback = new URL("socratictrade://auth");
   nativeCallback.searchParams.set("code", code);

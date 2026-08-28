@@ -91,7 +91,7 @@ export const CATALOG_SOURCES: CatalogSource[] = [
   { id: "fmp-transcripts", label: "FMP earnings transcripts (rights-gated)", status: "opt_in", notes: "RAG only when rights claim active." },
   { id: "roic-transcripts", label: "ROIC earnings transcripts", status: "opt_in", notes: "RAG ingest path." },
   { id: "roic-financials", label: "ROIC multi-year financials", status: "opt_in", notes: "RAG multi-year doc, not table columns." },
-  { id: "earningscalls", label: "EarningsCalls.com", status: "opt_in", notes: "Transcript path when enabled." }
+  { id: "earningscalls", label: "EarningsCalls.dev", status: "opt_in", notes: "Transcript path when enabled." }
 ];
 
 const src = (sourceId: string, notes?: string, preferred?: boolean): CatalogFieldSource => ({

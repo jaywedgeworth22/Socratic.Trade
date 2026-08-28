@@ -65,8 +65,8 @@ struct MobileSnapshot: Decodable {
         // optional.  A catalog that cannot be read must land on nil, which `serverAdvertises`
         // reads as "the server did not answer" and falls back to the built-in controls.
         catalog = (try? values.decodeIfPresent(ControlCatalog.self, forKey: .catalog)) ?? nil
-        readiness = try values.decode(Readiness.self, forKey: .readiness)
-        policy = try values.decode(PolicySummary.self, forKey: .policy)
+        readiness = (try? values.decode(Readiness.self, forKey: .readiness)) ?? .default
+        policy = (try? values.decode(PolicySummary.self, forKey: .policy)) ?? .default
         marketSession = try values.decodeIfPresent(String.self, forKey: .marketSession) ?? "unknown"
         scheduler = try values.decodeIfPresent(SchedulerSummary.self, forKey: .scheduler) ?? .empty
         portfolio = try values.decodeIfPresent(PortfolioSummary.self, forKey: .portfolio)
@@ -154,11 +154,73 @@ struct Readiness: Decodable {
     let needsAppConsent: Bool?
 
     var requiresAppConsent: Bool { needsAppConsent == true }
+
+    static let `default` = Readiness(
+        hasAccount: false,
+        hasUniverse: false,
+        systemState: "stopped",
+        strategyAuthority: "advisory",
+        selectedAccountNumber: nil,
+        activeConnectedAccount: nil,
+        commandBacklog: CommandBacklog(queued: 0, running: 0),
+        needsAppConsent: false
+    )
+
+    private enum CodingKeys: String, CodingKey {
+        case hasAccount, hasUniverse, systemState, strategyAuthority, selectedAccountNumber, activeConnectedAccount, commandBacklog, needsAppConsent
+    }
+
+    init(
+        hasAccount: Bool,
+        hasUniverse: Bool,
+        systemState: String,
+        strategyAuthority: String,
+        selectedAccountNumber: String?,
+        activeConnectedAccount: ConnectedAccount?,
+        commandBacklog: CommandBacklog,
+        needsAppConsent: Bool?
+    ) {
+        self.hasAccount = hasAccount
+        self.hasUniverse = hasUniverse
+        self.systemState = systemState
+        self.strategyAuthority = strategyAuthority
+        self.selectedAccountNumber = selectedAccountNumber
+        self.activeConnectedAccount = activeConnectedAccount
+        self.commandBacklog = commandBacklog
+        self.needsAppConsent = needsAppConsent
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        hasAccount = (try? values.decode(Bool.self, forKey: .hasAccount)) ?? false
+        hasUniverse = (try? values.decode(Bool.self, forKey: .hasUniverse)) ?? false
+        systemState = (try? values.decode(String.self, forKey: .systemState)) ?? "stopped"
+        strategyAuthority = (try? values.decode(String.self, forKey: .strategyAuthority)) ?? "advisory"
+        selectedAccountNumber = try? values.decodeIfPresent(String.self, forKey: .selectedAccountNumber)
+        activeConnectedAccount = try? values.decodeIfPresent(ConnectedAccount.self, forKey: .activeConnectedAccount)
+        commandBacklog = (try? values.decode(CommandBacklog.self, forKey: .commandBacklog)) ?? CommandBacklog(queued: 0, running: 0)
+        needsAppConsent = try? values.decodeIfPresent(Bool.self, forKey: .needsAppConsent)
+    }
 }
 
 struct CommandBacklog: Decodable {
     let queued: Int
     let running: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case queued, running
+    }
+
+    init(queued: Int, running: Int) {
+        self.queued = queued
+        self.running = running
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        queued = (try? values.decode(Int.self, forKey: .queued)) ?? 0
+        running = (try? values.decode(Int.self, forKey: .running)) ?? 0
+    }
 }
 
 struct ConnectedAccount: Decodable, Identifiable, Hashable {
@@ -203,6 +265,85 @@ struct PolicySummary: Decodable {
     /// Mirrors the server snapshot's policy.runDuringExtendedHours (app/api/mobile/snapshot).
     /// nil ≠ false: older payloads without the field cannot answer the market-window question.
     let runDuringExtendedHours: Bool?
+
+    static let `default` = PolicySummary(
+        systemState: "stopped",
+        strategyAuthority: "advisory",
+        accountNumber: nil,
+        connectedAccountId: nil,
+        includedIndices: [],
+        additionalSymbols: [],
+        blocklist: [],
+        holdingHorizon: nil,
+        runCadenceMinutes: 60,
+        maxOrderNotional: nil,
+        maxOrderPctOfNav: nil,
+        maxDailyNotional: nil,
+        maxDailyPctOfNav: nil,
+        maxDailyOrders: nil,
+        requireTypedConfirmation: true,
+        runDuringExtendedHours: false
+    )
+
+    private enum CodingKeys: String, CodingKey {
+        case systemState, strategyAuthority, accountNumber, connectedAccountId, includedIndices, additionalSymbols, blocklist, holdingHorizon, runCadenceMinutes, maxOrderNotional, maxOrderPctOfNav, maxDailyNotional, maxDailyPctOfNav, maxDailyOrders, requireTypedConfirmation, runDuringExtendedHours
+    }
+
+    init(
+        systemState: String,
+        strategyAuthority: String,
+        accountNumber: String?,
+        connectedAccountId: String?,
+        includedIndices: [String]?,
+        additionalSymbols: [String]?,
+        blocklist: [String]?,
+        holdingHorizon: String?,
+        runCadenceMinutes: Int?,
+        maxOrderNotional: Double?,
+        maxOrderPctOfNav: Double?,
+        maxDailyNotional: Double?,
+        maxDailyPctOfNav: Double?,
+        maxDailyOrders: Int?,
+        requireTypedConfirmation: Bool?,
+        runDuringExtendedHours: Bool?
+    ) {
+        self.systemState = systemState
+        self.strategyAuthority = strategyAuthority
+        self.accountNumber = accountNumber
+        self.connectedAccountId = connectedAccountId
+        self.includedIndices = includedIndices
+        self.additionalSymbols = additionalSymbols
+        self.blocklist = blocklist
+        self.holdingHorizon = holdingHorizon
+        self.runCadenceMinutes = runCadenceMinutes
+        self.maxOrderNotional = maxOrderNotional
+        self.maxOrderPctOfNav = maxOrderPctOfNav
+        self.maxDailyNotional = maxDailyNotional
+        self.maxDailyPctOfNav = maxDailyPctOfNav
+        self.maxDailyOrders = maxDailyOrders
+        self.requireTypedConfirmation = requireTypedConfirmation
+        self.runDuringExtendedHours = runDuringExtendedHours
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        systemState = (try? values.decode(String.self, forKey: .systemState)) ?? "stopped"
+        strategyAuthority = (try? values.decode(String.self, forKey: .strategyAuthority)) ?? "advisory"
+        accountNumber = try? values.decodeIfPresent(String.self, forKey: .accountNumber)
+        connectedAccountId = try? values.decodeIfPresent(String.self, forKey: .connectedAccountId)
+        includedIndices = try? values.decodeIfPresent([String].self, forKey: .includedIndices)
+        additionalSymbols = try? values.decodeIfPresent([String].self, forKey: .additionalSymbols)
+        blocklist = try? values.decodeIfPresent([String].self, forKey: .blocklist)
+        holdingHorizon = try? values.decodeIfPresent(String.self, forKey: .holdingHorizon)
+        runCadenceMinutes = try? values.decodeIfPresent(Int.self, forKey: .runCadenceMinutes)
+        maxOrderNotional = try? values.decodeIfPresent(Double.self, forKey: .maxOrderNotional)
+        maxOrderPctOfNav = try? values.decodeIfPresent(Double.self, forKey: .maxOrderPctOfNav)
+        maxDailyNotional = try? values.decodeIfPresent(Double.self, forKey: .maxDailyNotional)
+        maxDailyPctOfNav = try? values.decodeIfPresent(Double.self, forKey: .maxDailyPctOfNav)
+        maxDailyOrders = try? values.decodeIfPresent(Int.self, forKey: .maxDailyOrders)
+        requireTypedConfirmation = try? values.decodeIfPresent(Bool.self, forKey: .requireTypedConfirmation)
+        runDuringExtendedHours = try? values.decodeIfPresent(Bool.self, forKey: .runDuringExtendedHours)
+    }
 }
 
 /// The console's shared run-state vocabulary (app/console/lib/derive.ts `deriveStateInfo`).
