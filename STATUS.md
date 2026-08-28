@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-28 CLAUDE — Qdrant self-host live + full non-Voyage corpus copy
+
+Owner-directed: Qdrant v1.19.0 runs as Coolify service `qdrant-st` on the upgraded Hetzner box — Tailscale-mesh-only :6333, API-key auth, mem 6g / cpu 3 caps.  Collection `socratic-trade` holds **801,239 points** copied from Pinecone and verified (exact counts + sampled payloads); voyage-era records excluded per owner rule (7,708 = 0.95%, plus 95 untagged legacy — both invisible to current bge-m3 retrieval anyway).  Gotcha for future bulk work: corpus ids are 155 chars, so GET fetches beyond ~40 ids answer HTTP 414 — the landed script batches by encoded URL length.  Creds canonical in ST Infisical prod (`QDRANT_URL` / `QDRANT_API_KEY`) per the owner's 2026-08-28 Infisical-first policy.  **Pinecone remains the serving store** — no runtime code changed; cutover is gated on the vector-db.ts adapter + shadow-read + Recall@8 parity + a pre-cutover delta copy.  Qdrant volume has NO off-box backup yet (board follow-up: snapshot cron -> B2).  Rollout: `docs/rollouts/2026-08-28-qdrant-st.md`.
+
 ## 2026-08-27 CLAUDE — iOS workspace-load failure: snapshot latency + first-load retry
 
 Root cause of "Couldn't load your workspace" after Apple sign-in: iOS makes ONE 30s snapshot attempt with no retry while `getDashboardSnapshot` chained three sequential broker deadlines (24s bundle → 16s options → 16s quotes) — past 30s in the current degraded-liveness window, and a fresh sign-in has no cached snapshot.  Fix: options now fetch concurrently with the bundle (helps installed builds on deploy), and iOS retries the first load once (45s window) before failing.  The web console got this hardening 2026-08-12; its "parallelise the broker chain" follow-up is now landed.  Rollout: `docs/rollouts/2026-08-27-ios-snapshot-latency.md`.
