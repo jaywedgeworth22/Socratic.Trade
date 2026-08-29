@@ -74,7 +74,10 @@ struct MobileSnapshot: Decodable {
         orders = try values.decodeIfPresent([EquityOrder].self, forKey: .orders) ?? []
         pendingProposals = try values.decodeIfPresent([PendingProposal].self, forKey: .pendingProposals) ?? []
         dailyStats = try values.decodeIfPresent(DailyStats.self, forKey: .dailyStats) ?? .empty
-        performance = try values.decodeIfPresent(PerformanceSummary.self, forKey: .performance)
+        // try?: performance is display-only enrichment — a malformed sub-field (this is
+        // exactly where the equity-curve date/timestamp mismatch lived) must degrade to
+        // "no performance section", never blank the whole workspace.
+        performance = (try? values.decodeIfPresent(PerformanceSummary.self, forKey: .performance)) ?? nil
         connectedAccounts = try values.decodeIfPresent([ConnectedAccount].self, forKey: .connectedAccounts) ?? []
         watchlist = try values.decodeIfPresent([WatchlistItem].self, forKey: .watchlist) ?? []
         alerts = try values.decodeIfPresent([PriceAlert].self, forKey: .alerts) ?? []
@@ -509,11 +512,53 @@ struct PerformanceSummary: Decodable {
 
 struct EquityCurvePoint: Decodable, Identifiable, Equatable {
     var id: String { date }
+    /// The server's shared EquityCurvePoint (src/lib/types.ts) keys points by
+    /// `timestamp`; older payload shapes used `date`.  Accept either — requiring
+    /// `date` alone made one curve point abort the WHOLE snapshot decode and
+    /// blank the app with "Couldn't load your workspace" (2026-08-27).
     let date: String
     let equity: Double
     let cash: Double?
     let pnl: Double?
     let returnPct: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case date
+        case timestamp
+        case equity
+        case cash
+        case pnl
+        case returnPct
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedDate =
+            try values.decodeIfPresent(String.self, forKey: .date) ??
+            values.decodeIfPresent(String.self, forKey: .timestamp)
+        guard let decodedDate else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.date,
+                DecodingError.Context(
+                    codingPath: values.codingPath,
+                    debugDescription: "Neither date nor timestamp present on equity curve point"
+                )
+            )
+        }
+        date = decodedDate
+        equity = try values.decode(Double.self, forKey: .equity)
+        cash = try values.decodeIfPresent(Double.self, forKey: .cash)
+        pnl = try values.decodeIfPresent(Double.self, forKey: .pnl)
+        returnPct = try values.decodeIfPresent(Double.self, forKey: .returnPct)
+    }
+
+    init(date: String, equity: Double, cash: Double? = nil, pnl: Double? = nil, returnPct: Double? = nil) {
+        self.date = date
+        self.equity = equity
+        self.cash = cash
+        self.pnl = pnl
+        self.returnPct = returnPct
+    }
 }
 
 struct BenchmarkComparison: Decodable {

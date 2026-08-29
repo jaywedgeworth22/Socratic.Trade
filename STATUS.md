@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-08-27 MONET — iOS OAuth return-to-app + workspace decode (owner re-report; grok dispatch dead)
+
+Owner re-reported both iOS auth issues after #3116/#3117.  Re-diagnosed with live production evidence: (A) auth-start clamped callbacks against the INTERNAL container origin, collapsing the mobile handoff to "/" — the OAuth sheet landed on the signed-in website; (B) "Couldn't load your workspace" is a decode failure — server equity-curve points carry `timestamp`, shipped Swift `EquityCurvePoint` required `date`, and the hard-try `performance` decode blanked the whole snapshot.  Fixes: public-origin resolution (`src/lib/mobile-auth-start.ts`), mobile-wire `date` alias (`src/lib/mobile-equity-curve-compat.ts` — fixes installed builds on deploy), Swift dual-key decode + defensive performance decode.  Grok local agent was owner-directed to implement but both headless dispatch modes died (8317 refused; leader-socket silent) — MONET landed directly.  Rollout: `docs/rollouts/2026-08-27-ios-auth-redirect-workspace-decode.md`.
 ## 2026-08-28 ANTIGRAVITY — Kalshi First-Class Event Accounts, Real-Time Paper Data, & Universal Shorting/Options Trading
 
 Added full first-class Kalshi account connectivity (demo & live) with customized event-contract settings, guardrails, portfolio, order execution, and LLM prompt views; removed delayed Alpaca paper keys from Infisical and guaranteed real-time market data performance for paper accounts; built universal financial-grade shorting and options trading across all supported brokers (Alpaca, Tradier, Webull, Public, Test). Verified with clean lint, type check, 7,639+ passing tests, and full Next.js production build. Rollout: `docs/rollouts/2026-08-28-kalshi-and-options-expansion.md`.

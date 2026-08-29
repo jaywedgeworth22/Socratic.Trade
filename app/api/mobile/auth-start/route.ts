@@ -1,4 +1,6 @@
 import { signIn } from "@/lib/auth/auth";
+import { sameOriginCallback } from "@/lib/mobile-auth-start";
+import { resolvePublicAppOrigin } from "@/lib/public-origin";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -19,18 +21,6 @@ function isNextRedirectError(error: unknown): boolean {
   );
 }
 
-/** Clamp the post-login destination to a same-origin path so this route can
- *  never be used as an open redirector. */
-function sameOriginCallback(raw: string | null, origin: string): string {
-  if (!raw) return "/";
-  try {
-    const url = new URL(raw, origin);
-    if (url.origin !== origin) return "/";
-    return `${url.pathname}${url.search}`;
-  } catch {
-    return "/";
-  }
-}
 
 // GET initiator for the native iOS web-auth flow.  ASWebAuthenticationSession can
 // only perform a top-level GET navigation, but Auth.js v5 initiates OAuth solely on
@@ -42,9 +32,12 @@ function sameOriginCallback(raw: string | null, origin: string): string {
 // builds) to this route.
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  // Never request.url (INTERNAL container origin) and never X-Forwarded-Host
+  // (client-influenceable) — see src/lib/mobile-auth-start.ts.
+  const origin = resolvePublicAppOrigin(request);
   const provider = url.searchParams.get("provider") ?? "";
-  const callbackUrl = sameOriginCallback(url.searchParams.get("callbackUrl"), url.origin);
-  const loginFallback = new URL(`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`, url.origin);
+  const callbackUrl = sameOriginCallback(url.searchParams.get("callbackUrl"), origin);
+  const loginFallback = new URL(`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`, origin);
 
   if (!WEB_AUTH_PROVIDERS.has(provider)) {
     return NextResponse.redirect(loginFallback);
