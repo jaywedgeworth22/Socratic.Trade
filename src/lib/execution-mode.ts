@@ -123,5 +123,6 @@ function brokerLabel(broker: ExecutionAccount["broker"]): string {
   if (broker === "etoro") return "eToro";
   if (broker === "public") return "Public";
   if (broker === "webull") return "Webull";
+  if (broker === "kalshi") return "Kalshi";
   return "Robinhood";
 }

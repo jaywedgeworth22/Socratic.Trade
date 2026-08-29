@@ -5,6 +5,7 @@ import { getTradierGateway } from "./tradier";
 import { getEToroGateway } from "./etoro";
 import { getPublicGateway } from "./public-broker";
 import { getWebullGateway } from "./webull";
+import { getKalshiGateway } from "./kalshi-broker";
 import { audit, getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { deriveExecutionState } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
@@ -35,6 +36,9 @@ function resolveGateway(policy: TradingPolicy, userId: string): BrokerGateway {
   }
   if (policy.activeBroker === "webull") {
     return getWebullGateway(userId, policy.connectedAccountId);
+  }
+  if (policy.activeBroker === "kalshi") {
+    return getKalshiGateway(userId, policy.connectedAccountId);
   }
   // No connected account: an account is an account, and with none connected the app cannot
   // place orders. There is no local-simulation fallback.

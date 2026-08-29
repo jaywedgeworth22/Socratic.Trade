@@ -577,9 +577,11 @@ interface TradierHistoryResponse {
 export function resolveAlpacaHistoryCredential(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
   const scoped = userId ? getConnectedAccountByBroker("alpaca", userId) ?? getConnectedAccountByBroker("alpaca-mcp", userId) : undefined;
   const acct = scoped ?? getConnectedAccountByBroker("alpaca", "local") ?? getConnectedAccountByBroker("alpaca-mcp", "local");
+  const liveKey = process.env.ALPACA_LIVE_API_KEY?.trim() ?? process.env.APCA_API_KEY_ID?.trim() ?? process.env.ALPACA_API_KEY?.trim();
+  const liveSecret = process.env.ALPACA_LIVE_SECRET_KEY?.trim() ?? process.env.APCA_API_SECRET_KEY?.trim() ?? process.env.ALPACA_SECRET_KEY?.trim();
   return {
-    apiKey: acct?.apiKey?.trim() || undefined,
-    secretKey: acct?.apiSecret?.trim() || undefined,
+    apiKey: acct?.apiKey?.trim() || liveKey || undefined,
+    secretKey: acct?.apiSecret?.trim() || liveSecret || undefined,
     source: scoped ? "user" : "env"
   };
 }
