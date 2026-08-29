@@ -179,6 +179,22 @@ export function connectTradierAccount(body: TradierConnectBody): Promise<{ ok: b
   });
 }
 
+export interface KalshiConnectBody {
+  label?: string;
+  apiKey: string;
+  apiSecret: string;
+  environment: "paper" | "live";
+  baseUrl?: string;
+}
+
+/** POST /api/connected-accounts {broker:"kalshi", ...}. Requires API Key ID (UUID) and RSA Private Key PEM. */
+export function connectKalshiAccount(body: KalshiConnectBody): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/connected-accounts", {
+    method: "POST",
+    body: JSON.stringify({ broker: "kalshi", ...body })
+  });
+}
+
 export type ExtraBrokerId = "etoro" | "public" | "webull";
 
 export function connectKeyPairBroker(

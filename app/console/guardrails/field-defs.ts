@@ -274,6 +274,16 @@ export const TRIGGERS: FieldDef[] = [
   }
 ];
 
+/** Per-account Kalshi event-contract settings */
+export const KALSHI_EVENT_DEFS: FieldDef[] = [
+  { path: "eventContractsEnabled", label: "Event contracts trading", kind: "bool", looserWhen: "on", hint: `Permits autonomous and proposed trading of binary event contracts on Kalshi.  ${ADVISORY_NOTE}` },
+  { path: "maxOrderNotional", label: "Max per order ($)", kind: "money", optional: true, looserWhen: "up", hint: "Maximum dollar spend on any single event-contract order." },
+  { path: "maxDailyNotional", label: "Max daily spend ($)", kind: "money", optional: true, looserWhen: "up", hint: "Maximum cumulative dollar spend across all event contracts per calendar day." },
+  { path: "maxDailyOrders", label: "Max opening orders per day", kind: "int", looserWhen: "up", hint: "Caps the maximum number of new Yes/No event contract positions opened per day." },
+  { path: "runCadenceMinutes", label: "Scan cadence (minutes)", kind: "minutes", hint: "How frequently the agent evaluates Kalshi prediction markets." },
+  { path: "kalshiMacroEnabled", label: "Kalshi macro intelligence", kind: "bool", hint: "Ingest Kalshi event odds into macro outlook analysis." }
+];
+
 export const ALL_DEFS: FieldDef[] = [
   ...ESSENTIALS,
   ...SOCRATIC_OVERRIDE,
@@ -283,6 +293,7 @@ export const ALL_DEFS: FieldDef[] = [
   ...PANIC_BRAKE,
   ...SHORTS,
   ...OPTIONS,
+  ...KALSHI_EVENT_DEFS,
   ...HYGIENE,
   ...TAX_RULES,
   ...UNIVERSE_FLOOR,
