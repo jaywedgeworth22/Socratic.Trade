@@ -183,12 +183,13 @@ export function knownBrokerLimits(broker: ConnectedAccount["broker"] | undefined
         shortSelling: false,
         optionsTrading: false,
         optionsOrders: false,
+        eventContracts: true,
         fractional: false,
         extendedHours: false,
         overnightHours: false,
         trailingStops: false,
         nativeBrackets: false,
-        orderTypes: ["market"],
+        orderTypes: ["limit", "market"],
         marketHours: ALL_SESSIONS,
         futuresTrading: false,
         cryptoTrading: false
@@ -238,6 +239,8 @@ export function brokerDisplayLabel(broker: ConnectedAccount["broker"] | undefine
       return "Public";
     case "webull":
       return "Webull";
+    case "kalshi":
+      return "Kalshi";
     case "test":
       return "Test";
     default:
@@ -260,6 +263,14 @@ export function buildPromptLines(input: {
   orderTypes: OrderType[];
   marketHours: MarketHours[];
 }): string[] {
+  if (input.brokerLabel === "Kalshi") {
+    return [
+      "You are an autonomous event-contract trading agent for a Kalshi account.",
+      "You trade binary CFTC-regulated event contracts (Yes/No outcomes priced $0.01–$0.99) on macro, economic, political, and financial indicators.",
+      "Propose Yes contracts (side='buy') or No contracts (side='short' or side='cover' to exit) with integer share counts and limit prices in cents (e.g. 0.52 for 52¢).",
+      `Allowed order types: ${input.orderTypes.join(", ")}.`
+    ];
+  }
   const lines: string[] = [
     `You are an autonomous equity trading agent for a ${input.brokerLabel} account.`
   ];

@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-28 ANTIGRAVITY — Kalshi First-Class Event Accounts, Real-Time Paper Data, & Universal Shorting/Options Trading
+
+Added full first-class Kalshi account connectivity (demo & live) with customized event-contract settings, guardrails, portfolio, order execution, and LLM prompt views; removed delayed Alpaca paper keys from Infisical and guaranteed real-time market data performance for paper accounts; built universal financial-grade shorting and options trading across all supported brokers (Alpaca, Tradier, Webull, Public, Test). Verified with clean lint, type check, 7,639+ passing tests, and full Next.js production build. Rollout: `docs/rollouts/2026-08-28-kalshi-and-options-expansion.md`.
+
 ## 2026-08-28 CLAUDE — Qdrant self-host live + full non-Voyage corpus copy
 
 Owner-directed: Qdrant v1.19.0 runs as Coolify service `qdrant-st` on the upgraded Hetzner box — Tailscale-mesh-only :6333, API-key auth, mem 6g / cpu 3 caps.  Collection `socratic-trade` holds **801,239 points** copied from Pinecone and verified (exact counts + sampled payloads); voyage-era records excluded per owner rule (7,708 = 0.95%, plus 95 untagged legacy — both invisible to current bge-m3 retrieval anyway).  Gotcha for future bulk work: corpus ids are 155 chars, so GET fetches beyond ~40 ids answer HTTP 414 — the landed script batches by encoded URL length.  Creds canonical in ST Infisical prod (`QDRANT_URL` / `QDRANT_API_KEY`) per the owner's 2026-08-28 Infisical-first policy.  **Pinecone remains the serving store** — no runtime code changed; cutover is gated on the vector-db.ts adapter + shadow-read + Recall@8 parity + a pre-cutover delta copy.  Qdrant volume has NO off-box backup yet (board follow-up: snapshot cron -> B2).  Rollout: `docs/rollouts/2026-08-28-qdrant-st.md`.

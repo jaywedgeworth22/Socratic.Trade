@@ -108,6 +108,7 @@
       "autonomy_halted_on_boot",
       "option_alert",
       "earningscalls_entitlement_blocked",
+      "roic_status_advisory",
       "risk_advisory",
       "protective_exit_failing",
       "signal_health",

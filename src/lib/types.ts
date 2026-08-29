@@ -224,6 +224,8 @@ export interface AccountCapabilities {
    * which only means the broker reports an options approval level / open contracts.
    */
   optionsOrders?: boolean;
+  /** Binary event contracts trading (e.g. Kalshi prediction markets). */
+  eventContracts?: boolean;
   /** Equity order types the venue will accept on this account. */
   orderTypes?: Array<"market" | "limit" | "stop_market" | "stop_limit">;
   /** Sessions the venue will accept on this account. */

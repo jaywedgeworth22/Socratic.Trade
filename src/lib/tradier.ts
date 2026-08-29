@@ -931,6 +931,54 @@ class TradierBrokerGateway implements BrokerGateway {
     };
   }
 
+  async placeOptionOrder(input: {
+    accountNumber: string;
+    occSymbol: string;
+    intent: "buy_to_open" | "sell_to_close" | "buy_to_close" | "sell_to_open";
+    quantity: number;
+    type: "market" | "limit";
+    limitPrice?: number;
+    timeInForce?: import("./types").TimeInForce;
+    refId: string;
+  }): Promise<ExecutedOrder> {
+    const { parseOccSymbol } = await import("./option-orders");
+    const parsed = parseOccSymbol(input.occSymbol);
+    const underlying = parsed?.underlyingSymbol ?? input.occSymbol.slice(0, 4);
+
+    const form: Record<string, string> = {
+      class: "option",
+      symbol: underlying,
+      option_symbol: input.occSymbol,
+      side: input.intent,
+      quantity: String(Math.max(1, Math.round(input.quantity))),
+      type: input.type === "limit" ? "limit" : "market",
+      duration: input.timeInForce === "gtc" ? "gtc" : "day",
+      tag: input.refId
+    };
+    if (input.type === "limit" && input.limitPrice != null) {
+      form.price = input.limitPrice.toFixed(2);
+    }
+
+    const body = await this.trackHealth(() =>
+      this.request<{ order?: Record<string, unknown> }>("POST", `/accounts/${input.accountNumber}/orders`, { form })
+    );
+
+    const id = body.order?.id ?? body.order?.order_id ?? input.refId;
+    const state = String(body.order?.status ?? "pending");
+    return {
+      orderId: String(id),
+      refId: input.refId,
+      state,
+      filledQuantity: input.quantity,
+      averagePrice: input.limitPrice,
+      raw: body
+    };
+  }
+
+  async cancelOptionOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder> {
+    return this.cancelEquityOrder(accountNumber, orderId);
+  }
+
   // Identifies and cancels a bracket's (otoco/oto) still-resting sibling legs given the ORIGINAL
   // entry order's own container ID. Reuses equityRowsFromTradierOrder — the SAME leg-flattening
   // helper getEquityOrders already relies on for coverage — so this shares its exact (and, per that

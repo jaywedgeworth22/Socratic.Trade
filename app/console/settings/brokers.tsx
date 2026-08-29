@@ -24,6 +24,7 @@ import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primit
 import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle, Pencil, Check, X, Info } from "lucide-react";
 import {
   connectAlpacaAccount,
+  connectKalshiAccount,
   connectKeyPairBroker,
   connectTradierAccount,
   disconnectAccount,
@@ -44,6 +45,8 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
       return "Robinhood";
     case "tradier":
       return "Tradier";
+    case "kalshi":
+      return "Kalshi";
     case "etoro":
       return "eToro";
     case "public":
@@ -79,6 +82,7 @@ export function BrokerAccountsCard() {
   const [capabilitiesAccount, setCapabilitiesAccount] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
   const [tradierOpen, setTradierOpen] = useState(false);
+  const [kalshiOpen, setKalshiOpen] = useState(false);
   const [extraOpen, setExtraOpen] = useState<"etoro" | "public" | "webull" | null>(null);
   // Inline rename of an account's cosmetic display name. `renaming` holds the id being edited
   // and the working input value; the broker account number is never touched by this.
@@ -414,6 +418,15 @@ export function BrokerAccountsCard() {
             size="sm"
             variant="outline"
             disabled={busy !== null}
+            onClick={() => setKalshiOpen(true)}
+            title="Link a Kalshi account with API Key ID & Private Key PEM.  Choose Demo or Live."
+          >
+            Connect Kalshi
+          </Btn>
+          <Btn
+            size="sm"
+            variant="outline"
+            disabled={busy !== null}
             onClick={() => setExtraOpen("public")}
             title="Link Public.com for quotes and history.  Order execution stays off until Settings → Public.com order execution is turned on (account not funded yet)."
           >
@@ -558,6 +571,14 @@ export function BrokerAccountsCard() {
         onClose={() => setTradierOpen(false)}
         onConnected={async () => {
           setTradierOpen(false);
+          await refresh();
+        }}
+      />
+      <KalshiConnectSheet
+        open={kalshiOpen}
+        onClose={() => setKalshiOpen(false)}
+        onConnected={async () => {
+          setKalshiOpen(false);
           await refresh();
         }}
       />
@@ -963,6 +984,126 @@ function ExtraBrokerConnectSheet({
   );
 }
 
+// ── Kalshi connect (API Key ID + Private Key PEM) ────────────────────────────
+
+function KalshiConnectSheet({
+  open,
+  onClose,
+  onConnected
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConnected: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
+  const [environment, setEnvironment] = useState<"paper" | "live">("paper");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!apiKey.trim()) {
+      toast.push("warn", "Kalshi API Key ID (UUID) is required");
+      return;
+    }
+    if (!apiSecret.trim()) {
+      toast.push("warn", "Kalshi RSA Private Key PEM is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      await connectKalshiAccount({
+        label: label.trim() || undefined,
+        apiKey: apiKey.trim(),
+        apiSecret: apiSecret.trim(),
+        environment
+      });
+      toast.push("pos", "Kalshi connected", `Linked Kalshi ${environment === "live" ? "Live" : "Demo"} account.`);
+      await onConnected();
+    } catch (error) {
+      toast.push("neg", "Could not connect Kalshi", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Connect Kalshi"
+      tone={environment === "live" ? "live" : undefined}
+    >
+      <div className="flex flex-col gap-3">
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Link a Kalshi account for binary event contracts (CFTC-regulated predictions on macro, politics, economics, and markets). 
+          Obtain your API Key ID and RSA Private Key PEM from Kalshi Settings → API Keys.
+        </p>
+
+        <Field label="Label (optional)" htmlFor="kalshi-label" hint="Cosmetic display name in the console.">
+          <TextInput
+            id="kalshi-label"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={environment === "live" ? "Kalshi Live" : "Kalshi Demo"}
+          />
+        </Field>
+
+        <Field
+          label="Environment"
+          htmlFor="kalshi-env"
+          hint="Demo practice account or live execution venue."
+        >
+          <Select
+            id="kalshi-env"
+            value={environment}
+            onChange={(e) => setEnvironment(e.target.value === "live" ? "live" : "paper")}
+          >
+            <option value="paper">Demo (Practice)</option>
+            <option value="live">Live (Real Orders)</option>
+          </Select>
+        </Field>
+
+        <Field label="API Key ID (UUID)" htmlFor="kalshi-key" hint="The UUID assigned when you generated the key on Kalshi.">
+          <TextInput
+            id="kalshi-key"
+            type="text"
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="e.g. 12345678-abcd-1234-abcd-1234567890ab"
+          />
+        </Field>
+
+        <Field
+          label="RSA Private Key PEM"
+          htmlFor="kalshi-secret"
+          hint="Your private key PEM generated from Kalshi Settings → API Keys."
+        >
+          <textarea
+            id="kalshi-secret"
+            className="w-full rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-2 font-mono text-[length:var(--con-fs-xs)] focus:outline-none focus:ring-1 focus:ring-[color:var(--con-accent)]"
+            rows={4}
+            value={apiSecret}
+            onChange={(e) => setApiSecret(e.target.value)}
+            placeholder="Paste your RSA private key PEM here..."
+          />
+        </Field>
+
+        <div className="flex justify-end gap-2 mt-2">
+          <Btn variant="ghost" onClick={onClose}>
+            Cancel
+          </Btn>
+          <Btn variant="primary" disabled={busy} onClick={() => void submit()}>
+            {busy ? "Connecting…" : "Connect Kalshi"}
+          </Btn>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
 // ── Capabilities Modal Sheet ──────────────────────────────────────────────────
 
 function CapabilitiesSheet({
@@ -974,6 +1115,7 @@ function CapabilitiesSheet({
 }) {
   if (!account) return null;
   const caps = mergeAccountCapabilities(account.broker, account.capabilities);
+  const isKalshi = account.broker === "kalshi";
   return (
     <Sheet
       open={account !== null}
@@ -990,40 +1132,63 @@ function CapabilitiesSheet({
         </p>
 
         <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="font-medium flex items-center gap-1.5"><Briefcase className="size-4 text-[color:var(--con-accent)]" /> Stock Trading</span>
-            <Chip tone={caps?.equityTrading !== false ? "pos" : "muted"}>
-              {caps?.equityTrading !== false ? "Connected" : "Disabled"}
-            </Chip>
-          </div>
-          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
-            <span className="font-medium flex items-center gap-1.5"><ArrowDown className="size-4 text-[color:var(--con-accent)]" /> Short Selling</span>
-            <Chip tone={caps?.shortSelling ? "pos" : "muted"}>
-              {caps?.shortSelling ? "Enabled" : "Disabled"}
-            </Chip>
-          </div>
-          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
-            <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Options Trading</span>
-            <Chip tone={caps?.optionsOrders ? "pos" : "muted"}>
-              {accountOptionsTradingLabel(caps)}
-            </Chip>
-          </div>
-          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
-            <span className="font-medium">Fractional Shares</span>
-            <Chip tone={caps?.fractional ? "pos" : "muted"}>{accountFractionalSharesLabel(caps?.fractional)}</Chip>
-          </div>
-          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
-            <span className="font-medium">Sessions</span>
-            <Chip tone="muted">
-              {accountSessionHoursLabel(caps)}
-            </Chip>
-          </div>
-          <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
-            <span className="font-medium flex items-center gap-1.5"><Scale className="size-4 text-[color:var(--con-accent)]" /> Margin Account</span>
-            <Chip tone={caps?.marginEnabled ? "pos" : "muted"}>
-              {caps?.marginEnabled ? "Enabled" : "Cash Only"}
-            </Chip>
-          </div>
+          {isKalshi ? (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Event Contracts</span>
+                <Chip tone="pos">Enabled</Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium flex items-center gap-1.5"><Scale className="size-4 text-[color:var(--con-accent)]" /> Yes / No Binary Payouts</span>
+                <Chip tone="pos">Supported ($0.01–$0.99)</Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium">Order Types</span>
+                <Chip tone="muted">Limit, Market</Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium">Regulation</span>
+                <Chip tone="muted">CFTC Regulated</Chip>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="font-medium flex items-center gap-1.5"><Briefcase className="size-4 text-[color:var(--con-accent)]" /> Stock Trading</span>
+                <Chip tone={caps?.equityTrading !== false ? "pos" : "muted"}>
+                  {caps?.equityTrading !== false ? "Connected" : "Disabled"}
+                </Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium flex items-center gap-1.5"><ArrowDown className="size-4 text-[color:var(--con-accent)]" /> Short Selling</span>
+                <Chip tone={caps?.shortSelling ? "pos" : "muted"}>
+                  {caps?.shortSelling ? "Enabled" : "Disabled"}
+                </Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium flex items-center gap-1.5"><Zap className="size-4 text-[color:var(--con-accent)]" /> Options Trading</span>
+                <Chip tone={caps?.optionsOrders ? "pos" : "muted"}>
+                  {accountOptionsTradingLabel(caps)}
+                </Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium">Fractional Shares</span>
+                <Chip tone={caps?.fractional ? "pos" : "muted"}>{accountFractionalSharesLabel(caps?.fractional)}</Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium">Sessions</span>
+                <Chip tone="muted">
+                  {accountSessionHoursLabel(caps)}
+                </Chip>
+              </div>
+              <div className="flex items-center justify-between border-t border-[color:var(--con-line)] pt-2">
+                <span className="font-medium flex items-center gap-1.5"><Scale className="size-4 text-[color:var(--con-accent)]" /> Margin Account</span>
+                <Chip tone={caps?.marginEnabled ? "pos" : "muted"}>
+                  {caps?.marginEnabled ? "Enabled" : "Cash Only"}
+                </Chip>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] flex flex-col gap-1.5">
