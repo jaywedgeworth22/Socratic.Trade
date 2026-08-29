@@ -30,11 +30,13 @@ fixes directly per the owner's fallback.
 
 ## Changes Made
 
-- `src/lib/mobile-auth-start.ts` (new) — `publicOrigin(headers)` (x-forwarded-proto/
-  host with canonical fallback) + `sameOriginCallback` accepting the request's public
-  origin or the canonical origin; still clamps cross-origin to "/".
-- `app/api/mobile/auth-start/route.ts` — uses the public origin for callback clamping
-  and the login fallback; helpers moved out (route modules may only export handlers).
+- `src/lib/mobile-auth-start.ts` (new) — `sameOriginCallback` accepts the resolved
+  public origin or the canonical origin and still clamps cross-origin to "/".  The
+  origin itself comes from the repo's existing `resolvePublicAppOrigin()`
+  (`src/lib/public-origin.ts`), NOT from `request.url` and NOT from forwarded headers.
+- `app/api/mobile/auth-start/route.ts` — resolves the origin via
+  `resolvePublicAppOrigin(request)` and uses it for both the callback clamp and the
+  login fallback; helpers moved out (route modules may only export handlers).
 - `src/lib/mobile-equity-curve-compat.ts` (new) + `app/api/mobile/snapshot/route.ts` —
   every live/paper equity-curve point on the MOBILE wire now also carries
   `date` (= `timestamp`); console shape untouched.  Fixes ALL shipped builds on deploy.
@@ -50,9 +52,15 @@ fixes directly per the owner's fallback.
 
 - Server-side compat alias chosen over renaming the shared `EquityCurvePoint` type —
   the console consumes `timestamp` and must not churn.
-- `publicOrigin` trusts `x-forwarded-host` — correct behind Traefik/Cloudflare which
-  always set it; the canonical-origin fallback keeps the clamp safe if headers are
-  absent.
+- The origin is resolved with `resolvePublicAppOrigin()` (configured
+  `NEXT_PUBLIC_SITE_URL`/`AUTH_URL`/`NEXTAUTH_URL`, else the fixed production
+  hostname), which **never trusts forwarded headers in production**.  An earlier cut of
+  this branch derived the origin from `x-forwarded-host`; Codex review (#3124) correctly
+  flagged that as an open redirect — those headers are client-influenceable at a
+  directly reachable origin, so an unknown provider or a real `signIn()` failure could
+  have aimed this PUBLIC route's `loginFallback` at an attacker's host.  Do not
+  reintroduce header-derived origins here; a regression test asserts a spoofed
+  `x-forwarded-host` still resolves to the canonical origin.
 
 ## Verification State
 

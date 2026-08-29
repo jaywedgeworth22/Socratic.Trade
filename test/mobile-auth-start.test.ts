@@ -15,11 +15,19 @@ describe("auth-start origin resolution", () => {
   const setNodeEnv = (value: string) =>
     Object.defineProperty(process.env, "NODE_ENV", { value, configurable: true, writable: true, enumerable: true });
 
+  // Assigning a captured `undefined` back onto process.env coerces it to the STRING
+  // "undefined", which is truthy — with vitest on a single worker that leaks a fake
+  // site URL into later files (app/layout.tsx feeds it to new URL()).  Delete instead.
+  const restore = (key: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  };
+
   afterEach(() => {
     setNodeEnv(env as string);
-    process.env.NEXT_PUBLIC_SITE_URL = site;
-    process.env.AUTH_URL = authUrl;
-    process.env.NEXTAUTH_URL = nextAuthUrl;
+    restore("NEXT_PUBLIC_SITE_URL", site);
+    restore("AUTH_URL", authUrl);
+    restore("NEXTAUTH_URL", nextAuthUrl);
   });
 
   it("ignores a spoofed X-Forwarded-Host in production and stays on the canonical origin", () => {
