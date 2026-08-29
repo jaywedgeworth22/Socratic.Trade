@@ -1,5 +1,6 @@
 import { signIn } from "@/lib/auth/auth";
-import { publicOrigin, sameOriginCallback } from "@/lib/mobile-auth-start";
+import { sameOriginCallback } from "@/lib/mobile-auth-start";
+import { resolvePublicAppOrigin } from "@/lib/public-origin";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,9 @@ function isNextRedirectError(error: unknown): boolean {
 // builds) to this route.
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const origin = publicOrigin(request.headers);
+  // Never request.url (INTERNAL container origin) and never X-Forwarded-Host
+  // (client-influenceable) — see src/lib/mobile-auth-start.ts.
+  const origin = resolvePublicAppOrigin(request);
   const provider = url.searchParams.get("provider") ?? "";
   const callbackUrl = sameOriginCallback(url.searchParams.get("callbackUrl"), origin);
   const loginFallback = new URL(`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`, origin);

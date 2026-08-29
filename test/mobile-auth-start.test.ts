@@ -1,30 +1,45 @@
-import { describe, expect, it } from "vitest";
-import { publicOrigin, sameOriginCallback } from "../src/lib/mobile-auth-start";
+import { afterEach, describe, expect, it } from "vitest";
+import { sameOriginCallback } from "../src/lib/mobile-auth-start";
+import { resolvePublicAppOrigin } from "../src/lib/public-origin";
 
-describe("publicOrigin", () => {
-  it("resolves the forwarded host + proto (Coolify/Traefik shape)", () => {
-    const headers = new Headers({
-      "x-forwarded-proto": "https",
-      "x-forwarded-host": "socratictrade.com",
-      host: "localhost:3000"
+// The initiator resolves its origin via resolvePublicAppOrigin, which deliberately
+// ignores forwarded headers in production because they are client-influenceable at a
+// directly reachable origin.  Deriving the origin from X-Forwarded-Host would let an
+// attacker aim this PUBLIC route's fallback redirect at their own host.
+describe("auth-start origin resolution", () => {
+  const env = process.env.NODE_ENV;
+  const site = process.env.NEXT_PUBLIC_SITE_URL;
+  const authUrl = process.env.AUTH_URL;
+  const nextAuthUrl = process.env.NEXTAUTH_URL;
+
+  const setNodeEnv = (value: string) =>
+    Object.defineProperty(process.env, "NODE_ENV", { value, configurable: true, writable: true, enumerable: true });
+
+  afterEach(() => {
+    setNodeEnv(env as string);
+    process.env.NEXT_PUBLIC_SITE_URL = site;
+    process.env.AUTH_URL = authUrl;
+    process.env.NEXTAUTH_URL = nextAuthUrl;
+  });
+
+  it("ignores a spoofed X-Forwarded-Host in production and stays on the canonical origin", () => {
+    setNodeEnv("production");
+    delete process.env.NEXT_PUBLIC_SITE_URL;
+    delete process.env.AUTH_URL;
+    delete process.env.NEXTAUTH_URL;
+    const request = new Request("http://localhost:3000/api/mobile/auth-start?provider=google", {
+      headers: { "x-forwarded-host": "evil.example.com", "x-forwarded-proto": "https", host: "evil.example.com" }
     });
-    expect(publicOrigin(headers)).toBe("https://socratictrade.com");
+    expect(resolvePublicAppOrigin(request)).toBe("https://socratictrade.com");
   });
 
-  it("falls back to the Host header when x-forwarded-host is absent", () => {
-    expect(publicOrigin(new Headers({ host: "socratictrade.com" }))).toBe("https://socratictrade.com");
-  });
-
-  it("falls back to the canonical origin with no host headers at all", () => {
-    expect(publicOrigin(new Headers())).toBe("https://socratictrade.com");
-  });
-
-  it("uses the first proto of a comma-joined forwarded chain", () => {
-    const headers = new Headers({
-      "x-forwarded-proto": "https, http",
-      "x-forwarded-host": "socratictrade.com"
-    });
-    expect(publicOrigin(headers)).toBe("https://socratictrade.com");
+  it("resolves the public origin rather than the internal container origin (the owner-reported regression)", () => {
+    setNodeEnv("production");
+    delete process.env.NEXT_PUBLIC_SITE_URL;
+    delete process.env.AUTH_URL;
+    delete process.env.NEXTAUTH_URL;
+    const request = new Request("http://localhost:3000/api/mobile/auth-start?provider=google");
+    expect(resolvePublicAppOrigin(request)).toBe("https://socratictrade.com");
   });
 });
 
