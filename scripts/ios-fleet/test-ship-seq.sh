@@ -249,6 +249,18 @@ check "3700s ago proceeds past the gate" "$(contains 'ship-gate: skip' && echo 1
 check "3700s ago consumes exactly one number" "$([[ "$(seq_now)" == "6" ]] && echo 0 || echo 1)"
 echo
 
+# --- 11. ASC unverified die-text names local sequence when it exists ------
+# Run 33023012786 printed "there is no local sequence" while local=72.
+echo "11. unverified ASC die-text reports existing local sequence"
+reset_state
+run_ship congress --repo-root "$REPO"
+check "exits 1 without --allow-unverified-seq" "$([[ $RC -eq 1 ]] && echo 0 || echo 1)"
+check "does not claim there is no local sequence" \
+  "$(contains 'there is no local sequence' && echo 1 || echo 0)"
+check "names the local sequence that exists" \
+  "$(contains 'local=5' && echo 0 || echo 1)"
+echo
+
 echo "----------------------------------------"
 echo "passed: ${PASS}   failed: ${FAIL}"
 [[ "$FAIL" -eq 0 ]] || exit 1

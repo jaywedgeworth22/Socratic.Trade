@@ -273,7 +273,7 @@ project_marketing_seq() {
 # Returns 1 (and prints nothing) when ASC cannot be consulted — the caller must
 # distinguish "no builds yet" (0) from "unknown" (failure).
 asc_latest_seq() {
-  local prefix="$1" out rc
+  local prefix="$1" out rc errf
   if ! command -v node >/dev/null 2>&1; then
     logerr "asc-seq: node not on PATH; cannot verify against App Store Connect"
     return 1
@@ -282,10 +282,21 @@ asc_latest_seq() {
     logerr "asc-seq: no ${SECRETS_ENV}; cannot verify against App Store Connect"
     return 1
   fi
+  # Never swallow node stderr: the previous 2>/dev/null hid the only clue
+  # when latest-build-seq exited 1 (run 33023012786, ~30s, rc=1 not HTTP).
+  errf="${TMPDIR:-/tmp}/asc-seq-err.$$"
   set +e
-  out=$(node "${FLEET_DIR}/asc-api.mjs" latest-build-seq "$BUNDLE_ID" "$prefix" 2>/dev/null)
+  out=$(node "${FLEET_DIR}/asc-api.mjs" latest-build-seq "$BUNDLE_ID" "$prefix" 2>"$errf")
   rc=$?
   set -e
+  if [[ -s "$errf" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      logerr "asc-seq: $line"
+    done <"$errf"
+  elif [[ $rc -ne 0 ]]; then
+    logerr "asc-seq: node produced no stderr (rc=${rc})"
+  fi
+  rm -f "$errf"
   if [[ $rc -ne 0 || ! "$out" =~ ^[0-9]+$ ]]; then
     logerr "asc-seq: query failed (rc=${rc}); cannot verify against App Store Connect"
     return 1
@@ -323,9 +334,10 @@ resolve_seq_floor() {
     # Treat "ASC unverified" as fatal on its own.
     if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 0 ]]; then
       die "cannot determine the next build number.
-  App Store Connect could not be reached AND there is no local sequence
-  (${STATE_DIR}/build-seq-${APP_KEY}.txt) and no ${prefix}.N in project.pbxproj.
-  Shipping now would very likely reuse a build number and be rejected as a duplicate.
+  App Store Connect could not be reached (required to verify the next sequence).
+  local=${l} project=${p} exist but are not sufficient without ASC confirmation
+  (${STATE_DIR}/build-seq-${APP_KEY}.txt).
+  Shipping now would risk reusing a build number already on the train.
   Fix one of these, then re-run:
     1) restore ASC access: check ${SECRETS_ENV} and that 'node' is on PATH, then
        run: node ${FLEET_DIR}/asc-api.mjs latest-build-seq ${BUNDLE_ID} ${prefix}
