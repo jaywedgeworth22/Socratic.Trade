@@ -834,6 +834,10 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
     const connectedKeyOnly = resolveConnectedAlpacaMarketData(userId, false);
     if (connectedKeyOnly) userKeyOnly = { ...connectedKeyOnly, source: "user" };
 
+    const ownLive = getUserApiKey(userId, "alpaca_api_key")?.apiKey ?? getUserApiKey(userId, "apca_api_key_id")?.apiKey;
+    const ownLiveSecret = getUserApiKey(userId, "alpaca_secret_key")?.apiKey ?? getUserApiKey(userId, "apca_api_secret_key")?.apiKey;
+    if (ownLive && ownLiveSecret) return { apiKey: ownLive, secretKey: ownLiveSecret, source: "user" };
+
     const own = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey;
     const ownSecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey;
     if (own && ownSecret) return { apiKey: own, secretKey: ownSecret, source: "user" };
@@ -844,8 +848,13 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
   if (localConnected) return { ...localConnected, source: "env" };
   const localConnectedKeyOnly = resolveConnectedAlpacaMarketData(LOCAL_USER, false);
 
-  const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
-  const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
+  // Check live market data credentials first for real-time SIP/IEX feeds
+  const liveKey = process.env.ALPACA_LIVE_API_KEY?.trim() ?? process.env.APCA_API_KEY_ID?.trim() ?? process.env.ALPACA_API_KEY?.trim();
+  const liveSecret = process.env.ALPACA_LIVE_SECRET_KEY?.trim() ?? process.env.APCA_API_SECRET_KEY?.trim() ?? process.env.ALPACA_SECRET_KEY?.trim();
+  if (liveKey && liveSecret) return { apiKey: liveKey, secretKey: liveSecret, source: "env" };
+
+  const opKey = getUserApiKey(LOCAL_USER, "alpaca_api_key")?.apiKey ?? getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
+  const opSecret = getUserApiKey(LOCAL_USER, "alpaca_secret_key")?.apiKey ?? getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
   if (userKeyOnly) return userKeyOnly;
   if (localConnectedKeyOnly) return { ...localConnectedKeyOnly, source: "env" };
   if (opKey && opSecret) return { apiKey: opKey, secretKey: opSecret, source: "env" };

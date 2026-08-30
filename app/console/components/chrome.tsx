@@ -74,6 +74,14 @@ function brokerName(broker: string | undefined): string {
       return "Robinhood";
     case "tradier":
       return "Tradier";
+    case "kalshi":
+      return "Kalshi";
+    case "etoro":
+      return "eToro";
+    case "public":
+      return "Public";
+    case "webull":
+      return "Webull";
     default:
       return broker ?? "";
   }

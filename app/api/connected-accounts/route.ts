@@ -47,11 +47,12 @@ export async function POST(req: Request) {
       body.broker === "tradier" ||
       body.broker === "etoro" ||
       body.broker === "public" ||
-      body.broker === "webull"
+      body.broker === "webull" ||
+      body.broker === "kalshi"
         ? body.broker
         : undefined;
     if (!broker) {
-      return new NextResponse("broker is required (alpaca | alpaca-mcp | robinhood | tradier | etoro | public | webull)", { status: 400 });
+      return new NextResponse("broker is required (alpaca | alpaca-mcp | robinhood | tradier | etoro | public | webull | kalshi)", { status: 400 });
     }
     const taxationType =
       body.taxationType === "roth_ira" || body.taxationType === "traditional_ira" || body.taxationType === "taxable"
@@ -155,6 +156,12 @@ export async function POST(req: Request) {
         return new NextResponse("Webull requires OpenAPI App Key and App Secret from Developer Tool → My Application.", { status: 400 });
       }
       environment = body.environment === "paper" ? "paper" : "live";
+    } else if (broker === "kalshi") {
+      const secret = typeof body.apiSecret === "string" ? body.apiSecret.trim() : "";
+      if (!apiKey || !secret) {
+        return new NextResponse("Kalshi requires API Key ID (UUID) and Private Key PEM.", { status: 400 });
+      }
+      environment = body.environment === "live" ? "live" : "paper";
     } else if (broker === "alpaca" || broker === "alpaca-mcp") {
       environment = isAlpacaPaperCredential({ accountNumber: body.accountNumber, apiKey }) ? "paper" : "live";
       // A user-supplied baseUrl is trusted with the account's API credentials on every broker
@@ -172,18 +179,20 @@ export async function POST(req: Request) {
     }
 
     const defaultLabel =
-      broker === "tradier"
-        ? `Tradier ${environment === "paper" ? "Sandbox" : "Brokerage"}`
-        : broker === "etoro"
-          ? `eToro ${environment === "paper" ? "Demo" : "Real"}`
-          : broker === "public"
-            ? "Public Brokerage"
-            : broker === "webull"
-              ? `Webull ${environment === "paper" ? "Sandbox" : "Brokerage"}`
-              : broker === "alpaca-mcp"
-                ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
-                : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
-    let accountNumber = typeof body.accountNumber === "string" ? body.accountNumber.trim() || undefined : undefined;
+      broker === "kalshi"
+        ? `Kalshi ${environment === "paper" ? "Demo" : "Live"}`
+        : broker === "tradier"
+          ? `Tradier ${environment === "paper" ? "Sandbox" : "Brokerage"}`
+          : broker === "etoro"
+            ? `eToro ${environment === "paper" ? "Demo" : "Real"}`
+            : broker === "public"
+              ? "Public Brokerage"
+              : broker === "webull"
+                ? `Webull ${environment === "paper" ? "Sandbox" : "Brokerage"}`
+                : broker === "alpaca-mcp"
+                  ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
+                  : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
+    let accountNumber = typeof body.accountNumber === "string" ? body.accountNumber.trim() || undefined : (broker === "kalshi" ? (apiKey ? `kalshi-${apiKey.slice(0, 8)}` : "kalshi-account") : undefined);
 
     const connectedAccountId = body.id ?? crypto.randomUUID();
     const connectedAccountLabel = typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel;
@@ -198,15 +207,19 @@ export async function POST(req: Request) {
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
       baseUrl: typeof body.baseUrl === "string" && body.baseUrl.trim()
         ? body.baseUrl.trim()
-        : broker === "tradier"
-          ? environment === "paper"
-            ? "https://sandbox.tradier.com/v1"
-            : "https://api.tradier.com/v1"
-          : (broker === "alpaca" || broker === "alpaca-mcp")
+        : broker === "kalshi"
+          ? environment === "live"
+            ? "https://external-api.kalshi.com/trade-api/v2"
+            : "https://external-api.demo.kalshi.co/trade-api/v2"
+          : broker === "tradier"
             ? environment === "paper"
-              ? "https://paper-api.alpaca.markets/v2"
-              : "https://api.alpaca.markets"
-            : undefined,
+              ? "https://sandbox.tradier.com/v1"
+              : "https://api.tradier.com/v1"
+            : (broker === "alpaca" || broker === "alpaca-mcp")
+              ? environment === "paper"
+                ? "https://paper-api.alpaca.markets/v2"
+                : "https://api.alpaca.markets"
+              : undefined,
       taxationType,
       capabilities: mergeAccountCapabilities(broker),
       isActive: body.isActive ?? false

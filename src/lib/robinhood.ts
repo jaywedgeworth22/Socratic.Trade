@@ -825,11 +825,12 @@ class TestBrokerGateway implements BrokerGateway {
       agenticAllowed: true,
       capabilities: {
         equityTrading: true,
-        shortSelling: false,
-        optionsTrading: false,
+        shortSelling: true,
+        optionsTrading: true,
+        optionsOrders: true,
         futuresTrading: false,
         cryptoTrading: false,
-        marginEnabled: false,
+        marginEnabled: true,
         accountType: "brokerage"
       }
     }];
@@ -902,9 +903,6 @@ class TestBrokerGateway implements BrokerGateway {
               volume: yf.volume > 0 ? yf.volume : undefined,
               asOf: yf.asOf || new Date().toISOString(),
               provider: "yahoo-finance",
-              // Carry the synthetic-spread flags so a price-derived Yahoo batch spread isn't relabeled
-              // as a real quoted spread when merged (mergeQuoteData / hasRealAsk). Side-specific flags
-              // preserve the REAL side of a one-sided quote; syntheticSpread stays = both, for back-compat.
               ...(yf.syntheticBid ? { syntheticBid: true } : {}),
               ...(yf.syntheticAsk ? { syntheticAsk: true } : {}),
               ...(yf.syntheticSpread ? { syntheticSpread: true } : {})
@@ -942,7 +940,6 @@ class TestBrokerGateway implements BrokerGateway {
           provider: "test"
         };
       } else {
-        // Fall back to a default simulated price rather than crashing the client's position display
         result[symbol] = {
           symbol,
           price: 100,
@@ -984,6 +981,30 @@ class TestBrokerGateway implements BrokerGateway {
   }
 
   async cancelEquityOrder(_accountNumber: string, orderId: string): Promise<ExecutedOrder> {
+    return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: { test: true } };
+  }
+
+  async placeOptionOrder(input: {
+    accountNumber: string;
+    occSymbol: string;
+    intent: "buy_to_open" | "sell_to_close" | "buy_to_close" | "sell_to_open";
+    quantity: number;
+    type: "market" | "limit";
+    limitPrice?: number;
+    timeInForce?: import("./types").TimeInForce;
+    refId: string;
+  }): Promise<ExecutedOrder> {
+    return {
+      orderId: `test-opt-${input.refId}`,
+      refId: input.refId,
+      state: "filled",
+      filledQuantity: input.quantity,
+      averagePrice: input.limitPrice ?? 2.5,
+      raw: { test: true }
+    };
+  }
+
+  async cancelOptionOrder(_accountNumber: string, orderId: string): Promise<ExecutedOrder> {
     return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: { test: true } };
   }
 }

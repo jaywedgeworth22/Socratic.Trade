@@ -81,7 +81,10 @@ On **cloud**, point the environment's "setup script" field at
 but the exact command depends on the platform's working directory for that
 field:
 
-- **Claude Code Cloud**: use `cd Socratic.Trade && bash scripts/cloud-setup.sh`.
+- **Claude Code Cloud**: paste the fleet locator from
+  `ai-fleet-coordinator/docs/CLAUDE-CODE-CLOUD-ENVIRONMENTS.md` (finds
+  `scripts/cloud-setup.sh` from either cwd). Equivalent:
+  `cd Socratic.Trade && bash scripts/cloud-setup.sh`.
   That platform's sandbox starts the "Setup script" field in the *parent* of
   the cloned repo, not the repo root, so a bare `bash scripts/cloud-setup.sh`
   fails with exit 127 ("No such file or directory") before the installer ever
