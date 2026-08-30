@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-08-30 GROK — PR #3120 CI unblock (ops-snapshot trial pin)
+
+`verify-hosted` on #3120 failed `test/ops-snapshot.test.ts` (`trial.active`
+expected true, got false).  Not an ios ship-seq failure.  Merged `origin/main`
+(`f385fb037` / #3111) so the snapshot fixture is pinned to now+7d.  PR intent
+unchanged: iOS auth-redirect + resilient workspace decoding, EarningsCalls.dev
+and ROIC.ai labels.  No squash-merge.  No extra-ship.  No `--force-ship`.
+Rollout: `docs/rollouts/2026-08-30-pr-3120-ops-snapshot-pin.md`.
+
 ## 2026-08-30 GROK — PR #3111 CI unblock (asc-seq stderr)
 
 `verify-hosted` on #3111 failed `test/ops-snapshot.test.ts` (`trial.active`
