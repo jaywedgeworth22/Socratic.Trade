@@ -211,7 +211,10 @@ describe("ops diagnostic snapshot", () => {
   it("exposes the Pinecone trial window and does not paint soft 429 backups as down", async () => {
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "2500000";
     process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "1";
-    process.env.PINECONE_TRIAL_ENDS_AT = "2026-08-30T00:00:00.000Z";
+    // buildOpsSnapshot uses Date.now(); a hardcoded calendar pin expires and
+    // turns this fixture red (2026-08-27 default, then 2026-08-30). Keep the
+    // window in the future relative to the run.
+    process.env.PINECONE_TRIAL_ENDS_AT = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const db = await import("../src/lib/db");
     db.getDb();
     const { logApiHealth } = await import("../src/lib/db-health");
