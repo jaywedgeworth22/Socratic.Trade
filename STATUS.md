@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-08-31 CLAUDE — Backup remediation: gzip weekly R2 cold snapshot + log rotation
+
+The weekly R2 cold snapshot now gzip-streams during upload
+(`cold-snapshots/app-YYYY-MM-DD.db.gz`, ~2.5-4 GB expected vs 9.7 GB raw at ~90%
+of the R2 free tier); retention prunes across both `.db` and `.db.gz` so the
+legacy `app-2026-08-30.db` deletes after the first gzipped success.  Restore
+now needs `gunzip` first — recipe in `docs/litestream.md`.  Container boot
+rotates `/app/data/litestream-runtime.log` (was 237 MB) at 64 MB, keeping the
+newest 16 MB.  Docs: B2 lifecycle hide-14d/delete-1d hard-caps B2 restore depth
+at ~15 days; all three apps run litestream in-container; 2026-08-31 L1 suffix
+heal precedent recorded.  Next action: verify the first `.gz` upload after
+Sunday 03:17 UTC and the rotation line on the next boot.  Rollout:
+`docs/rollouts/2026-08-31-backup-remediation.md`.
+
 ## 2026-08-30 BF-Fixer — PR #3120 Codex thread unstick
 
 HEAD `bab1cb840` was MERGEABLE but BLOCKED on five unresolved Codex threads.

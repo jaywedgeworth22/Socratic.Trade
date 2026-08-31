@@ -11,7 +11,8 @@
 # satisfied, so the historic R2 replica is now safe to prune.  It is also the answer to
 # "why is R2 bigger than a one-week snapshot should be": the bucket still holds the whole
 # pre-cutover litestream object set (see the ~90k-object L1 backlog noted further down)
-# ON TOP of cold-snapshots/app-<date>.db.
+# ON TOP of cold-snapshots/app-<date>.db.gz (gzip-streamed since 2026-08-31; restore
+# needs gunzip first -- see docs/litestream.md; earlier weekly objects were raw .db).
 #
 # !! FOOTGUN — READ BEFORE ANY PRUNE !!  BOTH replicas use the IDENTICAL object path
 # `trading-live/app.db`; only bucket + endpoint differ:

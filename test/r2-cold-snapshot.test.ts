@@ -1,14 +1,16 @@
 // r2-cold-snapshot.test.ts — weekly R2 cold-snapshot lane (src/lib/r2-cold-snapshot.ts).
 //
 // Covers: config gating (creds + kill switch), the no-op-without-creds contract (single
-// audit row), weekly due-at math, multipart part planning, retention pruning, the full
-// snapshot+upload drain path against a mocked S3 layer, temp-file cleanup on success AND
+// audit row), weekly due-at math, retention pruning across BOTH extensions (.db legacy +
+// .db.gz), the full snapshot+gzip+upload drain path against a mocked S3 layer (including
+// gunzip round-trip verification of the uploaded parts), temp-file cleanup on success AND
 // failure, and the Class A budget guard.
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { databasePath } from "../src/lib/db";
 import {
@@ -17,7 +19,6 @@ import {
   getR2WeeklyHealthStatus,
   loadR2ColdSnapshotConfig,
   nextR2ColdSnapshotDueAt,
-  planMultipartParts,
   r2ColdSnapshotClassAPct,
   selectColdSnapshotsToPrune,
   R2_ARCHIVE_MAX_AGE_SECONDS,
@@ -124,11 +125,14 @@ function mockS3(options: {
   return { fetchImpl, requests };
 }
 
-/** backupImpl test seam: writes `size` bytes to the destination and records the path. */
-function fakeBackup(size: number, captured: { path?: string }) {
+/** backupImpl test seam: writes `size` INCOMPRESSIBLE bytes to the destination and
+ *  records the path + content.  Random bytes keep gzip output ~= input size, so a
+ *  small partSizeBytes still exercises real multi-part uploads of the gzip stream. */
+function fakeBackup(size: number, captured: { path?: string; content?: Buffer }) {
   return async (destPath: string) => {
     captured.path = destPath;
-    writeFileSync(destPath, Buffer.alloc(size, 7));
+    captured.content = randomBytes(size);
+    writeFileSync(destPath, captured.content);
   };
 }
 
@@ -199,35 +203,6 @@ describe("nextR2ColdSnapshotDueAt", () => {
   });
 });
 
-describe("planMultipartParts", () => {
-  it("splits with a smaller final part", () => {
-    expect(planMultipartParts(250, 100)).toEqual([
-      { partNumber: 1, offset: 0, length: 100 },
-      { partNumber: 2, offset: 100, length: 100 },
-      { partNumber: 3, offset: 200, length: 50 },
-    ]);
-  });
-
-  it("has no zero-length tail on exact multiples", () => {
-    const parts = planMultipartParts(200, 100);
-    expect(parts).toHaveLength(2);
-    expect(parts[1]).toEqual({ partNumber: 2, offset: 100, length: 100 });
-  });
-
-  it("uses one part for small files and one empty part for zero bytes", () => {
-    expect(planMultipartParts(10, 100)).toEqual([{ partNumber: 1, offset: 0, length: 10 }]);
-    expect(planMultipartParts(0, 100)).toEqual([{ partNumber: 1, offset: 0, length: 0 }]);
-  });
-
-  it("plans ~16 parts for a 1.5 GB DB at 100 MB parts", () => {
-    const total = Math.round(1.5 * 1024 ** 3);
-    const parts = planMultipartParts(total, R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES);
-    expect(parts.length).toBe(Math.ceil(total / R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES));
-    expect(parts.length).toBeLessThanOrEqual(16);
-    expect(parts.reduce((s, p) => s + p.length, 0)).toBe(total);
-  });
-});
-
 describe("selectColdSnapshotsToPrune", () => {
   it("keeps the newest N and returns older snapshot keys for deletion", () => {
     const keys = [
@@ -251,18 +226,37 @@ describe("selectColdSnapshotsToPrune", () => {
     ]);
   });
 
+  it("counts .db and .db.gz together: the legacy raw .db prunes after the first .gz upload", () => {
+    // Exactly the migration state: last raw upload from 2026-08-30 plus the first
+    // gzipped upload from 2026-08-31.  retain=1 must delete the raw one.
+    const keys = [
+      "cold-snapshots/app-2026-08-30.db",
+      "cold-snapshots/app-2026-08-31.db.gz",
+    ];
+    expect(selectColdSnapshotsToPrune(keys, 1)).toEqual(["cold-snapshots/app-2026-08-30.db"]);
+  });
+
+  it("treats a same-date .db.gz as newer than its .db twin", () => {
+    const keys = [
+      "cold-snapshots/app-2026-08-31.db",
+      "cold-snapshots/app-2026-08-31.db.gz",
+    ];
+    expect(selectColdSnapshotsToPrune(keys, 1)).toEqual(["cold-snapshots/app-2026-08-31.db"]);
+  });
+
   it("never touches keys outside the snapshot pattern (historic litestream data)", () => {
     const keys = [
       "app.db/generations/deadbeef/snapshots/000001.snapshot.lz4",
       "app.db/generations/deadbeef/wal/000001_0.wal.lz4",
-      "cold-snapshots/app-2026-08-09.db",
+      "cold-snapshots/app-2026-08-09.db.gz",
+      "cold-snapshots/app-2026-08-02.db.gz.bak",
       "cold-snapshots/other-thing.txt",
     ];
     expect(selectColdSnapshotsToPrune(keys, 1)).toEqual([]);
   });
 
   it("returns empty when at or under the retention count", () => {
-    expect(selectColdSnapshotsToPrune(["cold-snapshots/app-2026-08-09.db"], 4)).toEqual([]);
+    expect(selectColdSnapshotsToPrune(["cold-snapshots/app-2026-08-09.db.gz"], 4)).toEqual([]);
   });
 });
 
@@ -306,21 +300,18 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(result.drained).toBe(0);
   });
 
-  it("backs up, multipart-uploads with correct part math, prunes to newest 1, cleans temp, completes the job", async () => {
+  it("backs up, gzip-streams into multipart parts, prunes legacy .db + older .gz, cleans temp, completes the job", async () => {
     setCreds();
     const now = Date.UTC(2026, 7, 9, 3, 20, 0);
     enqueueDueNow(now);
     const staleKeys = [
-      "cold-snapshots/app-2026-07-05.db",
-      "cold-snapshots/app-2026-07-12.db",
-      "cold-snapshots/app-2026-07-19.db",
-      "cold-snapshots/app-2026-07-26.db",
+      "cold-snapshots/app-2026-07-26.db", // legacy raw uploads — must prune after a .gz success
       "cold-snapshots/app-2026-08-02.db",
-      "cold-snapshots/app-2026-08-09.db", // the one just uploaded
+      "cold-snapshots/app-2026-08-09.db.gz", // the one just uploaded
       "app.db/generations/deadbeef/wal/000001_0.wal.lz4", // historic litestream — untouchable
     ];
     const s3 = mockS3({ listKeys: staleKeys });
-    const captured: { path?: string } = {};
+    const captured: { path?: string; content?: Buffer } = {};
 
     const result = await drainR2ColdSnapshotJobs(now, {
       fetchImpl: s3.fetchImpl,
@@ -331,14 +322,21 @@ describe("drainR2ColdSnapshotJobs", () => {
 
     expect(result.drained).toBe(1);
     expect(result.lastRun?.status).toBe("ok");
-    expect(result.lastRun?.key).toBe("cold-snapshots/app-2026-08-09.db");
-    expect(result.lastRun?.bytes).toBe(2500);
-    expect(result.lastRun?.parts).toBe(3); // 1000 + 1000 + 500
+    expect(result.lastRun?.key).toBe("cold-snapshots/app-2026-08-09.db.gz");
+    // Random input is incompressible: gzip output = 2500 + header/trailer overhead.
+    expect(result.lastRun?.rawBytes).toBe(2500);
+    expect(result.lastRun?.bytes).toBeGreaterThan(2500);
+    expect(result.lastRun?.bytes).toBeLessThan(2600);
+    expect(result.lastRun?.parts).toBe(3); // 1000 + 1000 + tail
 
-    // Multipart part math against the wire: three PUTs, part numbers 1..3.
+    // Gzip stream against the wire: sequential part numbers, full-size non-final parts,
+    // and the concatenated parts gunzip back to the EXACT original backup bytes.
     const partPuts = s3.requests.filter((r) => r.method === "PUT" && r.url.includes("partNumber="));
     expect(partPuts.map((r) => Number(/partNumber=(\d+)/.exec(r.url)?.[1]))).toEqual([1, 2, 3]);
-    expect(partPuts.map((r) => r.body?.byteLength)).toEqual([1000, 1000, 500]);
+    expect(partPuts.slice(0, -1).map((r) => r.body?.byteLength)).toEqual([1000, 1000]);
+    const uploaded = Buffer.concat(partPuts.map((r) => Buffer.from(r.body!)));
+    expect(uploaded.byteLength).toBe(result.lastRun?.bytes);
+    expect(gunzipSync(uploaded).equals(captured.content!)).toBe(true);
 
     // Complete carries every part's ETag.
     const complete = s3.requests.find((r) => r.method === "POST" && r.url.includes("uploadId="));
@@ -347,13 +345,10 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(completeXml).toContain("etag-2");
     expect(completeXml).toContain("etag-3");
 
-    // Retention pruned every older snapshot key — nothing else.  Default retain is 1
-    // because the live DB is ~4 GB of a 10 GB R2 free tier.
+    // Retention pruned every older snapshot key across BOTH extensions — nothing else.
+    // Default retain is 1 (free-tier cap; the raw DB is ~9.7 GB of a 10 GiB tier).
     const deletes = s3.requests.filter((r) => r.method === "DELETE");
     expect(deletes.map((r) => decodeURIComponent(new URL(r.url).pathname)).sort()).toEqual([
-      "/socratic-trade-bucket/cold-snapshots/app-2026-07-05.db",
-      "/socratic-trade-bucket/cold-snapshots/app-2026-07-12.db",
-      "/socratic-trade-bucket/cold-snapshots/app-2026-07-19.db",
       "/socratic-trade-bucket/cold-snapshots/app-2026-07-26.db",
       "/socratic-trade-bucket/cold-snapshots/app-2026-08-02.db",
     ]);
@@ -367,10 +362,14 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(auditCount("r2_cold_snapshot.success")).toBe(1);
 
     // Health reader input: last success persisted for /api/health checks.storage.r2Weekly.
-    const last = getInternalSetting<{ key: string; completedAt: string; bytes: number }>(
+    const last = getInternalSetting<{ key: string; completedAt: string; bytes: number; rawBytes?: number }>(
       R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY,
     );
-    expect(last).toMatchObject({ key: "cold-snapshots/app-2026-08-09.db", bytes: 2500 });
+    expect(last).toMatchObject({
+      key: "cold-snapshots/app-2026-08-09.db.gz",
+      bytes: result.lastRun?.bytes,
+      rawBytes: 2500,
+    });
     expect(typeof last?.completedAt).toBe("string");
     expect(Number.isFinite(Date.parse(last!.completedAt))).toBe(true);
   });
@@ -380,7 +379,7 @@ describe("drainR2ColdSnapshotJobs", () => {
     const now = Date.UTC(2026, 7, 9, 3, 20, 0);
     enqueueDueNow(now);
     const s3 = mockS3({ failPart: 2 });
-    const captured: { path?: string } = {};
+    const captured: { path?: string; content?: Buffer } = {};
     const alerts: string[] = [];
 
     const result = await drainR2ColdSnapshotJobs(now, {
@@ -406,7 +405,7 @@ describe("drainR2ColdSnapshotJobs", () => {
     // Failure is recorded for ops; last success is left alone so health stays green
     // when a prior week still falls inside the 8-day window.
     const failure = getInternalSetting<{ key: string; reason: string }>(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY);
-    expect(failure?.key).toBe("cold-snapshots/app-2026-08-09.db");
+    expect(failure?.key).toBe("cold-snapshots/app-2026-08-09.db.gz");
     expect(failure?.reason).toMatch(/UploadPart 2/);
     expect(getInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY)).toBeUndefined();
   });
