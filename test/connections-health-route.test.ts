@@ -104,6 +104,33 @@ describe("connections-health API route", () => {
     }
   });
 
+  it("canonicalizes producer earningscalls logs onto the expected RapidAPI lane", async () => {
+    const { db, route } = await load();
+    db.logApiHealth({ service: "earningscalls", ok: true, latencyMs: 40, keySource: "env" });
+    db.logApiHealth({
+      service: "earningscalls-dev-rapidapi",
+      ok: true,
+      latencyMs: 55,
+      keySource: "env",
+    });
+
+    const response = await route.GET(authenticatedAdminRequest());
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      services: Array<{ service: string; keySource: string | null; lastSuccessTs: string | null }>;
+    };
+    const earningsLanes = body.services.filter((lane) =>
+      lane.service === "earningscalls" ||
+      lane.service === "earningscalls-dev-rapidapi" ||
+      lane.service === "earningscall"
+    );
+
+    expect(earningsLanes).toHaveLength(1);
+    expect(earningsLanes[0]?.service).toBe("earningscalls-dev-rapidapi");
+    expect(earningsLanes[0]?.keySource).toBe("env");
+    expect(earningsLanes[0]?.lastSuccessTs).not.toBeNull();
+  });
+
   it("marks historical quiverquant log lanes intentional OFF", async () => {
     const { db, route } = await load();
     db.logApiHealth({

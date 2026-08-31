@@ -122,6 +122,13 @@ describe("admin connections panel count formatting", () => {
     expect(formatLaneCallCount(0, undefined)).toBe("0");
     expect(formatLaneCallCount(1200, undefined)).toBe("1200");
   });
+
+  it("maps earningscalls aliases to one EarningsCalls.dev label", async () => {
+    const { formatServiceName } = await import("../app/admin/connections/connections-health-client");
+    expect(formatServiceName("earningscalls-dev-rapidapi")).toBe("EarningsCalls.dev");
+    expect(formatServiceName("earningscalls")).toBe("EarningsCalls.dev");
+    expect(formatServiceName("earningscall")).toBe("EarningsCalls.dev");
+  });
 });
 
 describe("getServiceHealthSummaries treats FilingAPI 401 as a soft skip", () => {

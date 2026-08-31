@@ -1,12 +1,23 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  currentAuthjsSessionCookieName,
+  isKnownSessionCookieName,
+  type KnownSessionCookieName,
+} from "./auth/session-cookie-names";
 
 const HANDOFF_TTL_MS = 2 * 60_000;
 const MAX_HANDOFFS = 256;
 
 type MobileAuthHandoff = {
   sessionToken: string;
+  cookieName: KnownSessionCookieName;
   codeChallenge: string;
   expiresAt: number;
+};
+
+export type ConsumedMobileAuthHandoff = {
+  sessionToken: string;
+  cookieName: KnownSessionCookieName;
 };
 
 type MobileAuthHandoffStore = Map<string, MobileAuthHandoff>;
@@ -51,14 +62,18 @@ function cleanExpired(now: number): void {
 export function createMobileAuthHandoff(input: {
   sessionToken: string;
   codeChallenge: string;
+  cookieName?: string;
   now?: number;
 }): string | undefined {
   if (!input.sessionToken || !hasValidCodeChallenge(input.codeChallenge)) return undefined;
+  const cookieName = input.cookieName ?? currentAuthjsSessionCookieName();
+  if (!isKnownSessionCookieName(cookieName)) return undefined;
   const now = input.now ?? Date.now();
   cleanExpired(now);
   const code = base64url(randomBytes(32));
   handoffs().set(code, {
     sessionToken: input.sessionToken,
+    cookieName,
     codeChallenge: input.codeChallenge,
     expiresAt: now + HANDOFF_TTL_MS
   });
@@ -69,7 +84,7 @@ export function consumeMobileAuthHandoff(input: {
   code: string;
   codeVerifier: string;
   now?: number;
-}): string | undefined {
+}): ConsumedMobileAuthHandoff | undefined {
   const now = input.now ?? Date.now();
   cleanExpired(now);
   const handoff = handoffs().get(input.code);
@@ -79,5 +94,5 @@ export function consumeMobileAuthHandoff(input: {
   const expected = Buffer.from(handoff.codeChallenge, "utf8");
   const actual = Buffer.from(verifierChallenge(input.codeVerifier), "utf8");
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return undefined;
-  return handoff.sessionToken;
+  return { sessionToken: handoff.sessionToken, cookieName: handoff.cookieName };
 }

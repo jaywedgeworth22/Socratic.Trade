@@ -23,7 +23,7 @@ Touched:
 - `test/ops-snapshot.test.ts` (via merge of #3111)
 - `app/api/mobile/auth-redirect/route.ts` (from original PR commit)
 - `ios/SocraticTrade/MobileModels.swift` (from original PR commit)
-- `app/console/connections/connections-health-client.tsx` (from original PR commit)
+- `app/admin/connections/connections-health-client.tsx` (from original PR commit)
 - `src/lib/data-catalog.ts` (from original PR commit)
 - `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`, this rollout
 

@@ -65,8 +65,13 @@ struct MobileSnapshot: Decodable {
         // optional.  A catalog that cannot be read must land on nil, which `serverAdvertises`
         // reads as "the server did not answer" and falls back to the built-in controls.
         catalog = (try? values.decodeIfPresent(ControlCatalog.self, forKey: .catalog)) ?? nil
-        readiness = (try? values.decode(Readiness.self, forKey: .readiness)) ?? .default
-        policy = (try? values.decode(PolicySummary.self, forKey: .policy)) ?? .default
+        // Fail closed: a missing or wrong-shape `readiness` must not become a
+        // snapshot that presents as consented (`needsAppConsent: false`).  Same
+        // for `policy` — substituting `systemState: "stopped"` would hide an
+        // actually active strategy.  Inner fields of a valid object still have
+        // older-payload defaults in their own decoders.
+        readiness = try values.decode(Readiness.self, forKey: .readiness)
+        policy = try values.decode(PolicySummary.self, forKey: .policy)
         marketSession = try values.decodeIfPresent(String.self, forKey: .marketSession) ?? "unknown"
         scheduler = try values.decodeIfPresent(SchedulerSummary.self, forKey: .scheduler) ?? .empty
         portfolio = try values.decodeIfPresent(PortfolioSummary.self, forKey: .portfolio)
@@ -163,7 +168,7 @@ struct Readiness: Decodable {
         selectedAccountNumber: nil,
         activeConnectedAccount: nil,
         commandBacklog: CommandBacklog(queued: 0, running: 0),
-        needsAppConsent: false
+        needsAppConsent: true
     )
 
     private enum CodingKeys: String, CodingKey {

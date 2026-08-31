@@ -72,6 +72,40 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.readiness.systemState, "active")
     }
 
+    func testMissingReadinessRejectsTheSnapshot() {
+        let json = #"{"policy":{"systemState":"active","strategyAuthority":"decide"}}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8)))
+    }
+
+    func testWrongShapeReadinessRejectsTheSnapshot() {
+        let json = #"{"readiness":"ok","policy":{"systemState":"active","strategyAuthority":"decide"}}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8)))
+    }
+
+    func testMissingPolicyRejectsTheSnapshot() {
+        let json = #"""
+        {"readiness":{"hasAccount":true,"hasUniverse":true,"systemState":"active","strategyAuthority":"decide","commandBacklog":{"queued":0,"running":0}}}
+        """#
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8)))
+    }
+
+    func testWrongShapePolicyRejectsTheSnapshot() {
+        let json = #"""
+        {"readiness":{"hasAccount":true,"hasUniverse":true,"systemState":"active","strategyAuthority":"decide","commandBacklog":{"queued":0,"running":0}},"policy":"v1"}
+        """#
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8)))
+    }
+
+    func testOlderReadinessWithoutConsentFieldDoesNotRequireConsent() throws {
+        let json = #"""
+        {"readiness":{"hasAccount":true,"hasUniverse":true,"systemState":"active","strategyAuthority":"decide","commandBacklog":{"queued":0,"running":0}},
+         "policy":{"systemState":"active","strategyAuthority":"decide"}}
+        """#
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8))
+        XCTAssertNil(snapshot.readiness.needsAppConsent)
+        XCTAssertFalse(snapshot.readiness.requiresAppConsent)
+    }
+
     func testSnapshotDecodesCompactLatestScan() throws {
         let json = Data(#"""
         {
