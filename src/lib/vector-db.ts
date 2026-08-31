@@ -58,6 +58,7 @@ import {
   type UserOperationClaim
 } from "./user-write-fence";
 import { hasInFlightStrategyWork, shouldSkipWholeIndexInventory } from "./db-execution";
+import { meterQdrantQuery, qdrantQueryTier, vectorReadBackend } from "./vector-store/qdrant-read";
 
 export class WholeIndexInventoryDeferredError extends Error {
   readonly code = "whole-index-inventory-deferred" as const;
@@ -4657,6 +4658,27 @@ export interface VectorMetadataInventoryRow {
 
 export type VectorDataNamespace = "default" | "managed" | "private" | "fmp-transcripts";
 
+/**
+ * The literal Pinecone namespace NAME a logical tier targets ("" = the default namespace).
+ * Factored out of vectorDataIndex so the Qdrant read backend (vector-store/qdrant-read.ts)
+ * pins its `ns` tenant clause to the exact same string a Pinecone query would use — the two
+ * can never drift.
+ */
+export function vectorNamespaceName(
+  namespace: VectorDataNamespace,
+  ledgerAuthority?: string,
+  userId?: string
+): string {
+  if (namespace === "default") return "";
+  return namespace === "private"
+    ? privateVectorNamespace(userId ?? "local", ledgerAuthority)
+    : namespace === "fmp-transcripts"
+      ? fmpTranscriptVectorNamespace(ledgerAuthority)
+      : ledgerAuthority
+        ? `socratic-${managedOccurrenceToken(ledgerAuthority)}`
+        : managedVectorNamespace();
+}
+
 function vectorDataIndex(
   pc: Pinecone,
   namespace: VectorDataNamespace,
@@ -4667,14 +4689,7 @@ function vectorDataIndex(
   if (namespace === "default") return base;
   const namespaceMethod = (base as unknown as { namespace?: (name: string) => typeof base }).namespace;
   if (typeof namespaceMethod === "function") {
-    const name = namespace === "private"
-      ? privateVectorNamespace(userId ?? "local", ledgerAuthority)
-      : namespace === "fmp-transcripts"
-        ? fmpTranscriptVectorNamespace(ledgerAuthority)
-        : ledgerAuthority
-          ? `socratic-${managedOccurrenceToken(ledgerAuthority)}`
-          : managedVectorNamespace();
-    return namespaceMethod.call(base, name);
+    return namespaceMethod.call(base, vectorNamespaceName(namespace, ledgerAuthority, userId));
   }
   if (process.env.NODE_ENV === "test") return base;
   throw new Error("Pinecone namespace support is unavailable for isolated vectors.");
@@ -6786,6 +6801,35 @@ export async function retrieveContextDetailed(
       ? vectorDataIndex(pc, "fmp-transcripts", ledgerAuthority)
       : undefined;
 
+    // STAGE-1 Qdrant read cutover (vector-store/qdrant-read.ts): resolved once per retrieval
+    // pass — a runtime knob flip applies to the NEXT pass, no redeploy.  When "qdrant", the six
+    // dense tier queries below hit the Qdrant mirror with the SAME filters, pinned to the SAME
+    // namespace names via the shared vectorNamespaceName helper; writes/deletes/inventory stay on
+    // Pinecone.  Qdrant reads never route through withRagApiHealth("pinecone"), so they cannot
+    // trip the Pinecone WU breaker or page the Pinecone health lane — and the WU breaker (a
+    // WRITE-side monthly-quota gate) never gates this read path on either backend.
+    // EMBEDDING-SPACE GATE (review fix): the Qdrant mirror holds ONLY embed_model-stamped
+    // non-Voyage vectors — pinecone-to-qdrant-copy.py skips both voyage-* points and unstamped
+    // legacy points.  When Voyage is the active model its embed-space filter is EMPTY (that is
+    // what keeps unstamped legacy vectors retrievable on Pinecone), so a Voyage query vector sent
+    // to Qdrant would rank nothing but foreign-space bge vectors with no server clause to stop
+    // it — cross-model cosines are garbage evidence.  Qdrant serves a pass only when the active
+    // model's embed-space filter pins the mirror's space; otherwise reads stay on Pinecone.
+    const readBackend: "pinecone" | "qdrant" =
+      Object.keys(embedSpaceFilterForModel(activeEmbeddingModel(userId))).length > 0
+        ? vectorReadBackend()
+        : "pinecone";
+    const defaultNamespaceName = vectorNamespaceName("default");
+    const privateNamespaceName = queryPrivateNamespace
+      ? vectorNamespaceName("private", ledgerAuthority, userId)
+      : undefined;
+    const managedNamespaceName = queryManagedNamespace
+      ? vectorNamespaceName("managed", ledgerAuthority)
+      : undefined;
+    const fmpNamespaceName = queryFmpNamespace
+      ? vectorNamespaceName("fmp-transcripts", ledgerAuthority)
+      : undefined;
+
     // Episodic cross-symbol mode (matchAllSymbols): omit the symbol clause entirely so decision
     // analogs on OTHER tickers stay retrievable. Default (unset) keeps the per-symbol restriction.
     const symbolFilter: Record<string, unknown> = options?.matchAllSymbols ? {} : { symbol: { $eq: symbol } };
@@ -6922,70 +6966,72 @@ export async function retrieveContextDetailed(
       // The dedicated private namespace is queried only when its durable manifest proves it exists
       // under the current physical provider authority.
       const endDenseQuery = stageTrace?.start("dense_query", {
-        provider: "pinecone",
+        provider: readBackend,
         model: activeModel,
         candidatesIn: fetchK
       });
+      // Per-tier dense query dispatcher: Pinecone (today's path, byte-identical) or the Qdrant
+      // mirror per the runtime read-backend knob.  Qdrant errors — including a refused
+      // (unimplemented) filter translation, which throws rather than silently widening the
+      // filter — soft-fail that tier to an empty pool so the run continues; they are NEVER
+      // routed through withRagApiHealth("pinecone"), so they cannot trip the Pinecone WU
+      // breaker, book phantom Pinecone read units, or page the Pinecone health lane.
+      let qdrantTierAttempts = 0;
+      const qdrantTierErrors: unknown[] = [];
+      const denseTierQuery = (
+        index: NonNullable<typeof privateIndex>,
+        namespaceName: string,
+        operation: string,
+        filter: Record<string, unknown>
+      ): Promise<{ matches: any[] }> => {
+        if (readBackend === "qdrant") {
+          qdrantTierAttempts += 1;
+          return qdrantQueryTier(namespaceName, { vector: embedding as number[], topK: fetchK, filter }).catch(
+            (error) => {
+              qdrantTierErrors.push(error);
+              console.warn(
+                `[vector-db] Qdrant ${operation} failed; tier contributes no candidates:`,
+                error instanceof Error ? error.message : String(error)
+              );
+              return { matches: [] };
+            }
+          );
+        }
+        return withRagApiHealth("pinecone", pineconeSource, userId, operation, () =>
+          index.query({
+            vector: embedding,
+            topK: fetchK,
+            filter,
+            includeMetadata: true
+          })
+        ) as Promise<{ matches: any[] }>;
+      };
       let denseResults: any[];
       try {
         denseResults = await Promise.all([
-        withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
-          defaultIndex.query({
-            vector: embedding,
-            topK: fetchK,
-            filter: userTierFilter,
-            includeMetadata: true,
-          })
-        ),
+        denseTierQuery(defaultIndex, defaultNamespaceName, "query user tier", userTierFilter),
         privateIndex
-          ? withRagApiHealth("pinecone", pineconeSource, userId, "query private namespace", () =>
-              privateIndex.query({
-                vector: embedding,
-                topK: fetchK,
-                filter: userTierFilter,
-                includeMetadata: true
-              })
-            )
+          ? denseTierQuery(privateIndex, privateNamespaceName!, "query private namespace", userTierFilter)
           : Promise.resolve({ matches: [] }),
-        withRagApiHealth("pinecone", pineconeSource, userId, "query shared tier", () =>
-          defaultIndex.query({
-            vector: embedding,
-            topK: fetchK,
-            filter: sharedTierFilter,
-            includeMetadata: true,
-          })
-        ),
+        denseTierQuery(defaultIndex, defaultNamespaceName, "query shared tier", sharedTierFilter),
         managedIndex
-          ? withRagApiHealth("pinecone", pineconeSource, userId, "query managed user tier", () =>
-              managedIndex.query({
-                vector: embedding,
-                topK: fetchK,
-                filter: managedUserFilter,
-                includeMetadata: true
-              })
-            )
+          ? denseTierQuery(managedIndex, managedNamespaceName!, "query managed user tier", managedUserFilter)
           : Promise.resolve({ matches: [] }),
         managedIndex
-          ? withRagApiHealth("pinecone", pineconeSource, userId, "query managed shared tier", () =>
-              managedIndex.query({
-                vector: embedding,
-                topK: fetchK,
-                filter: managedSharedFilter,
-                includeMetadata: true
-              })
-            )
+          ? denseTierQuery(managedIndex, managedNamespaceName!, "query managed shared tier", managedSharedFilter)
           : Promise.resolve({ matches: [] }),
         fmpIndex
-          ? withRagApiHealth("pinecone", pineconeSource, userId, "query FMP transcript tier", () =>
-              fmpIndex.query({
-                vector: embedding,
-                topK: fetchK,
-                filter: managedSharedFilter,
-                includeMetadata: true
-              })
-            )
+          ? denseTierQuery(fmpIndex, fmpNamespaceName!, "query FMP transcript tier", managedSharedFilter)
           : Promise.resolve({ matches: [] })
         ]);
+        // Total-outage escalation (review fix): per-tier fail-open is for PARTIAL degradation.
+        // When EVERY queried Qdrant tier failed (endpoint down, refused translation on a shared
+        // filter shape), rethrow so the pass reports lookup_failed — exactly what a Pinecone
+        // outage does — instead of a "successful" empty retrieval that Green/Red would misread
+        // as "no relevant evidence exists".
+        if (readBackend === "qdrant" && qdrantTierAttempts > 0 && qdrantTierErrors.length >= qdrantTierAttempts) {
+          throw qdrantTierErrors[0];
+        }
         endDenseQuery?.({
           candidatesOut: denseResults.reduce((total, result) => total + (result.matches?.length ?? 0), 0)
         });
@@ -6994,21 +7040,29 @@ export async function retrieveContextDetailed(
         throw error;
       }
       const [userResults, privateResults, localResults, managedUserResults, managedLocalResults, fmpResults] = denseResults;
-      meterPineconeQuery(
-        pineconeReadUnits(userResults, 1) +
-          pineconeReadUnits(privateResults, privateIndex ? 1 : 0) +
-          pineconeReadUnits(localResults, 1) +
-          pineconeReadUnits(managedUserResults, managedIndex ? 1 : 0) +
-          pineconeReadUnits(managedLocalResults, managedIndex ? 1 : 0) +
-          pineconeReadUnits(fmpResults, fmpIndex ? 1 : 0),
-        userId,
+      const denseMatchCount =
         (userResults.matches?.length ?? 0) +
-          (privateResults.matches?.length ?? 0) +
-          (localResults.matches?.length ?? 0) +
-          (managedUserResults.matches?.length ?? 0) +
-          (managedLocalResults.matches?.length ?? 0) +
-          (fmpResults.matches?.length ?? 0)
-      );
+        (privateResults.matches?.length ?? 0) +
+        (localResults.matches?.length ?? 0) +
+        (managedUserResults.matches?.length ?? 0) +
+        (managedLocalResults.matches?.length ?? 0) +
+        (fmpResults.matches?.length ?? 0);
+      if (readBackend === "qdrant") {
+        // Self-hosted reads: provider "qdrant", zero read units — never book phantom Pinecone WUs
+        // for queries Pinecone did not serve.
+        meterQdrantQuery(userId, denseMatchCount);
+      } else {
+        meterPineconeQuery(
+          pineconeReadUnits(userResults, 1) +
+            pineconeReadUnits(privateResults, privateIndex ? 1 : 0) +
+            pineconeReadUnits(localResults, 1) +
+            pineconeReadUnits(managedUserResults, managedIndex ? 1 : 0) +
+            pineconeReadUnits(managedLocalResults, managedIndex ? 1 : 0) +
+            pineconeReadUnits(fmpResults, fmpIndex ? 1 : 0),
+          userId,
+          denseMatchCount
+        );
+      }
 
       const tiers = [
         userResults.matches || [],

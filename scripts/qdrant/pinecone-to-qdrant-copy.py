@@ -12,9 +12,20 @@ Read-only against Pinecone; writes only to the Qdrant collection.
 
 Snapshot semantics: this copies what exists while it runs.  Writes that land in
 Pinecone during or after the run are NOT here — point ids are deterministic
-(uuid5 of namespace + Pinecone id), so re-running (delete the state file, or
-just the namespace from done_ns) is an idempotent delta pass.  Run one before
+(uuid5 of namespace + Pinecone id), so re-running (keep the state file — see
+below — or delete it entirely) is an idempotent delta pass.  Run one before
 any retrieval cutover.
+
+Cheap delta skip: `done_ns` records the Pinecone vectorCount a namespace had
+when it finished, not just its name.  A namespace is only skipped on a later
+run if its *current* vectorCount still matches that recorded count — an
+unchanged namespace costs one stats lookup, not a full vectors/list+fetch
+pass.  A namespace that grew (or is brand new) is rescanned in full; Pinecone
+has no "list since timestamp" API, so a grown namespace still costs a full
+re-list of its own ids, but every namespace that didn't change is skipped
+outright.  This is what makes keeping the state file across runs the right
+delta procedure instead of deleting it (deleting it forces a full-corpus
+rescan of every namespace, which is only needed for the very first run).
 
 Resumable: pagination state checkpoints only after every queued batch up to
 that cursor has completed (fetch + upsert), so a crash never skips records.
@@ -71,8 +82,15 @@ def qd(method, path, body=None):
 
 def load_state():
     if os.path.exists(STATE_PATH):
-        return json.load(open(STATE_PATH))
-    return {"index": INDEX, "collection": COLL, "done_ns": [], "current_ns": None,
+        st = json.load(open(STATE_PATH))
+        # Back-compat: older state files recorded done_ns as a flat list (no
+        # vectorCount, so we can't tell "unchanged" from "grew").  Treat those
+        # namespaces as due for a one-time revalidation rather than trusting
+        # them skippable forever.
+        if isinstance(st.get("done_ns"), list):
+            st["done_ns"] = {ns: None for ns in st["done_ns"]}
+        return st
+    return {"index": INDEX, "collection": COLL, "done_ns": {}, "current_ns": None,
             "token": None, "scanned": 0, "copied": 0,
             "skipped_no_model": 0, "skipped_voyage": 0}
 
@@ -172,7 +190,8 @@ def main():
         save_state(st)
 
     for ns, meta in namespaces:
-        if ns in st["done_ns"]:
+        done_count = st["done_ns"].get(ns)
+        if done_count is not None and done_count == meta.get("vectorCount", 0):
             continue
         token = st["token"] if st["current_ns"] == ns else None
         pages = 0
@@ -209,7 +228,7 @@ def main():
             st["current_ns"], st["token"] = None, None
             save_state(st)
             continue
-        st["done_ns"].append(ns)
+        st["done_ns"][ns] = meta.get("vectorCount", 0)
         st["current_ns"], st["token"] = None, None
         save_state(st)
         if meta.get("vectorCount", 0) > 1000:

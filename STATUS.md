@@ -3299,3 +3299,5 @@ Fixed `test/chat-draft-policy.test.ts` test regression. A previous commit accide
 ## Current (2026-08-31 CLAUDE)
 
 - **Qdrant self-host audit landed (board 601d581c):** collection green/801,239 pts, now fully payload-indexed (16 fields), mem 10g, snapshots persist on volume; runbook keyword monitors 803872370-72 now page on schedulerStale/tradingLivenessDegraded/litestreamTiersDegraded.  Pinecone read units exhausted — Qdrant cutover (golden set -> adapter -> shadow-read -> delta copy) is the critical path.  Details: `docs/rollouts/2026-08-31-qdrant-rag-error-ux-audit.md`.
+
+- **Qdrant read cutover stage 1 in flight (2026-08-31 CLAUDE):** reads switchable to self-hosted Qdrant via RAG_VECTOR_READ_QDRANT knob/env; prod flips at deploy (Pinecone read units exhausted — RAG was silently dead).  Writes stay Pinecone until stage 2.  Sep 1: delta copy + sentinel backfill + golden eval per scripts/qdrant/DELTA-RUNBOOK.md.
