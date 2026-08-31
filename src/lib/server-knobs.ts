@@ -66,7 +66,7 @@ import { getInternalSetting, setInternalSetting } from "./db-settings";
 
 export type ServerKnobType = "boolean" | "number";
 
-export type ServerKnobGroup = "workers" | "streams" | "budgets";
+export type ServerKnobGroup = "workers" | "streams" | "budgets" | "retrieval";
 
 export interface ServerKnobSpec {
   /** Stable id — exactly the env var name it overrides. */
@@ -95,6 +95,10 @@ export const SERVER_KNOB_GROUPS: Record<ServerKnobGroup, { title: string; blurb:
   budgets: {
     title: "Budgets & digests",
     blurb: "Daily spend caps and scheduled pushes.  Read fresh on every pass — flips apply on the next call."
+  },
+  retrieval: {
+    title: "Retrieval",
+    blurb: "RAG read-path routing.  Checked fresh on every retrieval pass — flips apply to the next query."
   }
 };
 
@@ -170,6 +174,15 @@ export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
     type: "boolean",
     defaultValue: true,
     effect: "Applies to the next upsert call.  Turning off removes the daily cap — Pinecone writes are then unlimited."
+  },
+  {
+    id: "RAG_VECTOR_READ_QDRANT",
+    group: "retrieval",
+    label: "Qdrant read backend",
+    description: "Serve RAG retrieval queries from the self-hosted Qdrant mirror instead of Pinecone.  Stage 1: reads only — writes, deletes, and inventory stay on Pinecone.",
+    type: "boolean",
+    defaultValue: false,
+    effect: "Applies to the next retrieval pass.  Requires QDRANT_URL (and QDRANT_API_KEY) in the environment; without them reads stay on Pinecone.  The string env RAG_VECTOR_READ_BACKEND=qdrant|pinecone is honored when neither this override nor this env var is set."
   },
   {
     id: "SEC_FILING_RAG_MAX_PER_RUN",
