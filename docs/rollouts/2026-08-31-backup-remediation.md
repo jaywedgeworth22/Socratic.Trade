@@ -50,6 +50,11 @@ Touched files:
   row: the host-level `litestream-congress` systemd unit is historical; CT runs
   litestream in-container now.  Plus this effort's row.
 - `STATUS.md`, `docs/rollouts/2026-08-31-backup-remediation.md` (this note).
+- `test/console-decisions-index.test.tsx` — unrelated pre-existing test rot that
+  blocked this PR's `verify`: the fixed fixture date `2026-08-01T12:00:00Z`
+  crossed timeAgo()'s 30-day boundary at 2026-08-31T12:00 UTC, after which the
+  age renders as an absolute date without "ago".  Fixture is now relative to
+  runtime (one hour ago), deterministic forever.
 
 ## Decisions & Trade-offs
 
