@@ -704,12 +704,17 @@ export async function drainR2ColdSnapshotJobs(
   now: number = Date.now(),
   deps: R2ColdSnapshotDeps = {},
 ): Promise<R2ColdSnapshotDrainResult> {
-  const claimant = `r2-cold-snapshot:${process.pid}`;
-  // 45 min lease: gzip-streaming a ~10 GB backup into sequential 100 MB parts
-  // can legitimately take a while on the shared box.
+  // Unique claimant PER INVOCATION (not just per PID): completeDueJob/failDueJob
+  // fence on `claimed_by = claimant`, so if a lease ever expires mid-upload and a
+  // later drain reclaims the job, the stale worker's completion is fenced out
+  // (returns false) instead of clobbering the reclaimer's job state.
+  const claimant = `r2-cold-snapshot:${process.pid}:${crypto.randomUUID().slice(0, 8)}`;
+  // 2h lease: gzip-streaming a ~10 GB backup into sequential multipart parts is
+  // normally minutes, but a degraded uplink must not let a second drain start a
+  // concurrent ~10 GB backup + racing upload of the same key.
   const jobs = claimDueJobs(R2_COLD_SNAPSHOT_JOB_TYPE, {
     limit: 1,
-    leaseMs: 45 * 60_000,
+    leaseMs: 120 * 60_000,
     claimant,
     now: new Date(now),
   });

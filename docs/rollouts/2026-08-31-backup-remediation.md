@@ -72,6 +72,13 @@ Touched files:
   pressure was the problem, not log retention.
 - Historical rollout notes describing the raw `.db` era were left as-is (they
   are dated history); only live docs were corrected.
+- Codex round-2 hardening: the drain claimant is now unique per invocation (the
+  completeDueJob/failDueJob `claimed_by` fence previously matched any invocation
+  from the same PID, so a stale worker could clobber a reclaimer's job state)
+  and the claim lease grew 45 min -> 2 h so a degraded uplink cannot let a
+  second drain start a concurrent ~10 GB backup racing the same key.  Recovery-
+  depth wording corrected: the R2 cold snapshot is second-provider DR at most
+  ~7 days old (retain=1), not history deeper than B2's ~15-day window.
 
 ## Verification State
 

@@ -23,7 +23,9 @@ All fleet B2 buckets carry lifecycle rules **hide after 14 days + delete hidden
 after 1 day**.  B2 applies these to litestream's LTX objects like any other file,
 so point-in-time restore depth from B2 is hard-capped at **~15 days** regardless
 of what litestream's own retention settings claim.  Do not plan a restore deeper
-than that from B2; the weekly R2 cold snapshot is the only older recovery point.
+than that from B2.  The weekly R2 cold snapshot is SECOND-PROVIDER disaster
+recovery, not deeper history: retain=1 means it is a single point at most ~7
+days old.  No provider holds a recovery point older than ~15 days.
 
 ## Weekly R2 cold snapshot is gzipped (2026-08-31)
 
