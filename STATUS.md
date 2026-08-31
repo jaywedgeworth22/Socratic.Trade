@@ -10,8 +10,12 @@ now needs `gunzip` first — recipe in `docs/litestream.md`.  Container boot
 rotates `/app/data/litestream-runtime.log` (was 237 MB) at 64 MB, keeping the
 newest 16 MB.  Docs: B2 lifecycle hide-14d/delete-1d hard-caps B2 restore depth
 at ~15 days; all three apps run litestream in-container; 2026-08-31 L1 suffix
-heal precedent recorded.  Next action: verify the first `.gz` upload after
-Sunday 03:17 UTC and the rotation line on the next boot.  Rollout:
+heal precedent recorded.  PR #3135 merged (squash `0d69d9063`); the deploy is
+correctly deferred by the weekday RTH latch (Monday; build refused 14:39 UTC
+with `rth-blocked`) and the post-close 21:20 UTC drain ships it — do not HOTFIX
+or hand-trigger.  Next action: after the drain, `bash scripts/verify-deploy-sha.sh
+0d69d9063`; then verify the first `.gz` upload after Sunday 03:17 UTC and the
+rotation line on that boot.  Rollout:
 `docs/rollouts/2026-08-31-backup-remediation.md`.
 
 ## 2026-08-30 BF-Fixer — PR #3120 Codex thread unstick
