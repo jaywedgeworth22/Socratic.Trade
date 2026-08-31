@@ -1,5 +1,24 @@
 # Current Status
 
+## 2026-08-30 BF-Fixer — PR #3120 Codex thread unstick
+
+HEAD `bab1cb840` was MERGEABLE but BLOCKED on five unresolved Codex threads.
+Fail-closed snapshot decode for missing/wrong-shape `readiness` and `policy`.
+Auth-redirect carries cookie salt and exchange reissues a verified token.
+Connections-health merges `earningscalls` onto `earningscalls-dev-rapidapi`.
+Ops-snapshot pin rollout path corrected to `app/admin/connections/`.  No
+extra-ship.  No TestFlight.  Rollout:
+`docs/rollouts/2026-08-30-pr-3120-codex-threads.md`.
+
+## 2026-08-30 GROK — PR #3120 CI unblock (ops-snapshot trial pin)
+
+`verify-hosted` on #3120 failed `test/ops-snapshot.test.ts` (`trial.active`
+expected true, got false).  Not an ios ship-seq failure.  Merged `origin/main`
+(`f385fb037` / #3111) so the snapshot fixture is pinned to now+7d.  PR intent
+unchanged: iOS auth-redirect + resilient workspace decoding, EarningsCalls.dev
+and ROIC.ai labels.  No squash-merge.  No extra-ship.  No `--force-ship`.
+Rollout: `docs/rollouts/2026-08-30-pr-3120-ops-snapshot-pin.md`.
+
 ## 2026-08-30 GROK — PR #3111 CI unblock (asc-seq stderr)
 
 `verify-hosted` on #3111 failed `test/ops-snapshot.test.ts` (`trial.active`

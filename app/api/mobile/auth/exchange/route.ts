@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sessionTokenForCurrentCookie } from "@/lib/auth/session-cookie-names";
 import { consumeMobileAuthHandoff } from "@/lib/mobile-auth-handoff";
 
 export const dynamic = "force-dynamic";
@@ -12,16 +13,22 @@ export async function POST(request: Request) {
   if (typeof body.code !== "string" || typeof body.codeVerifier !== "string") {
     return NextResponse.json({ error: "Missing mobile authentication code." }, { status: 400 });
   }
-  const token = consumeMobileAuthHandoff({ code: body.code, codeVerifier: body.codeVerifier });
-  if (!token) {
+  const handoff = consumeMobileAuthHandoff({ code: body.code, codeVerifier: body.codeVerifier });
+  if (!handoff) {
     return NextResponse.json({ error: "Mobile authentication code is invalid or expired." }, { status: 401 });
   }
 
-  const cookieName = process.env.NODE_ENV === "production"
-    ? "__Secure-authjs.session-token"
-    : "authjs.session-token";
+  const reissued = await sessionTokenForCurrentCookie({
+    sessionToken: handoff.sessionToken,
+    cookieName: handoff.cookieName,
+    secret: process.env.AUTH_SECRET,
+  });
+  if (!reissued) {
+    return NextResponse.json({ error: "Mobile authentication code is invalid or expired." }, { status: 401 });
+  }
+
   const response = NextResponse.json({ success: true });
-  response.cookies.set(cookieName, token, {
+  response.cookies.set(reissued.cookieName, reissued.token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",

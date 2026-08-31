@@ -44,6 +44,42 @@ const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null 
   { service: "usage-monitor", keySource: null }
 ];
 
+/** Health-log lane names that should render as one Connections card. */
+function canonicalHealthLaneService(service: string): string {
+  if (service === "earningscall" || service === "earningscalls") {
+    return "earningscalls-dev-rapidapi";
+  }
+  if (service === "roic") return "roic.ai";
+  return service;
+}
+
+function laterIso(left: string | null, right: string | null): string | null {
+  if (!left) return right;
+  if (!right) return left;
+  return left > right ? left : right;
+}
+
+function mergeHealthLane(left: ServiceHealthSummary, right: ServiceHealthSummary): ServiceHealthSummary {
+  const lastSuccessTs = laterIso(left.lastSuccessTs, right.lastSuccessTs);
+  const lastFailureTs = laterIso(left.lastFailureTs, right.lastFailureTs);
+  return {
+    ...left,
+    lastSuccessTs,
+    lastSuccessLatencyMs:
+      lastSuccessTs === left.lastSuccessTs ? left.lastSuccessLatencyMs : right.lastSuccessLatencyMs,
+    lastFailureTs,
+    lastFailureError:
+      lastFailureTs === left.lastFailureTs ? left.lastFailureError : right.lastFailureError,
+    callsLastHour: left.callsLastHour + right.callsLastHour,
+    callsLast24h: left.callsLast24h + right.callsLast24h,
+    stoppedWorking: left.stoppedWorking || right.stoppedWorking,
+    stoppedReason: left.stoppedWorking ? left.stoppedReason : right.stoppedReason,
+    stoppedReasonKind: left.stoppedWorking ? left.stoppedReasonKind : right.stoppedReasonKind,
+    laneLogCap: left.laneLogCap ?? right.laneLogCap,
+    intentionalOff: Boolean(left.intentionalOff || right.intentionalOff),
+  };
+}
+
 function toCanonicalService(service: string): string {
   if (service === "alpha-vantage") return "alphavantage";
   if (service === "alpaca-broker") return "alpaca_paper_api_key";
@@ -73,14 +109,14 @@ function toCanonicalService(service: string): string {
 }
 
 function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHealthSummary[] {
-  // Map legacy names to canonical names before matching expectations
+  // Map producer / legacy names to canonical names before matching expectations.
+  // The transcript producer logs `earningscalls`; EXPECTED_BACKEND_LANES still
+  // lists `earningscalls-dev-rapidapi`.  Without this merge the dashboard
+  // shows two identical EarningsCalls.dev cards.
   for (const s of services) {
-    if (s.service === "earningscall") {
-      s.service = "earningscalls-dev-rapidapi";
-      s.keySource = "env";
-    }
-    if (s.service === "roic") {
-      s.service = "roic.ai";
+    s.service = canonicalHealthLaneService(s.service);
+    if (s.service === "earningscalls-dev-rapidapi") {
+      s.keySource = s.keySource ?? "env";
     }
   }
 
@@ -97,7 +133,12 @@ function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHeal
   }
 
   const filteredServices = services.filter((s) => !(s.keySource === "env" && hasUserKey(s.service)));
-  const byLane = new Map(filteredServices.map((service) => [`${service.service}:${service.keySource ?? ""}`, service]));
+  const byLane = new Map<string, ServiceHealthSummary>();
+  for (const service of filteredServices) {
+    const key = `${service.service}:${service.keySource ?? ""}`;
+    const existing = byLane.get(key);
+    byLane.set(key, existing ? mergeHealthLane(existing, service) : service);
+  }
 
   for (const lane of EXPECTED_BACKEND_LANES) {
     const expectedKeySource = (lane.keySource === "env" && hasUserKey(lane.service)) ? "user" : lane.keySource;
