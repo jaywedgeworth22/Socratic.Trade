@@ -76,12 +76,17 @@ Touched files:
 ## Verification State
 
 ```bash
-npx tsc --noEmit        # clean
+npm run lint                                   # 0 errors, 792 grandfathered warnings (exit 0)
+npx tsc --noEmit                               # clean
 npx vitest run test/r2-cold-snapshot.test.ts   # 26/26 passed
+npx vitest run test/console-decisions-index.test.tsx  # 7/7 passed (after fixture un-rot)
 bash -n scripts/coolify-prod-start.sh          # syntax OK
 grep -nP '[^\x00-\x7F]' scripts/coolify-prod-start.sh  # no matches
-npm run lint / npm test / npm run build        # via scripts/land.sh gate
+bash scripts/land.sh                           # tsc + full vitest + next build, all green; opened PR #3135
 ```
+
+Note: `scripts/land.sh` runs tsc -> vitest -> build but NOT lint, so lint was
+run explicitly above; the hosted required `verify` check runs lint again.
 
 ## Next Steps & Blockers
 
