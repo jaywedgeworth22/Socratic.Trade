@@ -49,6 +49,10 @@ Touched files:
 - `docs/EFFORT-LOG.md` — in-place bracketed correction on the 2026-08-01 KIMI
   row: the host-level `litestream-congress` systemd unit is historical; CT runs
   litestream in-container now.  Plus this effort's row.
+- `PLAN.md` — backup-remediation entry (approach change per the pre-commit
+  protocol).
+- `litestream.coolify.yml` — live cold-snapshots reference updated to `.db.gz`
+  with the gunzip-first note.
 - `STATUS.md`, `docs/rollouts/2026-08-31-backup-remediation.md` (this note).
 - `test/console-decisions-index.test.tsx` — unrelated pre-existing test rot that
   blocked this PR's `verify`: the fixed fixture date `2026-08-01T12:00:00Z`
