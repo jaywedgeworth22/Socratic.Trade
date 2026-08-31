@@ -3295,3 +3295,7 @@ Fixed `test/chat-draft-policy.test.ts` test regression. A previous commit accide
 
 - **Fix paper vs-SPY +50%**: deposit+invest sparse snapshots without fills no longer count as alpha (`grok/fix-paper-spy-return-again`).
 
+
+## Current (2026-08-31 CLAUDE)
+
+- **Qdrant self-host audit landed (board 601d581c):** collection green/801,239 pts, now fully payload-indexed (16 fields), mem 10g, snapshots persist on volume; runbook keyword monitors 803872370-72 now page on schedulerStale/tradingLivenessDegraded/litestreamTiersDegraded.  Pinecone read units exhausted — Qdrant cutover (golden set -> adapter -> shadow-read -> delta copy) is the critical path.  Details: `docs/rollouts/2026-08-31-qdrant-rag-error-ux-audit.md`.
