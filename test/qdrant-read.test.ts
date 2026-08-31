@@ -48,11 +48,13 @@ describe("backend knob resolution", () => {
   it("is a catalogued server knob (runtime-flippable without redeploy)", () => {
     const spec = serverKnobById(QDRANT_READ_KNOB_ID);
     expect(spec?.type).toBe("boolean");
-    expect(spec?.defaultValue).toBe(false);
+    expect(spec?.defaultValue).toBe(true);
   });
 
-  it("defaults to pinecone with nothing set", () => {
+  it("defaults to qdrant when QDRANT_URL is set, falls back to pinecone when unconfigured", () => {
     expect(vectorReadBackend()).toBe("pinecone");
+    process.env.QDRANT_URL = "http://qdrant.example:6333";
+    expect(vectorReadBackend()).toBe("qdrant");
   });
 
   it("boolean env turns qdrant on (with QDRANT_URL) and explicit falsy keeps pinecone", () => {

@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-31 ANTIGRAVITY — Default RAG reads to Qdrant, decouple from Pinecone & immediate restart sweep
+
+Fixed strategy run failures from Pinecone rate limits (429 / WU exhaustion) and orphaned process restart runs.  Defaulted `RAG_VECTOR_READ_QDRANT` to `true` across server knobs and `vectorReadBackend()` so retrieval natively queries self-hosted Qdrant on Hetzner without Pinecone prerequisites; fully decoupled `retrieveContextDetailed`, `denseTierQuery`, and `denseResults` from Pinecone client and index objects; handled Pinecone 429 rate limits gracefully during hourly background reconciliation; updated `markStaleRunningRuns` to immediately sweep dead runs from previous process lifecycles upon startup.  Full verification gate passed: lint, tsc, 7,695 vitest tests (700 files), Next.js build.  Rollout: `docs/rollouts/2026-08-31-qdrant-default-strategy-fix.md`.
+
 ## 2026-08-31 GROK — Top-to-bottom full-stack audit (web, iOS, backend)
 
 Report-only.  Branch `grok/full-stack-audit`, worktree `~/apps/trading-grok-full-audit`, board `52592a4d`, tree `ff7a562d9`.  Nine-agent scan plus orchestrator file:line verification.  Catalog: `docs/reviews/2026-08-31-grok-full-stack-audit.md`.  Still open on `main`: Alpaca `stop_market` write (`d4cb5e75`), MCP place timeout REST fallback (`ef0dccb3`), any-`client_order_id` provenance (`d36c2233`), oldest-500 fills, iOS `uniqueKeysWithValues`, web 401 freeze.  Guardrails Discard and `/mobile` redirect are fixed.  Do not implement in this PR.  Do not steal Claude `06df80cf`.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-31-grok-full-stack-audit.md`.

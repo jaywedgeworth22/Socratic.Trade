@@ -63,6 +63,9 @@ export function vectorReadBackend(): VectorReadBackend {
     if (backend === "qdrant") enabled = true;
     else if (backend === "pinecone") enabled = false;
   }
+  if (enabled === undefined) {
+    enabled = true;
+  }
   if (enabled !== true) return "pinecone";
   if (!qdrantConfigured()) {
     if (!warnedUnconfigured) {

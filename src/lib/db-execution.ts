@@ -548,13 +548,15 @@ export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, s
  */
 export function markStaleRunningRuns(now: number = Date.now()): number {
   const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
+  const processStarted = processStartedAtMs();
+  const restartCutoff = new Date(processStarted - PROCESS_RESTART_DETECT_SKEW_MS).toISOString();
   const db = getDb();
   const stale = db
     .prepare(
       `SELECT id, user_id, connected_account_id, started_at FROM strategy_runs
-       WHERE status = 'running' AND started_at < ?`
+       WHERE status = 'running' AND (started_at < ? OR started_at < ?)`
     )
-    .all(cutoff) as Array<{
+    .all(cutoff, restartCutoff) as Array<{
       id: string;
       user_id: string;
       connected_account_id: string | null;
@@ -562,19 +564,18 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
     }>;
   let count = 0;
   for (const row of stale) {
-    // Extra grace beyond the raised threshold: audit_events has no run_id COLUMN, but nearly every
-    // strategy-run audit kind carries `runId` in its JSON payload (e.g. strategy_bear_review_unavailable,
-    // order placements) — so a run that's still emitting audit rows more recently than the cutoff is
-    // demonstrably still alive, just slow, not crashed. This json_extract only runs for rows ALREADY
-    // past the time cutoff (typically 0-1 per sweep tick), so it's cheap despite no index on payload.
-    const recentActivity = db
-      .prepare(`SELECT 1 FROM audit_events WHERE json_extract(payload, '$.runId') = ? AND created_at >= ? LIMIT 1`)
-      .get(row.id, cutoff);
-    if (recentActivity) continue;
+    const cause = staleRunningRunSweepCause(row.started_at, processStarted);
+    // Extra grace beyond the raised threshold: for same-process stalls, check if the run is still
+    // emitting audit rows recently. Prior-process runs died when the process restarted.
+    if (cause !== "process_restarted_mid_run") {
+      const recentActivity = db
+        .prepare(`SELECT 1 FROM audit_events WHERE json_extract(payload, '$.runId') = ? AND created_at >= ? LIMIT 1`)
+        .get(row.id, cutoff);
+      if (recentActivity) continue;
+    }
 
     const finishedAt = new Date(now).toISOString();
-    const cause = staleRunningRunSweepCause(row.started_at);
-    const summary = staleRunningRunSweepSummary(row.started_at);
+    const summary = staleRunningRunSweepSummary(row.started_at, processStarted);
     const res = db
       .prepare(
         `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = ?
