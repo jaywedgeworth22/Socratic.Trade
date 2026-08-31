@@ -12,6 +12,48 @@ WAL as LTX files to an S3-compatible object store.
 `docs/rollouts/2026-08-07-litestream-b2-backup.md` and
 `docs/rollouts/2026-08-17-litestream-restore-drill.md`.
 
+**All three fleet apps (ST, CT, UM) run litestream IN-CONTAINER** since the August
+2026 Hetzner rebuild.  The 2026-08-01 host-level `litestream-congress` systemd unit
+was an interim measure and no longer exists — any doc describing Congress.Trade
+litestream on the host is historical.
+
+## B2 lifecycle caps restore depth
+
+All fleet B2 buckets carry lifecycle rules **hide after 14 days + delete hidden
+after 1 day**.  B2 applies these to litestream's LTX objects like any other file,
+so point-in-time restore depth from B2 is hard-capped at **~15 days** regardless
+of what litestream's own retention settings claim.  Do not plan a restore deeper
+than that from B2; the weekly R2 cold snapshot is the only older recovery point.
+
+## Weekly R2 cold snapshot is gzipped (2026-08-31)
+
+The weekly cold snapshot (`src/lib/r2-cold-snapshot.ts`, Sunday ~03:17 UTC due-job)
+uploads `cold-snapshots/app-YYYY-MM-DD.db.gz` — the better-sqlite3 `backup()` file
+gzip-streamed during the multipart upload (the raw DB reached ~9.7 GB, ~90% of the
+R2 free tier; compressed is expected at ~2.5-4 GB).  Retention is retain=1 across
+BOTH extensions, so the first successful `.gz` upload prunes the last legacy raw
+`.db` object.  **Restore from a cold snapshot now needs a gunzip step first:**
+
+```bash
+# Download (rclone/aws cli against the historic R2 bucket), then:
+gunzip app-2026-08-31.db.gz          # yields app-2026-08-31.db
+sqlite3 app-2026-08-31.db 'PRAGMA integrity_check;'   # expect: ok
+```
+
+After gunzip the file is a plain SQLite DB — treat it exactly like the old raw
+`.db` snapshot.
+
+## L1 suffix heal precedent (2026-08-31)
+
+A stuck ST L2 compaction (litestream 0.5.12 trying to upload ONE giant L2 file
+covering a multi-day L1 backlog, failing repeatedly) had been tripping the B2
+Class B download cap daily since 8/29.  Healed 2026-08-31 with the L1 suffix heal
+in its keep-above-snapshot-boundary variant: `scripts/litestream-l1-suffix-heal.py`
+keeps the newest contiguous L1 suffix, deletes older L1 plus all L2/L3 so Compact
+rebuilds small files, and never touches L0, L9, `cold-snapshots/`, or any other
+bucket (dry-run by default; `--apply` to delete).  Use that script — not ad-hoc
+deletes — if the pattern recurs.
+
 Local Mac notes below (`litestream.yml` + `scripts/run-litestream.sh`) are optional
 dev/sidecar history; production does **not** use Mac PM2 litestream.
 

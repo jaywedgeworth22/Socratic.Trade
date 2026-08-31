@@ -3,16 +3,26 @@
 // Owner directive (2026-08-08): with litestream's active replica moved to Backblaze B2
 // (PR #2584), the R2 bucket sits idle — use it intelligently as SECOND-PROVIDER disaster
 // recovery. Once a week (Sunday ~03:17 UTC, staggered off the top of the hour), take a
-// consistent better-sqlite3 `backup()` of the live DB to a temp file and multipart-upload
-// it to the historic R2 bucket under `cold-snapshots/app-<ISO-date>.db`, then prune to the
-// newest N (default 4) snapshots.
+// consistent better-sqlite3 `backup()` of the live DB to a temp file, stream it through
+// gzip, and multipart-upload the compressed stream to the historic R2 bucket under
+// `cold-snapshots/app-<ISO-date>.db.gz`, then prune to the newest N (default 1) snapshots
+// across BOTH extensions (`.db` legacy raw uploads and `.db.gz`).
 //
-// Budget stance: stays reliably far under the R2 free tier. One weekly run costs ~20
-// Class A ops (create + ~16 parts at 100 MB + complete + list + up to a couple deletes)
-// ≈ 90/month vs the 1M free-tier allowance; storage is retain×DB-size.  The live DB
-// is ~4.2 GB (2026-08-15), so retain is pinned at 1 (~4.2 GB of the 10 GiB free
-// tier).  Four copies would be ~17 GB and trip the 70% guard.  Host-verified
-// 2026-08-18: `R2_COLD_SNAPSHOT_DEFAULT_RETAIN=1`, `R2_COLD_SNAPSHOT_RETAIN`
+// Gzip (2026-08-31): the raw DB reached ~9.7 GB, putting one uncompressed weekly copy at
+// ~90% of the 10 GiB R2 free tier.  The upload now streams the backup file through node
+// zlib createGzip into sequential multipart parts — memory stays bounded at roughly one
+// part (default 100 MB) plus zlib buffers, never the whole file (the box has 16 GB of
+// SHARED RAM).  Expected compressed size ~2.5-4 GB.  No compression knob — always gzip.
+// RESTORE now needs a gunzip step first: download the `.db.gz`, `gunzip` it, then treat
+// the result exactly like the old raw `.db` snapshot (see docs/litestream.md).
+//
+// Budget stance: stays reliably far under the R2 free tier. One weekly run costs roughly
+// 30-45 Class A ops (create + ~25-40 compressed parts at 100 MB + complete + list + up to
+// a couple deletes) ≈ 200/month vs the 1M free-tier allowance; storage is
+// retain×compressed-size.  Retain is pinned at 1.  The retention pass counts + prunes
+// both `.db` and `.db.gz` objects, so the first successful `.gz` upload prunes the last
+// legacy raw `.db` object.  Host-verified 2026-08-18 (pre-gzip):
+// `R2_COLD_SNAPSHOT_DEFAULT_RETAIN=1`, `R2_COLD_SNAPSHOT_RETAIN`
 // unset, and `cold-snapshots/` holds exactly one object
 // (`app-2026-08-16.db`).  `R2_ARCHIVE_KEEP_GENERATIONS` is unused leftover
 // (empty `weekly/` prefix) and must not drive this lane.  `R2_COLD_SNAPSHOT_RETAIN`
@@ -39,8 +49,9 @@
 // Bare "fs"/"os"/"path" (not the "node:" scheme) so Next.js webpack can externalize this
 // module for server bundles — same trap as r2-usage.ts / egress-guard.
 import crypto from "crypto";
-import { closeSync, existsSync, openSync, readSync, readdirSync, statSync, unlinkSync } from "fs";
+import { createReadStream, existsSync, readdirSync, statSync, unlinkSync } from "fs";
 import { dirname, join } from "path";
+import { createGzip } from "zlib";
 import { audit, databasePath, getDb } from "./db";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import {
@@ -80,12 +91,17 @@ export const R2_COLD_SNAPSHOT_LAST_FAILURE_KEY = "r2coldsnap:lastFailure";
  * Matches Usage Monitor `R2_ARCHIVE_MAX_AGE_SECONDS` (weekly job + one-day slack).
  */
 export const R2_ARCHIVE_MAX_AGE_SECONDS = 8 * 24 * 3600;
-const KEY_PATTERN = /^cold-snapshots\/app-\d{4}-\d{2}-\d{2}\.db$/;
+/** Matches both the current gzipped uploads and legacy raw `.db` uploads so the
+ *  retention pass counts + prunes across both extensions (retain=1 semantics). */
+const KEY_PATTERN = /^cold-snapshots\/app-\d{4}-\d{2}-\d{2}\.db(\.gz)?$/;
 
 export interface R2ColdSnapshotLastSuccess {
   key: string;
   completedAt: string;
+  /** Uploaded object size (gzip-compressed as of 2026-08-31). */
   bytes: number;
+  /** Uncompressed backup size (absent on receipts written before gzip landed). */
+  rawBytes?: number;
 }
 
 export interface R2ColdSnapshotLastFailure {
@@ -211,35 +227,14 @@ export function nextR2ColdSnapshotDueAt(nowMs: number): { dueAtISO: string; dedu
   return { dueAtISO, dedupeKey: `week-${dueAtISO.slice(0, 10)}` };
 }
 
-export interface MultipartPartPlan {
-  partNumber: number;
-  offset: number;
-  length: number;
-}
-
-/** Split `totalBytes` into sequential parts of `partSizeBytes` (last part may be
- *  smaller). A zero-byte file still yields one empty part (S3 allows a single
- *  0-byte part). Pure. */
-export function planMultipartParts(totalBytes: number, partSizeBytes: number): MultipartPartPlan[] {
-  if (totalBytes <= 0) return [{ partNumber: 1, offset: 0, length: 0 }];
-  const parts: MultipartPartPlan[] = [];
-  let offset = 0;
-  let partNumber = 1;
-  while (offset < totalBytes) {
-    const length = Math.min(partSizeBytes, totalBytes - offset);
-    parts.push({ partNumber, offset, length });
-    offset += length;
-    partNumber += 1;
-  }
-  return parts;
-}
-
 /**
  * Retention: given a bucket listing, return the cold-snapshot keys to DELETE so only the
- * newest `retain` remain. Defensive: only keys matching our exact
- * `cold-snapshots/app-YYYY-MM-DD.db` pattern are ever candidates — historic litestream
- * objects (different prefix/shape) can never be pruned by this lane. Snapshot keys embed
- * the ISO date, so lexical sort == chronological sort. Pure.
+ * newest `retain` remain. Counts BOTH extensions: only keys matching our exact
+ * `cold-snapshots/app-YYYY-MM-DD.db` or `...db.gz` pattern are ever candidates — historic
+ * litestream objects (different prefix/shape) can never be pruned by this lane. Snapshot
+ * keys embed the ISO date, so lexical sort == chronological sort (a same-date `.db.gz`
+ * sorts after its `.db` twin, i.e. the gzipped upload is treated as newer). This is what
+ * prunes the last legacy raw `.db` object after the first successful `.gz` upload. Pure.
  */
 export function selectColdSnapshotsToPrune(keys: readonly string[], retain: number): string[] {
   const snapshots = keys.filter((k) => KEY_PATTERN.test(k)).sort().reverse();
@@ -393,6 +388,68 @@ async function abortMultipartUpload(cfg: R2ColdSnapshotConfig, key: string, uplo
   }
 }
 
+/**
+ * Stream the temp backup file through gzip into sequential multipart parts.
+ * Memory stays bounded at roughly ONE part (default 100 MB) plus zlib buffers —
+ * the ~10 GB raw backup is never buffered in full, and awaiting each part upload
+ * pauses the gzip stream (async-iterator backpressure) so compressed output can
+ * never pile up faster than it is shipped.
+ */
+async function uploadGzippedParts(
+  cfg: R2ColdSnapshotConfig,
+  key: string,
+  uploadId: string,
+  srcPath: string,
+  partSizeBytes: number,
+  deps: R2ColdSnapshotDeps,
+): Promise<{ completedParts: Array<{ partNumber: number; etag: string }>; compressedBytes: number }> {
+  const completedParts: Array<{ partNumber: number; etag: string }> = [];
+  let compressedBytes = 0;
+  let partNumber = 1;
+  let pending: Buffer[] = [];
+  let pendingBytes = 0;
+
+  const flush = async (body: Buffer): Promise<void> => {
+    const etag = await uploadPart(cfg, key, uploadId, partNumber, body, deps);
+    completedParts.push({ partNumber, etag });
+    partNumber += 1;
+  };
+
+  const gzip = createGzip();
+  const source = createReadStream(srcPath, { highWaterMark: 4 * 1024 * 1024 });
+  // pipe() does not forward source errors to its destination — destroy the gzip
+  // stream ourselves so the for-await below rejects instead of hanging forever.
+  source.on("error", (err) => gzip.destroy(err));
+  source.pipe(gzip);
+
+  try {
+    for await (const chunk of gzip as AsyncIterable<Buffer>) {
+      pending.push(chunk);
+      pendingBytes += chunk.length;
+      compressedBytes += chunk.length;
+      while (pendingBytes >= partSizeBytes) {
+        const joined = pending.length === 1 ? pending[0] : Buffer.concat(pending);
+        await flush(joined.subarray(0, partSizeBytes));
+        const rest = joined.subarray(partSizeBytes);
+        pending = rest.length > 0 ? [rest] : [];
+        pendingBytes = rest.length;
+      }
+    }
+    // Final (possibly short — S3 allows any size for the LAST part) flush.  gzip
+    // output is never zero bytes for any input, but keep the single-empty-part
+    // fallback so a pathological case still completes rather than erroring.
+    if (pendingBytes > 0 || completedParts.length === 0) {
+      await flush(pending.length === 1 ? pending[0] : Buffer.concat(pending));
+    }
+    return { completedParts, compressedBytes };
+  } finally {
+    // A thrown flush() exits the for-await early — destroy both streams so the
+    // backup file's fd cannot leak while the failed run is being cleaned up.
+    source.destroy();
+    gzip.destroy();
+  }
+}
+
 async function listColdSnapshotKeys(cfg: R2ColdSnapshotConfig, deps: R2ColdSnapshotDeps): Promise<string[]> {
   const keys: string[] = [];
   let continuation: string | undefined;
@@ -420,7 +477,10 @@ export interface R2ColdSnapshotRunResult {
   status: "ok" | "skipped" | "error";
   reason?: string;
   key?: string;
+  /** Uploaded (gzip-compressed) object size. */
   bytes?: number;
+  /** Uncompressed backup size. */
+  rawBytes?: number;
   parts?: number;
   pruned?: string[];
   durationMs?: number;
@@ -459,7 +519,7 @@ export async function performR2ColdSnapshot(
 
   const alert = deps.alertImpl ?? defaultAlert;
 
-  // Budget guard: the weekly upload is ~20 Class A ops, but if the month's Class A count
+  // Budget guard: the weekly upload is ~30-45 Class A ops, but if the month's Class A count
   // is already past 50% of the free tier something ELSE is burning ops — do not add to it.
   const classAPct = r2ColdSnapshotClassAPct();
   if (classAPct !== null && classAPct >= R2_COLD_SNAPSHOT_BUDGET_GUARD_PCT) {
@@ -483,7 +543,7 @@ export async function performR2ColdSnapshot(
 
   const startedAt = Date.now();
   const isoDate = new Date(now).toISOString().slice(0, 10);
-  const key = `${R2_COLD_SNAPSHOT_PREFIX}app-${isoDate}.db`;
+  const key = `${R2_COLD_SNAPSHOT_PREFIX}app-${isoDate}.db.gz`;
   const dbDir = dirname(databasePath());
 
   // Proactive cleanup: sweep any stale temp snapshot files from crashed or aborted prior runs
@@ -510,29 +570,17 @@ export async function performR2ColdSnapshot(
     // Consistent online backup — NEVER a raw copy of the live WAL-mode file.
     const backupImpl = deps.backupImpl ?? ((dest: string) => getDb().backup(dest));
     await backupImpl(tempPath);
-    const totalBytes = statSync(tempPath).size;
-    const plan = planMultipartParts(totalBytes, partSizeBytes);
+    const rawBytes = statSync(tempPath).size;
 
     uploadId = await createMultipartUpload(cfg, key, deps);
-    const completedParts: Array<{ partNumber: number; etag: string }> = [];
-    const fd = openSync(tempPath, "r");
-    try {
-      for (const part of plan) {
-        const buffer = Buffer.alloc(part.length);
-        if (part.length > 0) {
-          let read = 0;
-          while (read < part.length) {
-            const n = readSync(fd, buffer, read, part.length - read, part.offset + read);
-            if (n <= 0) throw new Error(`short read at offset ${part.offset + read}`);
-            read += n;
-          }
-        }
-        const etag = await uploadPart(cfg, key, uploadId, part.partNumber, buffer, deps);
-        completedParts.push({ partNumber: part.partNumber, etag });
-      }
-    } finally {
-      closeSync(fd);
-    }
+    const { completedParts, compressedBytes } = await uploadGzippedParts(
+      cfg,
+      key,
+      uploadId,
+      tempPath,
+      partSizeBytes,
+      deps,
+    );
     await completeMultipartUpload(cfg, key, uploadId, completedParts, deps);
     uploadId = undefined; // completed — nothing to abort from here on
 
@@ -554,20 +602,30 @@ export async function performR2ColdSnapshot(
       setInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY, {
         key,
         completedAt,
-        bytes: totalBytes,
+        bytes: compressedBytes,
+        rawBytes,
       } satisfies R2ColdSnapshotLastSuccess);
     } catch {
       /* health may lag until next success; never throw into the scheduler tick */
     }
     audit("r2_cold_snapshot.success", {
       key,
-      bytes: totalBytes,
-      parts: plan.length,
+      bytes: compressedBytes,
+      rawBytes,
+      parts: completedParts.length,
       pruned,
       retain: cfg.retain,
       durationMs,
     });
-    return { status: "ok", key, bytes: totalBytes, parts: plan.length, pruned, durationMs };
+    return {
+      status: "ok",
+      key,
+      bytes: compressedBytes,
+      rawBytes,
+      parts: completedParts.length,
+      pruned,
+      durationMs,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (uploadId) await abortMultipartUpload(cfg, key, uploadId, deps);
@@ -647,7 +705,8 @@ export async function drainR2ColdSnapshotJobs(
   deps: R2ColdSnapshotDeps = {},
 ): Promise<R2ColdSnapshotDrainResult> {
   const claimant = `r2-cold-snapshot:${process.pid}`;
-  // 45 min lease: ~16 sequential 100 MB parts can legitimately take a while.
+  // 45 min lease: gzip-streaming a ~10 GB backup into sequential 100 MB parts
+  // can legitimately take a while on the shared box.
   const jobs = claimDueJobs(R2_COLD_SNAPSHOT_JOB_TYPE, {
     limit: 1,
     leaseMs: 45 * 60_000,
@@ -669,6 +728,7 @@ export async function drainR2ColdSnapshotJobs(
           reason: result.reason,
           key: result.key,
           bytes: result.bytes,
+          rawBytes: result.rawBytes,
           parts: result.parts,
           prunedCount: result.pruned?.length ?? 0,
         });
