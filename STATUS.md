@@ -31,7 +31,8 @@ PITR granularity and the app's 168h snapshot retention stays authoritative.  Doc
 only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
 
 **Next action (blocker, CT only):** the CT `--apply` run passed every guard but had removed
-**zero** objects ~7 minutes into its delete phase, with the first doomed object still present
+**zero** objects 30 minutes into its delete phase — L1 had in fact *grown* from 2,413 to
+2,418 as replication outpaced it — with the first doomed object still present
 and no hide markers.  Real delete calls cycle ~8s each (vs 1.4s dry-run) because the loop
 re-lists the whole directory per `--include`, so it is O(n^2) and multi-hour; and a
 100%-failing run is indistinguishable from a slow one, because `rclone()` discards stderr and
