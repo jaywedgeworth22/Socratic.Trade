@@ -55,6 +55,7 @@ import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
 import { journalLane } from "./task-journal";
 import { pruneTaskJournal } from "./db-task-journal";
 import { withDeadline, SCHEDULER_BROKER_TIMEOUT_MS } from "./safety-maintenance";
+import { logError, logWarn, recordSchedulerTick } from "./sentry-metrics";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 export const MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY = "scheduler:managedVectorReconcile:lastAttempt";
@@ -270,7 +271,7 @@ export async function sendSentrySchedulerCheckIn(): Promise<void> {
       }
     );
   } catch (err) {
-    console.error("[scheduler] sentry cron check-in error:", err);
+    logError("scheduler.tick", { event: "cron_checkin_failed", error: safeErrorMessage(err) });
   }
 }
 
@@ -1128,7 +1129,7 @@ async function tickInner(): Promise<void> {
     await Promise.all(executing);
   } catch (err) {
     // Never let a thrown error kill the timer
-    console.error("[scheduler] tick error:", err);
+    logError("scheduler.tick", { event: "tick_error", error: safeErrorMessage(err) });
   }
 }
 
@@ -1138,12 +1139,19 @@ async function tickInner(): Promise<void> {
 // `tickInner` can never wedge the scheduler permanently.
 async function tick(): Promise<void> {
   if (tickGuardHost.__tickInFlight) {
-    console.warn("[scheduler] previous tick still in flight; skipping this interval");
+    logWarn("scheduler.overrun", { reason: "in_flight" });
+    recordSchedulerTick("overrun");
     return;
   }
   tickGuardHost.__tickInFlight = true;
+  const started = Date.now();
   try {
     await tickInner();
+    const durationMs = Date.now() - started;
+    recordSchedulerTick(durationMs > TICK_MS ? "overrun" : "ok", durationMs);
+  } catch (err) {
+    recordSchedulerTick("error", Date.now() - started);
+    throw err;
   } finally {
     tickGuardHost.__tickInFlight = false;
   }

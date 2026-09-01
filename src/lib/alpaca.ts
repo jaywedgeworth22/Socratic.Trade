@@ -423,7 +423,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
       }
       return body.result;
     } catch (e) {
-      console.warn(`Alpaca MCP tool call "${toolName}" failed, falling back to REST:`, e);
+      const { logWarn, recordBrokerCall } = await import("./sentry-metrics");
+      recordBrokerCall("alpaca", `mcp:${toolName}`, 0, "failure");
+      logWarn("broker.call", {
+        broker: "alpaca",
+        endpoint: `mcp:${toolName}`,
+        error: e instanceof Error ? e.message : String(e)
+      });
       return fallbackFn();
     }
   }

@@ -16,6 +16,8 @@ import {
   tripPineconeWuBreaker
 } from "./pinecone-wu-breaker";
 import { applyOpenRouterClassifierEnrichment } from "./llm-call";
+import { logError, logWarn, recordEmbedFailure, recordRagRejection } from "./sentry-metrics";
+import { withGenAiSpan, withSentrySpan } from "./sentry-gen-ai";
 import { timeSync as timeSyncGuard } from "./slow-sync-guard";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
@@ -1606,6 +1608,22 @@ async function captureRagSentryMessage(
   leaseGuard?: VectorStoreLeaseGuard
 ): Promise<void> {
   assertVectorStoreLease(leaseGuard);
+  const provider = context.provider != null ? String(context.provider) : undefined;
+  if (message.toLowerCase().includes("embedding integrity rejection")) {
+    recordRagRejection("embedding_integrity", provider ?? "unknown");
+  }
+  if (level === "warning") {
+    logWarn(message.toLowerCase().includes("embedding integrity") ? "rag.rejected" : "rag.warning", {
+      provider,
+      operation: context.operation != null ? String(context.operation) : undefined,
+      lane: context.lane != null ? String(context.lane) : undefined
+    });
+  } else {
+    logError("rag.error", {
+      provider,
+      operation: context.operation != null ? String(context.operation) : undefined
+    });
+  }
   if (!process.env.SENTRY_DSN) return;
   try {
     const mod = (await import("@sentry/nextjs")) as typeof import("@sentry/nextjs") & {
@@ -2492,12 +2510,18 @@ async function embedWithRetry(
             headers["X-Title"] = "Socratic.Trade";
             applyOpenRouterClassifierEnrichment(body, { userId, service: "rag", feature: "embed" });
           }
-          const response = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(body),
-            signal
-          });
+          const response = await withGenAiSpan(
+            url,
+            { method: "POST", body: JSON.stringify(body) },
+            () =>
+              fetch(url, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(body),
+                signal
+              }),
+            { operation: "embeddings", model: modelName, system: isOpenRouter ? "openrouter" : "siliconflow" }
+          );
           if (!response.ok) {
             throw new Error(`Embedding API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
           }
@@ -2846,8 +2870,8 @@ async function embedDocumentsLaneOrSkip(
   } catch (error) {
     if (error instanceof VectorStoreLeaseLostError) throw error;
     assertVectorStoreLease(leaseGuard);
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[vector-db] Embed batch failed; continuing remaining batches: ${message}`);
+    recordEmbedFailure(activeEmbeddingProvider(userId), "embed-api-failed");
+    logWarn("embed.failed", { provider: activeEmbeddingProvider(userId), error_type: "embed-api-failed" });
     return { rejected: Math.max(1, inputs.length), reason: "embed-api-failed" };
   }
 }
@@ -6893,10 +6917,11 @@ export async function retrieveContextDetailed(
           endEmbed?.({ error });
           // Soft-degrade this query only. Multi-query already isolates per variant; the
           // single-query caller treats null as lookup_failed and Green/Red skip RAG.
-          console.warn(
-            `[vector-db] Query embed failed; retrieval continues without this query:`,
-            error instanceof Error ? error.message : String(error)
-          );
+          recordEmbedFailure(activeEmbeddingProvider(userId), "query-embed-failed");
+          logWarn("embed.failed", {
+            provider: activeEmbeddingProvider(userId),
+            error_type: "query-embed-failed"
+          });
           return null;
         }
         meterEmbed([q], activeModel, userId, embedProvider); // count only on a cache MISS; book under the requesting userId
@@ -6910,7 +6935,6 @@ export async function retrieveContextDetailed(
         if (embedding != null) {
           const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
           audit("vector_embedding_integrity", { rejected: 1, context: "query" }, userId);
-          console.warn(`[vector-db] Rejected malformed query embedding (dim=${dim}).`);
           void captureRagSentryMessage("warning", "RAG query embedding integrity rejection", {
             provider: activeEmbeddingProvider(userId),
             operation: "embed query",
@@ -6999,12 +7023,15 @@ export async function retrieveContextDetailed(
           );
         }
         return withRagApiHealth("pinecone", pineconeSource, userId, operation, () =>
-          index.query({
-            vector: embedding,
-            topK: fetchK,
-            filter,
-            includeMetadata: true
-          })
+          withSentrySpan("pinecone.query", "db", () =>
+            index.query({
+              vector: embedding,
+              topK: fetchK,
+              filter,
+              includeMetadata: true
+            }),
+            { "db.system": "pinecone", "db.operation": "query" }
+          )
         ) as Promise<{ matches: any[] }>;
       };
       let denseResults: any[];

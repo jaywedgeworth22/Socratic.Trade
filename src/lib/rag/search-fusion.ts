@@ -302,7 +302,14 @@ export async function retrieveFusedContext(
       }
     }
   } catch (embedErr) {
-    console.warn("[search-fusion] MMR embedding failed; using Jaccard fallback:", embedErr instanceof Error ? embedErr.message : String(embedErr));
+    void import("../sentry-metrics").then(({ logWarn, recordEmbedFailure }) => {
+      recordEmbedFailure("search-fusion", "mmr-embed-failed");
+      logWarn("embed.failed", {
+        provider: "search-fusion",
+        error_type: "mmr-embed-failed",
+        error: embedErr instanceof Error ? embedErr.message : String(embedErr)
+      });
+    });
   }
 
   if (queryVec && candVectors) {

@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-09-01 GROK — Sentry fleet adoption remainder (tunnel, iOS DSN, profiling, logger, gen_ai)
+
+Remaining ST Sentry work after AG #3146 (`enableLogs`, Replay 0.01/1.0, traces 0.2, no Vercel monitors).  Enables `tunnelRoute: "/monitoring"` with middleware matcher + public-prefix exclusion so ad-blockers cannot drop browser envelopes.  iOS `SentryTelemetry.swift` no longer hardcodes a DSN fallback — Info.plist `SENTRY_DSN` only, skip init if missing; Cocoa Session Replay with mask-all-text / mask-all-images / no screenshots; `releaseName`/`dist` from `CFBundleShortVersionString`/`CFBundleVersion`.  Server continuous profiling via `@sentry/profiling-node` on `sentry.server.config.ts` only (`profileLifecycle: "trace"`).  Sparse `Sentry.logger` + Application Metrics from existing `src/lib/sentry-metrics.ts` on scheduler tick/overrun, rag.rejected, embed.failed, broker.call.  OpenRouter/Voyage/Pinecone/earningscalls HTTP wrapped in `gen_ai.*` / `db` spans without prompt contents.  Official `@sentry/nextjs` AI integrations stay registered for any SDK path.
+
+**Coolify (not in this PR):** set `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true` at **build time** to actually emit web Replay.  The code default stays off.  iOS TestFlight ship must pass `SENTRY_DSN` as an xcodebuild setting or Cocoa stays inert.
+
+Branch `grok/sentry-fleet-adoption`, worktree `~/apps/trading-grok-sentry-adopt`.  Rollout: `docs/rollouts/2026-09-01-sentry-fleet-adoption.md`.
+
 ## 2026-09-01 CLAUDE — L1 boundary-trim hardened, and Congress.Trade found wedged too
 
 Closes the three guard gaps the #3140 review raised, plus two defects that only showed up
