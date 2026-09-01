@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
 <!--
   TEMPLATE launchd job for scripts/sync-provider-knobs.sh (NOT installed by default).
 
-  Runs the provider-knob sync every 30 minutes with --apply, so the trading app's
+  Runs the provider-knob sync every 30 minutes with the apply flag, so the trading app's
   Infisical prod knobs stay in sync with the plans tracked in the API-Usage-Monitor.
 
   INSTALL (owner action; see docs/rollouts/2026-07-10-provider-knob-sync.md):
@@ -12,7 +15,7 @@
        EnvironmentVariables (otherwise slack-sync.sh is a safe no-op).
     3. cp scripts/com.jay.provider-knob-sync.plist ~/Library/LaunchAgents/
        launchctl load  -w ~/Library/LaunchAgents/com.jay.provider-knob-sync.plist
-    4. Dry-run first WITHOUT --apply to confirm the diff before trusting the writer:
+    4. Dry-run first WITHOUT the apply flag to confirm the diff before trusting the writer:
        bash scripts/sync-provider-knobs.sh
 
   UNINSTALL:
@@ -22,9 +25,6 @@
   The job is safe to leave running: monitor-unreachable or in-sync runs exit 0
   and write nothing; it only ever writes the allow-listed provider knobs.
 -->
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
   <key>Label</key>
   <string>com.jay.provider-knob-sync</string>
 

@@ -3,6 +3,21 @@
 ## 2026-08-31 AG — Sentry observability expansion: Session Replay, trace sampling, and privacy-safe telemetry
 
 Expands Sentry observability in Socratic.Trade utilizing the fleet's $5,000 credit sponsored tier: enabled masked Session Replay by default on web client (`replaysOnErrorSampleRate: 1.0`, `replaysSessionSampleRate: 0.1`) with complete text and media redaction, raised default trace sampling to 0.2 across server/edge/client, and verified inert behavior when Sentry env vars are absent. Rollout: `docs/rollouts/2026-08-31-sentry-observability-expansion.md`.
+## 2026-09-01 CLAUDE — PR #3139 plist comment: actually fix the XML `--` bug
+
+PR #3139 claimed moving the template comment above `<!DOCTYPE>` down into `<dict>` fixed
+`plistlib.loads` raising `ExpatError: not well-formed` on
+`scripts/com.jay.provider-knob-sync.plist` — it did not.  XML comments cannot contain the
+sequence `--` anywhere in their body regardless of position, and the relocated comment
+still had two literal `--apply` mentions (lines 8 and 18).  `chatgpt-codex-connector`
+caught this and was right: `plistlib.load` on the PR's head still raised the identical
+error.  Reworded both `--apply` mentions to "the apply flag" (no `--` sequence remains in
+the comment); the real `--apply` CLI argument in `<key>ProgramArguments</key>` is untouched
+since it's a `<string>` value, not comment text.  Verified with `python3 -c "import
+plistlib; plistlib.load(open('scripts/com.jay.provider-knob-sync.plist','rb'))"` on both
+`/usr/bin/python3` and `/opt/homebrew/bin/python3` — parses clean now, raised before.  No
+repo test/CI step runs plistlib against this file.  Rollout:
+`docs/rollouts/2026-09-01-pr-3139-plist-comment-fix.md`.
 
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
 
