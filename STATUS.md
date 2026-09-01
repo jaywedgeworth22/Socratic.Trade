@@ -1,5 +1,27 @@
 # Current Status
 
+## 2026-08-31 GROK — Top-to-bottom full-stack audit (web, iOS, backend)
+
+Report-only.  Branch `grok/full-stack-audit`, worktree `~/apps/trading-grok-full-audit`, board `52592a4d`, tree `ff7a562d9`.  Nine-agent scan plus orchestrator file:line verification.  Catalog: `docs/reviews/2026-08-31-grok-full-stack-audit.md`.  Still open on `main`: Alpaca `stop_market` write (`d4cb5e75`), MCP place timeout REST fallback (`ef0dccb3`), any-`client_order_id` provenance (`d36c2233`), oldest-500 fills, iOS `uniqueKeysWithValues`, web 401 freeze.  Guardrails Discard and `/mobile` redirect are fixed.  Do not implement in this PR.  Do not steal Claude `06df80cf`.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-31-grok-full-stack-audit.md`.
+
+## 2026-08-31 CLAUDE — Backup remediation: gzip weekly R2 cold snapshot + log rotation
+
+The weekly R2 cold snapshot now gzip-streams during upload
+(`cold-snapshots/app-YYYY-MM-DD.db.gz`, ~2.5-4 GB expected vs 9.7 GB raw at ~90%
+of the R2 free tier); retention prunes across both `.db` and `.db.gz` so the
+legacy `app-2026-08-30.db` deletes after the first gzipped success.  Restore
+now needs `gunzip` first — recipe in `docs/litestream.md`.  Container boot
+rotates `/app/data/litestream-runtime.log` (was 237 MB) at 64 MB, keeping the
+newest 16 MB.  Docs: B2 lifecycle hide-14d/delete-1d hard-caps B2 restore depth
+at ~15 days; all three apps run litestream in-container; 2026-08-31 L1 suffix
+heal precedent recorded.  PR #3135 merged (squash `0d69d9063`); the deploy is
+correctly deferred by the weekday RTH latch (Monday; build refused 14:39 UTC
+with `rth-blocked`) and the post-close 21:20 UTC drain ships it — do not HOTFIX
+or hand-trigger.  Next action: after the drain, `bash scripts/verify-deploy-sha.sh
+0d69d9063`; then verify the first `.gz` upload after Sunday 03:17 UTC and the
+rotation line on that boot.  Rollout:
+`docs/rollouts/2026-08-31-backup-remediation.md`.
+
 ## 2026-08-30 BF-Fixer — PR #3120 Codex thread unstick
 
 HEAD `bab1cb840` was MERGEABLE but BLOCKED on five unresolved Codex threads.

@@ -1,4 +1,5 @@
 import { getDb, resolveApiKey } from "../db";
+import { siliconflowBaseUrl } from "../siliconflow-base";
 import { retrieveContextDetailed, getClients } from "../vector-db";
 import { applyOpenRouterClassifierEnrichment } from "../llm-call";
 import { providerRequestIdFromPayload } from "../llm-usage";
@@ -45,7 +46,7 @@ export async function fetchAlternativeEmbedding(texts: string[], userId: string 
   const useSiliconFlow = !useOpenRouter && !!siliconflowKey && !siliconflowKey.startsWith("mock");
   if (!useSiliconFlow && !useOpenRouter) return null;
 
-  const url = useSiliconFlow ? "https://api.siliconflow.cn/v1/embeddings" : "https://openrouter.ai/api/v1/embeddings";
+  const url = useSiliconFlow ? `${siliconflowBaseUrl()}/v1/embeddings` : "https://openrouter.ai/api/v1/embeddings";
   const model = useSiliconFlow ? "BAAI/bge-m3" : "baai/bge-m3";
   const apiKey = useSiliconFlow ? siliconflowKey : openrouterKey;
   const headers: Record<string, string> = {

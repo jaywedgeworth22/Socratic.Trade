@@ -1,5 +1,6 @@
 import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-database/pinecone";
 import crypto from "crypto";
+import { siliconflowBaseUrl } from "./siliconflow-base";
 import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
@@ -2477,7 +2478,7 @@ async function embedWithRetry(
             });
           }
 
-          const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : "https://api.siliconflow.cn/v1/embeddings";
+          const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : `${siliconflowBaseUrl()}/v1/embeddings`;
           const headers: Record<string, string> = {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${apiKey}`
@@ -2648,7 +2649,7 @@ export async function rerankMatches(
           });
         }
 
-        const url = isOpenRouter ? "https://openrouter.ai/api/v1/rerank" : "https://api.siliconflow.cn/v1/rerank";
+        const url = isOpenRouter ? "https://openrouter.ai/api/v1/rerank" : `${siliconflowBaseUrl()}/v1/rerank`;
         const rerankHeaders: Record<string, string> = {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`
