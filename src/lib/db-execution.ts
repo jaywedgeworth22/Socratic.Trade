@@ -550,13 +550,14 @@ export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, s
 export function markStaleRunningRuns(now: number = Date.now()): number {
   const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
   const processStarted = processStartedAtMs();
+  const processBootCutoff = new Date(processStarted - PROCESS_RESTART_DETECT_SKEW_MS).toISOString();
   const db = getDb();
   const stale = db
     .prepare(
       `SELECT id, user_id, connected_account_id, started_at FROM strategy_runs
-       WHERE status = 'running' AND started_at < ?`
+       WHERE status = 'running' AND (started_at < ? OR started_at < ?)`
     )
-    .all(cutoff) as Array<{
+    .all(cutoff, processBootCutoff) as Array<{
       id: string;
       user_id: string;
       connected_account_id: string | null;
