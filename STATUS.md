@@ -35,21 +35,23 @@ delete**.  Established by a **census of the doomed set**, not the level count (a
 while replication adds) nor the progress line (which merges `deleted` with `failed`): new
 arrivals all sit above the boundary, so the at-or-below-boundary count drops only on a real
 delete.  After `progress 600/2362` it was still exactly 2,362 - its starting value.  Zero of
-600 attempted deletes succeeded.  It will grind
-~8 hours and report `deleted=0 failed=2362`.  Leading hypothesis is a host `rclone` `[b2]`
-key without `deleteFiles`, which a dry run cannot detect.  **Fix the credential or disarm the
-CT timers before 2026-09-02 00:04 UTC**, and kill the in-flight run.  ST's earlier heals went
-through a different credential path (`B2_KEY_ID`/`B2_APPLICATION_KEY` via
-`litestream-l1-suffix-heal.py`), so prove one ST delete through this tool before trusting the
-ST units either.  Original symptom, for the record: zero deletions with the first doomed object still present
-and no hide markers.  Real delete calls cycle ~8s each (vs 1.4s dry-run) because the loop
-re-lists the whole directory per `--include`, so it is O(n^2) and multi-hour; and a
-100%-failing run is indistinguishable from a slow one, because `rclone()` discards stderr and
-the caller counts failures without naming the object or reason.  Read the terminal
-`APPLIED app=congress deleted=N failed=M` line in
-`/var/log/fleet-backup/l1-trim-congress-20260901.log` and re-count CT L1 before trusting the
-armed CT timers.  If `failed` is large, suspect the host `rclone` `[b2]` key's `deleteFiles`
-capability.  ST's half is unaffected by that question.
+600 attempted deletes succeeded.  Left alone it will grind ~8 hours and report
+`deleted=0 failed=2362`.
+
+Leading hypothesis is a host `rclone` `[b2]` key without `deleteFiles`, which a dry run
+cannot detect because dry runs never exercise the delete permission.  **The ST units use that
+same remote, so treat them as equally suspect** - CT's result does not prove ST will fail, but
+nothing here shows it will succeed either.  ST's earlier heals are not evidence: they ran
+through `scripts/litestream-l1-suffix-heal.py` with `B2_KEY_ID` / `B2_APPLICATION_KEY` from
+the environment, a *different* credential path from this tool's host `rclone` remote.
+
+Before 2026-09-02 00:04 UTC: prove one real delete by hand with `-vv` and read the stderr,
+then either fix the credential or disarm **all six** units (`systemctl stop l1trim-st-*.timer
+l1trim-ct-*.timer`).  Kill the in-flight CT run either way.  Two further traps worth knowing:
+the loop is O(n^2) and multi-hour (~8s per real call vs 1.4s dry-run, because it re-lists the
+whole directory per `--include`), and a 100%-failing run is indistinguishable from a slow one
+from the log alone, since `rclone()` discards stderr and the caller counts failures without
+naming the object or reason.
 
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed (PR #3140, `271e5ff8e`)
 

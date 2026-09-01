@@ -227,21 +227,26 @@ trade-off above, it must never be.
 
 ## 5. Next Steps & Blockers
 
-1. **The CT delete path is broken - fix it before the timers fire.**  This is no longer an
-   open question: 200 completed calls removed zero objects, so the deletes are failing 100%.
-   Establish *why* by running one real delete by hand and reading rclone's stderr, e.g.
-   `rclone delete b2:jays-congress-trade-eu/congress-trade/db.sqlite/0001/ --include
-   "/<one-doomed-name>" --b2-hard-delete -vv`.  The leading hypothesis is that the host
-   `rclone` `[b2]` application key lacks `deleteFiles`; a `--dry-run` cannot detect that,
-   which is why the tool's dry runs all looked healthy.  **The three armed CT units will fail
-   the same way**, each burning ~8 hours and thousands of Class A/C calls, so either fix the
-   credential or disarm the CT half (`systemctl stop l1trim-ct-0004.timer
-   l1trim-ct-0020.timer l1trim-ct-0040.timer`) before 2026-09-02 00:04 UTC.  Also kill the
-   in-flight run, which will otherwise grind until roughly 12:40Z for nothing.
-   **ST is a separate question** - its L1 dropped 756 -> 172 under earlier heals, but those
-   ran through `scripts/litestream-l1-suffix-heal.py` with `B2_KEY_ID` / `B2_APPLICATION_KEY`
-   from the environment, which is a *different* credential path from this tool's host
-   `rclone` remote.  Prove one ST delete works before trusting the ST units either.
+1. **The delete path is broken - fix it before the timers fire.**  This is no longer an open
+   question: after 600 completed calls the doomed-set census was unchanged at 2,362, so the
+   deletes are failing 100%.  Establish *why* by running one real delete by hand and reading
+   rclone's stderr, e.g. `rclone delete
+   b2:jays-congress-trade-eu/congress-trade/db.sqlite/0001/ --include "/<one-doomed-name>"
+   --b2-hard-delete -vv`.  The leading hypothesis is that the host `rclone` `[b2]`
+   application key lacks `deleteFiles`; a `--dry-run` cannot detect that, which is why the
+   tool's dry runs all looked healthy.
+
+   **If that is the cause it applies to all six units, not just CT's three** - the ST units
+   invoke the same tool against the same host `rclone` remote.  CT's result does not *prove*
+   ST will fail, but nothing observed here shows it will succeed, and ST's earlier heals are
+   not evidence either: those ran through `scripts/litestream-l1-suffix-heal.py` with
+   `B2_KEY_ID` / `B2_APPLICATION_KEY` from the environment, a *different* credential path.
+   Treat all six as unverified until one real delete is proven through this tool.
+
+   Before 2026-09-02 00:04 UTC, either fix the credential or disarm every unit
+   (`systemctl stop l1trim-st-0004.timer l1trim-st-0020.timer l1trim-st-0040.timer
+   l1trim-ct-0004.timer l1trim-ct-0020.timer l1trim-ct-0040.timer`).  Kill the in-flight CT
+   run either way - it will otherwise grind until roughly 12:40Z for nothing.
 
 2. **Re-space or lock the armed retries before they fire (P1, from the #3142 review).**  The
    three attempts per app are 16 and 20 minutes apart, but a large trim runs for hours and
