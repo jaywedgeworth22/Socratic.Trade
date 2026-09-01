@@ -29,9 +29,11 @@ Exit codes: 0 ok/no-op, 1 delete failures, 2 no usable snapshot,
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 
 APPS = {
@@ -45,6 +47,8 @@ MIN_SNAPSHOT_BYTES = 100 * 1024 * 1024
 MIN_SNAPSHOT_RATIO = 0.5
 # Above this L1 count, "nothing superseded" means the boundary did not advance.
 LARGE_L1 = 200
+# Objects per batched delete call.
+DELETE_CHUNK = 500
 
 
 def log(msg: str) -> None:
@@ -167,20 +171,49 @@ def main() -> int:
         log("DRY RUN - rerun with --apply to delete %d objects" % len(doomed))
         return 0
 
-    deleted = failed = 0
-    for nm, _sz, _rng in doomed:
+    # Delete in batches via --files-from.  One --include delete per object re-lists the
+    # whole prefix every time (O(n^2)); on Congress.Trade's 2400-object L1 that measured
+    # ~12s per delete.  A batched --files-from run lists once per chunk instead.
+    target = "b2:%s/%s/0001/" % (bucket, prefix)
+    sent = errors = 0
+    for start in range(0, len(doomed), DELETE_CHUNK):
+        chunk = doomed[start:start + DELETE_CHUNK]
+        handle, listfile = tempfile.mkstemp(prefix="l1-trim-", suffix=".txt")
         try:
-            # --b2-hard-delete: without it rclone only writes a hide marker, so the
-            # bytes stay billed until the bucket lifecycle reaper catches up a day later.
-            rclone(["delete", "b2:%s/%s/0001/" % (bucket, prefix),
-                    "--include", "/%s" % nm, "--b2-hard-delete"])
-            deleted += 1
-        except Exception:
-            failed += 1
-        if (deleted + failed) % 200 == 0:
-            log("progress %d/%d" % (deleted + failed, len(doomed)))
-    log("APPLIED app=%s deleted=%d failed=%d" % (args.app, deleted, failed))
-    return 1 if failed else 0
+            with os.fdopen(handle, "w") as fh:
+                fh.write("".join(nm + "\n" for nm, _sz, _rng in chunk))
+            try:
+                # NOT --b2-hard-delete: the host's scoped fleet-backup-writer key may
+                # hide versions but gets "Unknown 401 (401 unauthorized)" on
+                # b2_delete_file_version, so a hard delete silently deletes nothing
+                # (measured 2026-09-01: ~800 no-op "deletes" against Congress.Trade).
+                # A hide is enough to unwedge compaction -- litestream stops seeing the
+                # object immediately -- and the bucket's own lifecycle rule
+                # (daysFromHidingToDeleting=1) frees the bytes about a day later.
+                # Hard deletes need the B2 master key; run the trim from an operator
+                # workstation if you need the space back the same hour.
+                rclone(["delete", target, "--files-from", listfile,
+                        "--transfers", "16", "--checkers", "16"])
+            except Exception:
+                errors += 1
+            sent += len(chunk)
+            log("progress %d/%d" % (sent, len(doomed)))
+        finally:
+            try:
+                os.unlink(listfile)
+            except OSError:
+                pass
+
+    # Trust the bucket, not the exit codes: re-list and count what actually survived.
+    remaining = {nm for nm, _s, _t in listing(bucket, prefix, "0001")}
+    survivors = [nm for nm, _sz, _rng in doomed if nm in remaining]
+    deleted = len(doomed) - len(survivors)
+    log("APPLIED app=%s deleted=%d survived=%d batch_errors=%d"
+        % (args.app, deleted, len(survivors), errors))
+    if survivors:
+        log("first survivors: %s" % ", ".join(survivors[:5]))
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

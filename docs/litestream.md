@@ -314,7 +314,7 @@ Unparseable object names are warned about and skipped, never deleted.
 | Code | Meaning |
 |---|---|
 | 0 | Deleted successfully, or a legitimate no-op (small L1, nothing superseded), or a dry run |
-| 1 | One or more deletes failed - **or** an `rclone lsl` listing raised, since that propagates uncaught and Python exits 1 on the traceback.  Read the log: a listing failure produces no `APPLIED` line at all |
+| 1 | Doomed objects **survived** the trim - measured by re-listing the bucket afterwards, not inferred from rclone's return codes.  Also covers an `rclone lsl` listing that raised, since that propagates uncaught and Python exits 1 on the traceback; the tell is that a listing failure produces no `APPLIED` line at all |
 | 2 | No usable L9 snapshot |
 | 3 | The snapshot failed a safety guard (too small, shrank, or too old) |
 | 4 | Trimming would leave a restore hole |
@@ -325,54 +325,62 @@ Unparseable object names are warned about and skipped, never deleted.
 certainly not "compaction recovered".**  A dry run exits 0, and so does a legitimate no-op
 with nothing superseded.  An operator reading only `systemctl status` can therefore see
 success while the entire L1 backlog is still sitting there.  To establish that deletion
-actually happened, require an `APPLIED ... deleted=N failed=M` line with a non-zero `N`, or
-re-count the level.  To establish that the *wedge* is fixed, look for
-`msg="compaction complete" ... level=2` and for the L2 object's `<min>` TXID advancing.
+actually happened, require an `APPLIED ... deleted=N survived=M` line with a non-zero `N` -
+those figures are read back off the bucket, so they can be trusted.  To establish that the
+*wedge* is fixed, look for `msg="compaction complete" ... level=2` and for the L2 object's
+`<min>` TXID advancing.
 
-### Deletes must be hard deletes
+### Deletes are HIDES, not hard deletes - and that is deliberate
 
-Backblaze B2 is versioned.  A plain `rclone delete` writes a **hide marker** and leaves the
-prior version in place, so the object stops being listed while its bytes stay **billed**
-until the bucket lifecycle reaper collects them - roughly a day later.  A trim that "worked"
-therefore frees nothing measurable on the invoice for 24 hours, which reads exactly like the
-trim having failed.
+B2 is versioned, so `rclone delete` writes a **hide marker** and leaves the prior version in
+place.  `--b2-hard-delete` removes the version outright.  The obvious conclusion is that the
+tool should always hard-delete.  It must not, from this host, and the reason cost a whole run
+to learn.
 
-This was measured on the fleet, not inferred: billed B2 storage read **199.59 GB** while the
-logical footprint of every bucket was **126.49 GB** - a ~73 GB overhang of hidden-but-billed
-versions.  The tool passes `--b2-hard-delete` on every delete call so the version goes away
-immediately.  Any future B2 cleanup script in this fleet must do the same.
+**The host's scoped `fleet-backup-writer` key can hide a version but cannot delete one.**  It
+returns `Unknown 401 (401 unauthorized)` on `b2_delete_file_version`.  With
+`--b2-hard-delete` set, rclone still reports progress while removing **nothing** - measured
+2026-09-01, roughly 800 "deletes" against Congress.Trade left the object count unchanged (it
+rose, from new L1 arrivals).  Verified on a single object both ways: hard delete returns 401
+and the file survives; a plain delete via `--files-from` removes it from listings.
 
-Listings and deletes are Backblaze **Class A/C** transactions.  They are not metered against
-the Class B download cap, so this tool works *while downloads are capped* - which is exactly
-the state the wedge puts the bucket in.
+A hide is sufficient for the job this tool exists to do.  Litestream stops seeing the object
+immediately, so compaction unwedges at once, and the bucket's own lifecycle rule
+(`daysFromHidingToDeleting=1`) frees the bytes about a day later.
 
-### What the delete phase looks like, and why it is slow
+What you give up is **same-hour space reclamation**, and that is where the billing lesson
+still bites: hidden versions stay billed until the reaper collects them.  That overhang was
+measured across the fleet - **199.59 GB** billed against a **126.49 GB** logical footprint,
+~73 GB of hidden-but-billed versions.  So the distinction absolutely matters; the host simply
+cannot avoid it.  Hard deletes need the **B2 master key**, so if you need the space back the
+same hour, run the trim from an operator workstation with that key instead.
 
-Know this before watching a log and concluding the run has hung.  Each delete shells out to
-`rclone delete <dir> --include /<name>`, and rclone lists the *whole* directory to resolve
-the filter - so an N-object trim performs N full listings.  Measured against Congress.Trade's
-2,413-object L1 on 2026-09-01, real delete calls cycled roughly every **8 seconds**, which
-puts a 2,362-object trim in the multi-hour range.  The progress line prints only every 200
-objects, so the first ~25 minutes are silent by design.
+The `NOT --b2-hard-delete` comment in the script records this.  **Keep it** - the flag looks
+like an obvious improvement to anyone who has not seen the 401.
 
-Failure accounting is currently a bare counter: a failed delete is caught, counted, and *not*
-attributed to an object or a reason (rclone's stderr is discarded).  A run failing 100% of
-its deletes therefore looks identical to a slow successful one, and even the progress line
-does not separate `deleted` from `failed`.  **Do not conclude a trim worked from the absence
-of errors - re-count the level and compare.**
+### The delete phase: batched, and verified against the bucket
 
-This is not hypothetical.  On 2026-09-01 the Congress.Trade `--apply` run passed every guard
-and then failed *every* delete.  Note *how* that was established, because the obvious method
-does not work: the level count is a **net** figure (Litestream keeps adding L1 while the trim
-runs), and the progress line combines `deleted` and `failed`, so neither one alone proves
-anything.  What proves it is a **census of the doomed set**: every object Litestream
-adds during the run sits *above* the boundary, so the count of objects still at or below the
-boundary is immune to new arrivals and drops by exactly one per successful delete.  After
-`progress 600/2362` that count was still exactly 2,362 - its starting value.  Zero of 600
-attempted deletes had succeeded.  The leading hypothesis is a host `rclone` `[b2]` application key
-without `deleteFiles` - which a dry run can never detect, because dry runs do not exercise
-the delete permission.  Before trusting any armed unit, prove one real delete by hand with
-`-vv` and read the stderr.  Details in `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
+Deletes are issued in chunks of `DELETE_CHUNK = 500` names written to a temp file and passed
+as one `rclone delete --files-from <file> --transfers 16 --checkers 16` per chunk.
+
+This replaced a per-object `rclone delete --include "/<name>"` loop, which was **O(n^2)**:
+resolving an `--include` filter re-lists the entire prefix, so an N-object trim performed N
+full listings.  Measured against Congress.Trade's ~2,400-object L1 at **~12 s per delete** -
+roughly 8 hours for 2,362 objects.  Batching lists the prefix once per chunk instead of once
+per object.
+
+**The run no longer trusts rclone's exit codes.**  After applying, it re-lists L1 and reports
+what actually survived:
+
+```
+APPLIED app=congress deleted=N survived=M batch_errors=E
+```
+
+`deleted` and `survived` are computed from the bucket, not from return codes, and any
+survivors are named in a following line.  This exists because the 401 above produced a run
+that reported clean progress the whole way through while deleting nothing - exit codes were
+lying, and the only honest source was the bucket itself.  A non-empty `survived` returns
+exit 1.
 
 ### Known defects in the current build - read before arming anything
 
@@ -380,15 +388,13 @@ These are confirmed by reproduction, not suspected.  All three need a **paired r
 change (the repo copy is kept byte-identical to the installed tool), so none is fixed in the
 build documented here.
 
-1. **The tool has no lock, and concurrent runs will collide.**  Nothing prevents two
+1. **The tool has no lock, and concurrent runs can still collide.**  Nothing prevents two
    invocations for the same app from overlapping.  Each snapshots its own delete list up
-   front, so a second run started while the first is still deleting will re-list and re-issue
-   hard deletes for the same keys - doubling Class A/C traffic and producing meaningless
-   `deleted` / `failed` counts.  This matters because the retry pattern above spaces attempts
-   only 16-20 minutes apart while a large trim runs for **hours**.  Space retries beyond the
-   maximum expected runtime, or add single-flight locking, before arming retries for a level
-   with thousands of objects.  Spacing is safe for a small L1 (ST's ~172 objects) and unsafe
-   for a large one (CT's ~2,400).
+   front, so a second run started while the first is still deleting re-lists and re-issues
+   deletes for the same keys, wasting Class A/C calls.  Batching cut run times by orders of
+   magnitude and so made a collision far less likely than it was at ~12 s per object, but
+   16-20 minute retry spacing is not a guarantee for a level with thousands of objects.  Add
+   single-flight locking, or space retries beyond the maximum expected runtime.
 2. **A zero-byte previous snapshot crashes the run.**  The relative-size guard short-circuits
    on `prev_size > 0`, but the log line immediately after it computes `size / prev_size`
    unconditionally, so a 0-byte predecessor raises an uncaught `ZeroDivisionError` and exits

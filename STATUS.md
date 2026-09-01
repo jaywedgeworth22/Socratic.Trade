@@ -2,23 +2,42 @@
 
 ## 2026-09-01 CLAUDE — L1 boundary-trim hardened, and Congress.Trade found wedged too
 
-Closes all three guard gaps the #3140 review raised (that PR accepted them but deliberately
-left them, since hardening has to change repo and host together).  The repo copy is resynced
-byte-identical to the hardened host tool — sha256 `71c14e0a…668c`, 8018 bytes, mode 755,
-verified on both sides.  New behaviour: `--app {socratic,congress,usage-monitor}` replaces
-the Socratic-only bucket/prefix constants; a **relative** truncation guard aborts under 50%
-of the previous snapshot (the 100 MB absolute floor cannot reject a truncated ~4.5 GB
-snapshot, and the boundary is read from the filename, which looks authoritative regardless of
-content); contiguity is now walked across the **entire** kept set for internal txid gaps
-(twins allowed) with its own exit code, because L2 stays wedged on non-contiguous input no
-matter how much L1 is trimmed; `--max-snapshot-age-hours` (default 48, scheduled units pass
-6) makes a late nightly abort loudly instead of trimming to a stale boundary; and a new guard
-aborts when nothing is superseded while L1 still holds more than 200 objects.  Deletes now
-pass `--b2-hard-delete` — without it rclone writes only a hide marker and the bytes stay
-**billed** until the lifecycle reaper runs ~a day later.  Measured, not inferred: fleet billed
-B2 storage 199.59 GB against a 126.49 GB logical footprint, a ~73 GB overhang.  Exit codes are
-documented end to end (0 ok/no-op, 1 delete failures, 2 no snapshot, 3 guard, 4 restore hole,
-5 kept-chain gaps, 6 boundary did not advance).
+Closes the three guard gaps the #3140 review raised, plus two defects that only showed up
+when the tool was run for real against a 2,400-object level.  The repo copy is resynced
+byte-identical to the hardened host tool — sha256 `a6bfc2bf…8087`, 9721 bytes, mode 755,
+verified on both sides.
+
+Guards: `--app {socratic,congress,usage-monitor}` replaces the Socratic-only bucket/prefix
+constants; a **relative** truncation guard aborts under 50% of the previous snapshot (the
+100 MB absolute floor cannot reject a truncated ~4.5 GB snapshot, and the boundary is read
+from the filename, which looks authoritative regardless of content); contiguity is walked
+across the **entire** kept set for internal txid gaps (twins allowed) with its own exit code,
+because L2 stays wedged on non-contiguous input no matter how much L1 is trimmed;
+`--max-snapshot-age-hours` (default 48, scheduled units pass 6) makes a late nightly abort
+loudly instead of trimming to a stale boundary; and a new guard aborts when nothing is
+superseded while L1 still holds more than 200 objects.
+
+Two fixes came out of running it:
+
+**Deletes are batched.**  The per-object `rclone delete --include` loop re-listed the whole
+prefix on every call — O(n^2), measured at ~12s per delete on CT, about 8 hours for 2,362
+objects.  Now chunks of 500 names go through one `rclone delete --files-from --transfers 16
+--checkers 16` per chunk.
+
+**Deletes are hides, NOT `--b2-hard-delete`, and that is deliberate.**  The host's scoped
+`fleet-backup-writer` key may hide a version but returns `Unknown 401 (401 unauthorized)` on
+`b2_delete_file_version` — so with the flag set rclone reported progress while deleting
+**nothing**, and roughly 800 "deletes" against CT were a complete no-op.  A hide is enough to
+unwedge compaction (litestream stops seeing the object immediately) and the bucket lifecycle
+rule `daysFromHidingToDeleting=1` frees the bytes about a day later.  Hard deletes need the
+B2 master key, so same-hour space reclamation means running the trim from an operator
+workstation.  The ~73 GB hide-marker overhang (199.59 GB billed vs 126.49 GB logical) is
+still the reason the distinction matters — the host just cannot avoid it.
+
+Consequently the tool **no longer trusts its own exit codes**: after applying it re-lists L1
+and reports `APPLIED app=X deleted=N survived=M batch_errors=E` from what actually remains,
+naming survivors.  Exit codes: 0 ok/no-op, 1 objects survived, 2 no snapshot, 3 guard,
+4 restore hole, 5 kept-chain gaps, 6 boundary did not advance.
 
 **Congress.Trade had never been trimmed at all.**  Its L1 held 2,413 objects, 2,362 of them
 (24.6 GB) superseded by the fresh 2026-09-01T00:00:02Z snapshot, leaving 51 (12 MB) — and its
@@ -30,28 +49,13 @@ rather than quietly becoming a nightly policy, since trimming below a snapshot c
 PITR granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
 only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
 
-**Next action (blocker):** the CT `--apply` run passed every guard and then failed **every
-delete**.  Established by a **census of the doomed set**, not the level count (a net figure
-while replication adds) nor the progress line (which merges `deleted` with `failed`): new
-arrivals all sit above the boundary, so the at-or-below-boundary count drops only on a real
-delete.  After `progress 600/2362` it was still exactly 2,362 - its starting value.  Zero of
-600 attempted deletes succeeded.  Left alone it will grind ~8 hours and report
-`deleted=0 failed=2362`.
+**Next action:** no successful large trim has been observed end to end yet — the 401 cause is
+understood and fixed, but confirm it.  After the 00:04-00:40 UTC window read the `APPLIED …
+deleted=N survived=M` line (computed from a bucket re-listing, so trustworthy) on both ST and
+CT, then separately confirm the wedge cleared via `msg="compaction complete" … level=2` and an
+advancing L2 `<min>` TXID.  Note that freed bytes lag ~24h behind a successful trim because
+the host can only hide; do not read that lag as failure.
 
-Leading hypothesis is a host `rclone` `[b2]` key without `deleteFiles`, which a dry run
-cannot detect because dry runs never exercise the delete permission.  **The ST units use that
-same remote, so treat them as equally suspect** - CT's result does not prove ST will fail, but
-nothing here shows it will succeed either.  ST's earlier heals are not evidence: they ran
-through `scripts/litestream-l1-suffix-heal.py` with `B2_KEY_ID` / `B2_APPLICATION_KEY` from
-the environment, a *different* credential path from this tool's host `rclone` remote.
-
-Before 2026-09-02 00:04 UTC: prove one real delete by hand with `-vv` and read the stderr,
-then either fix the credential or disarm **all six** units (`systemctl stop l1trim-st-*.timer
-l1trim-ct-*.timer`).  Kill the in-flight CT run either way.  Two further traps worth knowing:
-the loop is O(n^2) and multi-hour (~8s per real call vs 1.4s dry-run, because it re-lists the
-whole directory per `--include`), and a 100%-failing run is indistinguishable from a slow one
-from the log alone, since `rclone()` discards stderr and the caller counts failures without
-naming the object or reason.
 
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed (PR #3140, `271e5ff8e`)
 

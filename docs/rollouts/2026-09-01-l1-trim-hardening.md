@@ -5,51 +5,66 @@
 PR #3140 landed `scripts/litestream-l1-boundary-trim.py` as the repo mirror of the tool
 installed on `fleet-hetzner-nbg1` at `/usr/local/sbin/litestream-l1-boundary-trim`, which
 unwedges Litestream level-2 compaction by deleting L1 objects a full snapshot has already
-superseded.  The review on that PR raised three real guard gaps.  All three were fixed, the
-hardened tool was installed and exercised on the host, and this change syncs the repo copy
-back to byte-identity and documents the new behaviour.
+superseded.  The review on that PR raised three real guard gaps.  All three were fixed on the
+host, and this change syncs the repo copy back to byte-identity and documents the new
+behaviour.
 
-Investigating those gaps surfaced a second, larger finding: **Congress.Trade's L1 had never
-been trimmed at all and its L2 was wedged exactly the way Socratic.Trade's was.**  The tool
-is therefore now a fleet tool with an `--app` selector rather than a Socratic-only script.
+Two things came out of actually running the hardened tool against a large real level, and
+both are the substance of this note:
+
+1. **Congress.Trade's L1 had never been trimmed at all, and its L2 was wedged exactly the way
+   Socratic.Trade's was.**  The tool is therefore now a fleet tool with an `--app` selector
+   rather than a Socratic-only script.
+2. **The first CT run deleted nothing while reporting success**, because `--b2-hard-delete`
+   is not usable with the host's scoped key.  That produced two further fixes, and it is the
+   reason the tool no longer trusts its own exit codes.
 
 ## 2. Changes Made
 
-The script is a verbatim copy of the installed host binary - the repo copy was regenerated
-from `ssh root@100.69.77.26 'cat /usr/local/sbin/litestream-l1-boundary-trim'`, not
-hand-edited, so the two cannot drift silently.
+The script is a verbatim copy of the installed host tool - the repo copy was regenerated with
+`ssh root@100.69.77.26 'cat /usr/local/sbin/litestream-l1-boundary-trim'`, not hand-edited,
+so the two cannot drift silently.
 
 Behavioural changes relative to the version #3140 landed:
 
 - **Multi-app.**  A new `--app {socratic,congress,usage-monitor}` argument replaces the
-  hardcoded `BUCKET` / `PREFIX` module constants with a lookup table.  `socratic` remains
-  the default, so existing invocations are unchanged.
-- **Snapshot truncation guard.**  The run now aborts when the newest snapshot is under 50%
-  of the *previous* snapshot's size.  The pre-existing 100 MB absolute floor could not
-  reject a truncated ~4.5 GB snapshot, and the boundary is read from the object's filename,
-  which looks authoritative regardless of content.
-- **Kept-chain contiguity.**  The run now walks the *entire* retained set for internal txid
-  gaps instead of only checking that the first kept object reaches the boundary, and aborts
-  when gaps exist.  Twins (same `maxTXID`, different `minTXID`) are explicitly allowed.
-  Level-2 compaction stays wedged on non-contiguous input no matter how much L1 is trimmed,
-  so reporting success in that state is actively misleading.
-- **Configurable freshness.**  `--max-snapshot-age-hours` (default 48) replaces the
-  hardcoded 48h constant.  The scheduled units pass `6`, so a late or failed nightly
-  snapshot aborts loudly instead of silently trimming to yesterday's boundary and no-op'ing.
-- **Boundary-did-not-advance guard.**  The run aborts when nothing is superseded while L1
-  still holds more than 200 objects.
-- **Hard deletes.**  `--b2-hard-delete` is passed on every delete call.
-- **Documented exit codes.**  0 ok/no-op, 1 delete failures, 2 no usable snapshot, 3 snapshot
-  failed a safety guard, 4 would leave a restore hole, 5 kept chain has internal gaps, 6
-  nothing superseded although L1 is large.
+  hardcoded `BUCKET` / `PREFIX` module constants with a lookup table.  `socratic` remains the
+  default, so existing invocations are unchanged.
+- **Snapshot truncation guard.**  Aborts when the newest snapshot is under 50% of the
+  *previous* snapshot's size.  The pre-existing 100 MB absolute floor could not reject a
+  truncated ~4.5 GB snapshot, and the boundary is read from the object's filename, which
+  looks authoritative regardless of content.
+- **Kept-chain contiguity.**  Walks the *entire* retained set for internal txid gaps instead
+  of only checking that the first kept object reaches the boundary, and aborts when gaps
+  exist.  Twins (same `maxTXID`, different `minTXID`) are explicitly allowed.  Level-2
+  compaction stays wedged on non-contiguous input no matter how much L1 is trimmed, so
+  reporting success in that state is actively misleading.
+- **Configurable freshness.**  `--max-snapshot-age-hours` (default 48) replaces the hardcoded
+  48h constant.  The scheduled units pass `6`, so a late or failed nightly snapshot aborts
+  loudly instead of silently trimming to yesterday's boundary and no-op'ing.
+- **Boundary-did-not-advance guard.**  Aborts when nothing is superseded while L1 still holds
+  more than 200 objects.
+- **Batched deletes.**  Chunks of `DELETE_CHUNK = 500` names are written to a temp file and
+  issued as one `rclone delete --files-from <file> --transfers 16 --checkers 16` per chunk.
+  `os` and `tempfile` were added to the imports.
+- **Plain deletes, deliberately NOT `--b2-hard-delete`.**  See the trade-off below; this is
+  the one that silently destroyed a run.
+- **Post-apply verification against the bucket.**  After deleting, the run re-lists L1 and
+  reports `APPLIED app=X deleted=N survived=M batch_errors=E`, computed from what actually
+  remains rather than from rclone's exit codes, naming the first survivors.  Survivors return
+  exit 1.
+- **Documented exit codes.**  0 ok/no-op, 1 doomed objects survived, 2 no usable snapshot,
+  3 snapshot failed a safety guard, 4 would leave a restore hole, 5 kept chain has internal
+  gaps, 6 nothing superseded although L1 is large.
 
 Files touched:
 
 - `scripts/litestream-l1-boundary-trim.py` - resynced verbatim from the host (mode 755).
-- `docs/litestream.md` - rewrote the boundary-trim section: `--app` table, the guard list
-  with per-guard exit codes, an exit-code table, the hard-delete billing lesson, and the
-  transient-unit arming pattern.  The old "Pre-flight before `--apply` - what the guards do
-  NOT cover" subsection is gone because all three of its gaps are now enforced in code.
+- `docs/litestream.md` - rewrote the boundary-trim section: `--app` table, the guard list with
+  per-guard exit codes, an exit-code table, the hide-vs-hard-delete reality, the batched
+  delete phase and its bucket-verified reporting, known defects, and the transient-unit
+  arming pattern.  The old "Pre-flight before `--apply` - what the guards do NOT cover"
+  subsection is gone because all three of its gaps are now enforced in code.
 - `docs/rollouts/2026-09-01-l1-trim-hardening.md` - this note.
 - `docs/EFFORT-LOG.md` - new effort row, and an in-place correction of the #3140 row that was
   left at IN PROGRESS after that PR merged.
@@ -58,14 +73,36 @@ Files touched:
 
 ## 3. Decisions & Trade-offs
 
-**Hide markers are billed, so deletes must be hard deletes.**  Backblaze B2 is versioned; a
-plain `rclone delete` writes a hide marker and leaves the prior version in place.  The object
-stops being listed while its bytes stay billed until the bucket lifecycle reaper collects
-them, roughly a day later.  A trim that "worked" therefore frees nothing on the invoice for
-24 hours, which is indistinguishable from the trim having failed.  This was measured, not
-inferred: fleet billed B2 storage read **199.59 GB** against a **126.49 GB** logical
-footprint - a ~73 GB overhang of hidden-but-billed versions.  Any future B2 cleanup script
-in this fleet must pass `--b2-hard-delete`.
+**Hides, not hard deletes - because the host key cannot hard-delete.**  B2 is versioned:
+`rclone delete` writes a hide marker and leaves the prior version in place, while
+`--b2-hard-delete` removes the version outright.  Hard-deleting looks strictly better, and
+that assumption cost a full run.  The host's scoped `fleet-backup-writer` key may hide a
+version but returns `Unknown 401 (401 unauthorized)` on `b2_delete_file_version`.  With the
+flag set, rclone reported progress while deleting **nothing** - roughly 800 no-op "deletes"
+against Congress.Trade.  Verified directly on a single object: hard delete returns 401 and
+the file survives; plain delete via `--files-from` removes it from listings.
+
+A hide is sufficient for the actual goal.  Litestream stops seeing the object immediately, so
+compaction unwedges at once, and the bucket's lifecycle rule (`daysFromHidingToDeleting=1`)
+frees the bytes about a day later.  What is given up is same-hour space reclamation - and
+that is exactly where the billing lesson still applies: hidden versions stay **billed** until
+the reaper collects them.  That overhang was measured across the fleet: **199.59 GB** billed
+against a **126.49 GB** logical footprint, a ~73 GB gap.  So the distinction matters; the
+host simply cannot avoid it.  Hard deletes need the **B2 master key**, so same-hour
+reclamation means running the trim from an operator workstation.  The `NOT --b2-hard-delete`
+comment in the script records this and must stay - the flag looks like an obvious improvement
+to anyone who has not seen the 401.
+
+**Trust the bucket, not the exit codes.**  The 401 run is why the tool re-lists L1 after
+applying and derives `deleted` / `survived` from what remains.  Every signal short of that
+was lying: rclone returned success, the progress counter advanced normally, and the log
+showed no errors, while not one object had been removed.  A tool whose failure mode is
+"reports success, does nothing" has to verify its own work against the system of record.
+
+**Batching, because the per-object loop was O(n^2).**  Resolving `--include "/<name>"`
+re-lists the whole prefix, so an N-object trim performed N full listings - measured at ~12 s
+per delete against CT's ~2,400-object L1, roughly 8 hours for 2,362 objects.  Chunked
+`--files-from` lists once per chunk instead.
 
 **Contiguity is a hard abort (exit 5), not a warning.**  A trim cannot fix a hole - it only
 deletes at or below the boundary and never creates one - so continuing would delete real
@@ -74,8 +111,8 @@ Reconciling a hole needs a human, so the tool refuses rather than doing partial 
 
 **Freshness is configurable rather than tightened globally.**  Dropping the default from 48h
 would have been wrong for interactive use, where a human reads the printed `modtime` and
-decides.  The value that actually matters is on the *unattended* path, so the scheduled units
-pass `6` and the default stays permissive.
+decides.  The value that matters is on the *unattended* path, so the scheduled units pass `6`
+and the default stays permissive.
 
 **Still deliberately not a permanent nightly timer.**  Trimming L1 below a snapshot reduces
 sub-daily point-in-time granularity for the trimmed span to whatever L0 still covers.  The
@@ -88,28 +125,32 @@ Repo copy is byte-identical to the installed host tool:
 
 ```
 sha256 (host /usr/local/sbin/litestream-l1-boundary-trim)
-  71c14e0a2255934097f57e87b75bcb49728299bbe711d783d96dd6dda0ee668c
+  a6bfc2bf41652cd367178c28e95e9c7ba11dd854c13da1fc87be4905e4698087
 sha256 (repo scripts/litestream-l1-boundary-trim.py)
-  71c14e0a2255934097f57e87b75bcb49728299bbe711d783d96dd6dda0ee668c
+  a6bfc2bf41652cd367178c28e95e9c7ba11dd854c13da1fc87be4905e4698087
 ```
 
-Both 8018 bytes, mode 755.
+Both 9721 bytes, mode 755.  (An earlier revision landed on this branch as
+`71c14e0a…668c` / 8018 bytes; the batched-delete and hide-not-hard-delete fixes replaced it,
+and the repo copy was re-pulled from the host rather than patched.)
 
-Repo gate, run in AGENTS.md order:
+Repo gate, run in AGENTS.md order on Node 24 (`/opt/homebrew/opt/node@24/bin` first on
+`PATH`; the Homebrew default is Node 26, whose ABI mass-fails `better-sqlite3`):
 
 ```bash
 npm run lint       # PASS - 792 problems (0 errors, 792 warnings) - grandfathered backlog unchanged
 npx tsc --noEmit   # PASS - clean
-npm test           # PASS - 699 files passed / 1 skipped; 7692 tests passed / 51 skipped; 484s
+npm test           # PASS - 699 files passed / 1 skipped; 7692 tests passed / 51 skipped
 npm run build      # PASS - clean
 ```
 
-Run on Node 24 (`/opt/homebrew/opt/node@24/bin` first on `PATH`) - the Homebrew default is
-Node 26, whose ABI mass-fails `better-sqlite3`.
+The script is Python and is not compiled by any of the four; it was syntax-checked
+(`ast.parse`), confirmed pure ASCII, and exercised on the host directly.
 
-The script is Python and is not compiled by any of the four; it was syntax-checked and
-exercised on the host directly (`--app socratic` and `--app congress` dry runs, then a
-`--app congress --apply` run).
+CI note: one `verify-hosted` run on this branch failed on a vitest worker teardown flake
+(`EnvironmentTeardownError: [vitest-worker]: Closing rpc while "onUserConsoleLog" was
+pending`, attributed to `test/economic-calendar-prompt-wiring.test.ts`) with all 7,692 tests
+passing and `Errors 1`.  Unrelated to this diff; superseded by a later push.
 
 ### Congress.Trade: L1 had never been trimmed, and L2 was wedged the same way
 
@@ -129,43 +170,24 @@ That CT had accumulated 2,413 never-trimmed L1 objects while its L2 stayed empty
 strongest evidence that this class of wedge is silent: L0/L1 replication and every health
 probe stay green throughout, because nothing user-facing depends on L2 compaction completing.
 
-**The CT trim was started tonight in `--apply` mode at 2026-09-01T04:38:20Z** (logging to
-`/var/log/fleet-backup/l1-trim-congress-20260901.log`), and **all of its guards passed** -
-the numbers above are that run's own output.  Its delete phase is reported honestly here
-because it did **not** behave as expected:
+### The first CT run was a complete no-op, and how that was established
 
-- **30 minutes into the delete loop, CT L1 had not gone down at all - it had gone *up*, from
-  2,413 to 2,418**, as ongoing replication added new L1 objects faster than the trim removed
-  any.  The first doomed object (`00000000000450f0-00000000000450f3.ltx`, 758 MiB) was still
-  present throughout.  Counting with `--b2-versions` gave the same totals, so no hide markers
-  were being created either.  Seven minutes could have been dismissed as too early to tell;
-  thirty minutes with the level growing cannot.
-- The log was still 6 lines - the loop had not reached its first 200-object progress line, so
-  fewer than 200 calls had completed in 30 minutes.
-- The process was alive and cycling child `rclone` processes roughly every **8 seconds**, so
-  it was not hung on one call.  At that rate 2,362 deletes is ~5 hours, and the loop's
-  progress line only prints every 200 objects, so no progress line was due yet.
-- A read-only `--dry-run` of the exact delete the script issues (`--include "/<name>"
-  --b2-hard-delete`) matched the object correctly in ~1.4 s, so the **filter syntax is not
-  the problem**.
+The first `--apply` run started 2026-09-01T04:38:20Z (log:
+`/var/log/fleet-backup/l1-trim-congress-20260901.log`) and passed every guard - the numbers
+above are its own output.  It then deleted nothing at all, while reporting normal progress.
 
-**Resolved at 05:19:56Z, and the answer is that every delete is failing.**  The loop finally
-printed its first progress line:
+Establishing that took three attempts, and the first two were unsound.  They are recorded
+because the reasoning error is the reusable part:
 
-```
-[l1-boundary-trim] 2026-09-01T05:19:56Z progress 200/2362
-```
-
-That counter is `deleted + failed`, so it does not by itself separate the two.  The level
-count does not settle it either: Litestream keeps *adding* L1 objects while the trim runs, so
-the observed rise from 2,413 to 2,420 is a **net** figure and is consistent with some
-deletions having succeeded alongside more arrivals.  (Correct objection, raised in the #3142
-review; the first draft of this note over-claimed from the net count.)
-
-What settles it is a **census of the doomed set**, which is measurable directly.  Every
-object Litestream adds while the run proceeds has a `maxTXID` *above* the boundary, so the
-count of objects still at or below the boundary is unaffected by new arrivals and falls by
-exactly one per successful delete.  At 06:56Z, after `progress 600/2362`:
+- **The level count does not work.**  L1 went 2,413 -> 2,420 -> 2,433, but that is a *net*
+  figure: Litestream keeps adding L1 objects while the trim runs, so a rise is consistent
+  with some deletions succeeding alongside more arrivals.
+- **A small sample does not work.**  The first three doomed objects still being present after
+  400 calls proves three failures, not four hundred.
+- **A census of the doomed set does work.**  Every object Litestream adds during the run has
+  a `maxTXID` *above* the boundary, so the count of objects still at or below the boundary is
+  immune to new arrivals and falls by exactly one per successful delete.  At 06:56Z, after
+  `progress 600/2362`:
 
 ```
 current L1 total          : 2433
@@ -174,34 +196,14 @@ above boundary            :   71      (started at 51 kept; +20 new arrivals)
 => successful deletes     :    0
 ```
 
-**Zero of 600 attempted deletes succeeded.**  This is a direct measurement, not an inference
-from a sample: not one of the 2,362 objects the run set out to delete has been removed.
+Zero of 600 attempted deletes had succeeded - measured over the whole doomed set, not
+inferred from a sample.  The run went on to hard-delete nothing across roughly 800 calls.
 
-(An earlier draft argued this from the first three doomed objects still being present after
-400 calls.  The #3142 review correctly pointed out that three confirmed failures do not
-establish 400, let alone 2,362 - hence the full census above.)
-
-At ~12.5 s per call (41.5 minutes for the first 200, and the second 200 in the 41 minutes to
-06:00:42) the run is on course to grind through all 2,362 doomed objects over roughly
-**8 hours** and finally report `deleted=0 failed=2362` with exit 1.
-
-The most likely cause is that the host `rclone` `[b2]` remote's application key lacks the
-`deleteFiles` capability - a sane posture for a backup remote, and one that a `--dry-run`
-cannot detect, because dry runs never exercise the delete permission.  That was not confirmed
-here: doing so requires either a real delete (a host write, out of scope for this change) or
-reading the remote's credentials (never).
-
-Why it took 41 minutes to learn this is the actionable part.  `rclone()` raises a
-`RuntimeError` carrying only the return code; the caller catches bare `Exception` and
-increments `failed` without recording *which* object or *why*; and rclone's stderr is
-captured and discarded.  A 100%-failure run is therefore indistinguishable from a slow
-successful one until the first 200-object progress line - and even that only distinguishes
-them if someone independently re-counts the level, because the progress line itself does not
-separate `deleted` from `failed`.  See Next Steps.
-
-**No claim is made here that CT's L1 was reduced.  It was not.**  What is verified is the
-guard-passing analysis (2,413 / 2,362 / 51, and the zero-object L2), and that the delete
-phase is failing.
+**Cause: `--b2-hard-delete` against the host's scoped key returns `Unknown 401 (401
+unauthorized)` on `b2_delete_file_version`, and rclone reports progress anyway.**  A
+`--dry-run` cannot detect this, because dry runs never exercise the delete permission - which
+is precisely why every dry run looked healthy.  Both fixes above (drop the flag, verify
+against the bucket) come directly from this.
 
 ### Scheduled retries on the host
 
@@ -227,94 +229,61 @@ trade-off above, it must never be.
 
 ## 5. Next Steps & Blockers
 
-1. **The delete path is broken - fix it before the timers fire.**  This is no longer an open
-   question: after 600 completed calls the doomed-set census was unchanged at 2,362, so the
-   deletes are failing 100%.  Establish *why* by running one real delete by hand and reading
-   rclone's stderr, e.g. `rclone delete
-   b2:jays-congress-trade-eu/congress-trade/db.sqlite/0001/ --include "/<one-doomed-name>"
-   --b2-hard-delete -vv`.  The leading hypothesis is that the host `rclone` `[b2]`
-   application key lacks `deleteFiles`; a `--dry-run` cannot detect that, which is why the
-   tool's dry runs all looked healthy.
-
-   **If that is the cause it applies to all six units, not just CT's three** - the ST units
-   invoke the same tool against the same host `rclone` remote.  CT's result does not *prove*
-   ST will fail, but nothing observed here shows it will succeed, and ST's earlier heals are
-   not evidence either: those ran through `scripts/litestream-l1-suffix-heal.py` with
-   `B2_KEY_ID` / `B2_APPLICATION_KEY` from the environment, a *different* credential path.
-   Treat all six as unverified until one real delete is proven through this tool.
-
-   Before 2026-09-02 00:04 UTC, either fix the credential or disarm every unit
-   (`systemctl stop l1trim-st-0004.timer l1trim-st-0020.timer l1trim-st-0040.timer
-   l1trim-ct-0004.timer l1trim-ct-0020.timer l1trim-ct-0040.timer`).  Kill the in-flight CT
-   run either way - it will otherwise grind until roughly 12:40Z for nothing.
-
-2. **Re-space or lock the armed retries before they fire (P1, from the #3142 review).**  The
-   three attempts per app are 16 and 20 minutes apart, but a large trim runs for hours and
-   the tool has **no lock**.  Each run snapshots its delete list up front, so attempt 2 will
-   re-list and re-issue hard deletes for keys attempt 1 is still working through - doubling
-   B2 traffic and making both runs' `deleted` / `failed` counts meaningless.  This is safe for
-   ST (~172 L1 objects, finishes in minutes) and **not** safe for CT (~2,400).  Before
-   2026-09-02 00:04 UTC either widen the CT spacing past the expected runtime, drop CT to a
-   single attempt, or add single-flight locking.  The retry design silently assumed a
-   short run.
-
-3. **Fix two confirmed script defects (paired repo + host change).**  Both were found by the
-   #3142 review and reproduced directly:
-   - A **zero-byte previous snapshot crashes the run**: the relative-size guard short-circuits
-     on `prev_size > 0`, but the very next log line computes `size / prev_size`
-     unconditionally, raising an uncaught `ZeroDivisionError`.  Fail-safe (before any delete)
-     but it exits with a traceback rather than a documented code.
-   - **Legal twin shapes are misreported as gaps**: the contiguity walk sorts by `(min, max)`
-     and only recognises a twin on the adjacent pair.  For `(1,99), (1,200), (100,200)` it
-     compares `(1,99)` against `(1,200)`, misses the twin, and reports gap `63->1` even though
-     `(100,200)` is the exact continuation - a spurious exit 5 that blocks a trim that should
-     have run.  Collapse same-max twins before testing adjacency.
-
-4. **Give the delete loop real failure reporting (paired repo + host change).**  `rclone()`
-   discards stderr and reports only a return code; the caller catches bare `Exception` and
-   counts a failure without naming the object or the reason.  Add stderr to the raised error,
-   log the first few failures at the point they happen, and abort early once the failure rate
-   is obviously total instead of grinding through thousands of doomed calls.  This must be
-   applied to `/usr/local/sbin/litestream-l1-boundary-trim` and the repo copy in the same
-   change, to preserve byte-identity.
-
-5. **After the 2026-09-02 00:04-00:40 UTC window, confirm deletion and recovery separately.**
+1. **Confirm the fixed tool actually removes objects, on both apps.**  The 401 cause is
+   understood and fixed, but no successful large trim has been observed end to end yet.  The
+   check is now cheap and unambiguous: read the
+   `APPLIED app=X deleted=N survived=M batch_errors=E` line, which is computed from a
+   re-listing of the bucket.  A non-zero `survived` (exit 1) means objects the run intended
+   to remove are still there.
+2. **After the 2026-09-02 00:04-00:40 UTC window, confirm deletion and recovery separately.**
    Exit 0 means only that the run completed without hitting a guard - a dry run and a
-   legitimate no-op both return 0 without removing anything, so unit status alone proves
-   neither.  First establish that *deletion* happened: require an `APPLIED ... deleted=N` line
-   with non-zero `N`, or re-count the level.  Only then establish that the *wedge* is fixed:
-   `msg="compaction complete" ... level=2`, and the L2 object's `<min>` TXID advancing, on
+   legitimate no-op both return 0 without removing anything.  First establish *deletion* from
+   the `APPLIED` line; only then establish that the *wedge* is fixed, via
+   `msg="compaction complete" ... level=2` and the L2 object's `<min>` TXID advancing, on
    both ST and CT.  If CT's L2 count is still zero afterwards, the wedge has a second cause.
-6. **Re-check billed vs logical B2 storage in ~24h.**  The 199.59 GB / 126.49 GB gap should
-   close once the lifecycle reaper collects the pre-`--b2-hard-delete` hide markers.  Bytes
-   deleted by this tool from now on should not contribute a new overhang.
-7. **Usage-Monitor has a table entry but has not been exercised.**  `--app usage-monitor`
+3. **Fix two confirmed script defects (paired repo + host change).**  Both were found by the
+   #3142 review, reproduced directly, and are still present in this build:
+   - A **zero-byte previous snapshot crashes the run**: the relative-size guard
+     short-circuits on `prev_size > 0`, but the next log line computes `size / prev_size`
+     unconditionally, raising an uncaught `ZeroDivisionError`.  Fail-safe (before any delete)
+     but it exits on a traceback rather than a documented code.
+   - **Legal twin shapes are misreported as gaps**: the contiguity walk sorts by
+     `(min, max)` and only recognises a twin on the adjacent pair.  For
+     `(1,99), (1,200), (100,200)` it compares `(1,99)` against `(1,200)`, misses the twin,
+     and reports gap `63->1` even though `(100,200)` is the exact continuation - a spurious
+     exit 5 blocking a trim that should have run.  Collapse same-max twins before testing
+     adjacency.
+4. **Add single-flight locking.**  The tool still has no lock and each run snapshots its
+   delete list up front.  Batching made runs short enough that a collision at 16-20 minute
+   retry spacing is far less likely than it was at ~12 s per object, but it is not prevented.
+5. **Re-check billed vs logical B2 storage ~24h after a successful trim.**  Because the host
+   can only hide, freed bytes lag by roughly a day via `daysFromHidingToDeleting=1`.  The
+   199.59 GB / 126.49 GB gap should close on that schedule, not immediately - do not read the
+   lag as a failed trim.
+6. **Usage-Monitor has a table entry but has not been exercised.**  `--app usage-monitor`
    (`jays-usage-monitor-eu` / `api-usage-monitor/prod.db`) should get a dry run before anyone
    arms it, to confirm the prefix is right and its L1/L2 state.
-8. **The timers are transient by design and expire on reboot.**  If the wedge recurs, arm a
+7. **The timers are transient by design and expire on reboot.**  If the wedge recurs, arm a
    fresh set - do not convert these into an installed nightly timer.
 
-Blocker: item 1, and it is now a demonstrated failure rather than an unknown.  The CT
-delete path removes nothing, so the CT half of the armed timers will consume ~8 hours
-each and heal nothing.  Treat the ST half as unproven for the same reason until one ST
-delete is shown to work through this tool's credential path.
+No blockers.  The one that stood earlier - "CT deletes nothing and nobody knows why" - is
+diagnosed and fixed; item 1 is verification, not investigation.
 
 ## 6. Zero-Code Findings
 
-- **The delete loop is O(n^2) by construction and very slow at CT's scale.**  Each iteration
-  shells out to `rclone delete <dir> --include /<name> --b2-hard-delete`, and rclone must
-  list the *whole* directory to resolve the `--include` filter - so a 2,362-object trim
-  performs 2,362 full listings of a 2,413-object directory.  Measured on the host: a
-  `--dry-run` call takes ~1.4 s, while the real calls in the running trim cycle roughly every
-  **8 s**, putting a full CT run in the multi-hour range.  Because the progress line prints
-  only every 200 objects, an operator sees ~25 minutes of silence before the first one and
-  should not read that as a hang.  A future revision should collect the doomed names into one
-  `rclone delete --files-from` call, turning 2,362 listings into one.
-- **A totally-failing run looks exactly like a slow-but-working one.**  Failure accounting is
-  a bare counter (see Next Steps item 2), so the log gives an operator nothing to act on
-  until the run ends.  Combined with the multi-hour runtime above, a misconfigured credential
-  could burn most of a day before anyone could tell.  These two findings compound; fixing
-  either one alone leaves the diagnosis expensive.
+- **A dry run cannot validate a permission.**  Every dry run of this tool looked healthy while
+  the real delete path was returning 401, because `--dry-run` never exercises
+  `b2_delete_file_version`.  Any tool whose dry run is treated as a pre-flight check shares
+  this blind spot: a dry run validates *intent* (which objects, in what order), never
+  *authority*.
+- **Progress output is not evidence of progress.**  rclone advanced its counters normally
+  through ~800 deletes that removed nothing.  That is why the tool now re-lists the bucket and
+  reports `deleted` / `survived` from what remains; a component's own success report is the
+  weakest available signal about a side effect on an external system.
+- **Guard against the wrong *scope* of key, not just the wrong key.**  The host's key was
+  valid and correctly scoped for backup writing; it simply lacked one capability.  That
+  presents as a silent no-op rather than an auth error at startup, which is far harder to
+  notice than a missing or expired credential.
 - The tool never touches L2/L3.  When the L2 object *itself* is poisoned rather than merely
   oversized, `scripts/litestream-l1-suffix-heal.py` is still the right instrument; the
   comparison table in `docs/litestream.md` covers the choice.
