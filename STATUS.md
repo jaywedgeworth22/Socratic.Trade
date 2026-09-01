@@ -1,5 +1,71 @@
 # Current Status
 
+## 2026-09-01 CLAUDE — L1 boundary-trim hardened, and Congress.Trade found wedged too
+
+Closes the three guard gaps the #3140 review raised, plus two defects that only showed up
+when the tool was run for real against a 2,400-object level.  The repo copy is resynced
+byte-identical to the hardened host tool — sha256 `a6bfc2bf…8087`, 9721 bytes, mode 755,
+verified on both sides.
+
+Guards: `--app {socratic,congress,usage-monitor}` replaces the Socratic-only bucket/prefix
+constants; a **relative** truncation guard aborts under 50% of the previous snapshot (the
+100 MB absolute floor cannot reject a truncated ~4.5 GB snapshot, and the boundary is read
+from the filename, which looks authoritative regardless of content); contiguity is walked
+across the **entire** kept set for internal txid gaps (twins allowed) with its own exit code,
+because L2 stays wedged on non-contiguous input no matter how much L1 is trimmed;
+`--max-snapshot-age-hours` (default 48, scheduled units pass 6) makes a late nightly abort
+loudly instead of trimming to a stale boundary; and a new guard aborts when nothing is
+superseded while L1 still holds more than 200 objects.
+
+Two fixes came out of running it:
+
+**Deletes are batched.**  The per-object `rclone delete --include` loop re-listed the whole
+prefix on every call — O(n^2), measured at ~12s per delete on CT, about 8 hours for 2,362
+objects.  Now chunks of 500 names go through one `rclone delete --files-from --transfers 16
+--checkers 16` per chunk.
+
+**Deletes are hides, NOT `--b2-hard-delete`, and that is deliberate.**  The host's scoped
+`fleet-backup-writer` key may hide a version but returns `Unknown 401 (401 unauthorized)` on
+`b2_delete_file_version` — so with the flag set rclone reported progress while deleting
+**nothing**, and roughly 800 "deletes" against CT were a complete no-op.  A hide is enough to
+unwedge compaction (litestream stops seeing the object immediately) and the bucket lifecycle
+rule `daysFromHidingToDeleting=1` frees the bytes about a day later.  Hard deletes need the
+B2 master key, so same-hour space reclamation means running the trim from an operator
+workstation.  The ~73 GB hide-marker overhang (199.59 GB billed vs 126.49 GB logical) is
+still the reason the distinction matters — the host just cannot avoid it.
+
+Consequently the tool **no longer trusts its own exit codes**: after applying it re-lists L1
+and reports `APPLIED app=X deleted=N survived=M batch_errors=E` from what actually remains,
+naming survivors.  Exit codes: 0 ok/no-op, 1 objects survived, 2 no snapshot, 3 guard,
+4 restore hole, 5 kept-chain gaps, 6 boundary did not advance.
+
+**Congress.Trade had never been trimmed at all.**  Its L1 held 2,413 objects, 2,362 of them
+(24.6 GB) superseded by the fresh 2026-09-01T00:00:02Z snapshot, leaving 51 (12 MB) — and its
+L2 held **zero** objects, the same wedge state ST was in.  Six transient one-shot units
+(`l1trim-st-*`, `l1trim-ct-*`) are armed for 2026-09-02 00:04/00:20/00:40 UTC with
+`--max-snapshot-age-hours 6`, two retries of headroom for a late snapshot; they replace the
+single `l1-boundary-trim-oneshot`, now stopped.  Transient on purpose — they expire on reboot
+rather than quietly becoming a nightly policy, since trimming below a snapshot costs sub-daily
+PITR granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
+only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
+
+**The fixed tool then worked.**  CT re-run at 07:46:53Z reported
+`APPLIED app=congress deleted=2361 survived=0 batch_errors=0`, and the bucket recount agrees:
+CT L1 went **2,413 -> 82** (82 = the 51 originally-kept objects plus new arrivals), in minutes
+rather than the ~8 hours the per-object loop projected.  `--b2-versions` shows **2,444**
+versions against those 82 listed entries — the trimmed objects are hidden, not gone, and stay
+recoverable until the `daysFromHidingToDeleting=1` reaper runs.  That single listing shows both
+the cost (bytes billed ~24h longer) and the safety margin (a mistaken trim is reversible inside
+that window) of the hide-based approach.
+
+**Next action:** deletion is proven, **recovery is not** — CT's L2 is still at zero objects, as
+is ST's, and ST has not been trimmed with this build (L1 at 255).  A trim that removes objects
+without restarting compaction has fixed nothing, so confirm `msg="compaction complete" …
+level=2` and an advancing L2 `<min>` TXID on both apps after the 00:04-00:40 UTC window.  Do
+not read the ~24h lag in freed bytes as failure; the host can only hide.
+
+
+## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed (PR #3140, `271e5ff8e`)
 ## 2026-09-01 CLAUDE — PR #3139 plist comment: actually fix the XML `--` bug
 
 PR #3139 claimed moving the template comment above `<!DOCTYPE>` down into `<dict>` fixed
