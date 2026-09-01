@@ -10,20 +10,22 @@ const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 if (dsn) {
   // Session Replay can record DOM/network around errors. It is opt-in and, when
   // on, masks all text and blocks all media so portfolio/account values are not
-  // captured. Default sample rates are 0 (errors only via replaysOnErrorSampleRate).
-  const replayEnabled = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED === "true";
+  // captured. Default sample rates are 0.01 (1% session) and 1.0 (100% on error).
+  const replayRaw = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED?.trim();
+  const replayEnabled = replayRaw ? /^(true|1|on|yes)$/i.test(replayRaw) : false;
   const replaySessionSampleRate = Number(
-    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0"
+    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0.01"
   );
   const replayErrorSampleRate = Number(
-    process.env.NEXT_PUBLIC_SENTRY_REPLAY_ERROR_SAMPLE_RATE ?? "1"
+    process.env.NEXT_PUBLIC_SENTRY_REPLAY_ERROR_SAMPLE_RATE ?? "1.0"
   );
 
   Sentry.init({
     dsn,
     environment:
       process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || process.env.NODE_ENV,
-    tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? "0.1"),
+    tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? "0.2"),
+    enableLogs: true,
     sendDefaultPii: false,
     replaysSessionSampleRate: replayEnabled ? replaySessionSampleRate : 0,
     replaysOnErrorSampleRate: replayEnabled ? replayErrorSampleRate : 0,

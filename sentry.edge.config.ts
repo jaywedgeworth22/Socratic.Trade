@@ -5,7 +5,8 @@ if (process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV,
-    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0.1"),
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0.2"),
+    enableLogs: true,
     sendDefaultPii: false,
     beforeSend(event) {
       return redactForTelemetry(event) as typeof event;
