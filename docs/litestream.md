@@ -357,10 +357,17 @@ objects, so the first ~25 minutes are silent by design.
 
 Failure accounting is currently a bare counter: a failed delete is caught, counted, and *not*
 attributed to an object or a reason (rclone's stderr is discarded).  A run failing 100% of
-its deletes therefore looks identical to a slow successful one until the terminal
-`APPLIED ... deleted=N failed=M` line.  **Do not conclude a trim worked from the absence of
-errors** - re-count the level and compare.  Both are open follow-ups in
-`docs/rollouts/2026-09-01-l1-trim-hardening.md`.
+its deletes therefore looks identical to a slow successful one, and even the progress line
+does not separate `deleted` from `failed`.  **Do not conclude a trim worked from the absence
+of errors - re-count the level and compare.**
+
+This is not hypothetical.  On 2026-09-01 the Congress.Trade `--apply` run passed every guard
+and then failed *every* delete: its first progress line read `progress 200/2362` after 41
+minutes, while the level had gone from 2,413 objects to 2,420.  Two hundred completed calls,
+zero objects removed.  The leading hypothesis is a host `rclone` `[b2]` application key
+without `deleteFiles` - which a dry run can never detect, because dry runs do not exercise
+the delete permission.  Before trusting any armed unit, prove one real delete by hand with
+`-vv` and read the stderr.  Details in `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
 
 ### Known defects in the current build - read before arming anything
 

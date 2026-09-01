@@ -30,9 +30,15 @@ rather than quietly becoming a nightly policy, since trimming below a snapshot c
 PITR granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
 only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
 
-**Next action (blocker, CT only):** the CT `--apply` run passed every guard but had removed
-**zero** objects 30 minutes into its delete phase — L1 had in fact *grown* from 2,413 to
-2,418 as replication outpaced it — with the first doomed object still present
+**Next action (blocker):** the CT `--apply` run passed every guard and then failed **every
+delete**.  Its first progress line read `progress 200/2362` after 41 minutes while the level
+had gone 2,413 -> 2,420: two hundred completed calls, zero objects removed.  It will grind
+~8 hours and report `deleted=0 failed=2362`.  Leading hypothesis is a host `rclone` `[b2]`
+key without `deleteFiles`, which a dry run cannot detect.  **Fix the credential or disarm the
+CT timers before 2026-09-02 00:04 UTC**, and kill the in-flight run.  ST's earlier heals went
+through a different credential path (`B2_KEY_ID`/`B2_APPLICATION_KEY` via
+`litestream-l1-suffix-heal.py`), so prove one ST delete through this tool before trusting the
+ST units either.  Original symptom, for the record: zero deletions with the first doomed object still present
 and no hide markers.  Real delete calls cycle ~8s each (vs 1.4s dry-run) because the loop
 re-lists the whole directory per `--include`, so it is O(n^2) and multi-hour; and a
 100%-failing run is indistinguishable from a slow one, because `rclone()` discards stderr and

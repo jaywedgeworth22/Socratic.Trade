@@ -149,15 +149,36 @@ because it did **not** behave as expected:
   --b2-hard-delete`) matched the object correctly in ~1.4 s, so the **filter syntax is not
   the problem**.
 
-Whether those calls are succeeding slowly or failing is **not currently determinable from
-the log**, which is itself the finding: `rclone()` raises `RuntimeError` carrying only the
-return code, the caller catches bare `Exception` and increments `failed` without logging
-*which* object failed or *why*, and rclone's stderr is captured and discarded.  A run that
-fails 100% of its deletes is therefore indistinguishable from a slow successful one until
-the terminal `APPLIED ... deleted=N failed=M` line, hours later.  See Next Steps.
+**Resolved at 05:19:56Z, and the answer is that every delete is failing.**  The loop finally
+printed its first progress line:
 
-No claim is made here that CT's L1 has actually been reduced.  What is verified is the
-guard-passing analysis (2,413 / 2,362 / 51 and the zero-object L2), not the deletion.
+```
+[l1-boundary-trim] 2026-09-01T05:19:56Z progress 200/2362
+```
+
+That counter is `deleted + failed`.  200 calls had completed - and CT L1 stood at **2,420**,
+*higher* than the 2,413 the run started from.  Zero objects had been removed, so all 200 were
+failures.  The run is on course to grind through 2,362 doomed objects at ~12.5 s each
+(41.5 minutes for the first 200), take roughly **8 hours**, and finally report
+`deleted=0 failed=2362` with exit 1.
+
+The most likely cause is that the host `rclone` `[b2]` remote's application key lacks the
+`deleteFiles` capability - a sane posture for a backup remote, and one that a `--dry-run`
+cannot detect, because dry runs never exercise the delete permission.  That was not confirmed
+here: doing so requires either a real delete (a host write, out of scope for this change) or
+reading the remote's credentials (never).
+
+Why it took 41 minutes to learn this is the actionable part.  `rclone()` raises a
+`RuntimeError` carrying only the return code; the caller catches bare `Exception` and
+increments `failed` without recording *which* object or *why*; and rclone's stderr is
+captured and discarded.  A 100%-failure run is therefore indistinguishable from a slow
+successful one until the first 200-object progress line - and even that only distinguishes
+them if someone independently re-counts the level, because the progress line itself does not
+separate `deleted` from `failed`.  See Next Steps.
+
+**No claim is made here that CT's L1 was reduced.  It was not.**  What is verified is the
+guard-passing analysis (2,413 / 2,362 / 51, and the zero-object L2), and that the delete
+phase is failing.
 
 ### Scheduled retries on the host
 
@@ -183,13 +204,21 @@ trade-off above, it must never be.
 
 ## 5. Next Steps & Blockers
 
-1. **Resolve the CT delete-phase question first - it gates everything else.**  Read
-   `/var/log/fleet-backup/l1-trim-congress-20260901.log` for the terminal
-   `APPLIED app=congress deleted=N failed=M` line and re-count CT L1.  If `failed` is large,
-   the host `rclone` `[b2]` remote's application key most likely lacks `deleteFiles`, and the
-   armed CT timers will fail the same way.  If `deleted` is large but the count did not move,
-   the deletes are landing somewhere other than expected.  Either way, do not assume the
-   armed timers will heal CT until one manual run is proven to remove objects.
+1. **The CT delete path is broken - fix it before the timers fire.**  This is no longer an
+   open question: 200 completed calls removed zero objects, so the deletes are failing 100%.
+   Establish *why* by running one real delete by hand and reading rclone's stderr, e.g.
+   `rclone delete b2:jays-congress-trade-eu/congress-trade/db.sqlite/0001/ --include
+   "/<one-doomed-name>" --b2-hard-delete -vv`.  The leading hypothesis is that the host
+   `rclone` `[b2]` application key lacks `deleteFiles`; a `--dry-run` cannot detect that,
+   which is why the tool's dry runs all looked healthy.  **The three armed CT units will fail
+   the same way**, each burning ~8 hours and thousands of Class A/C calls, so either fix the
+   credential or disarm the CT half (`systemctl stop l1trim-ct-0004.timer
+   l1trim-ct-0020.timer l1trim-ct-0040.timer`) before 2026-09-02 00:04 UTC.  Also kill the
+   in-flight run, which will otherwise grind until roughly 12:40Z for nothing.
+   **ST is a separate question** - its L1 dropped 756 -> 172 under earlier heals, but those
+   ran through `scripts/litestream-l1-suffix-heal.py` with `B2_KEY_ID` / `B2_APPLICATION_KEY`
+   from the environment, which is a *different* credential path from this tool's host
+   `rclone` remote.  Prove one ST delete works before trusting the ST units either.
 
 2. **Re-space or lock the armed retries before they fire (P1, from the #3142 review).**  The
    three attempts per app are 16 and 20 minutes apart, but a large trim runs for hours and
@@ -234,8 +263,10 @@ trade-off above, it must never be.
 8. **The timers are transient by design and expire on reboot.**  If the wedge recurs, arm a
    fresh set - do not convert these into an installed nightly timer.
 
-Blocker: item 1.  Until a CT `--apply` run is shown to actually remove objects, the CT half
-of the armed timers should be treated as unproven.
+Blocker: item 1, and it is now a demonstrated failure rather than an unknown.  The CT
+delete path removes nothing, so the CT half of the armed timers will consume ~8 hours
+each and heal nothing.  Treat the ST half as unproven for the same reason until one ST
+delete is shown to work through this tool's credential path.
 
 ## 6. Zero-Code Findings
 
