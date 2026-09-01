@@ -3,6 +3,22 @@
 ## 2026-08-31 ANTIGRAVITY — Default RAG reads to Qdrant, decouple from Pinecone & immediate restart sweep
 
 Fixed strategy run failures from Pinecone rate limits (429 / WU exhaustion) and orphaned process restart runs.  Defaulted `RAG_VECTOR_READ_QDRANT` to `true` across server knobs and `vectorReadBackend()` so retrieval natively queries self-hosted Qdrant on Hetzner without Pinecone prerequisites; fully decoupled `retrieveContextDetailed`, `denseTierQuery`, and `denseResults` from Pinecone client and index objects; handled Pinecone 429 rate limits gracefully during hourly background reconciliation; updated `markStaleRunningRuns` to immediately sweep dead runs from previous process lifecycles upon startup.  Full verification gate passed: lint, tsc, 7,695 vitest tests (700 files), Next.js build.  Rollout: `docs/rollouts/2026-08-31-qdrant-default-strategy-fix.md`.
+## 2026-09-01 CLAUDE — PR #3139 plist comment: actually fix the XML `--` bug
+
+PR #3139 claimed moving the template comment above `<!DOCTYPE>` down into `<dict>` fixed
+`plistlib.loads` raising `ExpatError: not well-formed` on
+`scripts/com.jay.provider-knob-sync.plist` — it did not.  XML comments cannot contain the
+sequence `--` anywhere in their body regardless of position, and the relocated comment
+still had two literal `--apply` mentions (lines 8 and 18).  `chatgpt-codex-connector`
+caught this and was right: `plistlib.load` on the PR's head still raised the identical
+error.  Reworded both `--apply` mentions to "the apply flag" (no `--` sequence remains in
+the comment); the real `--apply` CLI argument in `<key>ProgramArguments</key>` is untouched
+since it's a `<string>` value, not comment text.  Verified with `python3 -c "import
+plistlib; plistlib.load(open('scripts/com.jay.provider-knob-sync.plist','rb'))"` on both
+`/usr/bin/python3` and `/opt/homebrew/bin/python3` — parses clean now, raised before.  No
+repo test/CI step runs plistlib against this file.  Rollout:
+`docs/rollouts/2026-09-01-pr-3139-plist-comment-fix.md`.
+
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
 
 Litestream level-2 compaction has been wedged since 2026-08-29 with no alert — L0/L1
