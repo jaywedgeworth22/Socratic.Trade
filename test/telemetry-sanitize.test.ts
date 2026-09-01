@@ -26,9 +26,13 @@ describe("sanitizeTelemetryUrl", () => {
   });
 
   it("still redacts the previously-supported param names (regression safety net)", () => {
-    const url = "/console/orders?symbol=AAPL&proposal=abc123&account=acct_1&token=tok&secret=shh&password=pw&auth=bearer&api_key=k1&code=xyz&key=k2";
+    const url = "/console/orders?symbol=AAPL&proposal=abc123&account=acct_1&token=tkn9&secret=shh&password=pw&auth=bearer&api_key=k1&code=xyz&key=k2";
     const result = sanitizeTelemetryUrl(url);
-    for (const value of ["AAPL", "abc123", "acct_1", "tok", "shh", "pw", "bearer", "k1", "xyz", "k2"]) {
+    // Note: values are chosen to avoid colliding with any *surviving* param
+    // name in the redacted output (e.g. a "tok" value would false-positive
+    // against the intentionally-preserved "token" key name below it --
+    // sanitizeTelemetryUrl redacts values, not names).
+    for (const value of ["AAPL", "abc123", "acct_1", "tkn9", "shh", "pw", "bearer", "k1", "xyz", "k2"]) {
       expect(result).not.toContain(value);
     }
   });
