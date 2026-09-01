@@ -1,1 +1,68 @@
-IyBSb3RhdGluZyBgRU5DUllQVElPTl9LRVlgCgpgRU5DUllQVElPTl9LRVlgIChBRVMtMjU2LUdDTSkgcHJvdGVjdHMgZXZlcnl0aGluZyBpbiBgdXNlcl9hcGlfa2V5c2AsIGBjb25uZWN0ZWRfYWNjb3VudHNgCihicm9rZXIgQVBJIGtleXMvc2VjcmV0cyksIGBub3RpZmljYXRpb25fcHJlZnNgIChQdXNob3Zlci9Ud2lsaW8gdG9rZW5zKSwgYW5kIHRoZSBSb2Jpbmhvb2QgTUNQCk9BdXRoIHRva2VuIGJsb2IgaW4gYHNldHRpbmdzYC4gSXQgaGFzIG5vIGJ1aWx0LWluIGtleSB2ZXJzaW9uaW5nIOKAlCBgZGVjcnlwdFZhbHVlKClgIG9ubHkgZXZlcgp0cmllcyB0aGUgKmN1cnJlbnQqIGtleS4gU3dhcHBpbmcgdGhlIGVudiB2YXIgd2l0aG91dCByZS1lbmNyeXB0aW5nIGZpcnN0IG1ha2VzIGV2ZXJ5IHN0b3JlZApjcmVkZW50aWFsIHNpbGVudGx5IHVuZGVjcnlwdGFibGUgKGZhaWwtY2xvc2VkLCByZXR1cm5zIGAiImApLCB3aGljaCBvbiB0aGlzIGFwcCBtZWFucyBicm9rZXIKb3JkZXIgcGxhY2VtZW50IGJyZWFrcyB3aXRoIG5vIGVycm9yLCBmb3IgZXZlcnkgYWNjb3VudCB3aXRoIGEgc3RvcmVkIGtleS4KCioqTmV2ZXIganVzdCBnZW5lcmF0ZSBhIG5ldyBrZXkgYW5kIHN3YXAgdGhlIGVudiB2YXIuKiogVXNlIGBzY3JpcHRzL3JvdGF0ZS1lbmNyeXB0aW9uLWtleS50c2AuCgojIyBXaHkgdGhpcyBpcyBpbmVydCB1bnRpbCB5b3UgcnVuIGl0CgpUaGlzIHNjcmlwdCBkb2VzIG5vdGhpbmcgb24gaXRzIG93biDigJQgaXQncyBub3QgY2FsbGVkIGZyb20gYXBwIGJvb3QsIGEgY3Jvbiwgb3IgQ0kuIEl0IG9ubHkgcnVucwp3aGVuIGV4cGxpY2l0bHkgaW52b2tlZCB3aXRoIGBPTERfRU5DUllQVElPTl9LRVlgL2BORVdfRU5DUllQVElPTl9LRVlgIHNldCBhbmQgYC0tZHJ5LXJ1bmAgb3IKYC0tYXBwbHlgIHBhc3NlZC4gU2FmZSB0byBoYXZlIG1lcmdlZCB0byBgbWFpbmAuCgojIyBQcm9jZWR1cmUKCjEuICoqQmFjayB1cCB0aGUgREIgZmlsZSBmaXJzdC4qKiBOb24tbmVnb3RpYWJsZSDigJQgdGhpcyByZXdyaXRlcyBldmVyeSBjcmVkZW50aWFsIHJvdyBpbiBwbGFjZS4KICAgYGBgYmFzaAogICBjcCBkYXRhL2FwcC5kYiBkYXRhL2FwcC5kYi5wcmUtcm90YXRpb24tJChkYXRlICslWSVtJWQpLmJhawogICBgYGAKICAgT3IsIGlmIHB1bGxpbmcgYSBmcmVzaCBjb3B5IGZyb20gcHJvZCBmb3IgYSBkcnktcnVuIGZpcnN0LCBkbyB0aGF0IGluc3RlYWQgb2YgdG91Y2hpbmcgdGhlIGxpdmUKICAgZmlsZSBhdCBhbGwgdW50aWwgeW91J3JlIGNvbmZpZGVudCBpbiBgLS1hcHBseWAuCgoyLiAqKkdlbmVyYXRlIHRoZSBuZXcga2V5OioqCiAgIGBgYGJhc2gKICAgb3BlbnNzbCByYW5kIC1oZXggMzIKICAgYGBgCgozLiAqKkRyeSBydW4qKiDigJQgZGVjcnlwdHMgZXZlcnkgcm93IHVuZGVyIHRoZSBPTEQga2V5LCByZS1lbmNyeXB0cyBpbiBtZW1vcnksIHZlcmlmaWVzIHRoZQogICByb3VuZC10cmlwLCB3cml0ZXMgTk9USElORzoKICAgYGBgYmFzaAogICBEQVRBQkFTRV9VUkw9ZmlsZTouL2RhdGEvYXBwLmRiIFwKICAgT0xEX0VOQ1JZUFRJT05fS0VZPTxjdXJyZW50IEVOQ1JZUFRJT05fS0VZPiBcCiAgIE5FV19FTkNSWVBUSU9OX0tFWT08dGhlIGtleSBmcm9tIHN0ZXAgMj4gXAogICBucHggdHN4IHNjcmlwdHMvcm90YXRlLWVuY3J5cHRpb24ta2V5LnRzIC0tZHJ5LXJ1bgogICBgYGAKICAgSWYgdGhpcyByZXBvcnRzIGFueSBmYWlsdXJlcywgU1RPUCDigJQgZG8gbm90IHByb2NlZWQgdG8gYC0tYXBwbHlgLiBBIGZhaWx1cmUgbWVhbnMgZWl0aGVyIHRoZQogICBgT0xEX0VOQ1JZUFRJT05fS0VZYCB5b3Ugc3VwcGxpZWQgaXMgd3JvbmcsIG9yIHNvbWUgcm93cyBhcmUgYWxyZWFkeSB1bmRlciBhIGRpZmZlcmVudCBrZXkgdGhhbgogICB5b3UgdGhpbmsuCgo0LiAqKkFwcGx5Kiog4oCUIHNhbWUgZW52LCBzaW5nbGUgYWxsLW9yLW5vdGhpbmcgU1FMaXRlIHRyYW5zYWN0aW9uOgogICBgYGBiYXNoCiAgIC4uLnNhbWUgZW52IGFzIHN0ZXAgMy4uLiBucHggdHN4IHNjcmlwdHMvcm90YXRlLWVuY3J5cHRpb24ta2V5LnRzIC0tYXBwbHkKICAgYGBgCiAgIElmIEFOWSByb3cgZmFpbHMgbWlkLXJ1biwgdGhlIHdob2xlIHRyYW5zYWN0aW9uIHJvbGxzIGJhY2sgYXV0b21hdGljYWxseSDigJQgbm90aGluZyBwYXJ0aWFsIGlzCiAgIGV2ZXIgbGVmdCBjb21taXR0ZWQuCgo1LiAqKk9ubHkgYWZ0ZXIgYSBzdWNjZXNzZnVsIGAtLWFwcGx5YCoqLCB1cGRhdGUgYEVOQ1JZUFRJT05fS0VZYCB0byB0aGUgbmV3IHZhbHVlIGluCiAgIEluZmlzaWNhbCAocHJvZCBwcm9qZWN0KSBhbmQgQ29vbGlmeSwgdGhlbiByZWRlcGxveS4KCjYuICoqVmVyaWZ5IHBvc3QtZGVwbG95Kiogd2l0aCB0aGUgbm93LWN1cnJlbnQga2V5OgogICBgYGBiYXNoCiAgIERBVEFCQVNFX1VSTD1maWxlOi4vZGF0YS9hcHAuZGIgbnB4IHRzeCBzY3JpcHRzL3JvdGF0ZS1lbmNyeXB0aW9uLWtleS50cyAtLXZlcmlmeQogICBgYGAKICAgUmVhZHMgYEVOQ1JZUFRJT05fS0VZYCBmcm9tIHRoZSBlbnZpcm9ubWVudCBleGFjdGx5IGxpa2UgdGhlIGFwcCBkb2VzLiBFeGl0cyBub24temVybyBhbmQgbGlzdHMKICAgZXZlcnkgcm93IHRoYXQgZmFpbHMgdG8gZGVjcnlwdC4KCjcuIFJldGlyZSB0aGUgb2xkIGtleSB2YWx1ZSBldmVyeXdoZXJlIGl0IG1pZ2h0IHN0aWxsIGJlIHdyaXR0ZW4gZG93biAoc2VjcmV0cyBtYW5hZ2VyIGhpc3RvcnksCiAgIGAuZW52YCBiYWNrdXBzLCBgfi8uc2VjcmV0c2ApLgoKIyMgYC0tdmVyaWZ5YCBhcyBhIHN0YW5kYWxvbmUgaGVhbHRoIGNoZWNrCgpSdW4gYC0tdmVyaWZ5YCBhbnkgdGltZSwgdW5yZWxhdGVkIHRvIHJvdGF0aW9uLCB0byBjb25maXJtIGV2ZXJ5IHN0b3JlZCBjaXBoZXJ0ZXh0IHN0aWxsIGRlY3J5cHRzCnVuZGVyIHRoZSBjdXJyZW50bHktY29uZmlndXJlZCBgRU5DUllQVElPTl9LRVlgIOKAlCB1c2VmdWwgYWZ0ZXIgYSByZXN0b3JlLWZyb20tYmFja3VwIGRyaWxsLCBvciBhcwphIHBlcmlvZGljIHNhbml0eSBjaGVjay4K
+# Rotating `ENCRYPTION_KEY`
+
+`ENCRYPTION_KEY` (AES-256-GCM) protects everything in `user_api_keys`, `connected_accounts`
+(broker API keys/secrets), `notification_prefs` (Pushover/Twilio tokens), and the Robinhood MCP
+OAuth token blob in `settings`. It has no built-in key versioning — `decryptValue()` only ever
+tries the *current* key. Swapping the env var without re-encrypting first makes every stored
+credential silently undecryptable (fail-closed, returns `""`), which on this app means broker
+order placement breaks with no error, for every account with a stored key.
+
+**Never just generate a new key and swap the env var.** Use `scripts/rotate-encryption-key.ts`.
+
+## Why this is inert until you run it
+
+This script does nothing on its own — it's not called from app boot, a cron, or CI. It only runs
+when explicitly invoked with `OLD_ENCRYPTION_KEY`/`NEW_ENCRYPTION_KEY` set and `--dry-run` or
+`--apply` passed. Safe to have merged to `main`.
+
+## Procedure
+
+1. **Back up the DB file first.** Non-negotiable — this rewrites every credential row in place.
+   ```bash
+   cp data/app.db data/app.db.pre-rotation-$(date +%Y%m%d).bak
+   ```
+   Or, if pulling a fresh copy from prod for a dry-run first, do that instead of touching the live
+   file at all until you're confident in `--apply`.
+
+2. **Generate the new key:**
+   ```bash
+   openssl rand -hex 32
+   ```
+
+3. **Dry run** — decrypts every row under the OLD key, re-encrypts in memory, verifies the
+   round-trip, writes NOTHING:
+   ```bash
+   DATABASE_URL=file:./data/app.db \
+   OLD_ENCRYPTION_KEY=<current ENCRYPTION_KEY> \
+   NEW_ENCRYPTION_KEY=<the key from step 2> \
+   npx tsx scripts/rotate-encryption-key.ts --dry-run
+   ```
+   If this reports any failures, STOP — do not proceed to `--apply`. A failure means either the
+   `OLD_ENCRYPTION_KEY` you supplied is wrong, or some rows are already under a different key than
+   you think.
+
+4. **Apply** — same env, single all-or-nothing SQLite transaction:
+   ```bash
+   ...same env as step 3... npx tsx scripts/rotate-encryption-key.ts --apply
+   ```
+   If ANY row fails mid-run, the whole transaction rolls back automatically — nothing partial is
+   ever left committed.
+
+5. **Only after a successful `--apply`**, update `ENCRYPTION_KEY` to the new value in
+   Infisical (prod project) and Coolify, then redeploy.
+
+6. **Verify post-deploy** with the now-current key:
+   ```bash
+   DATABASE_URL=file:./data/app.db npx tsx scripts/rotate-encryption-key.ts --verify
+   ```
+   Reads `ENCRYPTION_KEY` from the environment exactly like the app does. Exits non-zero and lists
+   every row that fails to decrypt.
+
+7. Retire the old key value everywhere it might still be written down (secrets manager history,
+   `.env` backups, `~/.secrets`).
+
+## `--verify` as a standalone health check
+
+Run `--verify` any time, unrelated to rotation, to confirm every stored ciphertext still decrypts
+under the currently-configured `ENCRYPTION_KEY` — useful after a restore-from-backup drill, or as
+a periodic sanity check.
