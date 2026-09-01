@@ -139,47 +139,17 @@ export function queueStrategyRunRequest(input: { userId: string; manual?: boolea
  */
 export const STRATEGY_RUN_EXECUTION_STALE_MS = 90_000;
 
-type ExecutionBeat = { at: number; timer?: ReturnType<typeof setInterval> };
+import {
+  isStrategyRunExecutionLive,
+  beginStrategyRunExecution,
+  resetStrategyRunExecutionsForTest
+} from "./strategy-run-execution-registry";
 
-const executionHost = globalThis as unknown as {
-  __socraticStrategyRunExecutions?: Map<string, ExecutionBeat>;
+export {
+  isStrategyRunExecutionLive,
+  beginStrategyRunExecution,
+  resetStrategyRunExecutionsForTest
 };
-
-function executionMap(): Map<string, ExecutionBeat> {
-  return (executionHost.__socraticStrategyRunExecutions ??= new Map());
-}
-
-export function isStrategyRunExecutionLive(runId: string): boolean {
-  return executionMap().has(runId);
-}
-
-export function beginStrategyRunExecution(
-  runId: string,
-  now: number = Date.now()
-): { stop: () => void; owns: () => boolean } {
-  const prev = executionMap().get(runId);
-  if (prev?.timer) clearInterval(prev.timer);
-  const beat: ExecutionBeat = { at: now };
-  beat.timer = setInterval(() => {
-    beat.at = Date.now();
-  }, 15_000);
-  beat.timer.unref?.();
-  executionMap().set(runId, beat);
-  return {
-    owns: () => executionMap().get(runId) === beat,
-    stop: () => {
-      if (beat.timer) clearInterval(beat.timer);
-      if (executionMap().get(runId) === beat) executionMap().delete(runId);
-    }
-  };
-}
-
-export function resetStrategyRunExecutionsForTest(): void {
-  for (const beat of executionMap().values()) {
-    if (beat.timer) clearInterval(beat.timer);
-  }
-  executionMap().clear();
-}
 
 export type ProcessPendingStrategyRunResult = {
   processed: number;
