@@ -1349,7 +1349,11 @@ function resolveRagKeyWithSource(service: "pinecone" | RagEmbedRerankProvider, u
   return { key, source: key ? "env" : "none", service };
 }
 
-export async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
+export async function getClients(
+  userId: string = "local",
+  leaseGuard?: VectorStoreLeaseGuard,
+  options?: { skipMissingPineconeAlert?: boolean }
+) {
   assertVectorStoreLease(leaseGuard);
   const lookupUserId = userId || "local";
   const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);
@@ -1375,11 +1379,13 @@ export async function getClients(userId: string = "local", leaseGuard?: VectorSt
   }
 
   if (!pineconeKey) {
-    if (leaseGuard) {
-      await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
-      assertVectorStoreLease(leaseGuard);
-    } else {
-      void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
+    if (!options?.skipMissingPineconeAlert) {
+      if (leaseGuard) {
+        await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
+        assertVectorStoreLease(leaseGuard);
+      } else {
+        void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
+      }
     }
     return { pc: null, voyage, initCacheKey: "", pineconeSource: pinecone.source, voyageSource };
   }
@@ -5506,13 +5512,23 @@ async function reconcileManagedVectorRecordsUnlocked(
     throw error;
   }
   const userId = options.userId ?? "local";
-  const providerAuthority = await getCurrentVectorProviderAuthority({
-    userId,
-    leaseGuard: operationLeaseGuard
-  });
+  let providerAuthority: string | undefined;
+  try {
+    providerAuthority = await getCurrentVectorProviderAuthority({
+      userId,
+      leaseGuard: operationLeaseGuard
+    });
+  } catch (error) {
+    assertVectorStoreLease(operationLeaseGuard);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (isPineconeWuExhaustedError(msg) || isWholeIndexInventoryDeferredError(error)) {
+      return emptyReconcileResult(dryRun, true);
+    }
+    throw error;
+  }
   assertVectorStoreLease(operationLeaseGuard);
   if (!providerAuthority) {
-    throw new Error("Stable Pinecone provider authority is unavailable for managed-vector reconciliation.");
+    return emptyReconcileResult(dryRun, true);
   }
   const ledgerAuthority = managedVectorLedgerAuthority();
   const targetNamespace: "managed" | "fmp-transcripts" = options.source === "fmp-earnings-transcript"
@@ -5531,7 +5547,11 @@ async function reconcileManagedVectorRecordsUnlocked(
       isManagedOccurrenceVectorId(row.id)
     ));
   } catch (error) {
-    if (isWholeIndexInventoryDeferredError(error)) return emptyReconcileResult(dryRun, true);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (isWholeIndexInventoryDeferredError(error) || isPineconeWuExhaustedError(msg)) return emptyReconcileResult(dryRun, true);
+    if (/rate limit|429|too many requests|Pinecone connection failed|fetch failed/i.test(msg)) {
+      return emptyReconcileResult(dryRun, true);
+    }
     throw error;
   }
   assertVectorStoreLease(operationLeaseGuard);
@@ -6676,12 +6696,27 @@ export async function retrieveContextDetailed(
     return finish([]);
   }
   const vectorUserId = vectorUserIdFor(userId);
-  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId);
   const activeProvider = activeEmbeddingProvider(userId);
+  const activeModel = activeEmbeddingModel(userId);
+  const hasEmbedSpaceFilter = Object.keys(embedSpaceFilterForModel(activeModel)).length > 0;
+  const readBackend: "pinecone" | "qdrant" = hasEmbedSpaceFilter ? vectorReadBackend() : "pinecone";
+
+  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId, undefined, {
+    skipMissingPineconeAlert: readBackend === "qdrant"
+  });
   const hasActiveKey = !!voyage || embeddingCredentialIsUsable(resolveApiKey(activeProvider, userId));
-  if (!pc || !hasActiveKey) {
-    void captureRagSentryMessage("warning", `RAG retrieval skipped: missing Pinecone or ${activeProvider} key`, {
-      provider: !pc ? "pinecone" : activeProvider,
+  if (!hasActiveKey) {
+    void captureRagSentryMessage("warning", `RAG retrieval skipped: missing ${activeProvider} key`, {
+      provider: activeProvider,
+      operation: "retrieveContext",
+      source: userId === "local" ? "operator" : "user"
+    });
+    reportRetrievalStatus(options, "lookup_failed");
+    return finish([]);
+  }
+  if (readBackend === "pinecone" && !pc) {
+    void captureRagSentryMessage("warning", "RAG retrieval skipped: missing Pinecone key", {
+      provider: "pinecone",
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
@@ -6765,15 +6800,33 @@ export async function retrieveContextDetailed(
   const asOfEpochFilter = buildAsOfEpochFilter(options?.asOf, strictAsOf);
 
   try {
-    if (!(await indexExists(pc, pineconeSource, userId))) {
-      reportRetrievalStatus(options, "lookup_failed");
-      return finish([]);
+    let stableProviderAuthority: string | undefined;
+    let defaultIndex: any;
+    let managedIndex: any;
+    let privateIndex: any;
+    let fmpIndex: any;
+
+    if (pc && initCacheKey) {
+      try {
+        await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
+      } catch {
+        // fail-soft on metric check
+      }
+      stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
     }
-    await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
-    const stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
-    const providerAuthority = stableProviderAuthority;
-    const defaultIndex = vectorDataIndex(pc, "default");
+
+    if (readBackend === "pinecone") {
+      if (!pc || !(await indexExists(pc, pineconeSource, userId))) {
+        reportRetrievalStatus(options, "lookup_failed");
+        return finish([]);
+      }
+      defaultIndex = vectorDataIndex(pc, "default");
+    }
     const ledgerAuthority = managedVectorLedgerAuthority();
+    if (!stableProviderAuthority && (readBackend === "qdrant" || !pc)) {
+      stableProviderAuthority = dbModule.durableProviderAuthority(ledgerAuthority);
+    }
+    const providerAuthority = stableProviderAuthority;
     const managedRecordsExpected = hasCommittedManagedRecords();
     const currentManagedRecordsExpected = hasCommittedVectorNamespaceRecords(ledgerAuthority, "managed");
     const currentFmpRecordsExpected = hasCommittedVectorNamespaceRecords(ledgerAuthority, "fmp-transcripts");
@@ -6781,45 +6834,32 @@ export async function retrieveContextDetailed(
       !stableProviderAuthority ||
       hasUnreachableCommittedManagedRecords(ledgerAuthority, stableProviderAuthority)
     );
-    const queryManagedNamespace = Boolean(stableProviderAuthority && currentManagedRecordsExpected);
-    const managedIndex = queryManagedNamespace
-      ? vectorDataIndex(pc, "managed", ledgerAuthority)
-      : undefined;
-    const queryPrivateNamespace = hasCurrentPrivateVectorNamespaceRecords(
-      userId,
-      ledgerAuthority,
-      stableProviderAuthority
-    );
-    const privateIndex = queryPrivateNamespace
-      ? vectorDataIndex(pc, "private", ledgerAuthority, userId)
-      : undefined;
-    const queryFmpNamespace = Boolean(
-      stableProviderAuthority &&
-      currentFmpRecordsExpected &&
-      fmpTranscriptRightsActive()
-    );
-    const fmpIndex = queryFmpNamespace
-      ? vectorDataIndex(pc, "fmp-transcripts", ledgerAuthority)
-      : undefined;
-
-    // STAGE-1 Qdrant read cutover (vector-store/qdrant-read.ts): resolved once per retrieval
-    // pass — a runtime knob flip applies to the NEXT pass, no redeploy.  When "qdrant", the six
-    // dense tier queries below hit the Qdrant mirror with the SAME filters, pinned to the SAME
-    // namespace names via the shared vectorNamespaceName helper; writes/deletes/inventory stay on
-    // Pinecone.  Qdrant reads never route through withRagApiHealth("pinecone"), so they cannot
-    // trip the Pinecone WU breaker or page the Pinecone health lane — and the WU breaker (a
-    // WRITE-side monthly-quota gate) never gates this read path on either backend.
-    // EMBEDDING-SPACE GATE (review fix): the Qdrant mirror holds ONLY embed_model-stamped
-    // non-Voyage vectors — pinecone-to-qdrant-copy.py skips both voyage-* points and unstamped
-    // legacy points.  When Voyage is the active model its embed-space filter is EMPTY (that is
-    // what keeps unstamped legacy vectors retrievable on Pinecone), so a Voyage query vector sent
-    // to Qdrant would rank nothing but foreign-space bge vectors with no server clause to stop
-    // it — cross-model cosines are garbage evidence.  Qdrant serves a pass only when the active
-    // model's embed-space filter pins the mirror's space; otherwise reads stay on Pinecone.
-    const readBackend: "pinecone" | "qdrant" =
-      Object.keys(embedSpaceFilterForModel(activeEmbeddingModel(userId))).length > 0
-        ? vectorReadBackend()
-        : "pinecone";
+    const queryManagedNamespace = readBackend === "qdrant"
+      ? currentManagedRecordsExpected
+      : Boolean(stableProviderAuthority && currentManagedRecordsExpected);
+    if (pc && queryManagedNamespace) {
+      managedIndex = vectorDataIndex(pc, "managed", ledgerAuthority);
+    }
+    const queryPrivateNamespace = readBackend === "qdrant"
+      ? true
+      : hasCurrentPrivateVectorNamespaceRecords(
+          userId,
+          ledgerAuthority,
+          stableProviderAuthority
+        );
+    if (pc && queryPrivateNamespace) {
+      privateIndex = vectorDataIndex(pc, "private", ledgerAuthority, userId);
+    }
+    const queryFmpNamespace = readBackend === "qdrant"
+      ? Boolean(currentFmpRecordsExpected && fmpTranscriptRightsActive())
+      : Boolean(
+          stableProviderAuthority &&
+          currentFmpRecordsExpected &&
+          fmpTranscriptRightsActive()
+        );
+    if (pc && queryFmpNamespace) {
+      fmpIndex = vectorDataIndex(pc, "fmp-transcripts", ledgerAuthority);
+    }
     const defaultNamespaceName = vectorNamespaceName("default");
     const privateNamespaceName = queryPrivateNamespace
       ? vectorNamespaceName("private", ledgerAuthority, userId)
@@ -6980,7 +7020,7 @@ export async function retrieveContextDetailed(
       let qdrantTierAttempts = 0;
       const qdrantTierErrors: unknown[] = [];
       const denseTierQuery = (
-        index: NonNullable<typeof privateIndex>,
+        index: any,
         namespaceName: string,
         operation: string,
         filter: Record<string, unknown>
@@ -6998,6 +7038,7 @@ export async function retrieveContextDetailed(
             }
           );
         }
+        if (!index) return Promise.resolve({ matches: [] });
         return withRagApiHealth("pinecone", pineconeSource, userId, operation, () =>
           index.query({
             vector: embedding,
@@ -7010,20 +7051,20 @@ export async function retrieveContextDetailed(
       let denseResults: any[];
       try {
         denseResults = await Promise.all([
-        denseTierQuery(defaultIndex, defaultNamespaceName, "query user tier", userTierFilter),
-        privateIndex
-          ? denseTierQuery(privateIndex, privateNamespaceName!, "query private namespace", userTierFilter)
-          : Promise.resolve({ matches: [] }),
-        denseTierQuery(defaultIndex, defaultNamespaceName, "query shared tier", sharedTierFilter),
-        managedIndex
-          ? denseTierQuery(managedIndex, managedNamespaceName!, "query managed user tier", managedUserFilter)
-          : Promise.resolve({ matches: [] }),
-        managedIndex
-          ? denseTierQuery(managedIndex, managedNamespaceName!, "query managed shared tier", managedSharedFilter)
-          : Promise.resolve({ matches: [] }),
-        fmpIndex
-          ? denseTierQuery(fmpIndex, fmpNamespaceName!, "query FMP transcript tier", managedSharedFilter)
-          : Promise.resolve({ matches: [] })
+          denseTierQuery(defaultIndex, defaultNamespaceName, "query user tier", userTierFilter),
+          privateNamespaceName && (readBackend === "qdrant" || privateIndex)
+            ? denseTierQuery(privateIndex, privateNamespaceName, "query private namespace", userTierFilter)
+            : Promise.resolve({ matches: [] }),
+          denseTierQuery(defaultIndex, defaultNamespaceName, "query shared tier", sharedTierFilter),
+          managedNamespaceName && (readBackend === "qdrant" || managedIndex)
+            ? denseTierQuery(managedIndex, managedNamespaceName, "query managed user tier", managedUserFilter)
+            : Promise.resolve({ matches: [] }),
+          managedNamespaceName && (readBackend === "qdrant" || managedIndex)
+            ? denseTierQuery(managedIndex, managedNamespaceName, "query managed shared tier", managedSharedFilter)
+            : Promise.resolve({ matches: [] }),
+          fmpNamespaceName && (readBackend === "qdrant" || fmpIndex)
+            ? denseTierQuery(fmpIndex, fmpNamespaceName, "query FMP transcript tier", managedSharedFilter)
+            : Promise.resolve({ matches: [] })
         ]);
         // Total-outage escalation (review fix): per-tier fail-open is for PARTIAL degradation.
         // When EVERY queried Qdrant tier failed (endpoint down, refused translation on a shared

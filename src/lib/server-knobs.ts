@@ -181,7 +181,7 @@ export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
     label: "Qdrant read backend",
     description: "Serve RAG retrieval queries from the self-hosted Qdrant mirror instead of Pinecone.  Stage 1: reads only — writes, deletes, and inventory stay on Pinecone.",
     type: "boolean",
-    defaultValue: false,
+    defaultValue: true,
     effect: "Applies to the next retrieval pass.  Requires QDRANT_URL (and QDRANT_API_KEY) in the environment; without them reads stay on Pinecone.  The string env RAG_VECTOR_READ_BACKEND=qdrant|pinecone is honored when neither this override nor this env var is set."
   },
   {

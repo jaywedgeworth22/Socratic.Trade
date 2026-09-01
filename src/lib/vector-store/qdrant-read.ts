@@ -34,7 +34,19 @@ const DEFAULT_COLLECTION = "socratic-trade";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export function qdrantConfigured(): boolean {
-  return Boolean(process.env.QDRANT_URL?.trim());
+  const url = process.env.QDRANT_URL?.trim();
+  if (!url) return false;
+  // Remote / production Qdrant endpoints require an API key unless explicitly permitted anonymously
+  if (
+    !process.env.QDRANT_API_KEY?.trim() &&
+    process.env.QDRANT_ALLOW_ANONYMOUS !== "true" &&
+    process.env.NODE_ENV !== "test" &&
+    !url.includes("127.0.0.1") &&
+    !url.includes("localhost")
+  ) {
+    return false;
+  }
+  return true;
 }
 
 let warnedUnconfigured = false;
@@ -62,6 +74,9 @@ export function vectorReadBackend(): VectorReadBackend {
     const backend = process.env.RAG_VECTOR_READ_BACKEND?.trim().toLowerCase();
     if (backend === "qdrant") enabled = true;
     else if (backend === "pinecone") enabled = false;
+  }
+  if (enabled === undefined) {
+    enabled = true;
   }
   if (enabled !== true) return "pinecone";
   if (!qdrantConfigured()) {

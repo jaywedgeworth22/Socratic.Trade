@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-31 ANTIGRAVITY — Default RAG reads to Qdrant, decouple from Pinecone & immediate restart sweep
+
+Fixed strategy run failures from Pinecone rate limits (429 / WU exhaustion) and orphaned process restart runs.  Defaulted `RAG_VECTOR_READ_QDRANT` to `true` across server knobs and `vectorReadBackend()` so retrieval natively queries self-hosted Qdrant on Hetzner without Pinecone prerequisites; fully decoupled `retrieveContextDetailed`, `denseTierQuery`, and `denseResults` from Pinecone client and index objects; resolved provider authority fallback from durable SQLite commits; broke `db-execution` circular dependency via standalone `strategy-run-execution-registry.ts`; handled Pinecone 429 rate limits gracefully during hourly background reconciliation; updated `markStaleRunningRuns` to immediately sweep dead runs from previous process lifecycles upon startup.  Full verification gate passed: lint, tsc, 7,696 vitest tests (700 files), Next.js build.  Rollout: `docs/rollouts/2026-08-31-qdrant-default-strategy-fix.md`.
+
 ## 2026-09-01 CLAUDE — L1 boundary-trim hardened, and Congress.Trade found wedged too
 
 Closes the three guard gaps the #3140 review raised, plus two defects that only showed up
