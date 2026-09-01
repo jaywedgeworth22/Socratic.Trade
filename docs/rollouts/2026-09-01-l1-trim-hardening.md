@@ -51,7 +51,10 @@ Files touched:
   transient-unit arming pattern.  The old "Pre-flight before `--apply` - what the guards do
   NOT cover" subsection is gone because all three of its gaps are now enforced in code.
 - `docs/rollouts/2026-09-01-l1-trim-hardening.md` - this note.
-- `docs/EFFORT-LOG.md`, `STATUS.md` - board and snapshot.
+- `docs/EFFORT-LOG.md` - new effort row, and an in-place correction of the #3140 row that was
+  left at IN PROGRESS after that PR merged.
+- `STATUS.md` - current-state snapshot.
+- `PLAN.md` - lane entry, and the #3140 entry marked merged.
 
 ## 3. Decisions & Trade-offs
 
@@ -188,7 +191,29 @@ trade-off above, it must never be.
    the deletes are landing somewhere other than expected.  Either way, do not assume the
    armed timers will heal CT until one manual run is proven to remove objects.
 
-2. **Give the delete loop real failure reporting (paired repo + host change).**  `rclone()`
+2. **Re-space or lock the armed retries before they fire (P1, from the #3142 review).**  The
+   three attempts per app are 16 and 20 minutes apart, but a large trim runs for hours and
+   the tool has **no lock**.  Each run snapshots its delete list up front, so attempt 2 will
+   re-list and re-issue hard deletes for keys attempt 1 is still working through - doubling
+   B2 traffic and making both runs' `deleted` / `failed` counts meaningless.  This is safe for
+   ST (~172 L1 objects, finishes in minutes) and **not** safe for CT (~2,400).  Before
+   2026-09-02 00:04 UTC either widen the CT spacing past the expected runtime, drop CT to a
+   single attempt, or add single-flight locking.  The retry design silently assumed a
+   short run.
+
+3. **Fix two confirmed script defects (paired repo + host change).**  Both were found by the
+   #3142 review and reproduced directly:
+   - A **zero-byte previous snapshot crashes the run**: the relative-size guard short-circuits
+     on `prev_size > 0`, but the very next log line computes `size / prev_size`
+     unconditionally, raising an uncaught `ZeroDivisionError`.  Fail-safe (before any delete)
+     but it exits with a traceback rather than a documented code.
+   - **Legal twin shapes are misreported as gaps**: the contiguity walk sorts by `(min, max)`
+     and only recognises a twin on the adjacent pair.  For `(1,99), (1,200), (100,200)` it
+     compares `(1,99)` against `(1,200)`, misses the twin, and reports gap `63->1` even though
+     `(100,200)` is the exact continuation - a spurious exit 5 that blocks a trim that should
+     have run.  Collapse same-max twins before testing adjacency.
+
+4. **Give the delete loop real failure reporting (paired repo + host change).**  `rclone()`
    discards stderr and reports only a return code; the caller catches bare `Exception` and
    counts a failure without naming the object or the reason.  Add stderr to the raised error,
    log the first few failures at the point they happen, and abort early once the failure rate
@@ -196,17 +221,17 @@ trade-off above, it must never be.
    applied to `/usr/local/sbin/litestream-l1-boundary-trim` and the repo copy in the same
    change, to preserve byte-identity.
 
-3. **After the 2026-09-02 00:04-00:40 UTC window, confirm L2 actually recovered.**  Exit 0
+5. **After the 2026-09-02 00:04-00:40 UTC window, confirm L2 actually recovered.**  Exit 0
    means "objects were deleted", not "compaction recovered".  Check for
    `msg="compaction complete" ... level=2` and for the L2 object's `<min>` TXID advancing on
    both ST and CT.  If CT's L2 count is still zero afterwards, the wedge has a second cause.
-4. **Re-check billed vs logical B2 storage in ~24h.**  The 199.59 GB / 126.49 GB gap should
+6. **Re-check billed vs logical B2 storage in ~24h.**  The 199.59 GB / 126.49 GB gap should
    close once the lifecycle reaper collects the pre-`--b2-hard-delete` hide markers.  Bytes
    deleted by this tool from now on should not contribute a new overhang.
-5. **Usage-Monitor has a table entry but has not been exercised.**  `--app usage-monitor`
+7. **Usage-Monitor has a table entry but has not been exercised.**  `--app usage-monitor`
    (`jays-usage-monitor-eu` / `api-usage-monitor/prod.db`) should get a dry run before anyone
    arms it, to confirm the prefix is right and its L1/L2 state.
-6. **The timers are transient by design and expire on reboot.**  If the wedge recurs, arm a
+8. **The timers are transient by design and expire on reboot.**  If the wedge recurs, arm a
    fresh set - do not convert these into an installed nightly timer.
 
 Blocker: item 1.  Until a CT `--apply` run is shown to actually remove objects, the CT half

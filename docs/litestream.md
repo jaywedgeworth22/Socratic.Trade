@@ -321,9 +321,13 @@ Unparseable object names are warned about and skipped, never deleted.
 | 5 | The kept chain has internal gaps - L2 will stay wedged, a human must reconcile |
 | 6 | Nothing superseded although L1 is large - the boundary did not advance |
 
-An exit code of 0 means "objects were deleted", **not** "compaction recovered".  After
-`--apply`, confirm the fix landed rather than assuming: look for `msg="compaction complete"
-... level=2` and for the L2 object's `<min>` TXID advancing.
+**Exit 0 means "the run completed without hitting a guard" - not "objects were deleted", and
+certainly not "compaction recovered".**  A dry run exits 0, and so does a legitimate no-op
+with nothing superseded.  An operator reading only `systemctl status` can therefore see
+success while the entire L1 backlog is still sitting there.  To establish that deletion
+actually happened, require an `APPLIED ... deleted=N failed=M` line with a non-zero `N`, or
+re-count the level.  To establish that the *wedge* is fixed, look for
+`msg="compaction complete" ... level=2` and for the L2 object's `<min>` TXID advancing.
 
 ### Deletes must be hard deletes
 
@@ -357,6 +361,35 @@ its deletes therefore looks identical to a slow successful one until the termina
 `APPLIED ... deleted=N failed=M` line.  **Do not conclude a trim worked from the absence of
 errors** - re-count the level and compare.  Both are open follow-ups in
 `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
+
+### Known defects in the current build - read before arming anything
+
+These are confirmed by reproduction, not suspected.  All three need a **paired repo + host**
+change (the repo copy is kept byte-identical to the installed tool), so none is fixed in the
+build documented here.
+
+1. **The tool has no lock, and concurrent runs will collide.**  Nothing prevents two
+   invocations for the same app from overlapping.  Each snapshots its own delete list up
+   front, so a second run started while the first is still deleting will re-list and re-issue
+   hard deletes for the same keys - doubling Class A/C traffic and producing meaningless
+   `deleted` / `failed` counts.  This matters because the retry pattern above spaces attempts
+   only 16-20 minutes apart while a large trim runs for **hours**.  Space retries beyond the
+   maximum expected runtime, or add single-flight locking, before arming retries for a level
+   with thousands of objects.  Spacing is safe for a small L1 (ST's ~172 objects) and unsafe
+   for a large one (CT's ~2,400).
+2. **A zero-byte previous snapshot crashes the run.**  The relative-size guard short-circuits
+   on `prev_size > 0`, but the log line immediately after it computes `size / prev_size`
+   unconditionally, so a 0-byte predecessor raises an uncaught `ZeroDivisionError` and exits
+   with a traceback instead of a documented code.  Fail-safe (it happens before any delete),
+   but undiagnosable from the exit status.
+3. **Legal twin shapes can be misreported as gaps.**  The contiguity walk sorts by
+   `(min, max)` and only recognises a twin when the *adjacent* pair shares a `max`.  For the
+   retained set `(1,99), (1,200), (100,200)` the sort yields that order, so `(1,99)` is
+   compared against `(1,200)`, the twin test fails, and a gap `63->1` is reported even though
+   `(100,200)` supplies the exact continuation.  The result is a spurious exit 5 that blocks
+   a trim which should have proceeded.  Fail-safe (it refuses rather than deleting), but it
+   will stall a real recovery until a human overrides it.  Collapse same-max twins before
+   testing adjacency.
 
 ### The deliberate trade-off
 
