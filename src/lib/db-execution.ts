@@ -2,6 +2,7 @@
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
 import "server-only";
 import { audit, getDb } from "./db";
+import { isStrategyRunExecutionLive } from "./strategy-run-requests";
 import { CENTRAL_TRADING_DAY_ZONE, startOfCentralTradingDay } from "./trading-day";
 import type { StrategyRunFinishStatus } from "./strategy-run-status";
 import type { StrategyRunRow } from "./types";
@@ -549,14 +550,13 @@ export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, s
 export function markStaleRunningRuns(now: number = Date.now()): number {
   const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
   const processStarted = processStartedAtMs();
-  const restartCutoff = new Date(processStarted - PROCESS_RESTART_DETECT_SKEW_MS).toISOString();
   const db = getDb();
   const stale = db
     .prepare(
       `SELECT id, user_id, connected_account_id, started_at FROM strategy_runs
-       WHERE status = 'running' AND (started_at < ? OR started_at < ?)`
+       WHERE status = 'running' AND started_at < ?`
     )
-    .all(cutoff, restartCutoff) as Array<{
+    .all(cutoff) as Array<{
       id: string;
       user_id: string;
       connected_account_id: string | null;
@@ -564,15 +564,13 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
     }>;
   let count = 0;
   for (const row of stale) {
+    if (isStrategyRunExecutionLive(row.id)) continue;
     const cause = staleRunningRunSweepCause(row.started_at, processStarted);
-    // Extra grace beyond the raised threshold: for same-process stalls, check if the run is still
-    // emitting audit rows recently. Prior-process runs died when the process restarted.
-    if (cause !== "process_restarted_mid_run") {
-      const recentActivity = db
-        .prepare(`SELECT 1 FROM audit_events WHERE json_extract(payload, '$.runId') = ? AND created_at >= ? LIMIT 1`)
-        .get(row.id, cutoff);
-      if (recentActivity) continue;
-    }
+    // Unconditional audit activity grace: check if the run is still emitting audit rows recently
+    const recentActivity = db
+      .prepare(`SELECT 1 FROM audit_events WHERE json_extract(payload, '$.runId') = ? AND created_at >= ? LIMIT 1`)
+      .get(row.id, cutoff);
+    if (recentActivity) continue;
 
     const finishedAt = new Date(now).toISOString();
     const summary = staleRunningRunSweepSummary(row.started_at, processStarted);

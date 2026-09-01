@@ -5512,8 +5512,13 @@ async function reconcileManagedVectorRecordsUnlocked(
       userId,
       leaseGuard: operationLeaseGuard
     });
-  } catch {
-    return emptyReconcileResult(dryRun, true);
+  } catch (error) {
+    assertVectorStoreLease(operationLeaseGuard);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (isPineconeWuExhaustedError(msg) || isWholeIndexInventoryDeferredError(error)) {
+      return emptyReconcileResult(dryRun, true);
+    }
+    throw error;
   }
   assertVectorStoreLease(operationLeaseGuard);
   if (!providerAuthority) {
@@ -6793,16 +6798,21 @@ export async function retrieveContextDetailed(
     let privateIndex: any;
     let fmpIndex: any;
 
+    if (pc && initCacheKey) {
+      try {
+        await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
+      } catch {
+        // fail-soft on metric check
+      }
+      stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+    }
+
     if (readBackend === "pinecone") {
       if (!pc || !(await indexExists(pc, pineconeSource, userId))) {
         reportRetrievalStatus(options, "lookup_failed");
         return finish([]);
       }
-      await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
-      stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
       defaultIndex = vectorDataIndex(pc, "default");
-    } else {
-      stableProviderAuthority = initCacheKey ? stableProviderAuthorityForInitKey(initCacheKey) : undefined;
     }
     const providerAuthority = stableProviderAuthority;
     const ledgerAuthority = managedVectorLedgerAuthority();
