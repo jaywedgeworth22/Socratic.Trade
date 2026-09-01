@@ -1,6 +1,47 @@
 # Current Status
 
-## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
+## 2026-09-01 CLAUDE — L1 boundary-trim hardened, and Congress.Trade found wedged too
+
+Closes all three guard gaps the #3140 review raised (that PR accepted them but deliberately
+left them, since hardening has to change repo and host together).  The repo copy is resynced
+byte-identical to the hardened host tool — sha256 `71c14e0a…668c`, 8018 bytes, mode 755,
+verified on both sides.  New behaviour: `--app {socratic,congress,usage-monitor}` replaces
+the Socratic-only bucket/prefix constants; a **relative** truncation guard aborts under 50%
+of the previous snapshot (the 100 MB absolute floor cannot reject a truncated ~4.5 GB
+snapshot, and the boundary is read from the filename, which looks authoritative regardless of
+content); contiguity is now walked across the **entire** kept set for internal txid gaps
+(twins allowed) with its own exit code, because L2 stays wedged on non-contiguous input no
+matter how much L1 is trimmed; `--max-snapshot-age-hours` (default 48, scheduled units pass
+6) makes a late nightly abort loudly instead of trimming to a stale boundary; and a new guard
+aborts when nothing is superseded while L1 still holds more than 200 objects.  Deletes now
+pass `--b2-hard-delete` — without it rclone writes only a hide marker and the bytes stay
+**billed** until the lifecycle reaper runs ~a day later.  Measured, not inferred: fleet billed
+B2 storage 199.59 GB against a 126.49 GB logical footprint, a ~73 GB overhang.  Exit codes are
+documented end to end (0 ok/no-op, 1 delete failures, 2 no snapshot, 3 guard, 4 restore hole,
+5 kept-chain gaps, 6 boundary did not advance).
+
+**Congress.Trade had never been trimmed at all.**  Its L1 held 2,413 objects, 2,362 of them
+(24.6 GB) superseded by the fresh 2026-09-01T00:00:02Z snapshot, leaving 51 (12 MB) — and its
+L2 held **zero** objects, the same wedge state ST was in.  Six transient one-shot units
+(`l1trim-st-*`, `l1trim-ct-*`) are armed for 2026-09-02 00:04/00:20/00:40 UTC with
+`--max-snapshot-age-hours 6`, two retries of headroom for a late snapshot; they replace the
+single `l1-boundary-trim-oneshot`, now stopped.  Transient on purpose — they expire on reboot
+rather than quietly becoming a nightly policy, since trimming below a snapshot costs sub-daily
+PITR granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
+only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
+
+**Next action (blocker, CT only):** the CT `--apply` run passed every guard but had removed
+**zero** objects ~7 minutes into its delete phase, with the first doomed object still present
+and no hide markers.  Real delete calls cycle ~8s each (vs 1.4s dry-run) because the loop
+re-lists the whole directory per `--include`, so it is O(n^2) and multi-hour; and a
+100%-failing run is indistinguishable from a slow one, because `rclone()` discards stderr and
+the caller counts failures without naming the object or reason.  Read the terminal
+`APPLIED app=congress deleted=N failed=M` line in
+`/var/log/fleet-backup/l1-trim-congress-20260901.log` and re-count CT L1 before trusting the
+armed CT timers.  If `failed` is large, suspect the host `rclone` `[b2]` key's `deleteFiles`
+capability.  ST's half is unaffected by that question.
+
+## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed (PR #3140, `271e5ff8e`)
 
 Litestream level-2 compaction has been wedged since 2026-08-29 with no alert — L0/L1
 replication and `/api/live` stayed green the whole time, so the only signal was `level=2`

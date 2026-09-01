@@ -245,17 +245,28 @@ in between, and a `0002/` object name whose `<min>` TXID never advances across r
 ### The heal: `scripts/litestream-l1-boundary-trim.py`
 
 Installed on `fleet-hetzner-nbg1` as `/usr/local/sbin/litestream-l1-boundary-trim`; the
-repo copy is the source of truth for review and re-installation.  It lists the newest L9
-snapshot, reads its `maxTXID` as a boundary, and deletes every L1 object whose `maxTXID` is
-at or below that boundary.  This is safe by construction: a full snapshot already contains
-those transactions, so a restore is snapshot + the remaining L1/L0 chain.
+repo copy is the source of truth for review and re-installation, and the two are kept
+byte-identical (verify with `sha256sum` on both sides).  It lists the newest L9 snapshot,
+reads its `maxTXID` as a boundary, and deletes every L1 object whose `maxTXID` is at or
+below that boundary.  This is safe by construction: a full snapshot already contains those
+transactions, so a restore is snapshot + the remaining L1/L0 chain.
+
+**It is a fleet tool, not a Socratic-only one.**  `--app` selects the replica; the bucket
+and prefix come from a table in the script rather than module constants:
+
+| `--app` | bucket | prefix |
+|---|---|---|
+| `socratic` (default) | `jays-socratic-trade-eu` | `trading-live/app.db` |
+| `congress` | `jays-congress-trade-eu` | `congress-trade/db.sqlite` |
+| `usage-monitor` | `jays-usage-monitor-eu` | `api-usage-monitor/prod.db` |
 
 ```bash
 # Dry run (default) - prints the plan and changes nothing.
-ssh root@100.69.77.26 /usr/local/sbin/litestream-l1-boundary-trim
+ssh root@100.69.77.26 /usr/local/sbin/litestream-l1-boundary-trim --app socratic
 
-# Apply.
-ssh root@100.69.77.26 /usr/local/sbin/litestream-l1-boundary-trim --apply
+# Apply, and require a snapshot no older than 6h (what the scheduled units pass).
+ssh root@100.69.77.26 /usr/local/sbin/litestream-l1-boundary-trim \
+  --app congress --max-snapshot-age-hours 6 --apply
 ```
 
 **Run it right after the nightly snapshot lands (~00:00Z).**  The snapshot is what advances
@@ -264,48 +275,88 @@ minutes of L1 to fold in - a small upload that succeeds.  Running it long after 
 still works but heals less, because the L1 accumulated since the snapshot is exactly what
 L2 still has to carry.
 
-Guards, all of which abort rather than proceed: no L9 snapshot found; the newest snapshot is
-under 100 MB (a truncated or in-progress snapshot must never define the boundary); the
-snapshot is older than 48h; or the trim would leave a restore hole between the snapshot and
-the first kept L1 object.  Unparseable object names are warned about and skipped, never
-deleted.
+### Guards
+
+Every guard aborts rather than proceeding, and each one has its own exit code so a scheduled
+unit's failure is diagnosable from `systemctl status` alone.
+
+- **No usable snapshot.**  No L9 object parses as `<min>-<max>.ltx` (exit 2).
+- **Absolute size floor.**  The newest snapshot is under 100 MB - a truncated or
+  in-progress snapshot must never define the boundary (exit 3).
+- **Relative size floor.**  The newest snapshot is under 50% of the *previous* snapshot's
+  size (exit 3).  The absolute floor alone cannot catch this: the real ST snapshot is
+  ~4.5 GB, so a badly truncated one still clears 100 MB, and the boundary is read from the
+  object's *filename*, which stays authoritative-looking regardless of content.  Comparing
+  consecutive snapshots is what actually detects truncation.
+- **Freshness.**  The snapshot is older than `--max-snapshot-age-hours` (default 48; the
+  scheduled units pass 6) (exit 3).  Without a tight bound a late or failed nightly snapshot
+  lets the run trim to *yesterday's* boundary, exit 0, and lapse - leaving roughly a full day
+  of L1 for the same oversized L2 upload this procedure exists to avoid.  A tight bound turns
+  that silent near-no-op into a loud failure.
+- **Restore hole.**  The first kept L1 object starts above `boundary + 1`, so deleting would
+  strand transactions between the snapshot and the kept chain (exit 4).
+- **Kept-chain contiguity.**  The run walks the *entire* retained set for internal txid gaps,
+  not just the first kept object, and aborts when any exist (exit 5).  Twins (same `maxTXID`,
+  different `minTXID`) are allowed and not counted as gaps.  This matters because L2
+  compaction stays wedged on non-contiguous input no matter how much L1 is trimmed - see
+  `docs/rollouts/2026-08-22-litestream-l2l3-unwedge.md`, where Litestream refused L1 with
+  `non-contiguous transaction ids in input files` and four holes across 560 objects.  The
+  trim never *creates* such a hole, but without this guard it reported success while L2 stayed
+  wedged and kept burning the shared allowance.
+- **Boundary did not advance.**  Nothing is superseded while L1 still holds more than 200
+  objects (exit 6).  A large L1 with a zero-length delete list means the snapshot boundary
+  never moved past the backlog, which is a failure to report, not a no-op to shrug at.
+
+Unparseable object names are warned about and skipped, never deleted.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Deleted successfully, or a legitimate no-op (small L1, nothing superseded), or a dry run |
+| 1 | One or more deletes failed |
+| 2 | No usable L9 snapshot |
+| 3 | The snapshot failed a safety guard (too small, shrank, or too old) |
+| 4 | Trimming would leave a restore hole |
+| 5 | The kept chain has internal gaps - L2 will stay wedged, a human must reconcile |
+| 6 | Nothing superseded although L1 is large - the boundary did not advance |
+
+An exit code of 0 means "objects were deleted", **not** "compaction recovered".  After
+`--apply`, confirm the fix landed rather than assuming: look for `msg="compaction complete"
+... level=2` and for the L2 object's `<min>` TXID advancing.
+
+### Deletes must be hard deletes
+
+Backblaze B2 is versioned.  A plain `rclone delete` writes a **hide marker** and leaves the
+prior version in place, so the object stops being listed while its bytes stay **billed**
+until the bucket lifecycle reaper collects them - roughly a day later.  A trim that "worked"
+therefore frees nothing measurable on the invoice for 24 hours, which reads exactly like the
+trim having failed.
+
+This was measured on the fleet, not inferred: billed B2 storage read **199.59 GB** while the
+logical footprint of every bucket was **126.49 GB** - a ~73 GB overhang of hidden-but-billed
+versions.  The tool passes `--b2-hard-delete` on every delete call so the version goes away
+immediately.  Any future B2 cleanup script in this fleet must do the same.
 
 Listings and deletes are Backblaze **Class A/C** transactions.  They are not metered against
 the Class B download cap, so this tool works *while downloads are capped* - which is exactly
 the state the wedge puts the bucket in.
 
-### Pre-flight before `--apply` - what the guards do NOT cover
+### What the delete phase looks like, and why it is slow
 
-The built-in guards are necessary, not sufficient.  Three gaps are known and unfixed in the
-script as installed; check them by hand before applying, and treat an armed one-shot as
-running without them.
+Know this before watching a log and concluding the run has hung.  Each delete shells out to
+`rclone delete <dir> --include /<name>`, and rclone lists the *whole* directory to resolve
+the filter - so an N-object trim performs N full listings.  Measured against Congress.Trade's
+2,413-object L1 on 2026-09-01, real delete calls cycled roughly every **8 seconds**, which
+puts a 2,362-object trim in the multi-hour range.  The progress line prints only every 200
+objects, so the first ~25 minutes are silent by design.
 
-1. **Is the snapshot from *tonight's* run?**  The freshness guard is 48h, so a snapshot from
-   yesterday passes.  If the nightly snapshot is late or failed, a 00:02Z one-shot trims to
-   the *old* boundary, exits 0, and lapses - leaving roughly a full day of L1 for the same
-   oversized L2 upload this procedure exists to avoid.  Compare the printed `modtime` against
-   the run you expect, not just the age.
-
-2. **Is the snapshot the size you expect?**  The floor is 100 MB and the real snapshot is
-   ~4.5 GB, so a badly truncated snapshot passes the guard - and the boundary is taken from
-   the object's *filename*, which stays authoritative-looking regardless of content.  Compare
-   the newest snapshot's size against the previous one and stop on any material regression.
-   Deleting L1 through the boundary of a truncated snapshot can leave the supposedly
-   superseded transactions with no valid restore source.
-
-3. **Is the KEPT chain contiguous all the way through?**  The script checks only that the
-   *first* kept object reaches the boundary; it does not walk the rest for internal gaps.
-   L1 holes are a demonstrated production wedge, not a theoretical one - see
-   `docs/rollouts/2026-08-22-litestream-l2l3-unwedge.md`, where Litestream refused L1 with
-   `non-contiguous transaction ids in input files` and four holes across 560 objects.  The
-   trim does not *create* such a hole (it only deletes at or below the boundary), but it will
-   report success while L2 stays wedged and keeps burning the shared allowance.
-   `scripts/litestream-l1-suffix-heal.py`'s dry run prints hole and twin counts for exactly
-   this - use it as the gap detector before applying.
-
-After `--apply`, confirm the fix landed rather than assuming: look for
-`msg="compaction complete" ... level=2` and for the L2 object's `<min>` TXID advancing.  An
-exit code of 0 means "objects were deleted", not "compaction recovered".
+Failure accounting is currently a bare counter: a failed delete is caught, counted, and *not*
+attributed to an object or a reason (rclone's stderr is discarded).  A run failing 100% of
+its deletes therefore looks identical to a slow successful one until the terminal
+`APPLIED ... deleted=N failed=M` line.  **Do not conclude a trim worked from the absence of
+errors** - re-count the level and compare.  Both are open follow-ups in
+`docs/rollouts/2026-09-01-l1-trim-hardening.md`.
 
 ### The deliberate trade-off
 
@@ -318,6 +369,13 @@ That is why this is an **on-demand heal and not a permanent nightly timer**.  Th
 configured snapshot retention (168h) stays the authoritative retention policy; this tool
 must never quietly become a second, shorter one.  Arm it as a one-shot when L2 is wedged,
 confirm L2 completed, and let it lapse.
+
+Arm it with `systemd-run --on-calendar`, which creates a **transient** unit under
+`/run/systemd/transient/`.  Transient units do not survive a reboot, which is the desired
+property here - a forgotten heal expires on its own instead of silently becoming policy.
+Arm several a few minutes apart (the fleet uses 00:04 / 00:20 / 00:40 UTC) so a late nightly
+snapshot gets retried: with `--max-snapshot-age-hours 6` an early attempt against a stale
+snapshot exits 3 and the next attempt picks it up once it lands.
 
 ### `boundary-trim` vs `suffix-heal` - which one
 
