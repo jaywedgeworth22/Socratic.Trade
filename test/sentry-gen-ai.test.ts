@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sentryMock = vi.hoisted(() => ({
   startSpan: vi.fn((_opts: unknown, fn: () => unknown) => fn()),
@@ -22,7 +22,11 @@ import {
 } from "../src/lib/sentry-gen-ai";
 
 describe("sentry gen_ai helpers", () => {
+  beforeEach(() => {
+    vi.stubEnv("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+  });
   afterEach(() => {
+    vi.unstubAllEnvs();
     sentryMock.startSpan.mockClear();
     sentryMock.getActiveSpan.mockClear();
   });

@@ -26,6 +26,9 @@ function resolveSentryMod(mod: unknown): SentryMod | null {
 }
 
 function loadSentry(): Promise<SentryMod | null> {
+  if (!process.env.SENTRY_DSN && !process.env.NEXT_PUBLIC_SENTRY_DSN) {
+    return Promise.resolve(null);
+  }
   if (!cached) {
     cached = import("@sentry/nextjs")
       .then((mod) => resolveSentryMod(mod))

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/nextjs";
 import {
   logError,
@@ -10,7 +10,11 @@ import {
 } from "../src/lib/sentry-metrics";
 
 describe("sentry-metrics helpers", () => {
+  beforeEach(() => {
+    vi.stubEnv("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+  });
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
