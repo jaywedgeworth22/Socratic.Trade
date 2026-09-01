@@ -1,22 +1,7 @@
-import { createRequire } from "node:module";
 import * as Sentry from "@sentry/nextjs";
 import { redactForTelemetry } from "./src/lib/telemetry-sanitize";
 
-/** Continuous Node profiling. Native addon — missing binary must not take down Sentry.init. */
-function maybeNodeProfilingIntegration(): ReturnType<typeof Sentry.nodeRuntimeMetricsIntegration> | undefined {
-  try {
-    const req = createRequire(import.meta.url);
-    const mod = req("@sentry/profiling-node") as {
-      nodeProfilingIntegration?: () => ReturnType<typeof Sentry.nodeRuntimeMetricsIntegration>;
-    };
-    return typeof mod.nodeProfilingIntegration === "function" ? mod.nodeProfilingIntegration() : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 if (process.env.SENTRY_DSN) {
-  const profiling = maybeNodeProfilingIntegration();
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV,
@@ -24,6 +9,8 @@ if (process.env.SENTRY_DSN) {
     enableLogs: true,
     sendDefaultPii: false,
     // Continuous profiling on the Node server only (not browser UI profiling).
+    // Native @sentry/profiling-node is attached from instrumentation.ts with
+    // webpackIgnore so `node:module` never enters the webpack graph.
     profileSessionSampleRate: Number(process.env.SENTRY_PROFILE_SESSION_SAMPLE_RATE ?? "1"),
     profileLifecycle: "trace",
     tracePropagationTargets: [
@@ -34,7 +21,6 @@ if (process.env.SENTRY_DSN) {
       /^https:\/\/usage\.jays\.services/,
     ],
     integrations: [
-      ...(profiling ? [profiling] : []),
       Sentry.nodeRuntimeMetricsIntegration(),
       Sentry.openAIIntegration(),
       Sentry.anthropicAIIntegration(),
