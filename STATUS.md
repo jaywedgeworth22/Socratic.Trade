@@ -49,12 +49,20 @@ rather than quietly becoming a nightly policy, since trimming below a snapshot c
 PITR granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
 only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
 
-**Next action:** no successful large trim has been observed end to end yet — the 401 cause is
-understood and fixed, but confirm it.  After the 00:04-00:40 UTC window read the `APPLIED …
-deleted=N survived=M` line (computed from a bucket re-listing, so trustworthy) on both ST and
-CT, then separately confirm the wedge cleared via `msg="compaction complete" … level=2` and an
-advancing L2 `<min>` TXID.  Note that freed bytes lag ~24h behind a successful trim because
-the host can only hide; do not read that lag as failure.
+**The fixed tool then worked.**  CT re-run at 07:46:53Z reported
+`APPLIED app=congress deleted=2361 survived=0 batch_errors=0`, and the bucket recount agrees:
+CT L1 went **2,413 -> 82** (82 = the 51 originally-kept objects plus new arrivals), in minutes
+rather than the ~8 hours the per-object loop projected.  `--b2-versions` shows **2,444**
+versions against those 82 listed entries — the trimmed objects are hidden, not gone, and stay
+recoverable until the `daysFromHidingToDeleting=1` reaper runs.  That single listing shows both
+the cost (bytes billed ~24h longer) and the safety margin (a mistaken trim is reversible inside
+that window) of the hide-based approach.
+
+**Next action:** deletion is proven, **recovery is not** — CT's L2 is still at zero objects, as
+is ST's, and ST has not been trimmed with this build (L1 at 255).  A trim that removes objects
+without restarting compaction has fixed nothing, so confirm `msg="compaction complete" …
+level=2` and an advancing L2 `<min>` TXID on both apps after the 00:04-00:40 UTC window.  Do
+not read the ~24h lag in freed bytes as failure; the host can only hide.
 
 
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed (PR #3140, `271e5ff8e`)

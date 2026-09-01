@@ -205,6 +205,36 @@ unauthorized)` on `b2_delete_file_version`, and rclone reports progress anyway.*
 is precisely why every dry run looked healthy.  Both fixes above (drop the flag, verify
 against the bucket) come directly from this.
 
+### The fixed tool then worked: CT trimmed 2,361 objects cleanly
+
+Re-run at 2026-09-01T07:46:53Z with the batched, hide-not-hard-delete build
+(`/var/log/fleet-backup/l1-trim-congress-20260901b.log`):
+
+```
+APPLIED app=congress deleted=2361 survived=0 batch_errors=0
+```
+
+Confirmed against the bucket at 08:13Z:
+
+| | before | after |
+|---|---|---|
+| CT L1 (plain listing) | 2,413 | **82** |
+| CT L1 (`--b2-versions`) | - | 2,444 |
+
+82 is the 51 originally-kept objects plus new arrivals since.  `survived=0` and the recount
+agree, and the whole run took minutes rather than the ~8 hours the per-object loop projected -
+both fixes doing exactly what they were meant to.
+
+The `--b2-versions` count is the other half of the story: **2,444 versions still exist** while
+only 82 are listed.  The trimmed objects are hidden, not gone, and stay recoverable until the
+bucket's `daysFromHidingToDeleting=1` reaper collects them.  That is the cost (bytes stay
+billed ~24h) and the safety margin (a mistaken trim is reversible within that window) of the
+hide-based approach, both visible in one listing.
+
+**Still open: CT's L2 is still at zero objects**, as is ST's, so deletion is proven but
+*recovery* is not yet.  That is Next Steps item 2, and it is the whole point of the exercise -
+a trim that removes objects without restarting compaction has not fixed anything.
+
 ### Scheduled retries on the host
 
 Six **transient** one-shot systemd units are armed for **2026-09-02** at **00:04 / 00:20 /
@@ -229,19 +259,36 @@ trade-off above, it must never be.
 
 ## 5. Next Steps & Blockers
 
-1. **Confirm the fixed tool actually removes objects, on both apps.**  The 401 cause is
-   understood and fixed, but no successful large trim has been observed end to end yet.  The
-   check is now cheap and unambiguous: read the
-   `APPLIED app=X deleted=N survived=M batch_errors=E` line, which is computed from a
-   re-listing of the bucket.  A non-zero `survived` (exit 1) means objects the run intended
-   to remove are still there.
+1. **Deletion is now proven on CT; still prove it on ST.**  The CT re-run reported
+   `deleted=2361 survived=0 batch_errors=0` and the bucket recount agrees (L1 2,413 -> 82), so
+   the 401 fix works.  ST has not been trimmed with this build - its L1 stands at 255.  The
+   check is cheap and unambiguous: read the
+   `APPLIED app=X deleted=N survived=M batch_errors=E` line, computed from a re-listing of the
+   bucket.  A non-zero `survived` (exit 1) means objects the run intended to remove are still
+   there.
 2. **After the 2026-09-02 00:04-00:40 UTC window, confirm deletion and recovery separately.**
    Exit 0 means only that the run completed without hitting a guard - a dry run and a
    legitimate no-op both return 0 without removing anything.  First establish *deletion* from
    the `APPLIED` line; only then establish that the *wedge* is fixed, via
    `msg="compaction complete" ... level=2` and the L2 object's `<min>` TXID advancing, on
    both ST and CT.  If CT's L2 count is still zero afterwards, the wedge has a second cause.
-3. **Fix two confirmed script defects (paired repo + host change).**  Both were found by the
+3. **Validate the snapshot itself, not just its size (P1, from the #3142 review).**  The
+   truncation guard is a **heuristic, not an integrity check**: it compares the newest
+   snapshot's byte size against the previous one and against a 100 MB floor.  A snapshot
+   truncated to, say, 3 GB from 4.5 GB clears both, and the boundary is then taken from the
+   *filename* of that incomplete object - so the trim would hide L1 history the snapshot does
+   not actually contain.  Nothing in the script opens or checksums the LTX file.  The right
+   fix is real completion evidence (`litestream ltx` inspection, or a checksum/finalisation
+   marker), not a tighter percentage.
+
+   Severity is bounded by two things worth stating precisely, neither of which makes it
+   acceptable: deletes are **hides**, so within the lifecycle window
+   (`daysFromHidingToDeleting=1`) the versions still exist and are recoverable - confirmed on
+   CT, where 82 objects were listed while `--b2-versions` showed 2,444.  And the restore-hole
+   guard (exit 4) still refuses to strand the kept chain.  Neither helps after the reaper
+   runs, so treat the ~24h window as the actual remediation deadline.
+
+4. **Fix two confirmed script defects (paired repo + host change).**  Both were found by the
    #3142 review, reproduced directly, and are still present in this build:
    - A **zero-byte previous snapshot crashes the run**: the relative-size guard
      short-circuits on `prev_size > 0`, but the next log line computes `size / prev_size`
@@ -253,17 +300,17 @@ trade-off above, it must never be.
      and reports gap `63->1` even though `(100,200)` is the exact continuation - a spurious
      exit 5 blocking a trim that should have run.  Collapse same-max twins before testing
      adjacency.
-4. **Add single-flight locking.**  The tool still has no lock and each run snapshots its
+5. **Add single-flight locking.**  The tool still has no lock and each run snapshots its
    delete list up front.  Batching made runs short enough that a collision at 16-20 minute
    retry spacing is far less likely than it was at ~12 s per object, but it is not prevented.
-5. **Re-check billed vs logical B2 storage ~24h after a successful trim.**  Because the host
+6. **Re-check billed vs logical B2 storage ~24h after a successful trim.**  Because the host
    can only hide, freed bytes lag by roughly a day via `daysFromHidingToDeleting=1`.  The
    199.59 GB / 126.49 GB gap should close on that schedule, not immediately - do not read the
    lag as a failed trim.
-6. **Usage-Monitor has a table entry but has not been exercised.**  `--app usage-monitor`
+7. **Usage-Monitor has a table entry but has not been exercised.**  `--app usage-monitor`
    (`jays-usage-monitor-eu` / `api-usage-monitor/prod.db`) should get a dry run before anyone
    arms it, to confirm the prefix is right and its L1/L2 state.
-7. **The timers are transient by design and expire on reboot.**  If the wedge recurs, arm a
+8. **The timers are transient by design and expire on reboot.**  If the wedge recurs, arm a
    fresh set - do not convert these into an installed nightly timer.
 
 No blockers.  The one that stood earlier - "CT deletes nothing and nobody knows why" - is

@@ -384,9 +384,20 @@ exit 1.
 
 ### Known defects in the current build - read before arming anything
 
-These are confirmed by reproduction, not suspected.  All three need a **paired repo + host**
-change (the repo copy is kept byte-identical to the installed tool), so none is fixed in the
-build documented here.
+These are confirmed by reproduction, not suspected.  All need a **paired repo + host** change
+(the repo copy is kept byte-identical to the installed tool), so none is fixed in the build
+documented here.
+
+0. **The truncation guard is a heuristic, not an integrity check.**  It compares byte sizes -
+   a 100 MB floor, and 50% of the previous snapshot.  A snapshot truncated to 3 GB from 4.5 GB
+   clears both, and the boundary is then read from that incomplete object's *filename*, so the
+   trim would hide L1 history the snapshot does not actually contain.  Nothing opens or
+   checksums the LTX file.  Real completion evidence (`litestream ltx` inspection, or a
+   checksum / finalisation marker) is the fix; a tighter percentage is not.  Severity is
+   bounded but not removed: deletes are hides, so within the
+   `daysFromHidingToDeleting=1` window the versions still exist and are recoverable, and the
+   restore-hole guard (exit 4) still refuses to strand the kept chain.  After the reaper runs,
+   neither helps - treat ~24h as the remediation deadline.
 
 1. **The tool has no lock, and concurrent runs can still collide.**  Nothing prevents two
    invocations for the same app from overlapping.  Each snapshots its own delete list up
