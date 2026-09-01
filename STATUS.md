@@ -66,6 +66,23 @@ not read the ~24h lag in freed bytes as failure; the host can only hide.
 
 
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed (PR #3140, `271e5ff8e`)
+## 2026-09-01 CLAUDE — PR #3139 plist comment: actually fix the XML `--` bug
+
+PR #3139 claimed moving the template comment above `<!DOCTYPE>` down into `<dict>` fixed
+`plistlib.loads` raising `ExpatError: not well-formed` on
+`scripts/com.jay.provider-knob-sync.plist` — it did not.  XML comments cannot contain the
+sequence `--` anywhere in their body regardless of position, and the relocated comment
+still had two literal `--apply` mentions (lines 8 and 18).  `chatgpt-codex-connector`
+caught this and was right: `plistlib.load` on the PR's head still raised the identical
+error.  Reworded both `--apply` mentions to "the apply flag" (no `--` sequence remains in
+the comment); the real `--apply` CLI argument in `<key>ProgramArguments</key>` is untouched
+since it's a `<string>` value, not comment text.  Verified with `python3 -c "import
+plistlib; plistlib.load(open('scripts/com.jay.provider-knob-sync.plist','rb'))"` on both
+`/usr/bin/python3` and `/opt/homebrew/bin/python3` — parses clean now, raised before.  No
+repo test/CI step runs plistlib against this file.  Rollout:
+`docs/rollouts/2026-09-01-pr-3139-plist-comment-fix.md`.
+
+## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
 
 Litestream level-2 compaction has been wedged since 2026-08-29 with no alert — L0/L1
 replication and `/api/live` stayed green the whole time, so the only signal was `level=2`
