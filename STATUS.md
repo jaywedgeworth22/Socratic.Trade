@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-08-31 AG — Sentry observability expansion: Session Replay, trace sampling, and privacy-safe telemetry
+
+Expands Sentry observability in Socratic.Trade utilizing the fleet's $5,000 credit sponsored tier: enabled masked Session Replay by default on web client (`replaysOnErrorSampleRate: 1.0`, `replaysSessionSampleRate: 0.1`) with complete text and media redaction, raised default trace sampling to 0.2 across server/edge/client, and verified inert behavior when Sentry env vars are absent. Rollout: `docs/rollouts/2026-08-31-sentry-observability-expansion.md`.
+
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
 
 Litestream level-2 compaction has been wedged since 2026-08-29 with no alert — L0/L1
