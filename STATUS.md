@@ -1,5 +1,29 @@
 # Current Status
 
+## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
+
+Litestream level-2 compaction has been wedged since 2026-08-29 with no alert — L0/L1
+replication and `/api/live` stayed green the whole time, so the only signal was `level=2`
+lines in container logs.  Root cause is the mega-upload, not the Backblaze download cap:
+L2 folds the whole remaining L1 chain into one object, so while it is stalled L1 grows and
+each retry is a larger multipart upload that dies.  The cap DID reset at 00:00Z (zero cap
+errors 00:00–01:39Z) and L2 still failed 19 times in that window, every one on the upload;
+the first cap-exceeded came only at 01:39:33Z.  Lands
+`scripts/litestream-l1-boundary-trim.py` — byte-identical to the installed host tool
+(sha256 `b1a05816…f1d2`) — which deletes L1 objects already contained in the newest L9
+snapshot, dry-run by default, refusing to leave a restore hole.  Deletes and listings are
+Class A/C, so it works while downloads are capped.  A one-shot timer is armed for
+2026-09-02 00:02Z, right after the nightly snapshot advances the boundary; it is
+deliberately NOT a recurring timer, because trimming below a snapshot costs sub-daily PITR
+granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
+only; no runtime code touched.  Rollout:
+`docs/rollouts/2026-09-01-l2-unwedge-boundary-trim.md`.
+
+**Next action:** after 2026-09-02 00:02Z confirm a `compaction complete … level=2` line and
+the L2 `<min>` TXID advancing past `0000000000134700`.  If it still fails, the suspect is a
+poisoned L2/L3 object — that is `scripts/litestream-l1-suffix-heal.py`'s job, since
+boundary-trim never touches those levels.
+
 ## 2026-08-31 GROK — Top-to-bottom full-stack audit (web, iOS, backend)
 
 Report-only.  Branch `grok/full-stack-audit`, worktree `~/apps/trading-grok-full-audit`, board `52592a4d`, tree `ff7a562d9`.  Nine-agent scan plus orchestrator file:line verification.  Catalog: `docs/reviews/2026-08-31-grok-full-stack-audit.md`.  Still open on `main`: Alpaca `stop_market` write (`d4cb5e75`), MCP place timeout REST fallback (`ef0dccb3`), any-`client_order_id` provenance (`d36c2233`), oldest-500 fills, iOS `uniqueKeysWithValues`, web 401 freeze.  Guardrails Discard and `/mobile` redirect are fixed.  Do not implement in this PR.  Do not steal Claude `06df80cf`.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-31-grok-full-stack-audit.md`.
