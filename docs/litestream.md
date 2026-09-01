@@ -365,10 +365,11 @@ This is not hypothetical.  On 2026-09-01 the Congress.Trade `--apply` run passed
 and then failed *every* delete.  Note *how* that was established, because the obvious method
 does not work: the level count is a **net** figure (Litestream keeps adding L1 while the trim
 runs), and the progress line combines `deleted` and `failed`, so neither one alone proves
-anything.  What proves it is the **delete order** - `doomed` preserves the listing's
-lexicographic order, so the lowest-numbered objects go first, and after `progress 400/2362`
-the first three doomed objects were all still present.  One successful delete would have
-removed the first of them on the first call.  The leading hypothesis is a host `rclone` `[b2]` application key
+anything.  What proves it is a **census of the doomed set**: every object Litestream
+adds during the run sits *above* the boundary, so the count of objects still at or below the
+boundary is immune to new arrivals and drops by exactly one per successful delete.  After
+`progress 600/2362` that count was still exactly 2,362 - its starting value.  Zero of 600
+attempted deletes had succeeded.  The leading hypothesis is a host `rclone` `[b2]` application key
 without `deleteFiles` - which a dry run can never detect, because dry runs do not exercise
 the delete permission.  Before trusting any armed unit, prove one real delete by hand with
 `-vv` and read the stderr.  Details in `docs/rollouts/2026-09-01-l1-trim-hardening.md`.

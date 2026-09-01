@@ -162,21 +162,24 @@ the observed rise from 2,413 to 2,420 is a **net** figure and is consistent with
 deletions having succeeded alongside more arrivals.  (Correct objection, raised in the #3142
 review; the first draft of this note over-claimed from the net count.)
 
-What does settle it is the **delete order**.  `doomed` is built from the `rclone lsl` listing
-and preserves its lexicographic order, so the run deletes the lowest-numbered objects first.
-Those are still there:
+What settles it is a **census of the doomed set**, which is measurable directly.  Every
+object Litestream adds while the run proceeds has a `maxTXID` *above* the boundary, so the
+count of objects still at or below the boundary is unaffected by new arrivals and falls by
+exactly one per successful delete.  At 06:56Z, after `progress 600/2362`:
 
 ```
-# 06:13Z, after `progress 400/2362`
-00000000000450f0-00000000000450f3.ltx
-00000000000450f4-00000000000451c4.ltx
-00000000000451c5-00000000000451e7.ltx
+current L1 total          : 2433
+still <= boundary 5b521   : 2362      (the run started with exactly 2362 doomed)
+above boundary            :   71      (started at 51 kept; +20 new arrivals)
+=> successful deletes     :    0
 ```
 
-All three carry a `maxTXID` far below the boundary `5b521`, so all three are doomed, and they
-are the *first* three the loop attempts.  Four hundred completed calls later they are all
-still present.  A single successful delete would have removed the first one within the first
-call.  **Every delete is failing.**
+**Zero of 600 attempted deletes succeeded.**  This is a direct measurement, not an inference
+from a sample: not one of the 2,362 objects the run set out to delete has been removed.
+
+(An earlier draft argued this from the first three doomed objects still being present after
+400 calls.  The #3142 review correctly pointed out that three confirmed failures do not
+establish 400, let alone 2,362 - hence the full census above.)
 
 At ~12.5 s per call (41.5 minutes for the first 200, and the second 200 in the 41 minutes to
 06:00:42) the run is on course to grind through all 2,362 doomed objects over roughly
@@ -270,9 +273,12 @@ trade-off above, it must never be.
    applied to `/usr/local/sbin/litestream-l1-boundary-trim` and the repo copy in the same
    change, to preserve byte-identity.
 
-5. **After the 2026-09-02 00:04-00:40 UTC window, confirm L2 actually recovered.**  Exit 0
-   means "objects were deleted", not "compaction recovered".  Check for
-   `msg="compaction complete" ... level=2` and for the L2 object's `<min>` TXID advancing on
+5. **After the 2026-09-02 00:04-00:40 UTC window, confirm deletion and recovery separately.**
+   Exit 0 means only that the run completed without hitting a guard - a dry run and a
+   legitimate no-op both return 0 without removing anything, so unit status alone proves
+   neither.  First establish that *deletion* happened: require an `APPLIED ... deleted=N` line
+   with non-zero `N`, or re-count the level.  Only then establish that the *wedge* is fixed:
+   `msg="compaction complete" ... level=2`, and the L2 object's `<min>` TXID advancing, on
    both ST and CT.  If CT's L2 count is still zero afterwards, the wedge has a second cause.
 6. **Re-check billed vs logical B2 storage in ~24h.**  The 199.59 GB / 126.49 GB gap should
    close once the lifecycle reaper collects the pre-`--b2-hard-delete` hide markers.  Bytes

@@ -31,10 +31,11 @@ PITR granularity and the app's 168h snapshot retention stays authoritative.  Doc
 only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
 
 **Next action (blocker):** the CT `--apply` run passed every guard and then failed **every
-delete**.  Established from the **delete order**, not the level count (which is a net figure
-while replication adds, and the progress line merges `deleted` with `failed`): after
-`progress 400/2362` the first three doomed objects were all still present, and the loop
-deletes lowest-numbered first, so one success would have removed the first on call one.  It will grind
+delete**.  Established by a **census of the doomed set**, not the level count (a net figure
+while replication adds) nor the progress line (which merges `deleted` with `failed`): new
+arrivals all sit above the boundary, so the at-or-below-boundary count drops only on a real
+delete.  After `progress 600/2362` it was still exactly 2,362 - its starting value.  Zero of
+600 attempted deletes succeeded.  It will grind
 ~8 hours and report `deleted=0 failed=2362`.  Leading hypothesis is a host `rclone` `[b2]`
 key without `deleteFiles`, which a dry run cannot detect.  **Fix the credential or disarm the
 CT timers before 2026-09-02 00:04 UTC**, and kill the in-flight run.  ST's earlier heals went
