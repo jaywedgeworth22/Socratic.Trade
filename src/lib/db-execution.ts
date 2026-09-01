@@ -2,7 +2,7 @@
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
 import "server-only";
 import { audit, getDb } from "./db";
-import { isStrategyRunExecutionLive } from "./strategy-run-requests";
+import { isStrategyRunExecutionLive } from "./strategy-run-execution-registry";
 import { CENTRAL_TRADING_DAY_ZONE, startOfCentralTradingDay } from "./trading-day";
 import type { StrategyRunFinishStatus } from "./strategy-run-status";
 import type { StrategyRunRow } from "./types";

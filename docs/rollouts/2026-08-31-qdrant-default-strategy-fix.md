@@ -15,9 +15,16 @@ The owner reported failing strategy runs in **Activity > Strategy Runs** with er
 - **Immediate Startup Sweep for Prior-Process Orphaned Runs**:
   - In `src/lib/db-execution.ts` (`markStaleRunningRuns`), updated the query to `started_at < cutoff OR started_at < restartCutoff` (where `restartCutoff = processStartedMs - 2000ms`).  Orphaned runs from a previous container or process restart are now swept immediately on the first tick instead of lingering for 30 minutes, freeing concurrency locks immediately.
   - Bypassed the recent-audit activity check when `cause === "process_restarted_mid_run"`.
+- **Break Circular Dependency in Strategy Run Execution**:
+  - Extracted process-local execution heartbeat management into standalone dependency-free leaf `src/lib/strategy-run-execution-registry.ts`.
+  - Re-exported from `src/lib/strategy-run-requests.ts` and imported directly in `src/lib/db-execution.ts`, preventing Next.js page data collection TDZ errors.
+- **Provider Authority Fallback on Qdrant Reads**:
+  - Added `durableProviderAuthority()` in `src/lib/db-vector-commits.ts` to derive active provider authority directly from committed SQLite receipts when in-memory Pinecone cache is uninitialized.
+  - Added `skipMissingPineconeAlert` option to `getClients()` in `src/lib/vector-db.ts` to prevent false missing-Pinecone alerts when reading from Qdrant.
+  - Required `QDRANT_API_KEY` for remote endpoints in `src/lib/vector-store/qdrant-read.ts`.
 - **Test Coverage**:
   - Created `test/vector-db-qdrant-retrieval.test.ts` to hermetically test `retrieveContextDetailed` and `reconcileManagedVectorRecords` without Pinecone keys.
-  - Updated `test/qdrant-read.test.ts` to assert the new catalog and function default (`true` / `"qdrant"`).
+  - Updated `test/qdrant-read.test.ts` to assert the new catalog and function default (`true` / `"qdrant"`), along with remote endpoint API key enforcement.
   - Updated `test/stale-running-runs.test.ts` to verify immediate sweeping of prior-process runs under 30 minutes old.
 
 ### Touched Files
@@ -25,6 +32,9 @@ The owner reported failing strategy runs in **Activity > Strategy Runs** with er
 - `src/lib/vector-store/qdrant-read.ts`
 - `src/lib/vector-db.ts`
 - `src/lib/db-execution.ts`
+- `src/lib/db-vector-commits.ts`
+- `src/lib/strategy-run-execution-registry.ts`
+- `src/lib/strategy-run-requests.ts`
 - `test/qdrant-read.test.ts`
 - `test/stale-running-runs.test.ts`
 - `test/vector-db-qdrant-retrieval.test.ts`
@@ -41,7 +51,7 @@ The owner reported failing strategy runs in **Activity > Strategy Runs** with er
 ## 4. Verification State
 - `npm run lint`: Passed (0 errors).
 - `npx tsc --noEmit`: Passed (0 errors).
-- `npm test`: Passed (7,695 tests across 700 files passed, 51 skipped, 0 failures).
+- `npm test`: Passed (7,696 tests across 700 files passed, 51 skipped, 0 failures).
 - `npm run build`: Passed (clean Next.js production build with all static/dynamic routes compiled).
 
 ## 5. Next Steps & Blockers

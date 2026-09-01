@@ -93,6 +93,24 @@ describe("backend knob resolution", () => {
     expect(qdrantConfigured()).toBe(false);
     expect(vectorReadBackend()).toBe("pinecone");
   });
+
+  it("requires QDRANT_API_KEY on remote endpoints in production", () => {
+    const originalEnv = process.env.NODE_ENV;
+    try {
+      (process.env as unknown as { NODE_ENV: string }).NODE_ENV = "production";
+      process.env.QDRANT_URL = "https://qdrant.remote.example:6333";
+      delete process.env.QDRANT_API_KEY;
+      delete process.env.QDRANT_ALLOW_ANONYMOUS;
+      expect(qdrantConfigured()).toBe(false);
+      expect(vectorReadBackend()).toBe("pinecone");
+
+      process.env.QDRANT_API_KEY = "live-key";
+      expect(qdrantConfigured()).toBe(true);
+      expect(vectorReadBackend()).toBe("qdrant");
+    } finally {
+      (process.env as unknown as { NODE_ENV: string }).NODE_ENV = originalEnv;
+    }
+  });
 });
 
 describe("namespace -> ns tenant mapping", () => {

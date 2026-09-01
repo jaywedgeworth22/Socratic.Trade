@@ -1349,7 +1349,11 @@ function resolveRagKeyWithSource(service: "pinecone" | RagEmbedRerankProvider, u
   return { key, source: key ? "env" : "none", service };
 }
 
-export async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
+export async function getClients(
+  userId: string = "local",
+  leaseGuard?: VectorStoreLeaseGuard,
+  options?: { skipMissingPineconeAlert?: boolean }
+) {
   assertVectorStoreLease(leaseGuard);
   const lookupUserId = userId || "local";
   const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);
@@ -1375,11 +1379,13 @@ export async function getClients(userId: string = "local", leaseGuard?: VectorSt
   }
 
   if (!pineconeKey) {
-    if (leaseGuard) {
-      await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
-      assertVectorStoreLease(leaseGuard);
-    } else {
-      void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
+    if (!options?.skipMissingPineconeAlert) {
+      if (leaseGuard) {
+        await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
+        assertVectorStoreLease(leaseGuard);
+      } else {
+        void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
+      }
     }
     return { pc: null, voyage, initCacheKey: "", pineconeSource: pinecone.source, voyageSource };
   }
@@ -6695,7 +6701,9 @@ export async function retrieveContextDetailed(
   const hasEmbedSpaceFilter = Object.keys(embedSpaceFilterForModel(activeModel)).length > 0;
   const readBackend: "pinecone" | "qdrant" = hasEmbedSpaceFilter ? vectorReadBackend() : "pinecone";
 
-  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId);
+  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId, undefined, {
+    skipMissingPineconeAlert: readBackend === "qdrant"
+  });
   const hasActiveKey = !!voyage || embeddingCredentialIsUsable(resolveApiKey(activeProvider, userId));
   if (!hasActiveKey) {
     void captureRagSentryMessage("warning", `RAG retrieval skipped: missing ${activeProvider} key`, {
@@ -6814,8 +6822,11 @@ export async function retrieveContextDetailed(
       }
       defaultIndex = vectorDataIndex(pc, "default");
     }
-    const providerAuthority = stableProviderAuthority;
     const ledgerAuthority = managedVectorLedgerAuthority();
+    if (!stableProviderAuthority && (readBackend === "qdrant" || !pc)) {
+      stableProviderAuthority = dbModule.durableProviderAuthority(ledgerAuthority);
+    }
+    const providerAuthority = stableProviderAuthority;
     const managedRecordsExpected = hasCommittedManagedRecords();
     const currentManagedRecordsExpected = hasCommittedVectorNamespaceRecords(ledgerAuthority, "managed");
     const currentFmpRecordsExpected = hasCommittedVectorNamespaceRecords(ledgerAuthority, "fmp-transcripts");

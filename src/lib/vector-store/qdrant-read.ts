@@ -34,7 +34,19 @@ const DEFAULT_COLLECTION = "socratic-trade";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export function qdrantConfigured(): boolean {
-  return Boolean(process.env.QDRANT_URL?.trim());
+  const url = process.env.QDRANT_URL?.trim();
+  if (!url) return false;
+  // Remote / production Qdrant endpoints require an API key unless explicitly permitted anonymously
+  if (
+    !process.env.QDRANT_API_KEY?.trim() &&
+    process.env.QDRANT_ALLOW_ANONYMOUS !== "true" &&
+    process.env.NODE_ENV !== "test" &&
+    !url.includes("127.0.0.1") &&
+    !url.includes("localhost")
+  ) {
+    return false;
+  }
+  return true;
 }
 
 let warnedUnconfigured = false;
