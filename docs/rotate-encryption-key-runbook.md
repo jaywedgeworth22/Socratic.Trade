@@ -24,6 +24,9 @@ when explicitly invoked with `OLD_ENCRYPTION_KEY`/`NEW_ENCRYPTION_KEY` set and `
    Or, if pulling a fresh copy from prod for a dry-run first, do that instead of touching the live
    file at all until you're confident in `--apply`.
 
+   The script does **not** enforce this and cannot — it has no way to tell a real backup from a
+   stale one.  A clean run is not evidence that a backup exists.
+
 2. **Generate the new key:**
    ```bash
    openssl rand -hex 32
@@ -57,6 +60,12 @@ when explicitly invoked with `OLD_ENCRYPTION_KEY`/`NEW_ENCRYPTION_KEY` set and `
    ```
    Reads `ENCRYPTION_KEY` from the environment exactly like the app does. Exits non-zero and lists
    every row that fails to decrypt.
+
+   **Read the row count, not just the exit code.** Every mode refuses to create a database that
+   does not exist (a mistyped `DATABASE_URL` or the wrong working directory is a hard failure, not
+   an empty run), but an existing-yet-wrong database would still report `0 OK, 0 FAILED` and exit
+   0.  A run that finds zero encrypted values prints a warning for exactly that reason; treat it as
+   "I am pointed at the wrong file" unless you genuinely expect no stored credentials.
 
 7. Retire the old key value everywhere it might still be written down (secrets manager history,
    `.env` backups, `~/.secrets`).

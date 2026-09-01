@@ -233,6 +233,11 @@ function runRotation(apply: boolean): void {
   );
   if (total === 0) {
     console.log("Nothing to do.");
+    console.warn(
+      `WARNING: ${databasePath()} holds no encrypted values. Do NOT read this as "rotation complete" — ` +
+        "if you expected stored credentials here, you are pointed at the wrong database and swapping " +
+        "ENCRYPTION_KEY now would make the real ones unreadable."
+    );
     return;
   }
 
