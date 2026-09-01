@@ -19,6 +19,15 @@ granularity and the app's 168h snapshot retention stays authoritative.  Docs-and
 only; no runtime code touched.  Rollout:
 `docs/rollouts/2026-09-01-l2-unwedge-boundary-trim.md`.
 
+Codex review found three real guard gaps, all accepted and none fixed here — the script is
+landed as a verbatim mirror of the installed host copy, so hardening it must change repo and
+host together, which is a production write outside this unit.  They are: snapshot integrity
+(the 100 MB floor cannot catch a truncated ~4.5 GB snapshot whose filename still supplies the
+boundary), kept-chain contiguity (only the first kept object is checked, and internal L1 gaps
+are a demonstrated wedge), and scheduled-run freshness (the 48h guard accepts yesterday's
+snapshot, so a late nightly makes the 00:02Z one-shot under-heal and then lapse).  Covered
+meanwhile by the "Pre-flight before `--apply`" checklist in `docs/litestream.md`.
+
 **Next action:** after 2026-09-02 00:02Z confirm a `compaction complete … level=2` line and
 the L2 `<min>` TXID advancing past `0000000000134700`.  If it still fails, the suspect is a
 poisoned L2/L3 object — that is `scripts/litestream-l1-suffix-heal.py`'s job, since

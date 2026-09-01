@@ -151,15 +151,18 @@ Wed 2026-09-02 00:02:00 UTC   l1-boundary-trim-oneshot.timer -> l1-boundary-trim
 [Service] ExecStart="/usr/local/sbin/litestream-l1-boundary-trim" "--apply"
 ```
 
-**Repo gate** (this is a docs + standalone-script change; the trio still ran in full):
+**Repo gate** - all four commands, in the AGENTS.md order.  `land.sh` runs only the tsc /
+vitest / build trio, so `npm run lint` was run separately:
 
 ```
+npm run lint       # 792 problems (0 errors, 792 warnings) - passes; the gate fails on errors only
 npx tsc --noEmit
 npm test
 npm run build
 ```
 
-Results: `tsc` clean; **699 test files passed / 1 skipped, 7,692 tests passed / 51 skipped**;
+Results: lint 0 errors (792 grandfathered warnings, unchanged by this PR - it adds no
+TypeScript); `tsc` clean; **699 test files passed / 1 skipped, 7,692 tests passed / 51 skipped**;
 `next build` clean.  `scripts/litestream-l1-boundary-trim.py` is a standalone Python operator
 tool - it is not imported by the app, not exercised by vitest, and does nothing at runtime.
 
@@ -192,7 +195,30 @@ it deploys on merge rather than waiting for the 21:20 UTC drain.  No `HOTFIX=1` 
    starved by ST's retry storm.  Worth an alert on repeated `level=2` `compaction failed` lines
    so the next wedge is caught in hours rather than days - the existing health probes cannot
    see it, because L0/L1 replication stays perfectly healthy the whole time.
-5. **No blockers.**
+5. **Harden the three guard gaps Codex review found on PR #3140 - paired repo + host change.**
+   All three are real and all three are accepted; none is fixed in this PR, because
+   `scripts/litestream-l1-boundary-trim.py` is landed as a *verbatim mirror* of the file
+   installed at `/usr/local/sbin/litestream-l1-boundary-trim`.  Changing the repo copy alone
+   would break that correspondence and would not change what actually runs - the host copy is
+   what the armed one-shot executes - so the fix has to land in both at once, which is a
+   production write this unit was not authorized to make.  Until then the gaps are covered by
+   the "Pre-flight before `--apply`" checklist in `docs/litestream.md`:
+   - **Snapshot integrity (highest severity).**  The 100 MB floor cannot catch a truncated
+     ~4.5 GB snapshot, and the boundary is read from the object's filename.  Trimming through
+     the boundary of a truncated snapshot can leave those transactions with no valid restore
+     source.  Cheapest real fix that stays Class A/C: reject a material size regression
+     against the previous snapshot, which needs only the listing the tool already does.
+   - **Kept-chain contiguity.**  Only the *first* kept object is checked against the boundary;
+     internal gaps in the retained set are not.  This is a demonstrated wedge, not a
+     hypothetical - `docs/rollouts/2026-08-22-litestream-l2l3-unwedge.md` records Litestream
+     refusing L1 with `non-contiguous transaction ids in input files` (4 holes / 560 objects).
+     The trim cannot create such a hole, but it exits 0 and reports success while L2 stays
+     wedged.  Walk every retained range, treating twins the way `suffix-heal` does.
+   - **Scheduled-run snapshot freshness.**  The 48h guard accepts yesterday's snapshot, so a
+     late or failed nightly snapshot lets the 00:02Z one-shot trim to the old boundary, exit
+     0, and lapse - under-healing exactly when it matters.  The scheduled path should require
+     a snapshot from the current run, or poll for it, rather than accept the prior day's.
+6. **No blockers.**
 
 ## Zero-Code Findings
 

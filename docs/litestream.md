@@ -274,6 +274,39 @@ Listings and deletes are Backblaze **Class A/C** transactions.  They are not met
 the Class B download cap, so this tool works *while downloads are capped* - which is exactly
 the state the wedge puts the bucket in.
 
+### Pre-flight before `--apply` - what the guards do NOT cover
+
+The built-in guards are necessary, not sufficient.  Three gaps are known and unfixed in the
+script as installed; check them by hand before applying, and treat an armed one-shot as
+running without them.
+
+1. **Is the snapshot from *tonight's* run?**  The freshness guard is 48h, so a snapshot from
+   yesterday passes.  If the nightly snapshot is late or failed, a 00:02Z one-shot trims to
+   the *old* boundary, exits 0, and lapses - leaving roughly a full day of L1 for the same
+   oversized L2 upload this procedure exists to avoid.  Compare the printed `modtime` against
+   the run you expect, not just the age.
+
+2. **Is the snapshot the size you expect?**  The floor is 100 MB and the real snapshot is
+   ~4.5 GB, so a badly truncated snapshot passes the guard - and the boundary is taken from
+   the object's *filename*, which stays authoritative-looking regardless of content.  Compare
+   the newest snapshot's size against the previous one and stop on any material regression.
+   Deleting L1 through the boundary of a truncated snapshot can leave the supposedly
+   superseded transactions with no valid restore source.
+
+3. **Is the KEPT chain contiguous all the way through?**  The script checks only that the
+   *first* kept object reaches the boundary; it does not walk the rest for internal gaps.
+   L1 holes are a demonstrated production wedge, not a theoretical one - see
+   `docs/rollouts/2026-08-22-litestream-l2l3-unwedge.md`, where Litestream refused L1 with
+   `non-contiguous transaction ids in input files` and four holes across 560 objects.  The
+   trim does not *create* such a hole (it only deletes at or below the boundary), but it will
+   report success while L2 stays wedged and keeps burning the shared allowance.
+   `scripts/litestream-l1-suffix-heal.py`'s dry run prints hole and twin counts for exactly
+   this - use it as the gap detector before applying.
+
+After `--apply`, confirm the fix landed rather than assuming: look for
+`msg="compaction complete" ... level=2` and for the L2 object's `<min>` TXID advancing.  An
+exit code of 0 means "objects were deleted", not "compaction recovered".
+
 ### The deliberate trade-off
 
 Trimming L1 below a snapshot **reduces sub-daily point-in-time granularity for the trimmed
