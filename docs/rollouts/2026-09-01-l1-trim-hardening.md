@@ -131,10 +131,14 @@ probe stay green throughout, because nothing user-facing depends on L2 compactio
 the numbers above are that run's own output.  Its delete phase is reported honestly here
 because it did **not** behave as expected:
 
-- ~7 minutes into the delete loop, CT L1 was still at **2,413 objects** - zero observable
-  deletions - and the first doomed object (`00000000000450f0-00000000000450f3.ltx`, 758 MiB)
-  was still present.  Counting with `--b2-versions` gave the same 2,413, so no hide markers
-  were being created either.
+- **30 minutes into the delete loop, CT L1 had not gone down at all - it had gone *up*, from
+  2,413 to 2,418**, as ongoing replication added new L1 objects faster than the trim removed
+  any.  The first doomed object (`00000000000450f0-00000000000450f3.ltx`, 758 MiB) was still
+  present throughout.  Counting with `--b2-versions` gave the same totals, so no hide markers
+  were being created either.  Seven minutes could have been dismissed as too early to tell;
+  thirty minutes with the level growing cannot.
+- The log was still 6 lines - the loop had not reached its first 200-object progress line, so
+  fewer than 200 calls had completed in 30 minutes.
 - The process was alive and cycling child `rclone` processes roughly every **8 seconds**, so
   it was not hung on one call.  At that rate 2,362 deletes is ~5 hours, and the loop's
   progress line only prints every 200 objects, so no progress line was due yet.
