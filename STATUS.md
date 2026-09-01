@@ -3,6 +3,38 @@
 ## 2026-08-31 ANTIGRAVITY — Default RAG reads to Qdrant, decouple from Pinecone & immediate restart sweep
 
 Fixed strategy run failures from Pinecone rate limits (429 / WU exhaustion) and orphaned process restart runs.  Defaulted `RAG_VECTOR_READ_QDRANT` to `true` across server knobs and `vectorReadBackend()` so retrieval natively queries self-hosted Qdrant on Hetzner without Pinecone prerequisites; fully decoupled `retrieveContextDetailed`, `denseTierQuery`, and `denseResults` from Pinecone client and index objects; handled Pinecone 429 rate limits gracefully during hourly background reconciliation; updated `markStaleRunningRuns` to immediately sweep dead runs from previous process lifecycles upon startup.  Full verification gate passed: lint, tsc, 7,695 vitest tests (700 files), Next.js build.  Rollout: `docs/rollouts/2026-08-31-qdrant-default-strategy-fix.md`.
+## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
+
+Litestream level-2 compaction has been wedged since 2026-08-29 with no alert — L0/L1
+replication and `/api/live` stayed green the whole time, so the only signal was `level=2`
+lines in container logs.  Root cause is the mega-upload, not the Backblaze download cap:
+L2 folds the whole remaining L1 chain into one object, so while it is stalled L1 grows and
+each retry is a larger multipart upload that dies.  The cap DID reset at 00:00Z (zero cap
+errors 00:00–01:39Z) and L2 still failed 19 times in that window, every one on the upload;
+the first cap-exceeded came only at 01:39:33Z.  Lands
+`scripts/litestream-l1-boundary-trim.py` — byte-identical to the installed host tool
+(sha256 `b1a05816…f1d2`) — which deletes L1 objects already contained in the newest L9
+snapshot, dry-run by default, refusing to leave a restore hole.  Deletes and listings are
+Class A/C, so it works while downloads are capped.  A one-shot timer is armed for
+2026-09-02 00:02Z, right after the nightly snapshot advances the boundary; it is
+deliberately NOT a recurring timer, because trimming below a snapshot costs sub-daily PITR
+granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
+only; no runtime code touched.  Rollout:
+`docs/rollouts/2026-09-01-l2-unwedge-boundary-trim.md`.
+
+Codex review found three real guard gaps, all accepted and none fixed here — the script is
+landed as a verbatim mirror of the installed host copy, so hardening it must change repo and
+host together, which is a production write outside this unit.  They are: snapshot integrity
+(the 100 MB floor cannot catch a truncated ~4.5 GB snapshot whose filename still supplies the
+boundary), kept-chain contiguity (only the first kept object is checked, and internal L1 gaps
+are a demonstrated wedge), and scheduled-run freshness (the 48h guard accepts yesterday's
+snapshot, so a late nightly makes the 00:02Z one-shot under-heal and then lapse).  Covered
+meanwhile by the "Pre-flight before `--apply`" checklist in `docs/litestream.md`.
+
+**Next action:** after 2026-09-02 00:02Z confirm a `compaction complete … level=2` line and
+the L2 `<min>` TXID advancing past `0000000000134700`.  If it still fails, the suspect is a
+poisoned L2/L3 object — that is `scripts/litestream-l1-suffix-heal.py`'s job, since
+boundary-trim never touches those levels.
 
 ## 2026-08-31 GROK — Top-to-bottom full-stack audit (web, iOS, backend)
 
