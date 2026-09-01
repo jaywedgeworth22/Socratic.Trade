@@ -21,7 +21,9 @@
  * a change to the app's crypto is a deliberate, visible diff here too, not a silent drift.
  *
  * USAGE
- *   1. Back up the DB file first. Non-negotiable — see step 0 below, which refuses to run without it.
+ *   1. Back up the DB file first. Non-negotiable, and NOT enforced by this script — it has no way
+ *      to tell a real backup from a stale one, so do not read a successful run as proof one exists.
+ *      `cp data/app.db data/app.db.pre-rotation-$(date +%Y%m%d).bak`
  *   2. Dry run (decrypts every row under OLD key, re-encrypts in memory, verifies round-trip,
  *      writes NOTHING):
  *        DATABASE_URL=file:./data/app.db \
@@ -42,8 +44,8 @@
 
 import Database from "better-sqlite3";
 import crypto from "crypto";
-import { resolve, dirname } from "path";
-import { mkdirSync } from "fs";
+import { resolve } from "path";
+import { existsSync } from "fs";
 
 const ALGORITHM = "aes-256-gcm";
 const CIPHERTEXT_VERSION_PREFIX = "v1:";
@@ -110,10 +112,25 @@ function databasePath(): string {
   return resolve(value.replace(/^file:/, ""));
 }
 
+/**
+ * Open the EXISTING database, never create one.
+ *
+ * better-sqlite3 creates an empty file for a path that does not exist, which is exactly the wrong
+ * behavior here: a mistyped DATABASE_URL or a wrong working directory would silently produce a
+ * fresh empty DB, and then every mode reports a cheerful false green — `--dry-run`/`--apply` say
+ * "Nothing to do." and `--verify` says "0 FAILED" and exits 0. An operator following the runbook
+ * would read that as "rotation succeeded", swap ENCRYPTION_KEY, and only find out later that the
+ * real database was never touched and every stored credential is now unreadable. `fileMustExist`
+ * turns that into a loud failure at the only moment it is still cheap to fix.
+ */
 function openDb(): Database.Database {
   const path = databasePath();
-  mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path);
+  if (!existsSync(path)) {
+    console.error(`No database at ${path} — refusing to create one.`);
+    console.error("Check DATABASE_URL and your working directory; this script never rotates an empty DB.");
+    process.exit(1);
+  }
+  const db = new Database(path, { fileMustExist: true });
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 60000");
   return db;
@@ -284,6 +301,14 @@ function runVerify(): void {
   }
 
   console.log(`Verified ${ok + failed} ciphertext value(s): ${ok} decrypt OK, ${failed} FAILED under current ENCRYPTION_KEY.`);
+  if (ok + failed === 0) {
+    // Not an error — a DB with no stored credentials is a legitimate state — but "0 of 0 OK" is not
+    // evidence a rotation worked, and it is what a wrong (but existing) database also looks like.
+    console.warn(
+      `WARNING: found no encrypted values at all in ${databasePath()}. ` +
+        "That is only meaningful if you expect zero stored credentials; otherwise you are pointed at the wrong database."
+    );
+  }
   if (failed > 0) {
     console.error("Failures:");
     for (const line of failures) console.error(`  - ${line}`);
