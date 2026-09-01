@@ -43,6 +43,7 @@
     "@opentelemetry/sdk-trace-node": "^2.10.0",
     "@pinecone-database/pinecone": "^8.2.0",
     "@sentry/nextjs": "^10.71.0",
+    "@sentry/profiling-node": "10.71.0",
     "better-sqlite3": "^13.0.3",
     "cheerio": "^1.2.0",
     "clsx": "^2.1.1",
@@ -92,6 +93,7 @@
   },
   "allowScripts": {
     "@sentry/cli@2.58.6": true,
+    "@sentry/node-cpu-profiler@2.4.3": true,
     "better-sqlite3@12.11.1": true,
     "fsevents@2.3.3": true,
     "fsevents@2.3.2": true,

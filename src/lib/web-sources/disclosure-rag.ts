@@ -140,7 +140,9 @@ export async function embedDisclosures(
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[disclosure-rag] embed failed:", msg);
+    const { logError, recordEmbedFailure } = await import("../sentry-metrics");
+    recordEmbedFailure("disclosure-rag", "embed-failed");
+    logError("embed.failed", { provider: "disclosure-rag", error_type: "embed-failed" });
     return { attempted: docs.length, indexed: 0, error: msg };
   }
 }
