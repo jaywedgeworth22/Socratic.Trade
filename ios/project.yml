@@ -35,10 +35,18 @@ settings:
     INFOPLIST_KEY_CFBundleDisplayName: "Socratic Trade"
     INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.finance"
 
+packages:
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa.git
+    from: "8.44.0"
+
 targets:
   SocraticTrade:
     type: application
     platform: iOS
+    dependencies:
+      - package: Sentry
+        product: Sentry
     sources:
       - path: SocraticTrade
         excludes:
