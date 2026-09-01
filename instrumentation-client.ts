@@ -3,16 +3,17 @@
 // event run through redactForTelemetry — this is a financial app, so nothing
 // user-facing (account numbers, keys, tokens) may leave the browser.
 import * as Sentry from "@sentry/nextjs";
-import { redactForTelemetry } from "./src/lib/telemetry-sanitize";
+import { redactForTelemetry, sanitizeTelemetryUrl } from "./src/lib/telemetry-sanitize";
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
 if (dsn) {
   // Session Replay records DOM/network around errors. With our sponsored tier,
   // replay is enabled by default (100% on error, 10% baseline session sampling)
-  // while strictly masking all text and blocking all media so portfolio/account
-  // values are never captured.
-  const replayDisabled = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED === "false";
+  // while strictly masking all text, blocking media, and scrubbing query parameters
+  // so portfolio/account/trade values are never captured.
+  const replayRaw = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED?.trim();
+  const replayDisabled = replayRaw ? /^(false|0|off|no)$/i.test(replayRaw) : false;
   const replaySessionSampleRate = Number(
     process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0.1"
   );
@@ -26,12 +27,46 @@ if (dsn) {
       process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || process.env.NODE_ENV,
     tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? "0.2"),
     sendDefaultPii: false,
-    replaysSessionSampleRate: !replayDisabled ? replaySessionSampleRate : 0,
-    replaysOnErrorSampleRate: !replayDisabled ? replayErrorSampleRate : 0,
+    replaysSessionSampleRate: !replayDisabled && Number.isFinite(replaySessionSampleRate) ? replaySessionSampleRate : 0,
+    replaysOnErrorSampleRate: !replayDisabled && Number.isFinite(replayErrorSampleRate) ? replayErrorSampleRate : 0,
     integrations: !replayDisabled
-      ? [Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })]
+      ? [
+          Sentry.replayIntegration({
+            maskAllText: true,
+            blockAllMedia: true,
+            beforeAddRecordingEvent(event) {
+              if (event && typeof event === "object" && "data" in event && typeof event.data === "object" && event.data) {
+                const d = event.data as Record<string, unknown>;
+                if (typeof d.href === "string") {
+                  d.href = sanitizeTelemetryUrl(d.href);
+                }
+              }
+              return event;
+            }
+          })
+        ]
       : [],
     beforeSend(event) {
+      if (event.request?.url) {
+        event.request.url = sanitizeTelemetryUrl(event.request.url);
+      }
+      return redactForTelemetry(event) as typeof event;
+    },
+    beforeSendTransaction(event) {
+      if (event.request?.url) {
+        event.request.url = sanitizeTelemetryUrl(event.request.url);
+      }
+      if (event.spans) {
+        for (const span of event.spans) {
+          if (span.data) {
+            for (const key of ["http.url", "url.full", "http.query", "url.query"]) {
+              if (typeof span.data[key] === "string") {
+                span.data[key] = sanitizeTelemetryUrl(span.data[key] as string);
+              }
+            }
+          }
+        }
+      }
       return redactForTelemetry(event) as typeof event;
     }
   });

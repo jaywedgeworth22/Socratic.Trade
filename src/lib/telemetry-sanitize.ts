@@ -17,6 +17,11 @@ const DEFAULT_REDACTION: Required<RedactionOptions> = {
   maxStringLength: 1000
 };
 
+export function sanitizeTelemetryUrl(rawUrl: string): string {
+  if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
+  return rawUrl.replace(/([?&](?:symbol|proposal|account|token|key|secret|password|auth|api_key|code)=)[^&#\s]+/gi, "$1[REDACTED]");
+}
+
 export function redactForTelemetry(value: unknown, options: RedactionOptions = {}): unknown {
   const limits = { ...DEFAULT_REDACTION, ...options };
   const seen = new WeakSet<object>();
