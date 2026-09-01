@@ -5,14 +5,10 @@ const sentryMock = vi.hoisted(() => ({
   getActiveSpan: vi.fn(() => ({ setAttributes: vi.fn() }))
 }));
 
-vi.mock("@sentry/nextjs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@sentry/nextjs")>();
-  return {
-    ...actual,
-    startSpan: sentryMock.startSpan,
-    getActiveSpan: sentryMock.getActiveSpan
-  };
-});
+vi.mock("@sentry/nextjs", () => ({
+  startSpan: sentryMock.startSpan,
+  getActiveSpan: sentryMock.getActiveSpan
+}));
 
 import {
   extractModelName,
