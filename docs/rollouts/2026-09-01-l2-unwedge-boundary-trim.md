@@ -159,9 +159,22 @@ npm test
 npm run build
 ```
 
-Results are recorded in the PR.  `scripts/litestream-l1-boundary-trim.py` is a standalone
-Python operator tool - it is not imported by the app, not part of the Docker image's runtime
-path, and not exercised by vitest.
+Results: `tsc` clean; **699 test files passed / 1 skipped, 7,692 tests passed / 51 skipped**;
+`next build` clean.  `scripts/litestream-l1-boundary-trim.py` is a standalone Python operator
+tool - it is not imported by the app, not exercised by vitest, and does nothing at runtime.
+
+**This PR does trigger a production build - do not read "docs + script" as image-noop.**
+Checked, not assumed: the live `watch_paths` on Coolify app `socratic-app` was read straight
+out of `coolify-db` (`SELECT uuid, name, watch_paths FROM applications WHERE name ILIKE
+'%socratic%'`) and it contains both `scripts` and `scripts/**`, alongside `Dockerfile`,
+`src/**`, `app/**`, `public/**`, and the config files.  Adding a file under `scripts/`
+therefore matches, so the merge starts a real stop-old-first rebuild and container swap even
+though nothing the image runs has changed.
+
+This lands at ~03:20 UTC on Monday 2026-09-01, which is **outside** US regular trading hours
+(09:30-16:00 ET = 13:30-20:00 UTC), so the Dockerfile's RTH latch will not refuse the build -
+it deploys on merge rather than waiting for the 21:20 UTC drain.  No `HOTFIX=1` and no
+`RTH_DEPLOY_OVERRIDE=1` were used, and no deploy was hand-triggered.
 
 ## Next Steps & Blockers
 
