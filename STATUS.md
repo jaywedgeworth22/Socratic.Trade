@@ -1,6 +1,6 @@
 # Current Status
 
-## 2026-09-01 CLAUDE — PR #3139 plist comment: actually fix the XML `--` bug
+## 2026-09-01 CLAUDE — PR #3139 plist comment: actually fix the XML `--` bug — MERGED (squash `fe9944e81`)
 
 PR #3139 claimed moving the template comment above `<!DOCTYPE>` down into `<dict>` fixed
 `plistlib.loads` raising `ExpatError: not well-formed` on
@@ -13,7 +13,10 @@ the comment); the real `--apply` CLI argument in `<key>ProgramArguments</key>` i
 since it's a `<string>` value, not comment text.  Verified with `python3 -c "import
 plistlib; plistlib.load(open('scripts/com.jay.provider-knob-sync.plist','rb'))"` on both
 `/usr/bin/python3` and `/opt/homebrew/bin/python3` — parses clean now, raised before.  No
-repo test/CI step runs plistlib against this file.  Rollout:
+repo test/CI step runs plistlib against this file.  Fix landed in `42f0042a`; both
+`chatgpt-codex-connector` threads owner-resolved.  A follow-up session confirmed the
+hosted `verify` gate went green and the pre-armed `--squash --auto` merged it on its own
+at 2026-09-01T08:34:19Z — no further code changes needed.  Rollout:
 `docs/rollouts/2026-09-01-pr-3139-plist-comment-fix.md`.
 
 ## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
