@@ -3,6 +3,16 @@ const SECRET_VALUE =
   /\b(?:Bearer\s+)?(?:sk|pk|rk|ghp|gho|ghs|xox[baprs]?|rh|mcp|pc|voyage|fred|finnhub|tradier|marketstack|massive)[A-Za-z0-9._:-]{12,}\b/g;
 const HEX_SECRET = /\b[A-Fa-f0-9]{48,}\b/g;
 
+// Query-param names that must be redacted in addition to whatever SENSITIVE_KEY
+// already catches. These are either trading-specific identifiers that are not
+// "secrets" in the SENSITIVE_KEY sense (symbol/proposal/account/code) or legacy
+// bare aliases ("key", "auth") that predate SENSITIVE_KEY's compound patterns
+// (api[_-]?key etc). Exact-match only -- SENSITIVE_KEY already does the
+// substring-style matching for anything provider-key-shaped, e.g. a query param
+// literally named "apikey" (no separator) matches api[_-]?key's optional
+// separator, so it's covered without listing every provider's naming style here.
+const SENSITIVE_QUERY_PARAM_NAME = /^(?:symbol|proposal|account|code|auth|key)$/i;
+
 type RedactionOptions = {
   maxDepth?: number;
   maxArrayItems?: number;
@@ -17,9 +27,51 @@ const DEFAULT_REDACTION: Required<RedactionOptions> = {
   maxStringLength: 1000
 };
 
+// Parses actual query-param names (rather than matching a fixed alternation
+// literal) and redacts any whose decoded name matches SENSITIVE_KEY or the
+// trading-specific SENSITIVE_QUERY_PARAM_NAME list above. This fixed a real gap:
+// the previous implementation matched "api_key" exactly but not "apikey" (no
+// separator), which is what this app's actual providers use (Alpha Vantage,
+// Twelve Data, ROIC -- see src/lib/history.ts's `?apikey=`), so provider keys
+// were leaking into Sentry unredacted. Parsing param names against the shared
+// sensitive-key list means a future provider using a differently-shaped key
+// param name (as long as it still reads as "...key..."/"...token..."/etc, or is
+// one of the exact trading-identifier names above) is covered automatically.
 export function sanitizeTelemetryUrl(rawUrl: string): string {
   if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
-  return rawUrl.replace(/([?&](?:symbol|proposal|account|token|key|secret|password|auth|api_key|code)=)[^&#\s]+/gi, "$1[REDACTED]");
+
+  const hashIndex = rawUrl.indexOf("#");
+  const withoutHash = hashIndex === -1 ? rawUrl : rawUrl.slice(0, hashIndex);
+  const hash = hashIndex === -1 ? "" : rawUrl.slice(hashIndex);
+
+  const queryIndex = withoutHash.indexOf("?");
+  if (queryIndex === -1) return rawUrl;
+
+  const base = withoutHash.slice(0, queryIndex);
+  const query = withoutHash.slice(queryIndex + 1);
+  if (!query) return rawUrl;
+
+  const redactedQuery = query
+    .split("&")
+    .map((pair) => {
+      if (!pair) return pair;
+      const eqIndex = pair.indexOf("=");
+      if (eqIndex === -1) return pair; // bare flag, no value to redact
+
+      const rawName = pair.slice(0, eqIndex);
+      let decodedName = rawName;
+      try {
+        decodedName = decodeURIComponent(rawName.replace(/\+/g, " "));
+      } catch {
+        // malformed percent-encoding in the param name: fall back to the raw form
+      }
+
+      const isSensitive = SENSITIVE_KEY.test(decodedName) || SENSITIVE_QUERY_PARAM_NAME.test(decodedName);
+      return isSensitive ? `${rawName}=[REDACTED]` : pair;
+    })
+    .join("&");
+
+  return `${base}?${redactedQuery}${hash}`;
 }
 
 export function redactForTelemetry(value: unknown, options: RedactionOptions = {}): unknown {
@@ -62,6 +114,127 @@ export function redactForTelemetry(value: unknown, options: RedactionOptions = {
   }
 
   return visit(value, 0);
+}
+
+/**
+ * Redact a Sentry transaction event WITHOUT funneling `event.spans` through the
+ * generic, array-capped `redactForTelemetry`. Doing that (the previous
+ * implementation) silently truncated any transaction with more than
+ * `maxArrayItems` (default 20) spans -- `redactForTelemetry`'s array handling
+ * slices to the cap and appends a `"[truncated:N]"` *string* in place of the
+ * dropped span objects, which is not a valid span and corrupts the trace in the
+ * Sentry UI. Every span is kept 1:1 here; only known-sensitive fields on each
+ * span are scrubbed, and span-level URLs are sanitized the same way top-level
+ * request URLs are.
+ */
+export function redactTransactionEvent(event: unknown): unknown {
+  if (!isRecord(event)) return event;
+  const { spans, ...rest } = event;
+  const redactedRest = redactForTelemetry(rest) as Record<string, unknown>;
+  if (Array.isArray(spans)) {
+    redactedRest.spans = spans.map((span) => redactSpan(span));
+  }
+  return redactedRest;
+}
+
+function redactSpan(span: unknown): unknown {
+  if (!isRecord(span)) return span;
+  const { data, description, ...rest } = span;
+  return {
+    ...rest,
+    description: typeof description === "string" ? sanitizeTelemetryUrl(redactString(description, 500)) : description,
+    data: isRecord(data) ? redactSpanData(data) : data
+  };
+}
+
+function redactSpanData(data: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (SENSITIVE_KEY.test(key)) {
+      output[key] = "[redacted]";
+      continue;
+    }
+    if (typeof value === "string") {
+      // Covers the previous hardcoded key list (http.url, url.full, http.query,
+      // url.query) plus any other URL-bearing attribute name -- OTel/Sentry span
+      // attribute keys for this are not fully standardized across integrations.
+      output[key] = sanitizeTelemetryUrl(redactString(value, 1000));
+    } else if (value === null || value === undefined || typeof value === "number" || typeof value === "boolean") {
+      output[key] = value;
+    } else {
+      // span.data values are almost always OTel-style primitives; anything more
+      // complex here is rare, so falling back to the general (bounded) redactor
+      // for just this one field's value is safe and doesn't reintroduce the
+      // spans-array truncation bug this function exists to fix.
+      output[key] = redactForTelemetry(value);
+    }
+  }
+  return output;
+}
+
+/**
+ * Sanitize a Session Replay recording event before it is buffered for upload.
+ * `beforeAddRecordingEvent` only ever receives rrweb "Custom" events (type 5) --
+ * @sentry/replay's `maybeApplyCallback` gates the callback on
+ * `event.type === EventType.Custom`, so the Meta/FullSnapshot/IncrementalSnapshot
+ * events that carry raw DOM/page state (including the initial page load's
+ * `data.href`) NEVER reach this hook at all. What Custom events actually carry
+ * is `event.data.payload` -- e.g. `{tag:"breadcrumb", payload:{data:{url}}}` for
+ * a fetch/xhr breadcrumb, or `{tag:"performanceSpan", payload:{description,
+ * data}}` for a navigation entry, where `description` holds the destination
+ * URL/path. Rather than hardcode those two shapes (which is what the previous
+ * `d.href` check effectively guessed at, incorrectly), this walks every string
+ * under `payload` so it doesn't rot the next time replay's internal event shape
+ * changes.
+ */
+export function sanitizeReplayRecordingEvent(event: unknown): unknown {
+  if (!isRecord(event)) return event;
+  const data = event.data;
+  if (!isRecord(data) || !("payload" in data)) return event;
+  return {
+    ...event,
+    data: {
+      ...data,
+      payload: sanitizeReplayPayload(data.payload)
+    }
+  };
+}
+
+function sanitizeReplayPayload(value: unknown, depth = 0): unknown {
+  if (depth > 8) return value;
+  if (typeof value === "string") return sanitizeTelemetryUrl(redactString(value, 2000));
+  if (Array.isArray(value)) return value.map((item) => sanitizeReplayPayload(item, depth + 1));
+  if (isRecord(value)) {
+    const output: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      output[key] = SENSITIVE_KEY.test(key) ? "[redacted]" : sanitizeReplayPayload(item, depth + 1);
+    }
+    return output;
+  }
+  return value;
+}
+
+/**
+ * Sanitize the `urls` array Session Replay attaches to the replay_event
+ * envelope. This is a genuinely different data path from
+ * `beforeAddRecordingEvent`: `ReplayContainer` accumulates full,
+ * unredacted `location.href`-derived strings into `this._context.urls`
+ * from two places -- `setInitialState()` (the initial page URL) and the
+ * history-change span listener (every client-side navigation) -- and
+ * `sendReplayRequest` later builds `{urls, error_ids, trace_ids, ...}` and
+ * calls `client.emit("preprocessEvent", event, hint)` on it *before* running it
+ * through `prepareEvent`/the transport. There is no `beforeAddRecordingEvent`-
+ * equivalent hook for this envelope object -- `client.on("preprocessEvent", ...)`
+ * is the only public interception point, and it must mutate the event in place
+ * (no return value is consumed by the caller). Call this from a
+ * `Sentry.getClient()?.on("preprocessEvent", ...)` listener registered
+ * alongside the replay integration.
+ */
+export function sanitizeReplayEnvelopeEvent(event: unknown): void {
+  if (!isRecord(event) || event.type !== "replay_event") return;
+  if (Array.isArray(event.urls)) {
+    event.urls = event.urls.map((url) => (typeof url === "string" ? sanitizeTelemetryUrl(url) : url));
+  }
 }
 
 export function safeErrorMessage(error: unknown): string {

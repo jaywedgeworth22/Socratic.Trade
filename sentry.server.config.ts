@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { redactForTelemetry, sanitizeTelemetryUrl } from "./src/lib/telemetry-sanitize";
+import { redactForTelemetry, redactTransactionEvent, sanitizeTelemetryUrl } from "./src/lib/telemetry-sanitize";
 
 if (process.env.SENTRY_DSN) {
   Sentry.init({
@@ -17,18 +17,7 @@ if (process.env.SENTRY_DSN) {
       if (event.request?.url) {
         event.request.url = sanitizeTelemetryUrl(event.request.url);
       }
-      if (event.spans) {
-        for (const span of event.spans) {
-          if (span.data) {
-            for (const key of ["http.url", "url.full", "http.query", "url.query"]) {
-              if (typeof span.data[key] === "string") {
-                span.data[key] = sanitizeTelemetryUrl(span.data[key] as string);
-              }
-            }
-          }
-        }
-      }
-      return redactForTelemetry(event) as typeof event;
+      return redactTransactionEvent(event) as typeof event;
     }
   });
 }
