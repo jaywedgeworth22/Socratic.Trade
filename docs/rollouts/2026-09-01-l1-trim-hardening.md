@@ -156,11 +156,31 @@ printed its first progress line:
 [l1-boundary-trim] 2026-09-01T05:19:56Z progress 200/2362
 ```
 
-That counter is `deleted + failed`.  200 calls had completed - and CT L1 stood at **2,420**,
-*higher* than the 2,413 the run started from.  Zero objects had been removed, so all 200 were
-failures.  The run is on course to grind through 2,362 doomed objects at ~12.5 s each
-(41.5 minutes for the first 200), take roughly **8 hours**, and finally report
-`deleted=0 failed=2362` with exit 1.
+That counter is `deleted + failed`, so it does not by itself separate the two.  The level
+count does not settle it either: Litestream keeps *adding* L1 objects while the trim runs, so
+the observed rise from 2,413 to 2,420 is a **net** figure and is consistent with some
+deletions having succeeded alongside more arrivals.  (Correct objection, raised in the #3142
+review; the first draft of this note over-claimed from the net count.)
+
+What does settle it is the **delete order**.  `doomed` is built from the `rclone lsl` listing
+and preserves its lexicographic order, so the run deletes the lowest-numbered objects first.
+Those are still there:
+
+```
+# 06:13Z, after `progress 400/2362`
+00000000000450f0-00000000000450f3.ltx
+00000000000450f4-00000000000451c4.ltx
+00000000000451c5-00000000000451e7.ltx
+```
+
+All three carry a `maxTXID` far below the boundary `5b521`, so all three are doomed, and they
+are the *first* three the loop attempts.  Four hundred completed calls later they are all
+still present.  A single successful delete would have removed the first one within the first
+call.  **Every delete is failing.**
+
+At ~12.5 s per call (41.5 minutes for the first 200, and the second 200 in the 41 minutes to
+06:00:42) the run is on course to grind through all 2,362 doomed objects over roughly
+**8 hours** and finally report `deleted=0 failed=2362` with exit 1.
 
 The most likely cause is that the host `rclone` `[b2]` remote's application key lacks the
 `deleteFiles` capability - a sane posture for a backup remote, and one that a `--dry-run`

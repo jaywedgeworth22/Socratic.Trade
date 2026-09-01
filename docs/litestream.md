@@ -314,7 +314,7 @@ Unparseable object names are warned about and skipped, never deleted.
 | Code | Meaning |
 |---|---|
 | 0 | Deleted successfully, or a legitimate no-op (small L1, nothing superseded), or a dry run |
-| 1 | One or more deletes failed |
+| 1 | One or more deletes failed - **or** an `rclone lsl` listing raised, since that propagates uncaught and Python exits 1 on the traceback.  Read the log: a listing failure produces no `APPLIED` line at all |
 | 2 | No usable L9 snapshot |
 | 3 | The snapshot failed a safety guard (too small, shrank, or too old) |
 | 4 | Trimming would leave a restore hole |
@@ -362,9 +362,13 @@ does not separate `deleted` from `failed`.  **Do not conclude a trim worked from
 of errors - re-count the level and compare.**
 
 This is not hypothetical.  On 2026-09-01 the Congress.Trade `--apply` run passed every guard
-and then failed *every* delete: its first progress line read `progress 200/2362` after 41
-minutes, while the level had gone from 2,413 objects to 2,420.  Two hundred completed calls,
-zero objects removed.  The leading hypothesis is a host `rclone` `[b2]` application key
+and then failed *every* delete.  Note *how* that was established, because the obvious method
+does not work: the level count is a **net** figure (Litestream keeps adding L1 while the trim
+runs), and the progress line combines `deleted` and `failed`, so neither one alone proves
+anything.  What proves it is the **delete order** - `doomed` preserves the listing's
+lexicographic order, so the lowest-numbered objects go first, and after `progress 400/2362`
+the first three doomed objects were all still present.  One successful delete would have
+removed the first of them on the first call.  The leading hypothesis is a host `rclone` `[b2]` application key
 without `deleteFiles` - which a dry run can never detect, because dry runs do not exercise
 the delete permission.  Before trusting any armed unit, prove one real delete by hand with
 `-vv` and read the stderr.  Details in `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
