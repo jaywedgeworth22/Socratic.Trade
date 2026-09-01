@@ -27,6 +27,13 @@ if (dsn) {
     tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? "0.2"),
     enableLogs: true,
     sendDefaultPii: false,
+    tracePropagationTargets: [
+      "localhost",
+      /^https:\/\/([\w-]+\.)?socratictrade\.com/,
+      /^https:\/\/([\w-]+\.)?congress\.trade/,
+      /^https:\/\/([\w-]+\.)?jays\.services/,
+      /^https:\/\/usage\.jays\.services/,
+    ],
     replaysSessionSampleRate: replayEnabled ? replaySessionSampleRate : 0,
     replaysOnErrorSampleRate: replayEnabled ? replayErrorSampleRate : 0,
     integrations: replayEnabled
