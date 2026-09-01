@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
 <!--
   TEMPLATE launchd job for scripts/sync-provider-knobs.sh (NOT installed by default).
 
@@ -22,9 +25,6 @@
   The job is safe to leave running: monitor-unreachable or in-sync runs exit 0
   and write nothing; it only ever writes the allow-listed provider knobs.
 -->
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
   <key>Label</key>
   <string>com.jay.provider-knob-sync</string>
 
