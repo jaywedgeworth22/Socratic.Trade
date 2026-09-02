@@ -62,6 +62,19 @@ import {
 } from "./user-write-fence";
 import { hasInFlightStrategyWork, shouldSkipWholeIndexInventory } from "./db-execution";
 import { meterQdrantQuery, qdrantQueryTier, vectorReadBackend } from "./vector-store/qdrant-read";
+import {
+  meterQdrantUpsert,
+  qdrantCollectionInfo,
+  qdrantDeleteByFilter,
+  qdrantDeleteByIds,
+  qdrantDeleteNamespace,
+  qdrantInventoryByMetadata,
+  qdrantProviderAuthority,
+  qdrantRetrieveByPcIds,
+  qdrantSetPayload,
+  qdrantUpsertPoints,
+  vectorWriteBackend
+} from "./vector-store/qdrant-write";
 
 export class WholeIndexInventoryDeferredError extends Error {
   readonly code = "whole-index-inventory-deferred" as const;
@@ -76,6 +89,23 @@ export function isWholeIndexInventoryDeferredError(error: unknown): boolean {
     error instanceof WholeIndexInventoryDeferredError
     || (error instanceof Error && error.name === "WholeIndexInventoryDeferredError")
   );
+}
+
+function usesQdrantWrites(): boolean {
+  return vectorWriteBackend() === "qdrant";
+}
+
+/** Durable SQLite authority first so Qdrant writes keep matching copied occ:v3 ids. */
+function resolveQdrantWriteProviderAuthority(ledgerAuthority?: string): string {
+  try {
+    if (typeof dbModule.durableProviderAuthority === "function") {
+      const durable = dbModule.durableProviderAuthority(ledgerAuthority);
+      if (durable) return durable;
+    }
+  } catch {
+    // Isolated unit suites replace the DB barrel with a tiny mock.
+  }
+  return qdrantProviderAuthority();
 }
 
 function assertGatherSafeWholeIndexInventory(options?: {
@@ -649,6 +679,7 @@ export const PINECONE_DAILY_WU_FUSE_RECOMMENDATION =
 
 /** True when the daily write fuse still has room (or is disabled).  Fail-open like the text budget. */
 export function hasPineconeWriteBudget(userId: string = "local"): boolean {
+  if (usesQdrantWrites()) return true;
   if (!pineconeWriteBudgetEnabled()) return true;
   return usedPineconeWriteUnitsLast24h(userId) < pineconeMaxWriteUnitsPerDay();
 }
@@ -2068,6 +2099,13 @@ export async function getCurrentVectorProviderAuthority(options: {
   accountDeletionRequestId?: string;
   leaseGuard?: VectorStoreLeaseGuard;
 } = {}): Promise<string | undefined> {
+  if (usesQdrantWrites()) {
+    try {
+      return resolveQdrantWriteProviderAuthority(managedVectorLedgerAuthority());
+    } catch {
+      return qdrantProviderAuthority();
+    }
+  }
   const userId = options.userId ?? "local";
   const { pc, initCacheKey, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc || !initCacheKey) return undefined;
@@ -3086,17 +3124,21 @@ async function storeContextsImpl(
     })
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
+  const writeBackend = vectorWriteBackend();
   // Monthly Pinecone write-unit breaker — gate BEFORE dedup bookkeeping, budgets, and (most
   // importantly) any paid embed call. While the marker is active every upsert would 429, and
   // because content-hash dedup only records STORED documents, embedding here is pure spend
   // with no possible benefit. Auto-resumes when the marker expires (first of next month UTC).
-  const wuExhaustedUntil = pineconeWuExhaustedUntil();
-  if (wuExhaustedUntil) {
-    auditPineconeWuGateSkip(
-      { operation: "storeContexts", attempted: validDocuments.length, until: wuExhaustedUntil },
-      userId
-    );
-    return { attempted: validDocuments.length, indexed: 0, skipped: true, wuExhausted: true, wuExhaustedUntil };
+  // Qdrant writes are self-hosted and must not inherit a dead Pinecone WU park.
+  if (writeBackend === "pinecone") {
+    const wuExhaustedUntil = pineconeWuExhaustedUntil();
+    if (wuExhaustedUntil) {
+      auditPineconeWuGateSkip(
+        { operation: "storeContexts", attempted: validDocuments.length, until: wuExhaustedUntil },
+        userId
+      );
+      return { attempted: validDocuments.length, indexed: 0, skipped: true, wuExhausted: true, wuExhaustedUntil };
+    }
   }
   const privateLedgerAuthority = scope === PRIVATE_SCOPE && !options?.managedCommit
     ? managedVectorLedgerAuthority()
@@ -3290,45 +3332,63 @@ async function storeContextsImpl(
 
   let writeUnitBudgetSkipped = 0;
   assertVectorStoreLease(options?.leaseGuard);
-  const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId, scope, tenantScope, Boolean(options?.managedCommit));
-  if (writeBudget.skipped > 0) {
-    writeUnitBudgetSkipped = writeBudget.skipped;
-    const budgetPayload = {
-      requestedEstimatedWriteUnits: writeBudget.requested,
-      allowedEstimatedWriteUnits: writeBudget.allowed,
-      skipped: writeUnitBudgetSkipped,
-      usedLast24h: writeBudget.used,
-      limitPer24h: writeBudget.limit
-    };
-    await notifyPineconeDailyWriteFuse({
-      userId,
-      used: writeBudget.used,
-      limit: writeBudget.limit,
-      requested: writeBudget.requested,
-      skipped: writeUnitBudgetSkipped,
-      exceeded: writeBudget.documents.length === 0,
-      leaseGuard: options?.leaseGuard
-    });
-    if (writeBudget.documents.length === 0) {
-      const lastIngest = {
-        at: new Date().toISOString(),
-        attempted: validDocuments.length,
-        indexed: 0,
-        writeUnitBudgetSkipped,
-        writeBudget: budgetPayload
+  if (writeBackend === "pinecone") {
+    const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId, scope, tenantScope, Boolean(options?.managedCommit));
+    if (writeBudget.skipped > 0) {
+      writeUnitBudgetSkipped = writeBudget.skipped;
+      const budgetPayload = {
+        requestedEstimatedWriteUnits: writeBudget.requested,
+        allowedEstimatedWriteUnits: writeBudget.allowed,
+        skipped: writeUnitBudgetSkipped,
+        usedLast24h: writeBudget.used,
+        limitPer24h: writeBudget.limit
       };
-      setInternalSetting(LAST_INGEST_KEY, lastIngest);
-      audit("vector_store", { ok: true, attempted: validDocuments.length, indexed: 0, writeUnitBudgetSkipped }, userId);
-      return { attempted: validDocuments.length, indexed: 0, skipped: true, budgetSkipped, writeUnitBudgetSkipped };
+      await notifyPineconeDailyWriteFuse({
+        userId,
+        used: writeBudget.used,
+        limit: writeBudget.limit,
+        requested: writeBudget.requested,
+        skipped: writeUnitBudgetSkipped,
+        exceeded: writeBudget.documents.length === 0,
+        leaseGuard: options?.leaseGuard
+      });
+      if (writeBudget.documents.length === 0) {
+        const lastIngest = {
+          at: new Date().toISOString(),
+          attempted: validDocuments.length,
+          indexed: 0,
+          writeUnitBudgetSkipped,
+          writeBudget: budgetPayload
+        };
+        setInternalSetting(LAST_INGEST_KEY, lastIngest);
+        audit("vector_store", { ok: true, attempted: validDocuments.length, indexed: 0, writeUnitBudgetSkipped }, userId);
+        return { attempted: validDocuments.length, indexed: 0, skipped: true, budgetSkipped, writeUnitBudgetSkipped };
+      }
+      documentsToStore = writeBudget.documents;
+      if (dedupHashes) dedupHashes = dedupHashes.slice(0, documentsToStore.length);
     }
-    documentsToStore = writeBudget.documents;
-    if (dedupHashes) dedupHashes = dedupHashes.slice(0, documentsToStore.length);
   }
 
-  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId, options?.leaseGuard);
+  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(
+    userId,
+    options?.leaseGuard,
+    { skipMissingPineconeAlert: writeBackend === "qdrant" }
+  );
   const activeProvider = activeEmbeddingProvider(userId);
   const hasActiveKey = !!voyage || (resolveApiKey(activeProvider, userId) != null);
-  if (!pc || !hasActiveKey) {
+  if (writeBackend === "qdrant") {
+    if (!hasActiveKey) {
+      console.log(`[vector-db] Skipping storeContexts: Missing ${activeProvider} key.`);
+      await settleRagSideEffect(captureRagSentryMessage("warning", `RAG store skipped: missing ${activeProvider} key`, {
+        provider: activeProvider,
+        operation: "storeContexts",
+        source: userId === "local" ? "operator" : "user",
+        attempted: validDocuments.length
+      }, options?.leaseGuard), options?.leaseGuard);
+      audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: `missing ${activeProvider} key` }, userId);
+      return { attempted: validDocuments.length, indexed: 0, skipped: true, unconfigured: true };
+    }
+  } else if (!pc || !hasActiveKey) {
     console.log(`[vector-db] Skipping storeContexts: Missing Pinecone or ${activeProvider} keys.`);
     await settleRagSideEffect(captureRagSentryMessage("warning", `RAG store skipped: missing Pinecone or ${activeProvider} key`, {
       provider: !pc ? "pinecone" : activeProvider,
@@ -3354,9 +3414,29 @@ async function storeContextsImpl(
   const indexedDocIdentities = new Set<ContextDocument>();
   try {
     assertVectorStoreLease(options?.leaseGuard);
-    await ensureIndex(pc, initCacheKey, pineconeSource, userId, options?.leaseGuard);
-    assertVectorStoreLease(options?.leaseGuard);
-    const stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+    const namespaceName = options?.managedCommit
+      ? vectorNamespaceName(options.managedCommit.namespace, options.managedCommit.ledgerAuthority)
+      : scope === PRIVATE_SCOPE
+        ? vectorNamespaceName("private", privateLedgerAuthority, userId)
+        : vectorNamespaceName("default");
+    let stableProviderAuthority: string | undefined;
+    let index: ReturnType<typeof vectorDataIndex> | undefined;
+    if (writeBackend === "qdrant") {
+      const ledgerForAuthority = options?.managedCommit?.ledgerAuthority
+        ?? privateLedgerAuthority
+        ?? managedVectorLedgerAuthority();
+      stableProviderAuthority = options?.managedCommit?.providerAuthority
+        ?? resolveQdrantWriteProviderAuthority(ledgerForAuthority);
+    } else {
+      await ensureIndex(pc!, initCacheKey, pineconeSource, userId, options?.leaseGuard);
+      assertVectorStoreLease(options?.leaseGuard);
+      stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+      index = options?.managedCommit
+        ? vectorDataIndex(pc!, options.managedCommit.namespace, options.managedCommit.ledgerAuthority)
+        : scope === PRIVATE_SCOPE
+          ? vectorDataIndex(pc!, "private", privateLedgerAuthority, userId)
+          : vectorDataIndex(pc!, "default");
+    }
     if (
       options?.leaseGuard?.expectedProviderAuthority &&
       stableProviderAuthority !== options.leaseGuard.expectedProviderAuthority
@@ -3376,12 +3456,9 @@ async function storeContextsImpl(
     if (options?.managedCommit && stableProviderAuthority !== options.managedCommit.providerAuthority) {
       throw new Error("managed-vector-provider-authority-unavailable");
     }
-    const providerAuthority = options?.managedCommit?.providerAuthority ?? providerAuthorityForInitKey(initCacheKey);
-    const index = options?.managedCommit
-      ? vectorDataIndex(pc, options.managedCommit.namespace, options.managedCommit.ledgerAuthority)
-      : scope === PRIVATE_SCOPE
-        ? vectorDataIndex(pc, "private", privateLedgerAuthority, userId)
-        : vectorDataIndex(pc, "default");
+    const providerAuthority = options?.managedCommit?.providerAuthority
+      ?? stableProviderAuthority
+      ?? (initCacheKey ? providerAuthorityForInitKey(initCacheKey) : qdrantProviderAuthority());
     const batches = chunks(documentsToStore, embedBatchSize());
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
@@ -3583,26 +3660,31 @@ async function storeContextsImpl(
       }
 
       if (records.length > 0) {
-        const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(records);
         assertVectorStoreLease(options?.leaseGuard);
         const upsertOperation = options?.managedCommit?.namespace === "fmp-transcripts"
           ? "upsert fmp transcript vectors"
           : records.some((record) => record.metadata?.fmp_derived === true)
             ? "upsert fmp-derived private memory"
             : "upsert";
-        // Pinecone JS SDK v8 takes an options object ({ records }), not a bare array.
-        await withRagApiHealth(
-          "pinecone",
-          pineconeSource,
-          userId,
-          upsertOperation,
-          () => index.upsert({ records } as any),
-          options?.leaseGuard
-        );
+        if (writeBackend === "qdrant") {
+          await qdrantUpsertPoints({ namespace: namespaceName, records });
+          meterQdrantUpsert(records.length, userId);
+        } else {
+          const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(records);
+          // Pinecone JS SDK v8 takes an options object ({ records }), not a bare array.
+          await withRagApiHealth(
+            "pinecone",
+            pineconeSource,
+            userId,
+            upsertOperation,
+            () => index!.upsert({ records } as any),
+            options?.leaseGuard
+          );
+          meterPineconeUpsert(records.length, userId, estimatedWriteUnits);
+        }
         assertVectorStoreLease(options?.leaseGuard);
         indexed += records.length;
         if (options?.managedCommit) managedRecordBatches.push(records);
-        meterPineconeUpsert(records.length, userId, estimatedWriteUnits);
         // Delivered: this batch's vectors are now in Pinecone, so their "paid but not yet
         // delivered" stage rows can go (plain calls delete per batch; managed commits defer
         // until the committed re-upsert + finalize). Best-effort — a stray row is swept by
@@ -3648,20 +3730,25 @@ async function storeContextsImpl(
           ...record,
           metadata: { ...record.metadata, ingest_state: "committed" }
         }));
-        const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(committedRecords);
-        await withRagApiHealth(
-          "pinecone",
-          pineconeSource,
-          userId,
-          options.managedCommit.namespace === "fmp-transcripts"
-            ? "commit fmp transcript vectors"
-            : "commit managed vectors",
-          () => index.upsert({ records: committedRecords } as any),
-          options.leaseGuard,
-          { units: 1 }
-        );
+        if (writeBackend === "qdrant") {
+          await qdrantUpsertPoints({ namespace: namespaceName, records: committedRecords });
+          meterQdrantUpsert(committedRecords.length, userId);
+        } else {
+          const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(committedRecords);
+          await withRagApiHealth(
+            "pinecone",
+            pineconeSource,
+            userId,
+            options.managedCommit.namespace === "fmp-transcripts"
+              ? "commit fmp transcript vectors"
+              : "commit managed vectors",
+            () => index!.upsert({ records: committedRecords } as any),
+            options.leaseGuard,
+            { units: 1 }
+          );
+          meterPineconeUpsert(committedRecords.length, userId, estimatedWriteUnits);
+        }
         assertVectorStoreLease(options.leaseGuard);
-        meterPineconeUpsert(committedRecords.length, userId, estimatedWriteUnits);
       }
       try {
         options.managedCommit.markCommitted();
@@ -4002,30 +4089,34 @@ async function storeDocumentImpl(
   // Empty/whitespace-only input has no commit cardinality. Do not leave an unfinishable
   // expected_vectors=0 row in the durable pending ledger.
   if (chunked.length === 0) return { attempted: 0, indexed: 0, documentComplete: false };
+  const writeBackend = vectorWriteBackend();
   // Monthly Pinecone write-unit breaker — refuse BEFORE provider discovery, commit-ledger rows,
   // and any embed spend. `documentComplete: false` + `wuExhausted` lets producers (SEC ingest
   // worker, filings backfill, transcripts) park the document until `wuExhaustedUntil` instead of
   // retry-storming or dead-lettering it.
-  const storeDocWuUntil = pineconeWuExhaustedUntil();
-  if (storeDocWuUntil) {
-    auditPineconeWuGateSkip(
-      { operation: "storeDocument", attempted: chunked.length, until: storeDocWuUntil },
-      userId
-    );
-    return {
-      attempted: chunked.length,
-      indexed: 0,
-      skipped: true,
-      wuExhausted: true,
-      wuExhaustedUntil: storeDocWuUntil,
-      documentComplete: false
-    };
+  // Qdrant writes must not inherit that park — Pinecone WU exhaustion is why ingest is stuck.
+  if (writeBackend === "pinecone") {
+    const storeDocWuUntil = pineconeWuExhaustedUntil();
+    if (storeDocWuUntil) {
+      auditPineconeWuGateSkip(
+        { operation: "storeDocument", attempted: chunked.length, until: storeDocWuUntil },
+        userId
+      );
+      return {
+        attempted: chunked.length,
+        indexed: 0,
+        skipped: true,
+        wuExhausted: true,
+        wuExhaustedUntil: storeDocWuUntil,
+        documentComplete: false
+      };
+    }
   }
   // Daily write fuse: refuse BEFORE provider discovery and beginVectorCommit.  The monthly
   // breaker above parks on a calendar marker; this one parks when the rolling 24h ledger is
   // already at the configured cap so incremental lanes (ROIC transcripts, filings, 8-Ks) do
   // not open-and-abort a commit for every new document after the fuse is spent.
-  if (!hasPineconeWriteBudget(userId)) {
+  if (writeBackend === "pinecone" && !hasPineconeWriteBudget(userId)) {
     const used = usedPineconeWriteUnitsLast24h(userId);
     const limit = pineconeMaxWriteUnitsPerDay();
     await notifyPineconeDailyWriteFuse({
@@ -4089,7 +4180,9 @@ async function storeDocumentImpl(
   // Managed ids and relational receipts are bound to the physical Pinecone index. Resolve that
   // authority before creating any local commit row, so a control-plane/configuration failure cannot
   // leave a deterministic receipt for a provider that was never identified.
-  const providerClients = await getClients(userId, options?.leaseGuard);
+  const providerClients = await getClients(userId, options?.leaseGuard, {
+    skipMissingPineconeAlert: writeBackend === "qdrant"
+  });
   const activeProvider = activeEmbeddingProvider(userId);
   // Voyage is intentionally test-only after the production BGE-M3 migration. A managed document
   // must therefore require the credential that will actually embed it, not the optional test
@@ -4100,32 +4193,49 @@ async function storeDocumentImpl(
   const hasActiveEmbeddingAuthority = activeProvider === "voyage"
     ? Boolean(providerClients.voyage)
     : embeddingCredentialIsUsable(activeProviderCredential);
-  if (!providerClients.pc || !providerClients.initCacheKey || !hasActiveEmbeddingAuthority) {
+  if (!hasActiveEmbeddingAuthority) {
     audit("vector_store", {
       ok: false,
       attempted: chunked.length,
       indexed: 0,
       skipped: true,
-      reason: `missing Pinecone or ${activeProvider} embedding authority before managed commit`
+      reason: `missing ${activeProvider} embedding authority before managed commit`
     }, userId);
     return { attempted: chunked.length, indexed: 0, skipped: true, unconfigured: true };
   }
-  await ensureIndex(
-    providerClients.pc,
-    providerClients.initCacheKey,
-    providerClients.pineconeSource,
-    userId,
-    options?.leaseGuard
-  );
-  assertVectorStoreLease(options?.leaseGuard);
-  const providerAuthority = stableProviderAuthorityForInitKey(providerClients.initCacheKey);
+  let providerAuthority: string | undefined;
+  if (writeBackend === "qdrant") {
+    providerAuthority = resolveQdrantWriteProviderAuthority(managedVectorLedgerAuthority());
+  } else {
+    if (!providerClients.pc || !providerClients.initCacheKey) {
+      audit("vector_store", {
+        ok: false,
+        attempted: chunked.length,
+        indexed: 0,
+        skipped: true,
+        reason: `missing Pinecone or ${activeProvider} embedding authority before managed commit`
+      }, userId);
+      return { attempted: chunked.length, indexed: 0, skipped: true, unconfigured: true };
+    }
+    await ensureIndex(
+      providerClients.pc,
+      providerClients.initCacheKey,
+      providerClients.pineconeSource,
+      userId,
+      options?.leaseGuard
+    );
+    assertVectorStoreLease(options?.leaseGuard);
+    providerAuthority = stableProviderAuthorityForInitKey(providerClients.initCacheKey);
+  }
   if (!providerAuthority) {
     audit("vector_store", {
       ok: false,
       attempted: chunked.length,
       indexed: 0,
       skipped: true,
-      reason: "stable Pinecone provider authority unavailable"
+      reason: writeBackend === "qdrant"
+        ? "stable Qdrant provider authority unavailable"
+        : "stable Pinecone provider authority unavailable"
     }, userId);
     return {
       attempted: chunked.length,
@@ -4469,6 +4579,24 @@ export function isStale(asOfIso: string | undefined, docType: string | undefined
  * confirm `totalVectorCount > 0` after a backfill instead of guessing.
  */
 export async function getVectorStoreStats(userId: string = "local"): Promise<VectorStoreStats> {
+  if (usesQdrantWrites()) {
+    try {
+      const info = await qdrantCollectionInfo();
+      return {
+        configured: true,
+        indexName: info.collection,
+        exists: info.exists,
+        ...(info.pointsCount != null ? { totalVectorCount: info.pointsCount } : {}),
+        ...(info.dimension != null ? { dimension: info.dimension } : {})
+      };
+    } catch (err) {
+      return {
+        configured: true,
+        indexName: process.env.QDRANT_COLLECTION?.trim() || "socratic-trade",
+        error: err instanceof Error ? err.message : String(err)
+      };
+    }
+  }
   const name = indexName();
   const { pc, pineconeSource } = await getClients(userId);
   if (!pc) return { configured: false, indexName: name };
@@ -4502,6 +4630,24 @@ const ALL_STATS_TTL_MS = 60_000;
 export async function getAllVectorStoreStats(userId: string = "local"): Promise<VectorIndexStats[]> {
   if (cachedAllStats && Date.now() - cachedAllStats.ts < ALL_STATS_TTL_MS) {
     return cachedAllStats.data;
+  }
+  if (usesQdrantWrites()) {
+    try {
+      const info = await qdrantCollectionInfo();
+      const results: VectorIndexStats[] = [{
+        indexName: info.collection,
+        ...(info.pointsCount != null ? { totalVectorCount: info.pointsCount } : {}),
+        ...(info.dimension != null ? { dimension: info.dimension } : {}),
+        ...(!info.exists ? { error: "collection missing" } : {})
+      }];
+      cachedAllStats = { ts: Date.now(), data: results };
+      return results;
+    } catch (err) {
+      return [{
+        indexName: process.env.QDRANT_COLLECTION?.trim() || "socratic-trade",
+        error: err instanceof Error ? err.message : String(err)
+      }];
+    }
   }
   const { pc, pineconeSource } = await getClients(userId);
   if (!pc) return [];
@@ -4754,6 +4900,18 @@ export async function inventoryVectorRecordsByMetadata(options: {
     accountDeletionRequestId: options.accountDeletionRequestId
   });
   assertVectorStoreLease(options.leaseGuard);
+  if (usesQdrantWrites()) {
+    const namespaceName = vectorNamespaceName(options.namespace ?? "default", undefined, userId);
+    return qdrantInventoryByMetadata({
+      namespace: namespaceName,
+      prefix: options.prefix,
+      source: options.source,
+      docType: options.docType,
+      receiptRequired: options.receiptRequired,
+      batchSize: options.batchSize,
+      maxScanned: options.maxScanned
+    });
+  }
   const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for vector inventory.");
   if (!(await indexExists(pc, pineconeSource, userId, options.accountDeletionRequestId, options.leaseGuard))) return [];
@@ -4833,6 +4991,12 @@ export async function purgeVectorRecordsByMetadata(options: {
   const ids = rows.map((row) => row.id);
   if (dryRun || ids.length === 0) return { dryRun, ids, deleted: 0 };
   const userId = options.userId ?? "local";
+  if (usesQdrantWrites()) {
+    const namespaceName = vectorNamespaceName(options.namespace ?? "default", undefined, userId);
+    await qdrantDeleteByIds({ namespace: namespaceName, ids });
+    assertVectorStoreLease(options.leaseGuard);
+    return { dryRun, ids, deleted: ids.length };
+  }
   const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for vector purge.");
   const index = vectorDataIndex(pc, options.namespace ?? "default", undefined, userId);
@@ -4870,6 +5034,32 @@ export async function purgeVectorRecordIds(options: {
   const ids = [...new Set(options.ids.filter(Boolean))].sort();
   if (ids.length === 0) return { ids, deleted: 0 };
   const userId = options.userId ?? "local";
+  if (usesQdrantWrites()) {
+    const providerAuthority = resolveQdrantWriteProviderAuthority(options.ledgerAuthority);
+    if (options.expectedProviderAuthority && providerAuthority !== options.expectedProviderAuthority) {
+      throw new Error("Exact vector purge provider authority mismatch.");
+    }
+    if (
+      options.namespace === "private" &&
+      options.ledgerAuthority &&
+      options.expectedProviderAuthority &&
+      !hasCurrentPrivateVectorNamespaceRecords(
+        userId,
+        options.ledgerAuthority,
+        options.expectedProviderAuthority
+      )
+    ) {
+      throw new Error("Exact private-vector purge manifest authority mismatch.");
+    }
+    const namespaceName = vectorNamespaceName(
+      options.namespace ?? "default",
+      options.ledgerAuthority,
+      userId
+    );
+    await qdrantDeleteByIds({ namespace: namespaceName, ids });
+    assertVectorStoreLease(options.leaseGuard);
+    return { ids, deleted: ids.length };
+  }
   const { pc, initCacheKey, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for exact vector purge.");
   if (!(await indexExists(pc, pineconeSource, userId, undefined, options.leaseGuard))) {
@@ -4930,6 +5120,30 @@ export async function fetchExistingVectorRecordIds(options: {
   if (ids.length === 0) return [];
   const userId = options.userId ?? "local";
   assertVectorStoreLease(options.leaseGuard);
+  if (usesQdrantWrites()) {
+    const providerAuthority = resolveQdrantWriteProviderAuthority(options.ledgerAuthority);
+    if (options.expectedProviderAuthority && providerAuthority !== options.expectedProviderAuthority) {
+      throw new Error("Exact vector verification provider authority mismatch.");
+    }
+    if (
+      options.namespace === "private" &&
+      options.ledgerAuthority &&
+      options.expectedProviderAuthority &&
+      !hasCurrentPrivateVectorNamespaceRecords(
+        userId,
+        options.ledgerAuthority,
+        options.expectedProviderAuthority
+      )
+    ) {
+      throw new Error("Exact private-vector verification manifest authority mismatch.");
+    }
+    const namespaceName = vectorNamespaceName(
+      options.namespace ?? "default",
+      options.ledgerAuthority,
+      userId
+    );
+    return qdrantRetrieveByPcIds({ namespace: namespaceName, ids });
+  }
   const { pc, initCacheKey, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for exact vector verification.");
   if (!(await indexExists(pc, pineconeSource, userId, undefined, options.leaseGuard))) {
@@ -4986,6 +5200,12 @@ export async function purgeVectorNamespaceAll(options: {
   leaseGuard?: VectorStoreLeaseGuard;
 }): Promise<void> {
   const userId = options.userId ?? "local";
+  if (usesQdrantWrites()) {
+    const namespaceName = vectorNamespaceName(options.namespace, undefined, userId);
+    await qdrantDeleteNamespace({ namespace: namespaceName });
+    assertVectorStoreLease(options.leaseGuard);
+    return;
+  }
   const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for namespace purge.");
   const index = vectorDataIndex(pc, options.namespace, undefined, userId);
@@ -5153,6 +5373,12 @@ export async function purgeManagedVectorsByIds(
   if (uniqueIds.length === 0) return { deleted: 0, ids: [] };
   const userId = options.userId ?? "local";
   assertVectorStoreLease(options.leaseGuard);
+  if (usesQdrantWrites()) {
+    const namespaceName = vectorNamespaceName("managed", undefined, userId);
+    await qdrantDeleteByIds({ namespace: namespaceName, ids: uniqueIds });
+    assertVectorStoreLease(options.leaseGuard);
+    return { deleted: uniqueIds.length, ids: uniqueIds };
+  }
   const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for managed vector purge.");
   const index = vectorDataIndex(pc, "managed", undefined, userId);
@@ -5248,29 +5474,37 @@ export async function purgePrivateVectorRecordsForUser(options: {
   // Without the current provider token their immutable prefix cannot be inventoried or deleted,
   // so a private-account purge must fail closed instead of relying only on namespace deleteAll.
   if (!providerAuthority) {
-    throw new Error("Current Pinecone authority is unavailable; account deletion remains pending.");
+    throw new Error("Current vector provider authority is unavailable; account deletion remains pending.");
   }
   if ([...historicalAuthorities].some((authority) => authority !== providerAuthority)) {
-    throw new Error("Historical Pinecone authority is not currently reachable; account deletion remains pending.");
+    throw new Error("Historical vector provider authority is not currently reachable; account deletion remains pending.");
   }
 
-  const { pc, pineconeSource } = await getPineconeClient(options.userId, options.leaseGuard);
-  if (!pc) throw new Error("Pinecone key not configured for account vector purge.");
+  const qdrantWrites = usesQdrantWrites();
+  const { pc, pineconeSource } = qdrantWrites
+    ? { pc: null as Pinecone | null, pineconeSource: "none" as ApiKeySource }
+    : await getPineconeClient(options.userId, options.leaseGuard);
+  if (!qdrantWrites && !pc) throw new Error("Pinecone key not configured for account vector purge.");
   const dispatch = { accountDeletionRequestId: options.accountDeletionRequestId };
-  const defaultIndex = vectorDataIndex(pc, "default");
+  const defaultNamespaceName = vectorNamespaceName("default");
   // Submit exact metadata-filter deletes before relying on list/fetch inventory. This reaches live
   // historical rows even when listPaginated omits them; retries are idempotent after a crash.
   for (const filter of legacyPrivateVectorDeleteFilters(options.userId)) {
     assertVectorStoreLease(options.leaseGuard);
-    await withRagApiHealth(
-      "pinecone",
-      pineconeSource,
-      options.userId,
-      "account legacy-private-filter delete",
-      () => defaultIndex.deleteMany({ filter } as any),
-      options.leaseGuard,
-      dispatch
-    );
+    if (qdrantWrites) {
+      await qdrantDeleteByFilter({ namespace: defaultNamespaceName, filter });
+    } else {
+      const defaultIndex = vectorDataIndex(pc!, "default");
+      await withRagApiHealth(
+        "pinecone",
+        pineconeSource,
+        options.userId,
+        "account legacy-private-filter delete",
+        () => defaultIndex.deleteMany({ filter } as any),
+        options.leaseGuard,
+        dispatch
+      );
+    }
   }
   assertVectorStoreLease(options.leaseGuard);
 
@@ -5334,7 +5568,16 @@ export async function purgePrivateVectorRecordsForUser(options: {
   const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
   let deleted = 0;
   const purgeExactIds = async (namespace: VectorDataNamespace, targetIds: string[]) => {
-    const index = vectorDataIndex(pc, namespace, undefined, options.userId);
+    if (targetIds.length === 0) return;
+    if (qdrantWrites) {
+      await qdrantDeleteByIds({
+        namespace: vectorNamespaceName(namespace, undefined, options.userId),
+        ids: targetIds
+      });
+      deleted += targetIds.length;
+      return;
+    }
+    const index = vectorDataIndex(pc!, namespace, undefined, options.userId);
     for (const idBatch of chunks(targetIds, batchSize)) {
       assertVectorStoreLease(options.leaseGuard);
       await withRagApiHealth(
@@ -5354,23 +5597,37 @@ export async function purgePrivateVectorRecordsForUser(options: {
   await purgeExactIds("default", legacyIds);
   // New direct private writes are isolated by subject namespace. Namespace-wide deletion is the
   // provider authority here: it removes even a live record omitted by eventually-consistent list.
-  const privateIndex = vectorDataIndex(pc, "private", undefined, options.userId);
   assertVectorStoreLease(options.leaseGuard);
-  await withRagApiHealth(
-    "pinecone",
-    pineconeSource,
-    options.userId,
-    "account private-namespace delete",
-    () => privateIndex.deleteAll(),
-    options.leaseGuard,
-    dispatch
-  );
+  if (qdrantWrites) {
+    await qdrantDeleteNamespace({
+      namespace: vectorNamespaceName("private", undefined, options.userId)
+    });
+  } else {
+    const privateIndex = vectorDataIndex(pc!, "private", undefined, options.userId);
+    await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      options.userId,
+      "account private-namespace delete",
+      () => privateIndex.deleteAll(),
+      options.leaseGuard,
+      dispatch
+    );
+  }
   assertVectorStoreLease(options.leaseGuard);
   deleted += privateNamespaceIds.length;
 
   const fetchExactResiduals = async (namespace: VectorDataNamespace, targetIds: string[]) => {
+    if (targetIds.length === 0) return [];
+    if (qdrantWrites) {
+      const existing = await qdrantRetrieveByPcIds({
+        namespace: vectorNamespaceName(namespace, undefined, options.userId),
+        ids: targetIds
+      });
+      return existing;
+    }
     const remaining: string[] = [];
-    const index = vectorDataIndex(pc, namespace, undefined, options.userId);
+    const index = vectorDataIndex(pc!, namespace, undefined, options.userId);
     for (const idBatch of fetchIdChunks(targetIds, batchSize)) {
       assertVectorStoreLease(options.leaseGuard);
       const fetched = await withRagApiHealth(
@@ -5573,7 +5830,10 @@ async function reconcileManagedVectorRecordsUnlocked(
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (isWholeIndexInventoryDeferredError(error) || isPineconeWuExhaustedError(msg)) return emptyReconcileResult(dryRun, true);
-    if (/rate limit|429|too many requests|Pinecone connection failed|fetch failed/i.test(msg)) {
+    if (
+      !usesQdrantWrites() &&
+      /rate limit|429|too many requests|Pinecone connection failed|fetch failed/i.test(msg)
+    ) {
       return emptyReconcileResult(dryRun, true);
     }
     throw error;
@@ -5582,9 +5842,13 @@ async function reconcileManagedVectorRecordsUnlocked(
   // Resolve the mutation client before claiming any SQLite reconciliation fences. Inventory uses
   // the same provider, but this explicit preflight prevents a later configuration/client failure
   // from parking otherwise untouched commits behind fresh reconciliation leases.
-  const mutationClients = dryRun ? undefined : await getClients(userId, operationLeaseGuard);
+  const qdrantWrites = usesQdrantWrites();
+  const mutationNamespaceName = vectorNamespaceName(targetNamespace, ledgerAuthority);
+  const mutationClients = dryRun || qdrantWrites
+    ? undefined
+    : await getClients(userId, operationLeaseGuard);
   assertVectorStoreLease(operationLeaseGuard);
-  if (!dryRun && !mutationClients?.pc) {
+  if (!dryRun && !qdrantWrites && !mutationClients?.pc) {
     throw new Error("Pinecone key not configured for vector reconciliation.");
   }
   const mutationIndex = mutationClients?.pc
@@ -5950,10 +6214,10 @@ async function reconcileManagedVectorRecordsUnlocked(
     };
   }
 
-  if (!mutationClients || !mutationIndex) {
+  if (!qdrantWrites && (!mutationClients || !mutationIndex)) {
     throw new Error("Pinecone key not configured for vector reconciliation.");
   }
-  const pineconeSource = mutationClients.pineconeSource;
+  const pineconeSource = mutationClients?.pineconeSource;
   const renewReconciliationLease = (commitId: string, attemptToken: string): void => {
     dbModule.renewVectorCommitReconciliationLease(
       commitId,
@@ -5964,17 +6228,25 @@ async function reconcileManagedVectorRecordsUnlocked(
   for (const { row, commitId, attemptToken } of promoteRows) {
     assertVectorStoreLease(operationLeaseGuard);
     renewReconciliationLease(commitId, attemptToken);
-    await withRagApiHealth(
-      "pinecone",
-      pineconeSource,
-      userId,
-      "reconcile commit",
-      () => mutationIndex.update({
-        id: row.id,
-        metadata: { ingest_state: "committed", vector_attempt_token: attemptToken }
-      }),
-      operationLeaseGuard
-    );
+    if (qdrantWrites) {
+      await qdrantSetPayload({
+        namespace: mutationNamespaceName,
+        ids: [row.id],
+        payload: { ingest_state: "committed", vector_attempt_token: attemptToken }
+      });
+    } else {
+      await withRagApiHealth(
+        "pinecone",
+        pineconeSource!,
+        userId,
+        "reconcile commit",
+        () => mutationIndex!.update({
+          id: row.id,
+          metadata: { ingest_state: "committed", vector_attempt_token: attemptToken }
+        }),
+        operationLeaseGuard
+      );
+    }
     renewReconciliationLease(commitId, attemptToken);
   }
   // Finalize only after the complete expected provider set was observed. A partial provider set
@@ -6020,14 +6292,18 @@ async function reconcileManagedVectorRecordsUnlocked(
         group.claimToken,
         new Date(Date.now() + VECTOR_COMMIT_LEASE_MS).toISOString()
       );
-      await withRagApiHealth(
-        "pinecone",
-        pineconeSource,
-        userId,
-        "reconcile delete orphan fenced",
-        () => mutationIndex.deleteMany({ ids: idBatch }),
-        operationLeaseGuard
-      );
+      if (qdrantWrites) {
+        await qdrantDeleteByIds({ namespace: mutationNamespaceName, ids: idBatch });
+      } else {
+        await withRagApiHealth(
+          "pinecone",
+          pineconeSource!,
+          userId,
+          "reconcile delete orphan fenced",
+          () => mutationIndex!.deleteMany({ ids: idBatch }),
+          operationLeaseGuard
+        );
+      }
       dbModule.renewVectorReconcileOrphanLease(
         commitId,
         group.claimToken,
@@ -6040,14 +6316,18 @@ async function reconcileManagedVectorRecordsUnlocked(
   for (const [commitId, group] of claimedDeleteGroups) {
     for (const idBatch of chunks(group.ids, 100)) {
       renewReconciliationLease(commitId, group.attemptToken);
-      await withRagApiHealth(
-        "pinecone",
-        pineconeSource,
-        userId,
-        "reconcile delete fenced",
-        () => mutationIndex.deleteMany({ ids: idBatch }),
-        operationLeaseGuard
-      );
+      if (qdrantWrites) {
+        await qdrantDeleteByIds({ namespace: mutationNamespaceName, ids: idBatch });
+      } else {
+        await withRagApiHealth(
+          "pinecone",
+          pineconeSource!,
+          userId,
+          "reconcile delete fenced",
+          () => mutationIndex!.deleteMany({ ids: idBatch }),
+          operationLeaseGuard
+        );
+      }
       renewReconciliationLease(commitId, group.attemptToken);
       deleted += idBatch.length;
     }
@@ -6830,7 +7110,7 @@ export async function retrieveContextDetailed(
     let privateIndex: any;
     let fmpIndex: any;
 
-    if (pc && initCacheKey) {
+    if (readBackend === "pinecone" && pc && initCacheKey) {
       try {
         await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
       } catch {
@@ -6847,8 +7127,17 @@ export async function retrieveContextDetailed(
       defaultIndex = vectorDataIndex(pc, "default");
     }
     const ledgerAuthority = managedVectorLedgerAuthority();
-    if (!stableProviderAuthority && (readBackend === "qdrant" || !pc)) {
-      stableProviderAuthority = dbModule.durableProviderAuthority(ledgerAuthority);
+    if (!stableProviderAuthority) {
+      try {
+        if (typeof dbModule.durableProviderAuthority === "function") {
+          stableProviderAuthority = dbModule.durableProviderAuthority(ledgerAuthority);
+        }
+      } catch {
+        stableProviderAuthority = undefined;
+      }
+      if (!stableProviderAuthority && (readBackend === "qdrant" || usesQdrantWrites())) {
+        stableProviderAuthority = qdrantProviderAuthority();
+      }
     }
     const providerAuthority = stableProviderAuthority;
     const managedRecordsExpected = hasCommittedManagedRecords();
