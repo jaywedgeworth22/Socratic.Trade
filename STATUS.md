@@ -1,5 +1,24 @@
 # Current Status
 
+## 2026-09-01 GROK — Litestream structural: L2/L3 off, honest detector, scheduled L1 trim
+
+Owner-directed: stop the trim-and-heal cycle.  Product compaction is L0 + bounded L1 +
+24h snapshots.  Litestream 0.5.12 has no disable-L2 flag; `litestream.coolify.yml`
+`levels: [{interval: 30s}]` is the off switch (`Config.Levels` is L1..N).  No
+compaction-backoff yaml key either -- removing L2/L3 is the backoff (the storm was
+re-downloading the whole L1 chain every 5 minutes).
+
+Detector: per-level log recovery (L1 complete does not clear L2 fail).  Health pages
+stale L9 even when L0 age is 0.  Leftover L2/L3 objects do not page
+(`LITESTREAM_PRODUCT_DISABLED_TIERS`).  Boot log rotation (#3135) is enough.
+
+L1 boundary-trim is a first-class scheduled unit in-repo (`scripts/ops/litestream-l1-boundary-trim.timer`,
+00:04 UTC).  Do not fight tonight's transient oneshots.  Host install is remaining ops.
+Do not bounce Coolify.  Do not FORCE_RESTORE.  Do not touch live B2 `trading-live/**`.
+
+Branch `grok/litestream-structural`, worktree `~/apps/trading-grok-litestream-struct`,
+issue #3153, boards 081c8ecf / 1e3df744.  Rollout:
+`docs/rollouts/2026-09-01-litestream-structural.md`.
 ## 2026-09-01 GROK — Money-path orders: MCP write idempotency, Alpaca `stop` wire, provenance
 
 Owner-directed fix of three live-order bugs (#3152 / efd2a783, ef0dccb3, d4cb5e75, d36c2233).  MCP place/cancel no longer REST-falls-back after an 8s timeout or 5xx (reconcile by `client_order_id` / order id; fallback only on tool-not-found or 4xx-before-send).  Writes map `stop_market` to Alpaca `stop`.  Auto-replace treats a nonempty Alpaca UUID as owner-placed unless the id has prefix `protstop-`/`sstop-` or a tracked intent row.  No live orders from this Mac.  Branch `grok/money-path-orders`, worktree `~/apps/trading-grok-money-path`.  Rollout: `docs/rollouts/2026-09-01-money-path-orders.md`.
