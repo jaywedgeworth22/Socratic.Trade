@@ -1,10 +1,10 @@
 /**
- * STAGE-1 (READ PATH ONLY) Qdrant backend for RAG retrieval.
+ * STAGE-1 (READ PATH) Qdrant backend for RAG retrieval.
  *
  * When the runtime knob routes reads to Qdrant, each dense tier query in vector-db.ts hits the
- * self-hosted Qdrant mirror (collection "socratic-trade", one point per copied Pinecone vector —
- * see scripts/qdrant/pinecone-to-qdrant-copy.py) instead of Pinecone.  Writes, deletes, and
- * inventory stay on Pinecone in this stage.
+ * self-hosted Qdrant collection (collection "socratic-trade", one point per copied Pinecone vector —
+ * see scripts/qdrant/pinecone-to-qdrant-copy.py) instead of Pinecone.  Stage 2 writes, deletes, and
+ * inventory live in qdrant-write.ts.
  *
  * Backend selection (checked fresh per retrieval pass, flippable without redeploy):
  *   1. Admin > Operations DB override for the catalogued boolean knob RAG_VECTOR_READ_QDRANT

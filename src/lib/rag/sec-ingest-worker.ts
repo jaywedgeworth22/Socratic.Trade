@@ -11,6 +11,7 @@ import {
 } from "../db-rag-ingest";
 import { pineconeWuExhaustedUntil } from "../pinecone-wu-breaker";
 import { pineconeBackfillPaceGate } from "../pinecone-monthly-pace";
+import { vectorWriteBackend } from "../vector-store/qdrant-write";
 import { politeFetchText } from "../web-sources/http";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
 import { parseFilingHtml } from "../web-sources/sec-parser";
@@ -104,7 +105,9 @@ export class SecIngestWorker {
     // untouched (their leases expire and they become claimable again once the throttle lifts or
     // the month rolls over), incremental filing ingest keeps running, and retrieval is never
     // affected. Default-off: with no budget configured this is an env read and nothing else.
-    const paceGate = await pineconeBackfillPaceGate("backfill");
+    const paceGate = vectorWriteBackend() === "qdrant"
+      ? { throttled: false as const }
+      : await pineconeBackfillPaceGate("backfill");
     if (paceGate.throttled) return;
 
     const db = getDb();
@@ -356,7 +359,7 @@ export class SecIngestWorker {
       // Monthly Pinecone write-unit breaker: park BEFORE spending a single embed token.
       // Skip the gate when storeDocument already completed this stage — FTS writes are
       // local SQLite and must not be blocked by a Pinecone quota we already paid.
-      if (!storeAlreadyDone) {
+      if (!storeAlreadyDone && vectorWriteBackend() === "pinecone") {
         const wuUntil = pineconeWuExhaustedUntil();
         if (wuUntil) {
           deferSecIngestTask({
