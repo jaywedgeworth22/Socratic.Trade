@@ -30,7 +30,7 @@ type LlmObsApi = {
   wrap?: (
     opts: Record<string, unknown>,
     fn: () => Promise<unknown>
-  ) => Promise<unknown>;
+  ) => (() => Promise<unknown>) | Promise<unknown>;
   annotate?: (opts: Record<string, unknown>) => void;
 };
 
@@ -96,7 +96,7 @@ export async function withDatadogLlmObs<T>(
   const model = extractModelName(init?.body) ?? "unknown";
   const provider = inferGenAiSystem(url);
   try {
-    return (await llmobs.wrap(
+    const wrapped = llmobs.wrap(
       {
         kind: "llm",
         name: `${provider}.chat`,
@@ -115,7 +115,8 @@ export async function withDatadogLlmObs<T>(
         }
         return result;
       }
-    )) as T;
+    );
+    return (typeof wrapped === "function" ? await wrapped() : await wrapped) as T;
   } catch {
     return fn();
   }
