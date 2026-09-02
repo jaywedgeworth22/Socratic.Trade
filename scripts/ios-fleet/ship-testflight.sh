@@ -2,7 +2,7 @@
 # ship-testflight.sh - Archive + upload an iOS app to TestFlight without Xcode UI.
 #
 # Usage:
-#   bash /Users/jay/apps/ios-fleet/ship-testflight.sh <socratic|congress|usage|usage-local> [options]
+#   bash /Users/jay/apps/ios-fleet/ship-testflight.sh <socratic|congress|usage|usage-local|dealdex|autorotate|autorotate-mac|contactlogo|contactlogo-mac|botfleet|botfleet-mac> [options]
 #
 # Options:
 #   --repo-root PATH   Repo root (default: cwd)
@@ -22,8 +22,8 @@
 # Version numbering (owner directive 2026-08-12, revised same day):
 #   MARKETING_VERSION       = 1.0.<seq>          +1 on EVERY rebuild
 #   CURRENT_PROJECT_VERSION = <UTC YYYYMMDDHHMM> when the build was cut
-# App Store Connect renders "<marketing> (<build>)", so a ship now shows
-# "1.0.8 (202608121315)" instead of the uninformative "1.0.8 (1.0.8)".
+# App Store Connect renders "<marketing> (<build>)", so a ship shows
+# "1.0.8 (202609012215)". Marketing +1 every rebuild; build is the cut time.
 # The sequence is max(local cache, App Store Connect, project.pbxproj) + 1, so a
 # lost or reset local counter cannot silently reuse a shipped version.
 #
@@ -74,6 +74,13 @@
 # Secrets (never printed):
 #   ~/.secrets/appstore-connect.env  (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH)
 #   or Xcode-signed-in session for destination=upload export
+#   SENTRY_AUTH_TOKEN  (dSYM + Size Analysis upload; env or ~/.secrets/global-api-keys)
+#   SENTRY_DSN         (injected into xcodebuild so Cocoa plist $(SENTRY_DSN) is set)
+#
+# Sentry after a successful archive (2026-09-01):
+#   debug-files upload of the xcarchive dSYMs, then `sentry-cli build upload`
+#   for Size Analysis.  Failures WARN and do not fail the TestFlight ship.
+#   Quota: 100 size-analysis builds/month on the sponsored plan.  No LaunchAgent.
 #
 # ASCII-only (Apple bash 3.2 safe). Team: CC8UTF7ATG.
 
@@ -177,6 +184,91 @@ load_secrets() {
   return 0
 }
 
+# Map ship APP_KEY to Sentry project slug in org jays-services.
+sentry_project_for_app() {
+  case "${APP_KEY}" in
+    socratic) echo "socratic-trade" ;;
+    congress) echo "congress-trade" ;;
+    usage|usage-local) echo "usage-monitor" ;;
+    dealdex) echo "dealdex" ;;
+    autorotate|autorotate-mac) echo "autorotate" ;;
+    contactlogo|contactlogo-mac) echo "contactlogo" ;;
+    botfleet|botfleet-mac) echo "botfleet" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Pull SENTRY_AUTH_TOKEN from the handoff file if the environment does not
+# already have it.  Names-only grep trap: extract into a var, never echo.
+load_sentry_auth() {
+  if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+    return 0
+  fi
+  local keys="${HOME}/.secrets/global-api-keys"
+  if [[ -f "$keys" ]]; then
+    SENTRY_AUTH_TOKEN="$(grep -m1 '^SENTRY_AUTH_TOKEN=' "$keys" | cut -d= -f2- | tr -d '"' | tr -d '\r')"
+    export SENTRY_AUTH_TOKEN
+  fi
+}
+
+# After a successful archive: upload dSYMs and Size Analysis.  Never fail the
+# TestFlight ship if Sentry is missing or the upload errors.
+upload_sentry_artifacts() {
+  local project archive
+  project="$(sentry_project_for_app)"
+  archive="${ARCHIVE_PATH:-}"
+  if [[ -z "$project" ]]; then
+    log "sentry: no project mapping for app=${APP_KEY}; skipping artifact upload"
+    return 0
+  fi
+  if [[ -z "$archive" || ! -d "$archive" ]]; then
+    log "sentry: archive missing; skipping artifact upload"
+    return 0
+  fi
+  load_sentry_auth
+  if [[ -z "${SENTRY_AUTH_TOKEN:-}" ]]; then
+    log "sentry: SENTRY_AUTH_TOKEN unset; skipping dSYM / Size Analysis upload"
+    return 0
+  fi
+  if ! command -v sentry-cli >/dev/null 2>&1; then
+    log "sentry: sentry-cli not on PATH; trying official installer"
+    if ! curl -sL https://sentry.io/get-cli/ | SENTRY_CLI_VERSION="" bash >/dev/null 2>&1; then
+      log "warning: sentry-cli install failed; TestFlight ship continues"
+      return 0
+    fi
+    export PATH="${HOME}/.sentry-cli:${PATH}:/opt/homebrew/bin"
+  fi
+  if ! command -v sentry-cli >/dev/null 2>&1; then
+    log "warning: sentry-cli still missing; skipping artifact upload"
+    return 0
+  fi
+  log "sentry: uploading debug files for project=${project} (token length ${#SENTRY_AUTH_TOKEN})"
+  set +e
+  SENTRY_ORG=jays-services SENTRY_PROJECT="$project" \
+    sentry-cli debug-files upload --include-sources "$archive" \
+    >"${LOG_DIR}/sentry-debug-files.log" 2>&1
+  local dif_rc=$?
+  set -e
+  if [[ $dif_rc -eq 0 ]]; then
+    log "sentry: debug-files upload ok"
+  else
+    log "warning: sentry debug-files upload rc=${dif_rc}; see ${LOG_DIR}/sentry-debug-files.log"
+  fi
+  log "sentry: Size Analysis build upload for project=${project}"
+  set +e
+  SENTRY_ORG=jays-services SENTRY_PROJECT="$project" \
+    sentry-cli build upload "$archive" \
+    >"${LOG_DIR}/sentry-build-upload.log" 2>&1
+  local build_rc=$?
+  set -e
+  if [[ $build_rc -eq 0 ]]; then
+    log "sentry: build upload ok"
+  else
+    log "warning: sentry build upload rc=${build_rc}; see ${LOG_DIR}/sentry-build-upload.log"
+  fi
+  return 0
+}
+
 link_private_key() {
   # altool / iTMSTransporter look for AuthKey_<id>.p8 in standard dirs.
   local key_path="$1" key_id="$2"
@@ -190,28 +282,23 @@ link_private_key() {
   chmod 600 "$key_path" 2>/dev/null || true
 }
 
-# Owner directive 2026-08-12: version naming is 1.0.# where EVERY rebuild —
-# including a tiny tweak — adds exactly 1 to the last number. That part is
-# unchanged and is what MARKETING_VERSION carries.
+# Owner directive: version naming is 1.0.# (timestamp).
+# EVERY rebuild — including a tiny tweak — adds exactly 1 to the last number.
+# MARKETING_VERSION (CFBundleShortVersionString) is 1.0.<seq>.
+# CURRENT_PROJECT_VERSION (CFBundleVersion) is a UTC timestamp YYYYMMDDHHMM.
+# ASC shows "1.0.8 (202608121315)".
 #
-# CFBundleVersion is NOT a copy of it. An earlier revision set both fields to
-# the same dotted string, which App Store Connect renders as "1.0.7 (1.0.7)":
-# the parenthetical carried zero information, and it was a live rejection trap.
 # Apple requires CFBundleVersion to be strictly increasing WITHIN a marketing
-# train, and trade.congress.ios has 15 builds numbered 202608070253 through
-# 202608120521 sitting in the 1.0.0 train. "1.0.7" is numerically far lower
-# than any of them; the dotted scheme only worked because each new marketing
-# version opened a fresh, empty train. Ship into an older train once and Apple
-# rejects it after a full archive + upload.
+# train, and trade.congress.ios has builds numbered 202608070253 through
+# 202608120521 sitting in the 1.0.0 train.
 #
-# So CFBundleVersion is a UTC timestamp, YYYYMMDDHHMM (what this script did
-# originally):
-#   - the parenthetical now says WHEN the build was cut, which is the useful
+# So CFBundleVersion is a UTC timestamp, YYYYMMDDHHMM:
+#   - the parenthetical says WHEN the build was cut, which is the useful
 #     information the owner asked for: "1.0.8 (202608121315)"
 #   - it is monotonic by construction, so it can never regress
 #   - it is greater than every existing timestamp build, so it stays legal even
-#     if a ship ever lands back in the 1.0.0 train
-#   - it is demonstrably a legal CFBundleVersion for ASC: those 15 live builds
+#     if a ship ever lands back in an older train
+#   - it is demonstrably a legal CFBundleVersion for ASC: those builds
 #     were all accepted in exactly this format
 # Collisions are not a concern: two ships in the same UTC minute would need to
 # beat both the archive lock and the 1h min interval, and they would carry
@@ -273,7 +360,7 @@ project_marketing_seq() {
 # Returns 1 (and prints nothing) when ASC cannot be consulted — the caller must
 # distinguish "no builds yet" (0) from "unknown" (failure).
 asc_latest_seq() {
-  local prefix="$1" out rc errf
+  local prefix="$1" plat="${2:-}" out rc
   if ! command -v node >/dev/null 2>&1; then
     logerr "asc-seq: node not on PATH; cannot verify against App Store Connect"
     return 1
@@ -282,21 +369,10 @@ asc_latest_seq() {
     logerr "asc-seq: no ${SECRETS_ENV}; cannot verify against App Store Connect"
     return 1
   fi
-  # Never swallow node stderr: the previous 2>/dev/null hid the only clue
-  # when latest-build-seq exited 1 (run 33023012786, ~30s, rc=1 not HTTP).
-  errf="${TMPDIR:-/tmp}/asc-seq-err.$$"
   set +e
-  out=$(node "${FLEET_DIR}/asc-api.mjs" latest-build-seq "$BUNDLE_ID" "$prefix" 2>"$errf")
+  out=$(node "${FLEET_DIR}/asc-api.mjs" latest-build-seq "$BUNDLE_ID" "$prefix" "$plat" 2>/dev/null)
   rc=$?
   set -e
-  if [[ -s "$errf" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      logerr "asc-seq: $line"
-    done <"$errf"
-  elif [[ $rc -ne 0 ]]; then
-    logerr "asc-seq: node produced no stderr (rc=${rc})"
-  fi
-  rm -f "$errf"
   if [[ $rc -ne 0 || ! "$out" =~ ^[0-9]+$ ]]; then
     logerr "asc-seq: query failed (rc=${rc}); cannot verify against App Store Connect"
     return 1
@@ -306,7 +382,7 @@ asc_latest_seq() {
 
 # The floor the next sequence must exceed: the highest N any record knows about.
 resolve_seq_floor() {
-  local prefix="$1" proj_file="$2"
+  local prefix="$1" proj_file="$2" plat="${3:-}"
   local l p a floor
   l="$(local_seq)"
   p="$(project_marketing_seq "$proj_file" "$prefix")"
@@ -314,7 +390,7 @@ resolve_seq_floor() {
   [[ "$p" -gt "$floor" ]] && floor="$p"
 
   set +e
-  a="$(asc_latest_seq "$prefix")"
+  a="$(asc_latest_seq "$prefix" "$plat")"
   set -e
   if [[ -n "${a:-}" ]]; then
     [[ "$a" -gt "$floor" ]] && floor="$a"
@@ -334,19 +410,18 @@ resolve_seq_floor() {
     # Treat "ASC unverified" as fatal on its own.
     if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 0 ]]; then
       die "cannot determine the next build number.
-  App Store Connect could not be reached (required to verify the next sequence).
-  local=${l} project=${p} exist but are not sufficient without ASC confirmation
-  (${STATE_DIR}/build-seq-${APP_KEY}.txt).
-  Shipping now would risk reusing a build number already on the train.
+  App Store Connect could not be reached AND there is no local sequence
+  (${STATE_DIR}/build-seq-${APP_KEY}.txt) and no ${prefix}.N in project.pbxproj.
+  Shipping now would very likely reuse a build number and be rejected as a duplicate.
   Fix one of these, then re-run:
     1) restore ASC access: check ${SECRETS_ENV} and that 'node' is on PATH, then
        run: node ${FLEET_DIR}/asc-api.mjs latest-build-seq ${BUNDLE_ID} ${prefix}
-    2) or pass the number explicitly:  --version ${prefix}.<N>   (NOT --build <N>:
-       --version picks the marketing version and lets CFBundleVersion stay an
-       auto UTC timestamp, which is always higher than every build already
-       uploaded. A bare --build leaves MARKETING at ${DEFAULT_MARKETING}, which
-       re-enters an old train where Apple requires a strictly greater build than
-       everything in it -- rejected after the full archive+upload.)
+     2) or pass the number explicitly:  --version ${prefix}.<N>   (NOT --build <N>:
+        --version picks the marketing version and lets CFBundleVersion stay an
+        auto UTC timestamp, which is always higher than every build already
+        uploaded. A bare --build leaves MARKETING at ${DEFAULT_MARKETING}, which
+        re-enters an old train where Apple requires a strictly greater build than
+        everything in it -- rejected after the full archive+upload.)
     3) or, only if you are certain this train is empty, re-run with --allow-unverified-seq"
     fi
     if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 1 ]]; then
@@ -523,7 +598,6 @@ record_successful_ship() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    socratic|congress|usage|usage-local) APP_KEY="$1"; shift ;;
     --repo-root) REPO_ROOT="$2"; shift 2 ;;
     --build) FORCE_BUILD="$2"; shift 2 ;;
     --version) FORCE_VERSION="$2"; shift 2 ;;
@@ -536,12 +610,26 @@ while [[ $# -gt 0 ]]; do
     --allow-unverified-seq) ALLOW_UNVERIFIED_SEQ=1; shift ;;
     --sync-project-version) SYNC_PROJECT_VERSION=1; shift ;;
     -h|--help) usage ;;
-    *) die "unknown arg: $1 (try --help)" ;;
+    -*) die "unknown option: $1 (try --help)" ;;
+    *)
+      if [[ -z "$APP_KEY" ]]; then
+        APP_KEY="$1"; shift
+      else
+        die "unexpected arg: $1"
+      fi
+      ;;
   esac
 done
 
-[[ -n "$APP_KEY" ]] || die "app key required: socratic | congress | usage | usage-local"
+[[ -n "$APP_KEY" ]] || die "app key required (e.g. socratic, congress, usage, usage-local, dealdex, autorotate, autorotate-mac, contactlogo, contactlogo-mac, botfleet, botfleet-mac)"
 [[ -f "$APPS_JSON" ]] || die "missing apps registry: $APPS_JSON"
+
+# Validate APP_KEY against apps.json before requiring Xcode tools so --help-adjacent
+# and CI unit tests can reject unknown keys on Linux runners without xcodebuild.
+_EARLY_BUNDLE="$(json_get "$APP_KEY" bundleId)"
+_EARLY_SCHEME="$(json_get "$APP_KEY" scheme)"
+_EARLY_PROJECT="$(json_get "$APP_KEY" projectRel)"
+[[ -n "$_EARLY_BUNDLE" && -n "$_EARLY_SCHEME" && -n "$_EARLY_PROJECT" ]] || die "unknown app key or incomplete registry: $APP_KEY"
 
 # Prefer stable Xcode.app over Xcode-beta for TestFlight / ASC compatibility.
 # Beta toolchains + beta macOS stamp BuildMachineOSBuild that App Store review
@@ -582,11 +670,20 @@ REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 
 DISPLAY_NAME="$(json_get "$APP_KEY" displayName)"
 BUNDLE_ID="$(json_get "$APP_KEY" bundleId)"
+PLATFORM="$(json_get "$APP_KEY" platform)"
 SCHEME="$(json_get "$APP_KEY" scheme)"
 PROJECT_REL="$(json_get "$APP_KEY" projectRel)"
 PROJECT_REL_ALT="$(json_get "$APP_KEY" projectRelAlt)"
 XCODEGEN_DIR="$(json_get "$APP_KEY" xcodegenDir)"
 DEFAULT_MARKETING="$(json_get "$APP_KEY" marketingVersionDefault)"
+
+if [[ -z "$PLATFORM" ]]; then
+  if [[ "$APP_KEY" == *-mac || "$SCHEME" == *[Mm]ac* ]]; then
+    PLATFORM="macOS"
+  else
+    PLATFORM="iOS"
+  fi
+fi
 
 [[ -n "$BUNDLE_ID" && -n "$SCHEME" && -n "$PROJECT_REL" ]] || die "unknown app key or incomplete registry: $APP_KEY"
 if [[ "$BUNDLE_ID" == "me.grok.dealdex" ]]; then
@@ -679,7 +776,7 @@ elif [[ -n "$FORCE_BUILD" || -n "$FORCE_VERSION" ]]; then
 else
   # resolve_seq_floor runs in a subshell, so its die() cannot exit this script
   # on its own — check explicitly rather than leaning on set -e.
-  SEQ_FLOOR="$(resolve_seq_floor "$MARKETING_PREFIX" "$PBXPROJ")" || exit 1
+  SEQ_FLOOR="$(resolve_seq_floor "$MARKETING_PREFIX" "$PBXPROJ" "$PLATFORM")" || exit 1
   [[ "$SEQ_FLOOR" =~ ^[0-9]+$ ]] || die "could not resolve a build sequence floor (got '${SEQ_FLOOR}')"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     # Dry-run must not consume a sequence number — peek only.
@@ -763,13 +860,12 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 if [[ -n "$UPLOAD_ONLY_IPA" ]]; then
-  [[ -f "$UPLOAD_ONLY_IPA" ]] || die "IPA not found: $UPLOAD_ONLY_IPA"
+  [[ -f "$UPLOAD_ONLY_IPA" ]] || die "package not found: $UPLOAD_ONLY_IPA"
   [[ "$AUTH_MODE" == "api_key" ]] || die "upload-only requires ~/.secrets/appstore-connect.env with ASC_KEY_*"
   link_private_key "$ASC_KEY_PATH" "$ASC_KEY_ID"
-  log "uploading existing IPA via altool (api key)"
+  log "uploading existing package via altool (api key)"
   set +e
-  xcrun altool --upload-app --type ios \
-    --file "$UPLOAD_ONLY_IPA" \
+  xcrun altool --upload-package "$UPLOAD_ONLY_IPA" \
     --apiKey "$ASC_KEY_ID" \
     --apiIssuer "$ASC_ISSUER_ID" \
     2>&1 | tee "${LOG_DIR}/upload.log"
@@ -890,11 +986,25 @@ ensure_tf_ready() {
 acquire_archive_lock
 log "archiving..."
 set +e
+if [[ "$PLATFORM" == "macOS" ]]; then
+  ARCHIVE_PLATFORM_FLAGS=(-destination "generic/platform=macOS")
+else
+  ARCHIVE_PLATFORM_FLAGS=(-destination "generic/platform=iOS")
+fi
+
+SENTRY_DSN_FLAGS=()
+if [[ -n "${SENTRY_DSN:-}" ]]; then
+  SENTRY_DSN_FLAGS+=(SENTRY_DSN="$SENTRY_DSN")
+  log "SENTRY_DSN present for archive (length ${#SENTRY_DSN})"
+else
+  log "SENTRY_DSN unset; Cocoa no-ops when the plist value is empty"
+fi
+
 xcodebuild archive \
   -project "$PROJECT_PATH" \
   -scheme "$SCHEME" \
   -configuration Release \
-  -destination "generic/platform=iOS" \
+  "${ARCHIVE_PLATFORM_FLAGS[@]}" \
   -archivePath "$ARCHIVE_PATH" \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
@@ -903,16 +1013,18 @@ xcodebuild archive \
   CODE_SIGN_STYLE=Automatic \
   MARKETING_VERSION="$MARKETING" \
   CURRENT_PROJECT_VERSION="$BUILD_NUM" \
+  ${SENTRY_DSN_FLAGS[@]:+"${SENTRY_DSN_FLAGS[@]}"} \
   2>&1 | tee "${LOG_DIR}/archive.log"
-ARCHIVE_RC=${PIPESTATUS[0]}
+ARCHIVE_RC="${PIPESTATUS[0]:-$?}"
 set -e
 [[ $ARCHIVE_RC -eq 0 ]] || die "archive failed (rc=$ARCHIVE_RC); see ${LOG_DIR}/archive.log"
+upload_sentry_artifacts
 
 EXPORT_PLIST_UPLOAD="${FLEET_DIR}/ExportOptions-appstore.plist"
 EXPORT_PLIST_IPA="${FLEET_DIR}/ExportOptions-export-ipa.plist"
 
 if [[ "$EXPORT_ONLY" -eq 1 ]]; then
-  log "exporting IPA only..."
+  log "exporting package only..."
   mkdir -p "$EXPORT_DIR"
   set +e
   xcodebuild -exportArchive \
@@ -925,10 +1037,10 @@ if [[ "$EXPORT_ONLY" -eq 1 ]]; then
   EXPORT_RC=${PIPESTATUS[0]}
   set -e
   [[ $EXPORT_RC -eq 0 ]] || die "export failed (rc=$EXPORT_RC); see ${LOG_DIR}/export.log"
-  IPA="$(ls -1 "$EXPORT_DIR"/*.ipa 2>/dev/null | head -1 || true)"
-  [[ -n "$IPA" ]] || die "no IPA produced in $EXPORT_DIR"
-  log "IPA ready: $IPA"
-  log "Upload later: bash $0 $APP_KEY --upload-only \"$IPA\""
+  PACKAGE="$(ls -1 "$EXPORT_DIR"/*.ipa "$EXPORT_DIR"/*.pkg 2>/dev/null | head -1 || true)"
+  [[ -n "$PACKAGE" ]] || die "no IPA or PKG produced in $EXPORT_DIR"
+  log "Package ready: $PACKAGE"
+  log "Upload later: bash $0 $APP_KEY --upload-only \"$PACKAGE\""
   exit 0
 fi
 
@@ -956,7 +1068,7 @@ if [[ $EXPORT_RC -eq 0 ]]; then
   exit 0
 fi
 
-log "xcodebuild upload export failed (rc=$EXPORT_RC); trying IPA export + altool"
+log "xcodebuild upload export failed (rc=$EXPORT_RC); trying local export + altool"
 
 mkdir -p "$EXPORT_DIR"
 set +e
@@ -969,32 +1081,31 @@ xcodebuild -exportArchive \
   2>&1 | tee "${LOG_DIR}/export-ipa.log"
 EXPORT_RC=${PIPESTATUS[0]}
 set -e
-[[ $EXPORT_RC -eq 0 ]] || die "IPA export failed (rc=$EXPORT_RC); see ${LOG_DIR}/export-ipa.log and ${LOG_DIR}/export-upload.log"
+[[ $EXPORT_RC -eq 0 ]] || die "export failed (rc=$EXPORT_RC); see ${LOG_DIR}/export-ipa.log and ${LOG_DIR}/export-upload.log"
 
-IPA="$(ls -1 "$EXPORT_DIR"/*.ipa 2>/dev/null | head -1 || true)"
-[[ -n "$IPA" ]] || die "no IPA produced in $EXPORT_DIR"
+PACKAGE="$(ls -1 "$EXPORT_DIR"/*.ipa "$EXPORT_DIR"/*.pkg 2>/dev/null | head -1 || true)"
+[[ -n "$PACKAGE" ]] || die "no IPA or PKG produced in $EXPORT_DIR"
 
 # Re-load secrets before altool: long xcodebuild sessions can leave ASC_*
 # unset under `set -u` even when AUTH_MODE was api_key at plan time.
 load_secrets
 if [[ "$AUTH_MODE" != "api_key" ]]; then
-  log "IPA ready at: $IPA"
+  log "Package ready at: $PACKAGE"
   log "Upload blocked: no App Store Connect API key."
   log "Owner handoff:"
   log "  1) Create ASC API key (App Manager+) in App Store Connect"
   log "  2) Save .p8 as ~/.secrets/AuthKey_<KEY_ID>.p8 (chmod 600)"
   log "  3) Copy ${FLEET_DIR}/appstore-connect.env.example -> ~/.secrets/appstore-connect.env"
   log "  4) Fill ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH; chmod 600 the env file"
-  log "  5) Re-run: bash $0 $APP_KEY --upload-only \"$IPA\""
+  log "  5) Re-run: bash $0 $APP_KEY --upload-only \"$PACKAGE\""
   log "Also ensure App Store Connect has an app record for ${BUNDLE_ID}."
   exit 3
 fi
 
 link_private_key "${ASC_KEY_PATH}" "${ASC_KEY_ID}"
-log "uploading IPA via altool (api key)"
+log "uploading package via altool (api key)"
 set +e
-xcrun altool --upload-app --type ios \
-  --file "$IPA" \
+xcrun altool --upload-package "$PACKAGE" \
   --apiKey "${ASC_KEY_ID}" \
   --apiIssuer "${ASC_ISSUER_ID}" \
   2>&1 | tee "${LOG_DIR}/upload.log"
@@ -1002,8 +1113,8 @@ UPLOAD_RC=${PIPESTATUS[0]}
 set -e
 if [[ $UPLOAD_RC -ne 0 ]]; then
   log "altool failed (rc=$UPLOAD_RC). Common cause: no App Store Connect app for ${BUNDLE_ID}."
-  log "Create the iOS app in ASC (My Apps → +) with this exact bundle id, then:"
-  log "  bash $0 $APP_KEY --upload-only \"$IPA\""
+  log "Create the app in ASC (My Apps → +) with this exact bundle id, then:"
+  log "  bash $0 $APP_KEY --upload-only \"$PACKAGE\""
   die "altool upload failed (rc=$UPLOAD_RC); see ${LOG_DIR}/upload.log"
 fi
 
