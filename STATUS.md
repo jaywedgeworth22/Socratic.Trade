@@ -19,6 +19,9 @@ Do not bounce Coolify.  Do not FORCE_RESTORE.  Do not touch live B2 `trading-liv
 Branch `grok/litestream-structural`, worktree `~/apps/trading-grok-litestream-struct`,
 issue #3153, boards 081c8ecf / 1e3df744.  Rollout:
 `docs/rollouts/2026-09-01-litestream-structural.md`.
+## 2026-09-01 GROK — Money-path orders: MCP write idempotency, Alpaca `stop` wire, provenance
+
+Owner-directed fix of three live-order bugs (#3152 / efd2a783, ef0dccb3, d4cb5e75, d36c2233).  MCP place/cancel no longer REST-falls-back after an 8s timeout or 5xx (reconcile by `client_order_id` / order id; fallback only on tool-not-found or 4xx-before-send).  Writes map `stop_market` to Alpaca `stop`.  Auto-replace treats a nonempty Alpaca UUID as owner-placed unless the id has prefix `protstop-`/`sstop-` or a tracked intent row.  No live orders from this Mac.  Branch `grok/money-path-orders`, worktree `~/apps/trading-grok-money-path`.  Rollout: `docs/rollouts/2026-09-01-money-path-orders.md`.
 
 ## 2026-09-01 GROK — Sentry fleet adoption remainder (tunnel, iOS DSN, profiling, logger, gen_ai)
 
