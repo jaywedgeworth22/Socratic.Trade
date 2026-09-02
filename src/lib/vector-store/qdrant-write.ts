@@ -96,9 +96,13 @@ function qdrantHeaders(): Record<string, string> {
  */
 export function vectorWriteBackend(): VectorWriteBackend {
   let enabled: boolean | undefined;
+  let explicit = false;
   try {
     const override = serverKnobOverride(QDRANT_WRITE_KNOB_ID);
-    if (typeof override === "boolean") enabled = override;
+    if (typeof override === "boolean") {
+      enabled = override;
+      explicit = true;
+    }
   } catch {
     // fail open to env — same posture as every server-knob read
   }
@@ -107,19 +111,23 @@ export function vectorWriteBackend(): VectorWriteBackend {
     if (raw) {
       if (TRUTHY.has(raw)) enabled = true;
       else if (FALSY.has(raw)) enabled = false;
+      if (enabled !== undefined) explicit = true;
     }
   }
   if (enabled === undefined) {
     const backend = process.env.RAG_VECTOR_WRITE_BACKEND?.trim().toLowerCase();
     if (backend === "qdrant") enabled = true;
     else if (backend === "pinecone") enabled = false;
+    if (enabled !== undefined) explicit = true;
   }
   if (enabled === undefined) {
     enabled = true;
   }
   if (enabled !== true) return "pinecone";
   if (!qdrantConfigured()) {
-    if (!warnedUnconfigured) {
+    // Default-on without QDRANT_URL is silent pinecone (local tests, boxes without Qdrant).
+    // Warn only when an operator explicitly flipped the knob/env on without the endpoint.
+    if (explicit && !warnedUnconfigured) {
       warnedUnconfigured = true;
       console.warn(
         "[qdrant-write] Qdrant write backend requested but QDRANT_URL is not set; writes stay on Pinecone."
