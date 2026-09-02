@@ -1,0 +1,63 @@
+name: Sentry Deploy
+
+# Additive only: after a green CI run on main, attach a production *deploy*
+# record to the release version the Next.js bundler plugin already created
+# (full git SHA == Coolify SOURCE_COMMIT). Does NOT call `releases new` —
+# one of bundler plugin OR action-release, not both fighting.
+#
+# Soft-fail: sentry-cli errors warn and exit 0 so this never blocks merges.
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sentry-deploy-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  record-production-deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Attach Sentry production deploy
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: jays-services
+          SENTRY_PROJECT: socratic-trade
+          VERSION: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set +e
+          if [ -z "${SENTRY_AUTH_TOKEN:-}" ]; then
+            echo "::warning::SENTRY_AUTH_TOKEN missing; skipping sentry deploy record"
+            exit 0
+          fi
+          if [ -z "${VERSION:-}" ]; then
+            echo "::warning::empty VERSION; skipping sentry deploy record"
+            exit 0
+          fi
+          echo "Recording production deploy for release=${VERSION} project=${SENTRY_PROJECT}"
+          # Coolify may still be uploading the release via withSentryConfig; retry briefly.
+          ok=0
+          for i in 1 2 3 4 5; do
+            npx --yes @sentry/cli@2.58.6 releases deploys "$VERSION" new -e production
+            if [ $? -eq 0 ]; then
+              ok=1
+              break
+            fi
+            echo "attempt ${i} failed; sleeping 30s (Coolify release upload may still be in flight)"
+            sleep 30
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::warning::sentry-cli releases deploys failed after retries; leaving workflow green"
+          fi
+          exit 0
