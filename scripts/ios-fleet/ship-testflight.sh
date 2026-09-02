@@ -624,6 +624,13 @@ done
 [[ -n "$APP_KEY" ]] || die "app key required (e.g. socratic, congress, usage, usage-local, dealdex, autorotate, autorotate-mac, contactlogo, contactlogo-mac, botfleet, botfleet-mac)"
 [[ -f "$APPS_JSON" ]] || die "missing apps registry: $APPS_JSON"
 
+# Validate APP_KEY against apps.json before requiring Xcode tools so --help-adjacent
+# and CI unit tests can reject unknown keys on Linux runners without xcodebuild.
+_EARLY_BUNDLE="$(json_get "$APP_KEY" bundleId)"
+_EARLY_SCHEME="$(json_get "$APP_KEY" scheme)"
+_EARLY_PROJECT="$(json_get "$APP_KEY" projectRel)"
+[[ -n "$_EARLY_BUNDLE" && -n "$_EARLY_SCHEME" && -n "$_EARLY_PROJECT" ]] || die "unknown app key or incomplete registry: $APP_KEY"
+
 # Prefer stable Xcode.app over Xcode-beta for TestFlight / ASC compatibility.
 # Beta toolchains + beta macOS stamp BuildMachineOSBuild that App Store review
 # rejects as INVALID_BINARY even when TestFlight accepts the same IPA.
