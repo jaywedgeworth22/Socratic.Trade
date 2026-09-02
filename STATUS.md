@@ -1,5 +1,25 @@
 # Current Status
 
+## 2026-09-01 GROK — Litestream structural: L2/L3 off, honest detector, scheduled L1 trim
+
+Owner-directed: stop the trim-and-heal cycle.  Product compaction is L0 + bounded L1 +
+24h snapshots.  Litestream 0.5.12 has no disable-L2 flag; `litestream.coolify.yml`
+`levels: [{interval: 30s}]` is the off switch (`Config.Levels` is L1..N).  No
+compaction-backoff yaml key either -- removing L2/L3 is the backoff (the storm was
+re-downloading the whole L1 chain every 5 minutes).
+
+Detector: per-level log recovery (L1 complete does not clear L2 fail).  Health pages
+stale L9 even when L0 age is 0.  Leftover L2/L3 objects do not page
+(`LITESTREAM_PRODUCT_DISABLED_TIERS`).  Boot log rotation (#3135) is enough.
+
+L1 boundary-trim is a first-class scheduled unit in-repo (`scripts/ops/litestream-l1-boundary-trim.timer`,
+00:04 UTC).  Do not fight tonight's transient oneshots.  Host install is remaining ops.
+Do not bounce Coolify.  Do not FORCE_RESTORE.  Do not touch live B2 `trading-live/**`.
+
+Branch `grok/litestream-structural`, worktree `~/apps/trading-grok-litestream-struct`,
+issue #3153, boards 081c8ecf / 1e3df744.  Rollout:
+`docs/rollouts/2026-09-01-litestream-structural.md`.
+
 ## 2026-09-01 GROK — Sentry fleet adoption remainder (tunnel, iOS DSN, profiling, logger, gen_ai)
 
 Remaining ST Sentry work after AG #3146 (`enableLogs`, Replay 0.01/1.0, traces 0.2, no Vercel monitors).  Enables `tunnelRoute: "/monitoring"` with middleware matcher + public-prefix exclusion so ad-blockers cannot drop browser envelopes.  iOS `SentryTelemetry.swift` no longer hardcodes a DSN fallback — Info.plist `SENTRY_DSN` only, skip init if missing; Cocoa Session Replay with mask-all-text / mask-all-images / no screenshots; `releaseName`/`dist` from `CFBundleShortVersionString`/`CFBundleVersion`.  Server continuous profiling via `@sentry/profiling-node` on `sentry.server.config.ts` only (`profileLifecycle: "trace"`).  Sparse `Sentry.logger` + Application Metrics from existing `src/lib/sentry-metrics.ts` on scheduler tick/overrun, rag.rejected, embed.failed, broker.call.  OpenRouter/Voyage/Pinecone/earningscalls HTTP wrapped in `gen_ai.*` / `db` spans without prompt contents.  Official `@sentry/nextjs` AI integrations stay registered for any SDK path.
