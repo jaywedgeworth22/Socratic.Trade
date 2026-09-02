@@ -5474,10 +5474,10 @@ export async function purgePrivateVectorRecordsForUser(options: {
   // Without the current provider token their immutable prefix cannot be inventoried or deleted,
   // so a private-account purge must fail closed instead of relying only on namespace deleteAll.
   if (!providerAuthority) {
-    throw new Error("Current vector provider authority is unavailable; account deletion remains pending.");
+    throw new Error("Current Pinecone authority is unavailable; account deletion remains pending.");
   }
   if ([...historicalAuthorities].some((authority) => authority !== providerAuthority)) {
-    throw new Error("Historical vector provider authority is not currently reachable; account deletion remains pending.");
+    throw new Error("Historical Pinecone authority is not currently reachable; account deletion remains pending.");
   }
 
   const qdrantWrites = usesQdrantWrites();
