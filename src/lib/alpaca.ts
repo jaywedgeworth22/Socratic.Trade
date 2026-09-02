@@ -204,6 +204,54 @@ export function resolveAlpacaTimeInForce(input: {
   };
 }
 
+/** Alpaca's wire word for a stop-market is `stop`.  Keep `stop_limit` and everything else as-is. */
+export function mapAlpacaOrderTypeWrite(type: OrderType | string): string {
+  return type === "stop_market" ? "stop" : String(type);
+}
+
+export type McpCallMode = "read" | "write";
+
+/**
+ * MCP place/cancel timed out or otherwise failed after the sidecar may already have
+ * forwarded the write.  REST-falling-back would be a second send.
+ */
+export class AlpacaMcpWriteAmbiguousError extends Error {
+  readonly code = "ALPACA_MCP_WRITE_AMBIGUOUS" as const;
+  constructor(toolName: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `Alpaca MCP ${toolName} failed ambiguously; REST write fallback skipped to avoid a double-submit. ${detail}`,
+      cause instanceof Error ? { cause } : undefined
+    );
+    this.name = "AlpacaMcpWriteAmbiguousError";
+  }
+}
+
+/**
+ * REST-fallback is safe for a WRITE only when the sidecar never dispatched the tool
+ * (unknown tool / method-not-found / 4xx before send).  Timeouts, aborts, 5xx, 408/409/429,
+ * and network errors are ambiguous — the order may already exist at Alpaca.
+ */
+export function mcpWriteFailureAllowsRestFallback(error: unknown): boolean {
+  const text = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  const lower = text.toLowerCase();
+  if (
+    /-32601\b/.test(lower) ||
+    /method not found/.test(lower) ||
+    /unknown tool/.test(lower) ||
+    /tool not found/.test(lower) ||
+    /not implemented/.test(lower)
+  ) {
+    return true;
+  }
+  const http = text.match(/alpaca mcp http (\d{3})/i);
+  if (http) {
+    const status = Number(http[1]);
+    return status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 501;
+  }
+  return false;
+}
+
 class AlpacaBrokerGateway implements BrokerGateway {
   // Default getEquityOrders returns open orders plus terminal orders inside a bounded window.
   readonly ordersListIncludesTerminal = true;
@@ -384,10 +432,16 @@ class AlpacaBrokerGateway implements BrokerGateway {
     return request;
   }
 
-  private async callMcp<T>(toolName: string, args: Record<string, unknown>, fallbackFn: () => Promise<T>): Promise<T> {
+  private async callMcp<T>(
+    toolName: string,
+    args: Record<string, unknown>,
+    fallbackFn: () => Promise<T>,
+    opts?: { mode?: McpCallMode; reconcile?: () => Promise<T | undefined> }
+  ): Promise<T> {
     if (!this.isMcp || !this.mcpUrl) {
       return fallbackFn();
     }
+    const mode: McpCallMode = opts?.mode ?? "read";
     try {
       const response = await fetch(this.mcpUrl, {
         method: "POST",
@@ -411,7 +465,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
       }
       const body = await response.json();
       if (body.error) {
-        throw new Error(body.error.message || JSON.stringify(body.error));
+        const code = body.error.code != null ? String(body.error.code) : "";
+        const message = body.error.message || JSON.stringify(body.error);
+        throw new Error(code ? `Alpaca MCP ${code} ${message}` : message);
       }
       const content = body.result?.content;
       if (Array.isArray(content) && content[0]?.type === "text") {
@@ -430,7 +486,75 @@ class AlpacaBrokerGateway implements BrokerGateway {
         endpoint: `mcp:${toolName}`,
         error: e instanceof Error ? e.message : String(e)
       });
-      return fallbackFn();
+      // Reads may always REST-fallback.  Writes fallback only when the sidecar
+      // never dispatched the tool; otherwise reconcile by client_order_id / id
+      // and refuse a second send.
+      if (mode === "read" || mcpWriteFailureAllowsRestFallback(e)) {
+        return fallbackFn();
+      }
+      if (opts?.reconcile) {
+        try {
+          const recovered = await opts.reconcile();
+          if (recovered !== undefined) return recovered;
+        } catch (reconcileErr) {
+          logWarn("broker.call", {
+            broker: "alpaca",
+            endpoint: `mcp:${toolName}:reconcile`,
+            error: reconcileErr instanceof Error ? reconcileErr.message : String(reconcileErr)
+          });
+        }
+      }
+      throw new AlpacaMcpWriteAmbiguousError(toolName, e);
+    }
+  }
+
+  private async fetchAlpacaOrderByClientOrderId(clientOrderId: string): Promise<Record<string, unknown> | undefined> {
+    try {
+      const raw = await this.trackHealth(
+        () => this.alpaca.sendRequest(
+          `/orders:by_client_order_id/${encodeURIComponent(clientOrderId)}`,
+          null,
+          null,
+          "GET"
+        ),
+        { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS, retryTransient: true }
+      );
+      if (raw && typeof raw === "object" && (raw as { id?: unknown }).id) {
+        return raw as Record<string, unknown>;
+      }
+      return undefined;
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 404) return undefined;
+      const msg = error instanceof Error ? error.message : String(error);
+      if (/\b404\b|not found/i.test(msg)) return undefined;
+      throw error;
+    }
+  }
+
+  private async reconcilePlacedOrderByClientOrderId(clientOrderId: string): Promise<ExecutedOrder | undefined> {
+    const raw = await this.fetchAlpacaOrderByClientOrderId(clientOrderId);
+    if (!raw?.id) return undefined;
+    return executedOrderFromRaw(raw, clientOrderId);
+  }
+
+  private async reconcileCanceledOrder(orderId: string): Promise<ExecutedOrder | undefined> {
+    try {
+      const raw = await this.trackHealth(
+        () => this.alpaca.getOrder(orderId),
+        { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS, retryTransient: true }
+      );
+      const state = String(raw?.status ?? "");
+      if (isRejectedOrCanceledState(state) || state.toLowerCase() === "filled") {
+        return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: raw ?? { reconciled: true } };
+      }
+      return undefined;
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 404) {
+        return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: { reconciled: true, missing: true } };
+      }
+      throw error;
     }
   }
 
@@ -839,7 +963,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         const orderOptions: Record<string, unknown> = {
           symbol: toAlpacaSymbol(input.symbol),
           side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
-          type: input.type,
+          type: mapAlpacaOrderTypeWrite(input.type),
           time_in_force: tif.timeInForce,
           client_order_id: input.refId
         };
@@ -903,7 +1027,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     const orderArgs: Record<string, any> = {
       symbol: toAlpacaSymbol(input.symbol),
       side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
-      type: input.type,
+      type: mapAlpacaOrderTypeWrite(input.type),
       time_in_force: tif.timeInForce,
       client_order_id: input.refId
     };
@@ -931,16 +1055,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
       }
     }
 
-    return this.callMcp<any>(toolName, orderArgs, fallbackFn).then((res: any) => {
+    return this.callMcp<any>(toolName, orderArgs, fallbackFn, {
+      mode: "write",
+      reconcile: () => this.reconcilePlacedOrderByClientOrderId(input.refId)
+    }).then((res: any) => {
       if (res && res.id) {
-        return {
-          orderId: res.id,
-          refId: input.refId,
-          state: res.status,
-          filledQuantity: optionalNumber(res.filled_qty),
-          averagePrice: optionalNumber(res.filled_avg_price),
-          raw: res
-        };
+        return executedOrderFromRaw(res, input.refId);
       }
       return res;
     });
@@ -1003,9 +1123,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
   }
 
   async cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder> {
-    return this.callMcp<any>("cancel_order", { order_id: orderId }, async () => {
+    const restCancel = async (): Promise<ExecutedOrder> => {
       await this.trackHealth(() => this.alpaca.cancelOrder(orderId), { deadlineMs: ALPACA_BROKER_IO_DEADLINE_MS });
       return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: {} };
+    };
+    return this.callMcp<any>("cancel_order", { order_id: orderId }, restCancel, {
+      mode: "write",
+      reconcile: () => this.reconcileCanceledOrder(orderId)
     }).then((res: any) => {
       if (res && typeof res === "object") {
         return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: res };
@@ -1064,6 +1188,17 @@ function optionalNumber(value: unknown): number | undefined {
   if (value === null || value === undefined || value === "") return undefined;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function executedOrderFromRaw(raw: { id?: unknown; status?: unknown; filled_qty?: unknown; filled_avg_price?: unknown }, refId: string): ExecutedOrder {
+  return {
+    orderId: String(raw.id),
+    refId,
+    state: raw.status != null ? String(raw.status) : "accepted",
+    filledQuantity: optionalNumber(raw.filled_qty),
+    averagePrice: optionalNumber(raw.filled_avg_price),
+    raw
+  };
 }
 
 function number(value: unknown): number {
