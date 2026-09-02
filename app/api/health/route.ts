@@ -13,6 +13,7 @@ import {
   defaultLitestreamRuntimeLogPath,
   defaultLitestreamStatePath,
   getLitestreamRuntimeHealth,
+  LITESTREAM_PRODUCT_DISABLED_TIERS,
   runtimeReleaseIdentity,
   scanLitestreamRuntimeLogFile
 } from "@/lib/runtime-health";
@@ -386,7 +387,10 @@ export async function GET(request: Request) {
     // minutes (src/lib/litestream-remote-inventory.ts) — this request performs NO S3/B2 calls
     // and spawns nothing. Levels with no snapshot report an explicit "not-observable" reason.
     const litestreamTiers = assessLitestreamTierFreshness(litestreamStatePath, {
-      remoteInventory: getLitestreamRemoteInventory()
+      remoteInventory: getLitestreamRemoteInventory(),
+      // L2/L3 are off in litestream.coolify.yml (single `levels:` entry = L1).
+      // Leftover replica objects at those levels must not page as a wedge.
+      disabledTiers: LITESTREAM_PRODUCT_DISABLED_TIERS
     });
 
     // A THIRD, independent signal: litestream's own log lines, captured to a local file by

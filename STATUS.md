@@ -3,6 +3,25 @@
 ## 2026-09-01 GROK — Qdrant Stage 2 write/delete/inventory cutover
 
 Owner-directed full Qdrant integration.  Stage 1 reads already serve (`RAG_VECTOR_READ_QDRANT`, PR #3138).  Stage 2 routes upserts, deletes, payload patches, and metadata inventory to self-hosted collection `socratic-trade` via new `src/lib/vector-store/qdrant-write.ts` and knob `RAG_VECTOR_WRITE_QDRANT` (default true when `QDRANT_URL` is set).  Runtime default no longer calls Pinecone upsert/deleteMany/list/fetch, does not wrap those paths in `withRagApiHealth("pinecone")`, and does not park ingest on `pineconeWuExhaustedUntil` or the daily Pinecone WU fuse.  Provider authority on the Qdrant path comes from durable SQLite commits (`durableProviderAuthority`) so writes do not no-op.  Point ids stay uuid5(`st:{ns}:{pc_id}`) with payload `pc_id`/`ns` so Stage 1 reads keep matching.  Metering is provider `"qdrant"` with zero phantom WUs.  `@pinecone-database/pinecone` stays installed behind the pinecone backend flag.  Did not run a Pinecone delta copy (would burn remaining read units).  Branch `grok/qdrant-write-cutover`, worktree `~/apps/trading-grok-qdrant-writes`, issue #3151, boards 97b5894b / 9e19673a / dc98d716 / c741db8e.  Rollout: `docs/rollouts/2026-09-01-qdrant-write-cutover.md`.
+## 2026-09-01 GROK — Litestream structural: L2/L3 off, honest detector, scheduled L1 trim
+
+Owner-directed: stop the trim-and-heal cycle.  Product compaction is L0 + bounded L1 +
+24h snapshots.  Litestream 0.5.12 has no disable-L2 flag; `litestream.coolify.yml`
+`levels: [{interval: 30s}]` is the off switch (`Config.Levels` is L1..N).  No
+compaction-backoff yaml key either -- removing L2/L3 is the backoff (the storm was
+re-downloading the whole L1 chain every 5 minutes).
+
+Detector: per-level log recovery (L1 complete does not clear L2 fail).  Health pages
+stale L9 even when L0 age is 0.  Leftover L2/L3 objects do not page
+(`LITESTREAM_PRODUCT_DISABLED_TIERS`).  Boot log rotation (#3135) is enough.
+
+L1 boundary-trim is a first-class scheduled unit in-repo (`scripts/ops/litestream-l1-boundary-trim.timer`,
+00:04 UTC).  Do not fight tonight's transient oneshots.  Host install is remaining ops.
+Do not bounce Coolify.  Do not FORCE_RESTORE.  Do not touch live B2 `trading-live/**`.
+
+Branch `grok/litestream-structural`, worktree `~/apps/trading-grok-litestream-struct`,
+issue #3153, boards 081c8ecf / 1e3df744.  Rollout:
+`docs/rollouts/2026-09-01-litestream-structural.md`.
 ## 2026-09-01 GROK — Money-path orders: MCP write idempotency, Alpaca `stop` wire, provenance
 
 Owner-directed fix of three live-order bugs (#3152 / efd2a783, ef0dccb3, d4cb5e75, d36c2233).  MCP place/cancel no longer REST-falls-back after an 8s timeout or 5xx (reconcile by `client_order_id` / order id; fallback only on tool-not-found or 4xx-before-send).  Writes map `stop_market` to Alpaca `stop`.  Auto-replace treats a nonempty Alpaca UUID as owner-placed unless the id has prefix `protstop-`/`sstop-` or a tracked intent row.  No live orders from this Mac.  Branch `grok/money-path-orders`, worktree `~/apps/trading-grok-money-path`.  Rollout: `docs/rollouts/2026-09-01-money-path-orders.md`.

@@ -242,6 +242,34 @@ Two tells that this is the mega-upload wedge and not a credentials or endpoint p
 `level=2` on every failure while `level=0` `ltx file uploaded` lines keep flowing normally
 in between, and a `0002/` object name whose `<min>` TXID never advances across retries.
 
+### Structural product (2026-09-01): L2/L3 are off
+
+Repeated L1 trim/heal did not stick.  The product is now **L0 + bounded L1 + 24h snapshots**.
+PITR to the last snapshot plus remaining L0/L1 is enough.  Mega L2 is the failure mode, so
+it is no longer a compaction target.
+
+Litestream 0.5.12 (pinned; do not upgrade) has no disable-L2 flag.  `litestream.coolify.yml`
+sets a single top-level `levels:` entry (`interval: 30s` = L1).  `Config.Levels` is L1..N
+in list order (`cmd/litestream/main.go` `CompactionLevels()`).  One entry makes
+`MaxLevel() == 1` and `NextLevel(1)` the snapshot level.  DefaultConfig would otherwise
+start L2 at 5m and L3 at 1h.
+
+There is also **no compaction-backoff yaml key**.  `store.go` `monitorCompactionLevel`
+retries on the level interval with no exponential delay.  Removing L2/L3 is the backoff:
+the storm was re-downloading the whole L1 chain every 5 minutes.  Remaining L1 retries
+every 30s against a small L0 window.
+
+Health (`src/lib/runtime-health.ts`):
+- Log scan recovery is **per level**.  A later L1 `compaction complete` does not clear an
+  L2 `compaction failed`.  The previous nullish fallback to any-level complete kept
+  `litestreamCompactionLogFailureCount` at 0 through the incident.
+- L2/L3 are listed but **product-disabled**: leftover replica objects and empty listings
+  do not page.  Stale L9 still pages even when L0 age is 0.
+- `litestream-runtime.log` still rotates at boot above 64 MB (keep newest 16 MB, one `.1`).
+  With L2 mega-retry gone, that cap is enough; do not grow another 200 MB file.
+
+Do **not** add `verify-compaction: true` (ListObjects after every compact; tcp_mem 2026-07-10).
+
 ### The heal: `scripts/litestream-l1-boundary-trim.py`
 
 Installed on `fleet-hetzner-nbg1` as `/usr/local/sbin/litestream-l1-boundary-trim`; the
@@ -427,17 +455,24 @@ span** to whatever L0 still covers.  You can still restore to the snapshot, and 
 after the trim boundary; you lose the ability to land between two arbitrary mid-day
 transactions inside the span the snapshot already subsumes.
 
-That is why this is an **on-demand heal and not a permanent nightly timer**.  The app's
-configured snapshot retention (168h) stays the authoritative retention policy; this tool
-must never quietly become a second, shorter one.  Arm it as a one-shot when L2 is wedged,
-confirm L2 completed, and let it lapse.
+**As of 2026-09-01 this is a first-class scheduled unit**, not a forgotten one-shot.  L2/L3
+are off, so L1 is the only compaction level that can grow; the nightly trim is what keeps
+it bounded.  Snapshot retention (168h) stays the restore-depth policy.  The trim only
+hides L1 already contained in the newest L9 snapshot.
 
-Arm it with `systemd-run --on-calendar`, which creates a **transient** unit under
-`/run/systemd/transient/`.  Transient units do not survive a reboot, which is the desired
-property here - a forgotten heal expires on its own instead of silently becoming policy.
-Arm several a few minutes apart (the fleet uses 00:04 / 00:20 / 00:40 UTC) so a late nightly
-snapshot gets retried: with `--max-snapshot-age-hours 6` an early attempt against a stale
-snapshot exits 3 and the next attempt picks it up once it lands.
+Repo source of truth (install on `fleet-hetzner-nbg1`, do not bounce Coolify):
+
+```
+scripts/ops/litestream-l1-boundary-trim.timer      # OnCalendar 00:04 UTC
+scripts/ops/litestream-l1-boundary-trim.service
+scripts/ops/litestream-l1-boundary-trim-fleet.sh   # socratic, then congress, then usage-monitor
+scripts/ops/install-litestream-l1-trim.sh          # root, idempotent, does not fire the oneshot
+```
+
+Transient 00:04 / 00:20 / 00:40 UTC oneshots already armed for 2026-09-02 must not be
+fought.  The persistent timer is the same 00:04 UTC minute so the next deploy does not
+depend on a unit that dies on reboot.  Install is remaining host ops; this repo change
+does not SSH-enable it.
 
 ### `boundary-trim` vs `suffix-heal` - which one
 
