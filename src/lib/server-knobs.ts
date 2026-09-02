@@ -179,10 +179,19 @@ export const SERVER_KNOBS_CATALOG: readonly ServerKnobSpec[] = [
     id: "RAG_VECTOR_READ_QDRANT",
     group: "retrieval",
     label: "Qdrant read backend",
-    description: "Serve RAG retrieval queries from the self-hosted Qdrant mirror instead of Pinecone.  Stage 1: reads only — writes, deletes, and inventory stay on Pinecone.",
+    description: "Serve RAG retrieval queries from the self-hosted Qdrant collection instead of Pinecone.",
     type: "boolean",
     defaultValue: true,
     effect: "Applies to the next retrieval pass.  Requires QDRANT_URL (and QDRANT_API_KEY) in the environment; without them reads stay on Pinecone.  The string env RAG_VECTOR_READ_BACKEND=qdrant|pinecone is honored when neither this override nor this env var is set."
+  },
+  {
+    id: "RAG_VECTOR_WRITE_QDRANT",
+    group: "retrieval",
+    label: "Qdrant write backend",
+    description: "Send RAG upserts, deletes, and inventory to the self-hosted Qdrant collection instead of Pinecone.  Default on when QDRANT_URL is configured so ingest is not parked on exhausted Pinecone write units.",
+    type: "boolean",
+    defaultValue: true,
+    effect: "Applies to the next store, delete, or inventory call.  Requires QDRANT_URL (and QDRANT_API_KEY) in the environment; without them writes stay on Pinecone.  The string env RAG_VECTOR_WRITE_BACKEND=qdrant|pinecone is honored when neither this override nor this env var is set.  The Pinecone monthly WU breaker and daily write fuse apply only to the Pinecone write backend."
   },
   {
     id: "SEC_FILING_RAG_MAX_PER_RUN",
