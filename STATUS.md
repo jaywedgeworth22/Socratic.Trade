@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-09-01 GROK — Money-path orders: MCP write idempotency, Alpaca `stop` wire, provenance
+
+Owner-directed fix of three live-order bugs (#3152 / efd2a783, ef0dccb3, d4cb5e75, d36c2233).  MCP place/cancel no longer REST-falls-back after an 8s timeout or 5xx (reconcile by `client_order_id` / order id; fallback only on tool-not-found or 4xx-before-send).  Writes map `stop_market` to Alpaca `stop`.  Auto-replace treats a nonempty Alpaca UUID as owner-placed unless the id has prefix `protstop-`/`sstop-` or a tracked intent row.  No live orders from this Mac.  Branch `grok/money-path-orders`, worktree `~/apps/trading-grok-money-path`.  Rollout: `docs/rollouts/2026-09-01-money-path-orders.md`.
+
 ## 2026-09-01 GROK — Sentry fleet adoption remainder (tunnel, iOS DSN, profiling, logger, gen_ai)
 
 Remaining ST Sentry work after AG #3146 (`enableLogs`, Replay 0.01/1.0, traces 0.2, no Vercel monitors).  Enables `tunnelRoute: "/monitoring"` with middleware matcher + public-prefix exclusion so ad-blockers cannot drop browser envelopes.  iOS `SentryTelemetry.swift` no longer hardcodes a DSN fallback — Info.plist `SENTRY_DSN` only, skip init if missing; Cocoa Session Replay with mask-all-text / mask-all-images / no screenshots; `releaseName`/`dist` from `CFBundleShortVersionString`/`CFBundleVersion`.  Server continuous profiling via `@sentry/profiling-node` on `sentry.server.config.ts` only (`profileLifecycle: "trace"`).  Sparse `Sentry.logger` + Application Metrics from existing `src/lib/sentry-metrics.ts` on scheduler tick/overrun, rag.rejected, embed.failed, broker.call.  OpenRouter/Voyage/Pinecone/earningscalls HTTP wrapped in `gen_ai.*` / `db` spans without prompt contents.  Official `@sentry/nextjs` AI integrations stay registered for any SDK path.
