@@ -2342,6 +2342,8 @@ export interface MarketDataProviderOptions {
   enrichmentMode?: "full" | "skip";
   /** Slow-changing facts from the latest completed strategy scan. */
   seedEnrichment?: Record<string, MarketQuoteSummary>;
+  /** Epoch ms when the strategy gather wall expires.  Drives internal wave budget. */
+  deadlineAt?: number;
 }
 
 export interface MarketDataProvider {

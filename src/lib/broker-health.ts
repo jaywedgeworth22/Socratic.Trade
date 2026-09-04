@@ -1,4 +1,5 @@
-import { audit, getInternalSetting, getPolicy, setInternalSetting, setPolicy, deleteInternalSetting } from "./db";
+import { randomUUID } from "node:crypto";
+import { audit, finishStrategyRun, getInternalSetting, getPolicy, insertStrategyRun, setInternalSetting, setPolicy, deleteInternalSetting } from "./db";
 import { countRecentAuditEvents } from "./db-learning";
 import { ExecutionAccount, HealthSignals } from "./execution-mode";
 import { accountEquity } from "./risk-breaker";
@@ -147,6 +148,41 @@ export type ApplyBrokerPauseResult =
   | { action: "halted"; reason: string }
   | { action: "resumed"; priorReason?: string }
   | { action: "still_paused"; reason: string };
+
+/**
+ * Persist a skipped strategy_runs row when the scheduler health gate auto-halts
+ * an active account.  Journal-only skip left tradingLiveness with no row while
+ * equity-0 accounts sat halted (board 06df80cf).  Do not call on already-halted
+ * ticks — that would write a row every 15s.
+ */
+export function shouldPersistBrokerHealthSkip(input: {
+  wasActive: boolean;
+  pauseAction: ApplyBrokerPauseResult["action"];
+}): boolean {
+  return input.wasActive && input.pauseAction === "halted";
+}
+
+export function persistBrokerHealthSkipRun(input: {
+  userId: string;
+  connectedAccountId: string;
+  accountNumber?: string;
+  reason: string;
+  halted: boolean;
+}): string {
+  const runId = randomUUID();
+  insertStrategyRun(runId, input.userId, input.connectedAccountId, input.accountNumber);
+  const summary = input.halted
+    ? `Broker cannot place orders — autonomous strategy auto-paused: ${input.reason}`
+    : `Broker health check failed: ${input.reason}. Skipping strategy run to avoid consuming budget.`;
+  finishStrategyRun(runId, "skipped_broker_unhealthy", summary, input.userId);
+  audit(
+    "run_skipped_broker_unhealthy",
+    { runId, reason: input.reason, autoHalted: input.halted, source: "scheduler-gate" },
+    input.userId,
+    input.connectedAccountId
+  );
+  return runId;
+}
 
 /**
  * When broker health says the account cannot place orders and the policy is `active`, flip

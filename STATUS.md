@@ -13,6 +13,15 @@ legacy 9 GiB object (Jay has not approved that delete).  Read-only inventory
 script; no live prune; no Coolify; no extra-ship; no merge from this lane.
 Branch `grok/r2-weekly-gzip-freshen`.  Rollout:
 `docs/rollouts/2026-09-04-r2-weekly-gzip-freshen.md`.
+## 2026-09-04 BF-Fixer — Gather internal time budget (P0 06df80cf)
+
+Leftover `claude/gather-budget` had zero unique commits; `/tmp/st-gather` is gone.
+Reconstructed on `origin/main` `de236a63d`: internal enrichment-wave budget so gather
+returns a live tape before the 8-minute wall, plus one `skipped_broker_unhealthy`
+row when the scheduler health gate auto-halts an active account (equity 0).
+Abort + last-good (#3013/#3018) stay.  Not #3138/#3158/#3162.  No extra-ship.
+No TestFlight.  Branch `grok/gather-budget`, worktree `~/apps/trading-grok-gather-budget`.
+Rollout: `docs/rollouts/2026-09-04-gather-internal-budget.md`.
 
 ## 2026-09-04 GROK — Vitest teardown flake after #3162
 

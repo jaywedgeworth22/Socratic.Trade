@@ -22,7 +22,12 @@ import { maybeAdvisePineconeTrialRollback } from "./pinecone-trial-window";
 import { pineconeWuExhaustedUntil } from "./pinecone-wu-breaker";
 import { runWatchlistDigestIfDue } from "./watchlist-digest";
 import { runAuditPruneIfDue } from "./audit-prune";
-import { applyBrokerOrderPlacementPause, checkBrokerHealth } from "./broker-health";
+import {
+  applyBrokerOrderPlacementPause,
+  checkBrokerHealth,
+  persistBrokerHealthSkipRun,
+  shouldPersistBrokerHealthSkip
+} from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { hasInFlightStrategyWork, markStaleRunningRuns } from "./db-execution";
@@ -991,6 +996,7 @@ async function tickInner(): Promise<void> {
         // E.g., skips queuing an LLM strategy run if the broker is unreachable, account is suspended,
         // order path is down (Tradier OMS 500s, Alpaca trading_blocked), or elevated place failures.
         // Unhealthy + active → auto-halt systemState so future ticks stay paused until recovery.
+        const wasActiveForHealthGate = policy.systemState === "active";
         const healthSignals = await checkBrokerHealth(userId, account, brokerGateway);
         const pauseResult = await applyBrokerOrderPlacementPause({
           userId,
@@ -1012,6 +1018,26 @@ async function tickInner(): Promise<void> {
             status: "ok" as const,
             summary: `suppressed: ${healthSignals.reason ?? "unhealthy"}${pauseResult.action === "halted" ? "; auto-halted" : pauseResult.action === "still_paused" ? "; still paused" : ""}`
           })).catch(() => undefined);
+          // Equity-0 / OMS-down used to write NO strategy_runs row, so the completed-run
+          // counter never moved.  Persist once when we auto-halt an active account.
+          if (
+            shouldPersistBrokerHealthSkip({
+              wasActive: wasActiveForHealthGate,
+              pauseAction: pauseResult.action
+            })
+          ) {
+            try {
+              persistBrokerHealthSkipRun({
+                userId,
+                connectedAccountId: accountId,
+                accountNumber: policy.accountNumber,
+                reason: healthSignals.reason ?? "unhealthy",
+                halted: true
+              });
+            } catch (err) {
+              console.error("[scheduler] broker-health-gate skip row failed:", err);
+            }
+          }
           schedule.nextRunAt = null; // Re-evaluate on next tick without advancing the cadence
           continue;
         }
