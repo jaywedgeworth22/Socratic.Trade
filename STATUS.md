@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-09-04 GROK — Vitest teardown flake after #3162
+
+Main verify on `80515c15` failed with `EnvironmentTeardownError` /
+`onUserConsoleLog` pending in `test/economic-calendar-prompt-wiring.test.ts`
+after 7761 passing tests.  `#3046`'s `onConsoleLog: () => false` still
+forwards logs over RPC.  Fix: `disableConsoleIntercept: true` plus quiet
+log/info/debug in the existing setup file.  Targeted vitest 3/3 in 6.67s,
+eslint on touched files exit 0.  Branch `grok/vitest-teardown-console`,
+worktree `~/apps/trading-grok-verify-flake`.  PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/3163
+SHA `4fba321ff`.  No Coolify.  No extra-ship.  No merge from this lane.
+Remaining gate: GitHub `verify`.  Rollout:
+`docs/rollouts/2026-09-04-vitest-teardown-console.md`.
+
 ## 2026-09-03 GROK — Cash-flow-matched S&P overlay
 
 Owner asked where vs-S&P lives and for the overlay graph of account vs S&P if the same cash
