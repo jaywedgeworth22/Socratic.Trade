@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "crypto";
 import { audit, finishStrategyRun, getInternalSetting, getPolicy, insertStrategyRun, setInternalSetting, setPolicy, deleteInternalSetting } from "./db";
 import { countRecentAuditEvents } from "./db-learning";
 import { ExecutionAccount, HealthSignals } from "./execution-mode";
