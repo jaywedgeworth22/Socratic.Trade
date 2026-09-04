@@ -66,7 +66,9 @@ Canonical detail:
    up — a finished deploy must not sit `running:unhealthy` for extra
    minutes.
 4. Boot injects Infisical secrets, restores SQLite when the marker-guarded
-   bootstrap requires it, and runs Litestream (when R2 is enabled) around Next.js.
+   bootstrap requires it, and runs Litestream around Next.js.  Live replica is
+   Backblaze B2 (`jays-socratic-trade-eu`); R2 holds only the weekly
+   `cold-snapshots/` DR object (`app-YYYY-MM-DD.db.gz` since #3135).
 
 The retired Mac/PM2 publish path and Coolify PR previews are gone. Do not start
 Mac `pm2` `trading` while Coolify runs `DB_BOOTSTRAP=live` (dual schedulers).
@@ -75,9 +77,12 @@ Mac `pm2` `trading` while Coolify runs `DB_BOOTSTRAP=live` (dual schedulers).
 
 - Infisical is authoritative for production secrets.
 - SQLite lives on the Coolify persistent volume at `/app/data`.
-- Litestream → R2 when enabled; free-tier kill-switch and B2 offsite are covered
-  in fleet ops rollouts. `ENCRYPTION_KEY` must remain stable or stored credentials
-  become undecryptable.
+- Litestream → Backblaze B2 (live replica, `jays-socratic-trade-eu`).  Cloudflare
+  R2 (`socratic-trade-bucket`) holds only the weekly `cold-snapshots/` DR lane
+  (gzipped `app-YYYY-MM-DD.db.gz` since #3135; restore needs gunzip first).  The
+  R2 free-tier kill-switch is R2-era only and does not apply once `AWS_S3_ENDPOINT`
+  is B2.  `ENCRYPTION_KEY` must remain stable or stored credentials become
+  undecryptable.
 
 ## Verify after merge
 

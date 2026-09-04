@@ -8,21 +8,34 @@
 // `cold-snapshots/app-<ISO-date>.db.gz`, then prune to the newest N (default 1) snapshots
 // across BOTH extensions (`.db` legacy raw uploads and `.db.gz`).
 //
-// Gzip (2026-08-31): the raw DB reached ~9.7 GB, putting one uncompressed weekly copy at
-// ~90% of the 10 GiB R2 free tier.  The upload now streams the backup file through node
-// zlib createGzip into sequential multipart parts — memory stays bounded at roughly one
-// part (default 100 MB) plus zlib buffers, never the whole file (the box has 16 GB of
-// SHARED RAM).  Expected compressed size ~2.5-4 GB.  No compression knob — always gzip.
-// RESTORE now needs a gunzip step first: download the `.db.gz`, `gunzip` it, then treat
-// the result exactly like the old raw `.db` snapshot (see docs/litestream.md).
+// Gzip (2026-08-31, PR #3135): the raw DB reached ~9.7 GB, putting one uncompressed
+// weekly copy at ~90% of the 10 GiB R2 free tier.  The upload now streams the backup
+// file through node zlib createGzip into sequential multipart parts — memory stays
+// bounded at roughly one part (default 100 MB) plus zlib buffers, never the whole file
+// (the box has 16 GB of SHARED RAM).  Expected compressed size ~2.5-4 GB.  No
+// compression knob — always gzip.  RESTORE now needs a gunzip step first: download the
+// `.db.gz`, `gunzip` it, then treat the result exactly like the old raw `.db` snapshot
+// (see docs/litestream.md).
+//
+// Skip-prune freshen (2026-09-04): a successful Sunday run with retain=1 would upload
+// the new `.db.gz` THEN DeleteObject the legacy raw snapshot.  Read-only inventory
+// 2026-09-04 (SocraticTrade.com account, bucket `socratic-trade-bucket`):
+// object_count=1, bucket_size ~9.68 GB; sole key `cold-snapshots/app-2026-08-30.db`
+// size=9679310848 (~9.02 GiB); `trading-live/` empty (0 objects, historic litestream
+// prune moot); `weekly/` empty (0 objects, leftover `R2_ARCHIVE_KEEP_GENERATIONS`
+// unused).  Jay has NOT approved deleting that 9 GiB object.  Set
+// `R2_COLD_SNAPSHOT_SKIP_PRUNE=1` (1/true/on/yes) so the first gzip land uploads
+// WITHOUT pruning.  Default remains current retain=1 prune for normal Sunday jobs
+// AFTER Jay approves the delete.  Agents must never DeleteObject against this bucket
+// without that approval.
 //
 // Budget stance: stays reliably far under the R2 free tier. One weekly run costs roughly
 // 30-45 Class A ops (create + ~25-40 compressed parts at 100 MB + complete + list + up to
 // a couple deletes) ≈ 200/month vs the 1M free-tier allowance; storage is
 // retain×compressed-size.  Retain is pinned at 1.  The retention pass counts + prunes
-// both `.db` and `.db.gz` objects, so the first successful `.gz` upload prunes the last
-// legacy raw `.db` object.  Host-verified 2026-08-18 (pre-gzip):
-// `R2_COLD_SNAPSHOT_DEFAULT_RETAIN=1`, `R2_COLD_SNAPSHOT_RETAIN`
+// both `.db` and `.db.gz` objects, so the first successful `.gz` upload WITHOUT
+// skip-prune would delete the last legacy raw `.db` object.  Host-verified 2026-08-18
+// (pre-gzip): `R2_COLD_SNAPSHOT_DEFAULT_RETAIN=1`, `R2_COLD_SNAPSHOT_RETAIN`
 // unset, and `cold-snapshots/` holds exactly one object
 // (`app-2026-08-16.db`).  `R2_ARCHIVE_KEEP_GENERATIONS` is unused leftover
 // (empty `weekly/` prefix) and must not drive this lane.  `R2_COLD_SNAPSHOT_RETAIN`
@@ -41,6 +54,7 @@
 // Gating: silently a no-op (with ONE audit row per distinct reason) unless the
 // AWS_R2_HISTORIC_* credentials + bucket + endpoint from PR #2584 are configured.
 // R2_COLD_SNAPSHOT_ENABLED=0/off/false/no is the explicit kill switch.
+// R2_COLD_SNAPSHOT_SKIP_PRUNE=1/true/on/yes is the opt-in freshen gate (default off).
 //
 // Failure: audited, and surfaced once via the existing storage_warning notification path
 // (db-health.ts alertStorageWarning — 12h per-warning-type cooldown), then retried with
@@ -162,6 +176,13 @@ export interface R2ColdSnapshotConfig {
   secretAccessKey: string;
   retain: number;
   partSizeBytes: number;
+  /**
+   * Opt-in: upload the new `.db.gz` but do not DeleteObject older snapshots.
+   * Default false (retain=1 prune).  First gzip land must set
+   * `R2_COLD_SNAPSHOT_SKIP_PRUNE=1` until Jay approves deleting
+   * `cold-snapshots/app-2026-08-30.db`.
+   */
+  skipPrune: boolean;
 }
 
 /**
@@ -171,7 +192,15 @@ export interface R2ColdSnapshotConfig {
  * explicit kill switch (off/false/0/no).
  * Weekly retain reads only `R2_COLD_SNAPSHOT_RETAIN` (unset in prod → default 1).
  * `R2_ARCHIVE_KEEP_GENERATIONS` is unused leftover and is not consulted.
+ * `R2_COLD_SNAPSHOT_SKIP_PRUNE` is opt-in (1/true/on/yes); default is prune.
  */
+export function r2ColdSnapshotSkipPruneFromEnv(
+  raw: string | undefined = process.env.R2_COLD_SNAPSHOT_SKIP_PRUNE,
+): boolean {
+  const v = raw?.trim().toLowerCase() ?? "";
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
   const bucket = process.env.AWS_R2_HISTORIC_BUCKET_NAME?.trim() ?? "";
   const endpoint = process.env.AWS_R2_HISTORIC_ENDPOINT?.trim() ?? "";
@@ -192,6 +221,7 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
   const killRaw = process.env.R2_COLD_SNAPSHOT_ENABLED?.trim().toLowerCase();
   const killed = killRaw === "0" || killRaw === "off" || killRaw === "false" || killRaw === "no";
   const hasCreds = Boolean(bucket && endpoint && accessKeyId && secretAccessKey);
+  const skipPrune = r2ColdSnapshotSkipPruneFromEnv();
 
   return {
     enabled: hasCreds && !killed,
@@ -203,6 +233,7 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
     secretAccessKey,
     retain,
     partSizeBytes,
+    skipPrune,
   };
 }
 
@@ -482,7 +513,11 @@ export interface R2ColdSnapshotRunResult {
   /** Uncompressed backup size. */
   rawBytes?: number;
   parts?: number;
+  /** Keys actually DeleteObject'd.  Empty when skipPrune is on. */
   pruned?: string[];
+  /** Keys retain=1 would delete.  Recorded even when skipPrune leaves them in place. */
+  wouldPrune?: string[];
+  skipPrune?: boolean;
   durationMs?: number;
 }
 
@@ -584,16 +619,29 @@ export async function performR2ColdSnapshot(
     await completeMultipartUpload(cfg, key, uploadId, completedParts, deps);
     uploadId = undefined; // completed — nothing to abort from here on
 
-    // Retention: keep the newest `retain` snapshots, delete the rest. A prune failure
-    // does not fail the run — the snapshot IS uploaded; next week's prune catches up.
+    // Retention: keep the newest `retain` snapshots, delete the rest — unless
+    // skipPrune is on (first gzip land: do not delete the legacy 9 GiB `.db`
+    // until Jay approves).  A prune failure does not fail the run — the snapshot
+    // IS uploaded; next week's prune catches up.
     let pruned: string[] = [];
+    let wouldPrune: string[] = [];
     try {
       const keys = await listColdSnapshotKeys(cfg, deps);
-      pruned = selectColdSnapshotsToPrune(keys, cfg.retain);
-      for (const k of pruned) await deleteObject(cfg, k, deps);
+      wouldPrune = selectColdSnapshotsToPrune(keys, cfg.retain);
+      if (cfg.skipPrune) {
+        audit("r2_cold_snapshot.prune_skipped", {
+          key,
+          wouldPrune,
+          reason: "R2_COLD_SNAPSHOT_SKIP_PRUNE",
+        });
+      } else {
+        pruned = wouldPrune;
+        for (const k of pruned) await deleteObject(cfg, k, deps);
+      }
     } catch (err) {
       audit("r2_cold_snapshot.prune_error", { key, error: err instanceof Error ? err.message : String(err) });
       pruned = [];
+      wouldPrune = [];
     }
 
     const durationMs = Date.now() - startedAt;
@@ -614,6 +662,8 @@ export async function performR2ColdSnapshot(
       rawBytes,
       parts: completedParts.length,
       pruned,
+      wouldPrune,
+      skipPrune: cfg.skipPrune,
       retain: cfg.retain,
       durationMs,
     });
@@ -624,6 +674,8 @@ export async function performR2ColdSnapshot(
       rawBytes,
       parts: completedParts.length,
       pruned,
+      wouldPrune,
+      skipPrune: cfg.skipPrune,
       durationMs,
     };
   } catch (err) {
@@ -736,6 +788,7 @@ export async function drainR2ColdSnapshotJobs(
           rawBytes: result.rawBytes,
           parts: result.parts,
           prunedCount: result.pruned?.length ?? 0,
+          skipPrune: result.skipPrune ?? false,
         });
       }
     } catch (err) {

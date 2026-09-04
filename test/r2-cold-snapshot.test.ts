@@ -1,9 +1,10 @@
 // r2-cold-snapshot.test.ts — weekly R2 cold-snapshot lane (src/lib/r2-cold-snapshot.ts).
 //
-// Covers: config gating (creds + kill switch), the no-op-without-creds contract (single
-// audit row), weekly due-at math, retention pruning across BOTH extensions (.db legacy +
-// .db.gz), the full snapshot+gzip+upload drain path against a mocked S3 layer (including
-// gunzip round-trip verification of the uploaded parts), temp-file cleanup on success AND
+// Covers: config gating (creds + kill switch + skip-prune opt-in), the no-op-without-creds
+// contract (single audit row), weekly due-at math, retention pruning across BOTH
+// extensions (.db legacy + .db.gz), skip-prune vs normal prune on the drain path, the
+// full snapshot+gzip+upload drain path against a mocked S3 layer (including gunzip
+// round-trip verification of the uploaded parts), temp-file cleanup on success AND
 // failure, and the Class A budget guard.
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
@@ -20,6 +21,7 @@ import {
   loadR2ColdSnapshotConfig,
   nextR2ColdSnapshotDueAt,
   r2ColdSnapshotClassAPct,
+  r2ColdSnapshotSkipPruneFromEnv,
   selectColdSnapshotsToPrune,
   R2_ARCHIVE_MAX_AGE_SECONDS,
   R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES,
@@ -46,6 +48,7 @@ const CRED_ENVS = [
   "R2_COLD_SNAPSHOT_RETAIN",
   "R2_ARCHIVE_KEEP_GENERATIONS",
   "R2_COLD_SNAPSHOT_PART_MB",
+  "R2_COLD_SNAPSHOT_SKIP_PRUNE",
 ] as const;
 
 function setCreds(): void {
@@ -154,6 +157,7 @@ describe("loadR2ColdSnapshotConfig", () => {
     expect(cfg.region).toBe("auto");
     expect(cfg.retain).toBe(R2_COLD_SNAPSHOT_DEFAULT_RETAIN);
     expect(cfg.partSizeBytes).toBe(R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES);
+    expect(cfg.skipPrune).toBe(false);
   });
 
   it("honors the explicit kill switch even with credentials present", () => {
@@ -179,6 +183,22 @@ describe("loadR2ColdSnapshotConfig", () => {
     process.env.R2_ARCHIVE_KEEP_GENERATIONS = "2";
     const cfg = loadR2ColdSnapshotConfig();
     expect(cfg.retain).toBe(R2_COLD_SNAPSHOT_DEFAULT_RETAIN);
+  });
+
+  it("skipPrune is off by default and on for 1/true/on/yes", () => {
+    setCreds();
+    expect(loadR2ColdSnapshotConfig().skipPrune).toBe(false);
+    expect(r2ColdSnapshotSkipPruneFromEnv(undefined)).toBe(false);
+    expect(r2ColdSnapshotSkipPruneFromEnv("")).toBe(false);
+    expect(r2ColdSnapshotSkipPruneFromEnv("0")).toBe(false);
+    expect(r2ColdSnapshotSkipPruneFromEnv("off")).toBe(false);
+    expect(r2ColdSnapshotSkipPruneFromEnv("maybe")).toBe(false);
+    for (const raw of ["1", "true", "TRUE", "on", "yes", " Yes "]) {
+      expect(r2ColdSnapshotSkipPruneFromEnv(raw)).toBe(true);
+    }
+    process.env.R2_COLD_SNAPSHOT_SKIP_PRUNE = "1";
+    expect(loadR2ColdSnapshotConfig().skipPrune).toBe(true);
+    expect(loadR2ColdSnapshotConfig().retain).toBe(1);
   });
 });
 
@@ -328,6 +348,11 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(result.lastRun?.bytes).toBeGreaterThan(2500);
     expect(result.lastRun?.bytes).toBeLessThan(2600);
     expect(result.lastRun?.parts).toBe(3); // 1000 + 1000 + tail
+    expect(result.lastRun?.skipPrune).toBe(false);
+    expect(result.lastRun?.wouldPrune?.sort()).toEqual([
+      "cold-snapshots/app-2026-07-26.db",
+      "cold-snapshots/app-2026-08-02.db",
+    ]);
 
     // Gzip stream against the wire: sequential part numbers, full-size non-final parts,
     // and the concatenated parts gunzip back to the EXACT original backup bytes.
@@ -446,6 +471,77 @@ describe("drainR2ColdSnapshotJobs", () => {
     expect(alerts).toEqual(["r2_cold_snapshot_budget"]);
     expect(jobRows().map((r) => r.status)).toEqual(["done"]); // this week is skipped, not retried
     expect(auditCount("r2_cold_snapshot.budget_refused")).toBe(1);
+  });
+
+  it("normal prune (retain=1) deletes both legacy .db and older .db.gz candidates", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0); // Sunday 2026-09-06
+    enqueueDueNow(now);
+    const s3 = mockS3({
+      listKeys: [
+        "cold-snapshots/app-2026-08-30.db",
+        "cold-snapshots/app-2026-08-31.db.gz",
+        "cold-snapshots/app-2026-09-06.db.gz",
+        "trading-live/app.db/generations/deadbeef/wal/000001_0.wal.lz4",
+        "weekly/leftover.db",
+      ],
+    });
+    const captured: { path?: string; content?: Buffer } = {};
+
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl: s3.fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+    });
+
+    expect(result.lastRun?.status).toBe("ok");
+    expect(result.lastRun?.key).toBe("cold-snapshots/app-2026-09-06.db.gz");
+    expect(result.lastRun?.skipPrune).toBe(false);
+    expect(result.lastRun?.pruned?.sort()).toEqual([
+      "cold-snapshots/app-2026-08-30.db",
+      "cold-snapshots/app-2026-08-31.db.gz",
+    ]);
+    const objectDeletes = s3.requests.filter((r) => r.method === "DELETE" && !r.url.includes("uploadId="));
+    expect(objectDeletes.map((r) => decodeURIComponent(new URL(r.url).pathname)).sort()).toEqual([
+      "/socratic-trade-bucket/cold-snapshots/app-2026-08-30.db",
+      "/socratic-trade-bucket/cold-snapshots/app-2026-08-31.db.gz",
+    ]);
+  });
+
+  it("skip-prune uploads .db.gz and does not DeleteObject legacy .db or older .gz", async () => {
+    setCreds();
+    process.env.R2_COLD_SNAPSHOT_SKIP_PRUNE = "1";
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    const s3 = mockS3({
+      listKeys: [
+        "cold-snapshots/app-2026-08-30.db",
+        "cold-snapshots/app-2026-08-31.db.gz",
+        "cold-snapshots/app-2026-09-06.db.gz",
+      ],
+    });
+    const captured: { path?: string; content?: Buffer } = {};
+
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl: s3.fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+    });
+
+    expect(result.lastRun?.status).toBe("ok");
+    expect(result.lastRun?.key).toBe("cold-snapshots/app-2026-09-06.db.gz");
+    expect(result.lastRun?.skipPrune).toBe(true);
+    expect(result.lastRun?.pruned).toEqual([]);
+    expect(result.lastRun?.wouldPrune?.sort()).toEqual([
+      "cold-snapshots/app-2026-08-30.db",
+      "cold-snapshots/app-2026-08-31.db.gz",
+    ]);
+    const objectDeletes = s3.requests.filter((r) => r.method === "DELETE" && !r.url.includes("uploadId="));
+    expect(objectDeletes).toEqual([]);
+    expect(auditCount("r2_cold_snapshot.prune_skipped")).toBe(1);
+    expect(auditCount("r2_cold_snapshot.success")).toBe(1);
   });
 
   it("completes (skip) rather than retrying when creds vanished after scheduling", async () => {

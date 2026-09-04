@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-09-04 GROK — R2 weekly gzip freshen (skip-prune + inventory)
+
+Gzip upload path already on main via #3135 (`cold-snapshots/app-<ISO-date>.db.gz`,
+retain=1, KEY_PATTERN matches `.db` and `.db.gz`).  Live Litestream replica is B2
+`jays-socratic-trade-eu`; R2 is weekly DR only.  Read-only inventory 2026-09-04
+(SocraticTrade.com / `socratic-trade-bucket`): object_count=1, bucket_size ~9.68 GB;
+sole key `cold-snapshots/app-2026-08-30.db` size=9679310848 (~9.02 GiB);
+`trading-live/` empty (0); `weekly/` empty (0).  This lane adds
+`R2_COLD_SNAPSHOT_SKIP_PRUNE` so a freshen can land `.db.gz` without deleting the
+legacy 9 GiB object (Jay has not approved that delete).  Read-only inventory
+script; no live prune; no Coolify; no extra-ship; no merge from this lane.
+Branch `grok/r2-weekly-gzip-freshen`.  Rollout:
+`docs/rollouts/2026-09-04-r2-weekly-gzip-freshen.md`.
+
 ## 2026-09-04 GROK — Vitest teardown flake after #3162
 
 Main verify on `80515c15` failed with `EnvironmentTeardownError` /
