@@ -40,12 +40,22 @@ intact because other tests spy on them.
 ## Verification State
 
 ```bash
-PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+npx vitest run \
   test/vitest-console-intercept.test.ts \
   test/economic-calendar-prompt-wiring.test.ts
+# Test Files  2 passed (2)
+# Tests  3 passed (3)
+# Duration  6.67s
+# No EnvironmentTeardownError.
+
+npx eslint vitest.config.ts test/setup-peer-lane-cleanup.ts \
+  test/vitest-console-intercept.test.ts
+# exit 0
 ```
+
+Node v24.16.0.  Full `npm run lint` / `npx tsc --noEmit` / `npm test` / `npm run build` not re-run on this seat (prior land.sh timed out mid-gate).  Authoritative remaining gate is GitHub `verify` on the PR.  Image-noop (`vitest.config.ts` / `test/**` / docs are outside Coolify `watch_paths`).
 
 ## Next Steps & Blockers
 
-- Open a PR against `jaywedgeworth22/Socratic.Trade`.  Arm auto-merge after verify.
-- Do not merge, Coolify-nudge, or extra-ship from this seat.
+- Open a PR against `jaywedgeworth22/Socratic.Trade`.  Do not merge from this lane (owner: no merge, no Coolify, no extra-ship).
+- CI `verify` is the remaining gate (full tsc / vitest / next build).

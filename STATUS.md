@@ -6,9 +6,10 @@ Main verify on `80515c15` failed with `EnvironmentTeardownError` /
 `onUserConsoleLog` pending in `test/economic-calendar-prompt-wiring.test.ts`
 after 7761 passing tests.  `#3046`'s `onConsoleLog: () => false` still
 forwards logs over RPC.  Fix: `disableConsoleIntercept: true` plus quiet
-log/info/debug in the existing setup file.  Branch
-`grok/vitest-teardown-console`, worktree `~/apps/trading-grok-verify-flake`.
-No Coolify.  No extra-ship.  No merge from this lane.  Rollout:
+log/info/debug in the existing setup file.  Targeted vitest 3/3 in 6.67s,
+eslint on touched files exit 0.  Branch `grok/vitest-teardown-console`,
+worktree `~/apps/trading-grok-verify-flake`.  No Coolify.  No extra-ship.
+No merge from this lane.  Remaining gate: GitHub `verify`.  Rollout:
 `docs/rollouts/2026-09-04-vitest-teardown-console.md`.
 
 ## 2026-09-03 GROK — Cash-flow-matched S&P overlay
