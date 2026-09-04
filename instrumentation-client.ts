@@ -8,17 +8,20 @@ import { redactForTelemetry } from "./src/lib/telemetry-sanitize";
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
 if (dsn) {
-  // Session Replay can record DOM/network around errors. It is opt-in and, when
-  // on, masks all text and blocks all media so portfolio/account values are not
-  // captured. Default sample rates are 0.01 (1% session) and 1.0 (100% on error).
+  // Designer 2026-09-04: ST web session Replay stays 0%.  Error Replay is
+  // ON by default (100%) with mask-all.  Kill switch:
+  // NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=false.  Raise session sample only via
+  // NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE after Designer.
   const replayRaw = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED?.trim();
-  const replayEnabled = replayRaw ? /^(true|1|on|yes)$/i.test(replayRaw) : false;
+  const replayDisabled = replayRaw ? /^(false|0|off|no)$/i.test(replayRaw) : false;
   const replaySessionSampleRate = Number(
-    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0.01"
+    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0"
   );
   const replayErrorSampleRate = Number(
     process.env.NEXT_PUBLIC_SENTRY_REPLAY_ERROR_SAMPLE_RATE ?? "1.0"
   );
+  const feedbackRaw = process.env.NEXT_PUBLIC_SENTRY_FEEDBACK_ENABLED?.trim();
+  const feedbackDisabled = feedbackRaw ? /^(false|0|off|no)$/i.test(feedbackRaw) : false;
 
   Sentry.init({
     dsn,
@@ -34,11 +37,25 @@ if (dsn) {
       /^https:\/\/([\w-]+\.)?jays\.services/,
       /^https:\/\/usage\.jays\.services/,
     ],
-    replaysSessionSampleRate: replayEnabled ? replaySessionSampleRate : 0,
-    replaysOnErrorSampleRate: replayEnabled ? replayErrorSampleRate : 0,
-    integrations: replayEnabled
-      ? [Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })]
-      : [],
+    replaysSessionSampleRate: !replayDisabled ? replaySessionSampleRate : 0,
+    replaysOnErrorSampleRate: !replayDisabled ? replayErrorSampleRate : 0,
+    integrations: [
+      ...(!replayDisabled
+        ? [Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })]
+        : []),
+      ...(!feedbackDisabled
+        ? [
+            Sentry.feedbackIntegration({
+              colorScheme: "light",
+              autoInject: true,
+              showBranding: false,
+              buttonLabel: "Report a problem",
+              submitButtonLabel: "Send",
+              formTitle: "Report a problem",
+            }),
+          ]
+        : []),
+    ],
     beforeSend(event) {
       return redactForTelemetry(event) as typeof event;
     }

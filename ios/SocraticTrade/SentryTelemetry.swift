@@ -33,6 +33,7 @@ enum SentryTelemetry {
                 options.dist = dist
             }
             options.tracesSampleRate = 0.2
+            options.profilesSampleRate = 0.1
             options.enableAppHangTracking = true
             options.appHangTimeoutInterval = 2.0
             options.enableCaptureFailedRequests = true
