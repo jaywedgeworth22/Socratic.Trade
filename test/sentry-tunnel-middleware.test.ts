@@ -19,11 +19,12 @@ describe("Sentry browser tunnel", () => {
     expect(matcher[0]).toMatch(/\(\?\!.*monitoring/);
   });
 
-  it("defaults Session Replay to error-only (web session sample 0) with Feedback on", () => {
+  it("defaults Session Replay to 10% session / 100% error with Feedback on", () => {
     const src = readFileSync(join(repoRoot, "instrumentation-client.ts"), "utf8");
     expect(src).toMatch(/NEXT_PUBLIC_SENTRY_REPLAY_ENABLED/);
     expect(src).toContain("replayRaw ? /^(false|0|off|no)$/i.test(replayRaw) : false");
-    expect(src).toContain('NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0"');
+    expect(src).toContain('NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0.1"');
+    expect(src).toContain('NEXT_PUBLIC_SENTRY_REPLAY_ERROR_SAMPLE_RATE ?? "1.0"');
     expect(src).toMatch(/feedbackIntegration\(/);
     expect(src).toMatch(/NEXT_PUBLIC_SENTRY_FEEDBACK_ENABLED/);
   });
