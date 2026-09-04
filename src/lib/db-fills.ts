@@ -244,6 +244,62 @@ export function listPortfolioSnapshots(accountNumber: string, source?: FillSourc
   return rows.map(toPortfolioSnapshot);
 }
 
+/** Keep at most this many daily last-snapshots for the vs-S&P curve (~7 years of sessions). */
+export const DAILY_SNAPSHOT_DAY_CAP = 2500;
+
+/**
+ * One snapshot per calendar day (UTC date prefix of `created_at`), the last write that day,
+ * chronological. Used for the cash-flow-matched S&P comparison so every deposit/withdrawal
+ * day is a knot without the newest-100 cap dropping early history.
+ */
+export function listDailyPortfolioSnapshots(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local"
+): PortfolioSnapshot[] {
+  const rows = source
+    ? (getDb()
+        .prepare(
+          `SELECT * FROM (
+             SELECT p.*
+             FROM portfolio_snapshots p
+             INNER JOIN (
+               SELECT substr(created_at, 1, 10) AS d, MAX(created_at) AS max_created
+               FROM portfolio_snapshots
+               WHERE account_number = ? AND source = ? AND user_id = ?
+               GROUP BY substr(created_at, 1, 10)
+             ) last
+               ON p.created_at = last.max_created
+              AND p.account_number = ?
+              AND p.source = ?
+              AND p.user_id = ?
+             ORDER BY p.created_at DESC
+             LIMIT ?
+           ) newest ORDER BY created_at ASC`
+        )
+        .all(accountNumber, source, userId, accountNumber, source, userId, DAILY_SNAPSHOT_DAY_CAP) as RawPortfolioSnapshot[])
+    : (getDb()
+        .prepare(
+          `SELECT * FROM (
+             SELECT p.*
+             FROM portfolio_snapshots p
+             INNER JOIN (
+               SELECT substr(created_at, 1, 10) AS d, MAX(created_at) AS max_created
+               FROM portfolio_snapshots
+               WHERE account_number = ? AND user_id = ?
+               GROUP BY substr(created_at, 1, 10)
+             ) last
+               ON p.created_at = last.max_created
+              AND p.account_number = ?
+              AND p.user_id = ?
+             ORDER BY p.created_at DESC
+             LIMIT ?
+           ) newest ORDER BY created_at ASC`
+        )
+        .all(accountNumber, userId, accountNumber, userId, DAILY_SNAPSHOT_DAY_CAP) as RawPortfolioSnapshot[]);
+  return rows.map(toPortfolioSnapshot);
+}
+
 // ── Fill events ────────────────────────────────────────────────────────────────
 
 export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id?: string; filledAt?: string; userId?: string }): FillEvent {

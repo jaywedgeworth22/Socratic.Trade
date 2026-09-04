@@ -12,6 +12,10 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.dailyStats.openingOrderCount, 1)
         XCTAssertEqual(snapshot.performance?.liveRealizedPnl, 125.50)
         XCTAssertEqual(snapshot.performance?.benchmark?.excessReturnPct, 1.2)
+        XCTAssertEqual(snapshot.performance?.benchmark?.shadowValue, 24000)
+        XCTAssertEqual(snapshot.performance?.benchmark?.dollarExcess, 1000)
+        XCTAssertEqual(snapshot.performance?.benchmark?.accountEquitySeries?.count, 2)
+        XCTAssertEqual(snapshot.performance?.benchmark?.shadowBenchmarkSeries?.last?.value, 24000)
         XCTAssertEqual(snapshot.connectedAccounts.first?.environment, "live")
         XCTAssertEqual(snapshot.alerts.first?.triggeredPrice, 205)
         XCTAssertEqual(snapshot.pendingProposals.first?.proposal.tradeThesisTag, "quality")
@@ -40,6 +44,20 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.unifiedFeed.first?.title, "Strategy Run Failed")
         XCTAssertEqual(snapshot.unifiedFeed.first?.status, "failed")
         XCTAssertNil(snapshot.notifications.first?.channel)
+    }
+
+    func testBenchmarkWithoutDollarSeriesStillDecodes() throws {
+        // Installed TestFlight builds must keep reading a snapshot whose benchmark
+        // predates the same-cash dollar series — those keys are additive.
+        let json = #"""
+        {"readiness":{"hasAccount":true,"hasUniverse":true,"systemState":"active","strategyAuthority":"decide","commandBacklog":{"queued":0,"running":0}},
+         "policy":{"systemState":"active","strategyAuthority":"decide"},
+         "performance":{"liveRealizedPnl":1,"benchmark":{"accountReturnPct":5,"benchmarkReturnPct":4,"excessReturnPct":1,"startDate":"2026-06-01","endDate":"2026-07-21","points":10,"benchmarkSymbol":"SPY"}}}
+        """#
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8))
+        XCTAssertEqual(snapshot.performance?.benchmark?.excessReturnPct, 1)
+        XCTAssertNil(snapshot.performance?.benchmark?.accountEquitySeries)
+        XCTAssertNil(snapshot.performance?.benchmark?.shadowValue)
     }
 
     func testEquityCurveDecodesServerTimestampKeyedPoints() throws {
@@ -631,7 +649,7 @@ final class MobileModelsTests: XCTestCase {
       "orders":[{"id":"order-1","symbol":"AAPL","side":"buy","type":"limit","state":"filled","quantity":10,"filledQuantity":10,"averagePrice":190,"limitPrice":191,"timeInForce":"day","createdAt":"2026-07-21T15:00:00.000Z","updatedAt":"2026-07-21T15:01:00.000Z"}],
       "pendingProposals":[{"id":"proposal-1","createdAt":"2026-07-21T17:45:00.000Z","accountNumber":"account-number","executionMode":"broker/live","estimatedNotional":1500,"lastRevalidatedAt":"2026-07-21T17:50:00.000Z","revalidationNote":"Still valid","performanceSinceProposalPct":1.1,"proposalReferencePrice":200,"proposalCurrentPrice":202.2,"proposal":{"symbol":"AAPL","side":"buy","type":"limit","quantity":7,"limitPrice":201,"timeInForce":"day","rationale":"Rationale","greenTeamRationale":"Green rationale","tradeThesisTag":"quality","entryMarketRegime":"risk-on","confidenceScore":80,"proposedByModel":"openrouter/openai/gpt-5-mini","bracketTakeProfit":220,"bracketStopLoss":190,"exitPlan":"Trim a third at 220; trail the rest.","redTeamVerdict":{"verdict":"approve-at-half","rejected":false,"available":true,"reason":"Reduce concentration risk.","model":"openrouter/anthropic/claude-sonnet-4"}}}],
       "dailyStats":{"orderCount":2,"openingOrderCount":1,"notional":1500},
-      "performance":{"liveRealizedPnl":125.5,"paperRealizedPnl":0,"liveUnrealizedPnl":40,"paperUnrealizedPnl":0,"liveWinRate":60,"paperWinRate":0,"liveAverageReturnPct":2.5,"paperAverageReturnPct":0,"benchmark":{"accountReturnPct":5.2,"benchmarkReturnPct":4,"excessReturnPct":1.2,"startDate":"2026-06-01","endDate":"2026-07-21","points":25,"benchmarkSymbol":"SPY","cashFlowAdjusted":true,"netExternalFlows":1000},"fills":[{"id":"fill-1","symbol":"AAPL","side":"buy","quantity":10,"price":190,"notional":1900,"status":"filled","filledAt":"2026-07-21T15:01:00.000Z"}]},
+      "performance":{"liveRealizedPnl":125.5,"paperRealizedPnl":0,"liveUnrealizedPnl":40,"paperUnrealizedPnl":0,"liveWinRate":60,"paperWinRate":0,"liveAverageReturnPct":2.5,"paperAverageReturnPct":0,"benchmark":{"accountReturnPct":5.2,"benchmarkReturnPct":4,"excessReturnPct":1.2,"startDate":"2026-06-01","endDate":"2026-07-21","points":25,"benchmarkSymbol":"SPY","cashFlowAdjusted":true,"netExternalFlows":1000,"shadowValue":24000,"dollarExcess":1000,"accountEquitySeries":[{"date":"2026-06-01","value":20000},{"date":"2026-07-21","value":25000}],"shadowBenchmarkSeries":[{"date":"2026-06-01","value":20000},{"date":"2026-07-21","value":24000}]},"fills":[{"id":"fill-1","symbol":"AAPL","side":"buy","quantity":10,"price":190,"notional":1900,"status":"filled","filledAt":"2026-07-21T15:01:00.000Z"}]},
       "connectedAccounts":[{"id":"account-1","label":"Brokerage","broker":"robinhood","environment":"live","accountNumber":"account-number","isActive":true,"capabilities":{"equityTrading":true,"shortSelling":false,"optionsTrading":true,"optionsLevel":2,"marginEnabled":true,"accountType":"brokerage"}}],
       "watchlist":[{"symbol":"MSFT","addedAt":"2026-07-20T12:00:00.000Z"}],
       "alerts":[{"id":"alert-1","symbol":"AAPL","op":">","price":200,"note":"Breakout","status":"triggered","createdAt":"2026-07-20T12:00:00.000Z","triggeredAt":"2026-07-21T15:00:00.000Z","triggeredPrice":205}],
