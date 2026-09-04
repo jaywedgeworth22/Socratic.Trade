@@ -2836,12 +2836,23 @@ export interface BenchmarkSeriesPoint {
   index: number;
 }
 
+/** One point on a dollar series (account equity or same-cash S&P shadow). */
+export interface BenchmarkDollarPoint {
+  date: string;
+  value: number;
+}
+
 /**
- * SPY-benchmark equity-curve comparison: the account's equity curve and a SPY buy-and-hold curve,
- * both normalized to 100 at the first common date, plus the window's total returns. The honest
- * "are we beating the market" readout. Read as: if excess is +5% and SPY is +8%, the account
- * returned +13%. Computed on the fly from portfolio snapshots + SPY daily closes; null/absent when
- * there isn't enough history or SPY data is unavailable (degrade to "—").
+ * SPY-benchmark equity-curve comparison. Two readouts share the same deposit/withdrawal knots:
+ *  1) Time-weighted % (equityIndex vs benchmarkIndex, both start at 100) — manager skill,
+ *     cash flows neutralized so a transfer is not P&L.
+ *  2) Same-cash dollars (accountEquitySeries vs shadowBenchmarkSeries) — what the account
+ *     would be worth if every deposit bought S&P and every withdrawal sold S&P at that day's
+ *     close. dollarExcess = ending account equity − ending shadow value.
+ * Read the % tiles as: if excess is +5% and SPY is +8%, the account returned +13%. Read the
+ * dollar tiles as: "same cash in S&P is $X; you have $Y." Computed from portfolio snapshots +
+ * SPY daily closes; null/absent when there isn't enough history or SPY data is unavailable
+ * (degrade to "—").
  */
 /**
  * One capital regime between deposits/withdrawals (or a coalesced no-flow run of snapshots).
@@ -2866,6 +2877,14 @@ export interface BenchmarkSubPeriod {
 export interface BenchmarkComparison {
   equityIndex: BenchmarkSeriesPoint[];
   benchmarkIndex: BenchmarkSeriesPoint[];
+  /** Account equity in dollars at each aligned date (last snapshot of that day). */
+  accountEquitySeries: BenchmarkDollarPoint[];
+  /** Hypothetical S&P tracker funded with the same deposits and withdrawals, in dollars. */
+  shadowBenchmarkSeries: BenchmarkDollarPoint[];
+  /** Ending value of the same-cash S&P tracker. */
+  shadowValue: number;
+  /** Ending account equity minus shadowValue (positive = you have more dollars than same-cash S&P). */
+  dollarExcess: number;
   /** Account multi-period time-weighted return (%, geometric chain of sub-period returns
    *  between each deposit/withdrawal). External cash is neutralized each sub-period. */
   accountReturnPct: number;

@@ -705,7 +705,7 @@ private struct PerformanceOverviewCard: View {
 
                 if let benchmark = performance.benchmark {
                     AppCard {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text("vs \(benchmark.benchmarkSymbol)")
@@ -725,9 +725,28 @@ private struct PerformanceOverviewCard: View {
                             )
                             .font(.appCaption)
                             .foregroundStyle(.secondary)
-                            Text("account return minus \(benchmark.benchmarkSymbol) over the same window (cash flows neutralized).")
+                            if let shadowValue = benchmark.shadowValue, let dollarExcess = benchmark.dollarExcess {
+                                Text(
+                                    "Same cash in \(benchmark.benchmarkSymbol) \(AppFormat.money(shadowValue)).  You vs that \(dollarExcess > 0 ? "+" : "")\(AppFormat.money(dollarExcess))."
+                                )
+                                .font(.appCaption)
+                                .foregroundStyle(pnlColor(dollarExcess))
+                            }
+                            Text("Same deposits and withdrawals as this account, applied at each day's cutoff.  The dashed line is what those dollars would be in \(benchmark.benchmarkSymbol).")
                                 .font(.appCaption2)
                                 .foregroundStyle(.secondary)
+                            if let accountSeries = benchmark.accountEquitySeries,
+                               let shadowSeries = benchmark.shadowBenchmarkSeries,
+                               accountSeries.count >= 2,
+                               shadowSeries.count >= 2 {
+                                BenchmarkCompareChart(
+                                    account: accountSeries,
+                                    shadow: shadowSeries,
+                                    accountLabel: "You",
+                                    benchmarkLabel: benchmark.benchmarkSymbol
+                                )
+                                .padding(.top, 4)
+                            }
                         }
                     }
                 }

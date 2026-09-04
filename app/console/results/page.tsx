@@ -21,6 +21,7 @@ import {
   redTeamSampleTier
 } from "../lib/red-team-efficacy";
 import { describeRedTeamFailureKind } from "@/lib/red-team-routing";
+import { BenchmarkChart } from "../components/benchmark-chart";
 import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
 import { fmtExact, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH, SENTENCE_GAP } from "../lib/format";
@@ -247,7 +248,7 @@ export default function ResultsPage() {
       )}
 
       {/* Benchmark */}
-      <Card title="Versus the Market (SPY Buy-and-Hold)">
+      <Card title="Versus the Market (Same-Cash S&P)">
         {perf?.benchmark ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -255,7 +256,7 @@ export default function ResultsPage() {
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
                 sub={`Trailing ~${perf.benchmark.points} session${perf.benchmark.points === 1 ? "" : "s"} (${perf.benchmark.startDate} → ${perf.benchmark.endDate})`}
-                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others.  Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would.  This window is bounded to your most recently stored equity snapshots — a rolling window, not necessarily your full account history."
+                title="Time-weighted return: the window is split at every deposit/withdrawal into back-to-back capital regimes; each regime’s market return is chained (multiplied) with the others.  Having $100 for 10 days then $10 for 100 days does not let the long small-balance stretch dominate like a simple start→end ratio would.  One last snapshot per day, including early deposits, up to several years of sessions."
               />
               <Stat
                 label={perf.benchmark.benchmarkSymbol}
@@ -277,12 +278,46 @@ export default function ResultsPage() {
                 </div>
               </div>
             </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <Stat
+                label={`Same cash in ${perf.benchmark.benchmarkSymbol}`}
+                value={fmtMoney(perf.benchmark.shadowValue)}
+                sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
+                title={`Hypothetical ${perf.benchmark.benchmarkSymbol} tracker funded with the same deposits and withdrawals as this account.${SENTENCE_GAP}Each transfer is a breakpoint; that day's invested dollars grow with ${perf.benchmark.benchmarkSymbol} until the next transfer.${SENTENCE_GAP}Same-day additions and withdrawals are treated as landing at the daily cutoff.`}
+              />
+              <div>
+                <div className="con-card-title">You vs that</div>
+                <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
+                  <SignedText value={perf.benchmark.dollarExcess}>
+                    <span
+                      title={`Your ending equity minus the same-cash ${perf.benchmark.benchmarkSymbol} tracker.${SENTENCE_GAP}Positive means you have more dollars than if the same cash had tracked the S&P.`}
+                    >
+                      {fmtSignedMoney(perf.benchmark.dollarExcess)}
+                    </span>
+                  </SignedText>
+                </div>
+                <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                  account dollars − same-cash {perf.benchmark.benchmarkSymbol}
+                </div>
+              </div>
+            </div>
+            {perf.benchmark.accountEquitySeries.length >= 2 && perf.benchmark.shadowBenchmarkSeries.length >= 2 && (
+              <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
+                <div className="con-card-title mb-2">Account vs same-cash {perf.benchmark.benchmarkSymbol}</div>
+                <BenchmarkChart
+                  account={perf.benchmark.accountEquitySeries}
+                  shadow={perf.benchmark.shadowBenchmarkSeries}
+                  accountLabel="Your account"
+                  benchmarkLabel={perf.benchmark.benchmarkSymbol}
+                />
+              </div>
+            )}
             <p className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
               {perf.benchmark.cashFlowAdjusted
                 ? `Time-weighted across capital regimes — neutralized ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} net ${
                     (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
-                  } (deposits +, withdrawals −).  Each stretch between transfers is its own sub-period for you and for SPY; overall = product of (1 + r) − 1.  Flows are inferred from snapshots and fills, not a broker transfer ledger.`
-                : "No material deposits or withdrawals detected — single continuous period (account equity growth vs SPY over the same dates)."}
+                  } (deposits +, withdrawals −).${SENTENCE_GAP}Each stretch between transfers is its own sub-period for you and for ${perf.benchmark.benchmarkSymbol}; the % tiles chain those returns, and the dollar chart applies the same cash to ${perf.benchmark.benchmarkSymbol} at each breakpoint.${SENTENCE_GAP}Flows come from the broker ledger when present, otherwise snapshots and fills.`
+                : `No material deposits or withdrawals detected — single continuous period (account equity growth vs ${perf.benchmark.benchmarkSymbol} over the same dates).`}
               {(perf.benchmark.unverifiedFlows?.length ?? 0) > 0 &&
                 ` ${perf.benchmark.unverifiedFlows!.length} inferred transfer${
                   perf.benchmark.unverifiedFlows!.length === 1 ? "" : "s"

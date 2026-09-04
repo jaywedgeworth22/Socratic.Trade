@@ -19,6 +19,7 @@ import {
   listStrategyProfiles,
   listStrategyRuns,
   listFillEvents,
+  listDailyPortfolioSnapshots,
   listConnectedAccounts,
   getActiveConnectedAccount,
   filterFullStopPlansByLiveBasis,
@@ -728,12 +729,26 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
   // failure or sparse history simply leaves performance.benchmark undefined (UI shows "—").
   if (performance) {
     const curve = scorecardSource === "live" ? performance.liveEquityCurve : performance.paperEquityCurve;
+    // Daily last-snapshot curve so vs-S&P covers the life of the account (newest-100
+    // snapshots used to shrink the window to ~1–2 weeks on a busy scheduler). Fall back
+    // to the short curve when we do not yet have two distinct days.
+    const dailySnapshots = accountNumber
+      ? listDailyPortfolioSnapshots(accountNumber, scorecardSource, userId)
+      : [];
+    const dailyCurve = dailySnapshots.map((snapshot) => ({
+      timestamp: snapshot.createdAt,
+      equity: snapshot.equity,
+      source: scorecardSource,
+      cash: snapshot.cash,
+      positionsValue: snapshot.positionsValue
+    }));
+    const curveForBenchmark = dailyCurve.length >= 2 ? dailyCurve : curve;
     // Tip the curve with the live portfolio so "all time" includes now (snapshots only land on
     // strategy runs; without this tip a quiet cash account can look like stale mid-history alpha).
     const tippedCurve =
       displayPortfolio && Number.isFinite(displayPortfolio.totalMarketValue) && displayPortfolio.totalMarketValue > 0
         ? [
-            ...curve,
+            ...curveForBenchmark,
             {
               timestamp: new Date().toISOString(),
               equity: displayPortfolio.totalMarketValue,
@@ -742,7 +757,7 @@ async function computeDashboardSnapshot(userId: string = "local", currentUser?: 
               positionsValue: displayPortfolio.equityMarketValue
             }
           ]
-        : curve;
+        : curveForBenchmark;
     // Same-source fills let the benchmark infer deposits/withdrawals (cash delta minus trade
     // cash) so the account return line is time-weighted instead of counting transfers as P&L.
     const benchmarkFills = scorecardSource === "live" ? liveFills : paperFills;
