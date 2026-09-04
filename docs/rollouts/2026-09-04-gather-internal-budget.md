@@ -53,10 +53,13 @@ Did not raise the 8-minute cap.  Did not treat skip rows as liveness `completed`
 
 ```
 PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/gather-budget.test.ts test/strategy-gather.test.ts test/enrichment-abort.test.ts test/broker-health-auto-pause.test.ts test/market-preselection.test.ts
-PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh
+# 29 passed
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit   # clean
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test           # 7773 passed / 51 skipped, 710 files
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build      # Next webpack succeeded after crypto import fix
 ```
 
-Record actual counts after the gate.
+First land.sh build failed on `import { randomUUID } from "node:crypto"` in `broker-health.ts` (webpack UnhandledSchemeError).  Follow-up commit uses `from "crypto"` like `db-health.ts`.
 
 ## Next Steps & Blockers
 
