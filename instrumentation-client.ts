@@ -8,14 +8,14 @@ import { redactForTelemetry } from "./src/lib/telemetry-sanitize";
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
 if (dsn) {
-  // Designer 2026-09-04: ST web session Replay stays 0%.  Error Replay is
-  // ON by default (100%) with mask-all.  Kill switch:
-  // NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=false.  Raise session sample only via
-  // NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE after Designer.
+  // Designer 2026-09-04 update: ST web Session Replay defaults to 10%
+  // session / 100% error, mask-all.  Kill switch:
+  // NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=false.  Override rates via sample-rate
+  // env; do not rely on Coolify-only documentation.
   const replayRaw = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED?.trim();
   const replayDisabled = replayRaw ? /^(false|0|off|no)$/i.test(replayRaw) : false;
   const replaySessionSampleRate = Number(
-    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0"
+    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0.1"
   );
   const replayErrorSampleRate = Number(
     process.env.NEXT_PUBLIC_SENTRY_REPLAY_ERROR_SAMPLE_RATE ?? "1.0"

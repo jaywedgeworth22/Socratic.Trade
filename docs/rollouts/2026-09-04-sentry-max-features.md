@@ -5,8 +5,9 @@ Board `af1ab6e9`.  Branch `grok/sentry-max-features`.  Worktree
 
 ## Changes
 
-- Web Session Replay defaults to **error-only** (session sample 0%, error 100%,
-  mask-all).  Designer omission: do not raise session Replay on socratictrade.com.
+- Web Session Replay originally defaulted to **error-only** (session sample 0%,
+  error 100%, mask-all).  **Superseded** by `2026-09-04-sentry-replay-10.md`:
+  session default is now 10%.
 - User Feedback widget on (`NEXT_PUBLIC_SENTRY_FEEDBACK_ENABLED=false` kills it).
 - iOS `profilesSampleRate = 0.1`.
 - Kill switches: `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=false`, sample-rate env vars.
