@@ -6,11 +6,15 @@ WAL as LTX files to an S3-compatible object store.
 **Production (Coolify, 2026-08-07+):** active replica is **Backblaze B2** EU Central
 (`jays-socratic-trade-eu`, endpoint `s3.eu-central-003.backblazeb2.com`) via
 `litestream.coolify.yml` + Infisical `AWS_*`. B2 restore to a host scratch path is
-**VERIFIED** (2026-08-18 UTC).  Cloudflare R2 remains the weekly cold snapshot
-(`cold-snapshots/`), not a second Litestream writer.  Weekly retain=1 is
-**VERIFIED** (exactly one `cold-snapshots/` object).  Details:
-`docs/rollouts/2026-08-07-litestream-b2-backup.md` and
-`docs/rollouts/2026-08-17-litestream-restore-drill.md`.
+**VERIFIED** (2026-08-18 UTC).  Cloudflare R2 (`socratic-trade-bucket`) is weekly
+cold-snapshot DR only (`cold-snapshots/app-YYYY-MM-DD.db.gz` since PR #3135), not a
+second Litestream writer.  Read-only inventory 2026-09-04: object_count=1,
+bucket_size ~9.68 GB; sole key `cold-snapshots/app-2026-08-30.db` (9679310848
+bytes, ~9.02 GiB); `trading-live/` empty (historic litestream prune moot);
+`weekly/` empty (leftover `R2_ARCHIVE_KEEP_GENERATIONS` unused).  Details:
+`docs/rollouts/2026-08-07-litestream-b2-backup.md`,
+`docs/rollouts/2026-08-17-litestream-restore-drill.md`, and
+`docs/rollouts/2026-09-04-r2-weekly-gzip-freshen.md`.
 
 **All three fleet apps (ST, CT, UM) run litestream IN-CONTAINER** since the August
 2026 Hetzner rebuild.  The 2026-08-01 host-level `litestream-congress` systemd unit
@@ -32,9 +36,19 @@ days old.  No provider holds a recovery point older than ~15 days.
 The weekly cold snapshot (`src/lib/r2-cold-snapshot.ts`, Sunday ~03:17 UTC due-job)
 uploads `cold-snapshots/app-YYYY-MM-DD.db.gz` — the better-sqlite3 `backup()` file
 gzip-streamed during the multipart upload (the raw DB reached ~9.7 GB, ~90% of the
-R2 free tier; compressed is expected at ~2.5-4 GB).  Retention is retain=1 across
-BOTH extensions, so the first successful `.gz` upload prunes the last legacy raw
-`.db` object.  **Restore from a cold snapshot now needs a gunzip step first:**
+R2 free tier; compressed is expected at ~2.5-4 GB).  Gzip landed on main in PR
+#3135.  Retention is retain=1 across BOTH extensions (`.db` and `.db.gz`).
+
+**First gzip land must NOT prune.**  A normal retain=1 success would upload the new
+`.db.gz` then DeleteObject `cold-snapshots/app-2026-08-30.db` (~9.02 GiB).  Jay has
+not approved that delete.  Set `R2_COLD_SNAPSHOT_SKIP_PRUNE=1` so the freshen
+uploads without pruning.  Default remains retain=1 prune for later Sunday jobs
+after that approval.  Agents must never DeleteObject against this bucket without
+Jay's approval.  Read-only inventory: `node scripts/ops/r2-cold-snapshot-inventory.mjs`
+(AWS_R2_HISTORIC_* when present; prints keys+sizes+counts only; exits 2 on
+AccessDenied; no delete path).
+
+**Restore from a `.db.gz` cold snapshot needs a gunzip step first:**
 
 ```bash
 # Download (rclone/aws cli against the historic R2 bucket), then:
@@ -43,7 +57,7 @@ sqlite3 app-2026-08-31.db 'PRAGMA integrity_check;'   # expect: ok
 ```
 
 After gunzip the file is a plain SQLite DB — treat it exactly like the old raw
-`.db` snapshot.
+`.db` snapshot.  A still-present legacy `app-YYYY-MM-DD.db` needs no gunzip.
 
 ## L1 suffix heal precedent (2026-08-31)
 

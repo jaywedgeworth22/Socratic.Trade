@@ -779,9 +779,11 @@ async function tickInner(): Promise<void> {
   // Weekly R2 cold snapshot (owner directive 2026-08-08): second-provider disaster
   // recovery — better-sqlite3 backup() of the live DB, gzip-streamed + multipart-uploaded
   // to the idle historic R2 bucket (cold-snapshots/app-<date>.db.gz since 2026-08-31;
-  // newest 1 kept across .db/.db.gz — the raw DB hit ~9.7 GB). Durable weekly
-  // due-job (Sunday ~03:17 UTC; survives downtime), silent no-op without the
-  // AWS_R2_HISTORIC_* credentials, budget-guarded against the R2 free tier.
+  // newest 1 kept across .db/.db.gz — the raw DB hit ~9.7 GB).  First gzip land must
+  // set R2_COLD_SNAPSHOT_SKIP_PRUNE=1 until Jay approves deleting the legacy
+  // cold-snapshots/app-2026-08-30.db.  Durable weekly due-job (Sunday ~03:17 UTC;
+  // survives downtime), silent no-op without the AWS_R2_HISTORIC_* credentials,
+  // budget-guarded against the R2 free tier.
   void import("./r2-cold-snapshot")
     .then(({ ensureR2ColdSnapshotJobScheduled, drainR2ColdSnapshotJobs }) =>
       journalLane("r2-cold-snapshot", {}, async () => {
