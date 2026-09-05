@@ -15,7 +15,7 @@ describe("broker-health auto-pause when orders cannot be placed", () => {
 
   beforeEach(async () => {
     const { getDb } = await import("../src/lib/db");
-    getDb().exec("DELETE FROM settings; DELETE FROM audit_events;");
+    getDb().exec("DELETE FROM settings; DELETE FROM audit_events; DELETE FROM strategy_runs;");
   });
 
   afterEach(() => {
@@ -194,5 +194,35 @@ describe("broker-health auto-pause when orders cannot be placed", () => {
       gateway as never
     );
     expect(health.isHealthy).toBe(true);
+  });
+
+  it("persists skipped_broker_unhealthy once when the scheduler gate auto-halts", async () => {
+    const { getDb, listAudit } = await import("../src/lib/db");
+    const {
+      persistBrokerHealthSkipRun,
+      shouldPersistBrokerHealthSkip
+    } = await import("../src/lib/broker-health");
+
+    expect(shouldPersistBrokerHealthSkip({ wasActive: true, pauseAction: "halted" })).toBe(true);
+    expect(shouldPersistBrokerHealthSkip({ wasActive: true, pauseAction: "none" })).toBe(false);
+    expect(shouldPersistBrokerHealthSkip({ wasActive: false, pauseAction: "halted" })).toBe(false);
+    expect(shouldPersistBrokerHealthSkip({ wasActive: true, pauseAction: "still_paused" })).toBe(false);
+
+    const runId = persistBrokerHealthSkipRun({
+      userId: "local",
+      connectedAccountId: "acct-equity-0",
+      accountNumber: "PA1",
+      reason: "Account equity (0) is too low to trade",
+      halted: true
+    });
+    const row = getDb()
+      .prepare("SELECT status, summary, connected_account_id FROM strategy_runs WHERE id = ?")
+      .get(runId) as { status: string; summary: string; connected_account_id: string };
+    expect(row.status).toBe("skipped_broker_unhealthy");
+    expect(row.connected_account_id).toBe("acct-equity-0");
+    expect(row.summary).toMatch(/auto-paused/);
+    expect(row.summary).toMatch(/equity \(0\)/);
+    const kinds = listAudit(50, "local").map((a) => a.kind);
+    expect(kinds).toContain("run_skipped_broker_unhealthy");
   });
 });

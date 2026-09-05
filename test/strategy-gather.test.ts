@@ -120,6 +120,9 @@ describe("gatherStrategyMarket", () => {
     expect(result.baseMarketScan).toBe(scanned);
     expect(result.marketScan.topCandidates[0]?.price).toBe(221);
     expect(mockNewestPersisted).not.toHaveBeenCalled();
+    const scanOptions = mockScanMarket.mock.calls[0]?.[5] as { deadlineAt?: number; signal?: AbortSignal };
+    expect(typeof scanOptions.deadlineAt).toBe("number");
+    expect(scanOptions.deadlineAt).toBeGreaterThan(Date.now() - 1_000);
   });
 
   it("aborts the in-flight scan when the deadline wins", async () => {

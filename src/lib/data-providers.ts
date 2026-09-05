@@ -13,6 +13,7 @@
 // comment on SteadyApiEnrichmentProvider / AlphaVantageRapidApiEnrichmentProvider below and
 // rapidapi-quota.ts for the persisted daily-budget mechanism that keeps it safe.
 
+import { enrichmentPlanForDeadline } from "./gather-budget";
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import {
   congressFundamentalsEnabled,
@@ -310,6 +311,9 @@ export interface EnrichmentContext {
    *  and on paced paid fetches so an abandoned 8-minute gather stops starting
    *  Finnhub/RapidAPI work instead of finishing the queue behind a failed run. */
   signal?: AbortSignal;
+  /** Epoch ms of the outer gather wall.  Cascade skips keyed/scarce waves when
+   *  remaining time is below the internal budget (board 06df80cf leftover). */
+  deadlineAt?: number;
 }
 
 function throwIfEnrichmentAborted(signal: AbortSignal | undefined): void {
@@ -1470,7 +1474,10 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       // One retry for free providers that threw — transient 429/timeout must not permanently
       // suppress the keyless floor before paid/scarce failover runs.
       const retryIndexes = freeIndexes.filter((providerIndex) => results[providerIndex].failure);
-      if (retryIndexes.length > 0) {
+      if (
+        retryIndexes.length > 0 &&
+        !enrichmentPlanForDeadline(context?.deadlineAt).skipKeyedWave
+      ) {
         const retries = await Promise.all(
           retryIndexes.map(async (providerIndex) => ({
             providerIndex,
@@ -1484,8 +1491,13 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       }
 
       // ── Wave B: keyed non-scarce (costTier paid = has a key), gap-only ──────
+      // Skip when remaining gather budget cannot finish Finnhub's paced queue
+      // before the 8-minute wall (board 06df80cf leftover).
       throwIfEnrichmentAborted(context?.signal);
-      if (paidIndexes.length > 0) {
+      if (
+        !enrichmentPlanForDeadline(context?.deadlineAt).skipKeyedWave &&
+        paidIndexes.length > 0
+      ) {
         const filledAfterFree = buildFilledBySymbol(freeIndexes);
         const gapSymbols = normalized.filter((symbol) =>
           symbolHasCoverageGap(filledAfterFree.get(symbol) ?? new Set(), WAVE_B_GAP_FIELDS)
@@ -1505,7 +1517,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           const paidContext: EnrichmentContext = {
             coveredFields,
             analystSource,
-            signal: context?.signal
+            signal: context?.signal,
+            deadlineAt: context?.deadlineAt
           };
           const paidRuns = await Promise.all(
             paidIndexes.map((providerIndex) => {
@@ -1563,7 +1576,10 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     }
 
     throwIfEnrichmentAborted(context?.signal);
-    if (scarceIndexes.length > 0) {
+    if (
+      !enrichmentPlanForDeadline(context?.deadlineAt).skipScarceWave &&
+      scarceIndexes.length > 0
+    ) {
       // Prior waves' actual fills. A provider that threw contributed `{}`, so its fields read as
       // NOT covered and the scarce tier can still step in — failure must never suppress failover.
       const priorIndexes = freeFirstOn
@@ -1571,7 +1587,11 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         : legacyWaveOneIndexes;
       const filledBySymbol = buildFilledBySymbol(priorIndexes);
       const coveredFields = coveredFieldsFrom(filledBySymbol);
-      const scarceContext: EnrichmentContext = { coveredFields, signal: context?.signal };
+      const scarceContext: EnrichmentContext = {
+        coveredFields,
+        signal: context?.signal,
+        deadlineAt: context?.deadlineAt
+      };
       const scarceRuns = await Promise.all(
         scarceIndexes.map(async (providerIndex) => {
           const provider = this.providers[providerIndex];
