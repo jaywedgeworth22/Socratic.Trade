@@ -549,13 +549,11 @@ describe("Connection Health & Failure Routing", () => {
     }
   });
 
-  // 2026-08-14. The SAME wedge one stage later. Litestream's retention keeps pruning a wedged
-  // level while the wedge produces no replacements, so level 2 in production went 171 objects
-  // (frozen) to 0 objects (empty) — and the empty stage was classified "not observable / this is
-  // normal for a level Litestream has not needed to produce", so /api/health published
-  // `litestreamDegradedReasons: []` and no degraded storage tier for six days. This reproduces
-  // the persisted production snapshot against the real route.
-  it("/api/health flags an EMPTY deep-compaction level as wedged, with a stated reason, when its feeder is still advancing", async () => {
+  // 2026-09-01 product: L2/L3 are off.  The 2026-08-14 empty-L2 wedge is still covered
+  // in runtime-health.test.ts with disabledTiers: [].  The public route must not page
+  // leftover empty L2/L3 as a wedge, or the next deploy would 200-with-storageDegraded
+  // forever after we stop compacting those levels.
+  it("/api/health does not page empty L2/L3 when those levels are product-disabled", async () => {
     const { healthRoute, db } = await load();
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
 
@@ -601,18 +599,27 @@ describe("Connection Health & Failure Routing", () => {
       expect(body.checks.storage.litestreamTiers).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ tier: "1", state: "known", degraded: false }),
-          expect.objectContaining({ tier: "2", state: "empty", verdict: "wedged", degraded: true }),
-          expect.objectContaining({ tier: "3", state: "empty", verdict: "upstream-wedged", degraded: true }),
+          expect.objectContaining({
+            tier: "2",
+            state: "empty",
+            verdict: "expected",
+            reason: "product-disabled",
+            degraded: false
+          }),
+          expect.objectContaining({
+            tier: "3",
+            state: "empty",
+            verdict: "expected",
+            reason: "product-disabled",
+            degraded: false
+          }),
           expect.objectContaining({ tier: "9", state: "known", degraded: false })
         ])
       );
-      expect(body.checks.storage.litestreamTiersDegraded).toBe(true);
-      expect(body.checks.storage.litestreamTierDegradedReasons.length).toBeGreaterThan(0);
-      expect(
-        body.checks.storage.litestreamTierDegradedReasons.some((r: string) => r.includes("no objects at level 2"))
-      ).toBe(true);
-      expect(body.checks.storageDegraded).toBe(true);
-      // Five levels listed, five observed: an empty level is measured, not a coverage gap.
+      expect(body.checks.storage.litestreamTiersDegraded).toBe(false);
+      expect(body.checks.storage.litestreamTierDegradedReasons).toEqual([]);
+      expect(body.checks.storageDegraded).toBeFalsy();
+      // Five levels listed, five observed: an empty disabled level is still measured.
       expect(body.checks.storage.litestreamTierCoverage).toMatchObject({ observed: 5, notObservable: 0 });
     } finally {
       inventoryMod.setLitestreamRemoteInventoryCache(null);

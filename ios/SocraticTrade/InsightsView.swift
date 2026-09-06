@@ -72,8 +72,8 @@ struct InsightsView: View {
             let ahead = benchmark.excessReturnPct >= 0
             insights.append(.init(
                 id: "benchmark",
-                title: "vs SPY",
-                detail: "You \(AppFormat.percent(benchmark.accountReturnPct, signed: true)) · SPY \(AppFormat.percent(benchmark.benchmarkReturnPct, signed: true)) → excess \(AppFormat.percent(benchmark.excessReturnPct, signed: true)) across \(benchmark.points) observations.",
+                title: "vs \(benchmark.benchmarkSymbol)",
+                detail: "You \(AppFormat.percent(benchmark.accountReturnPct, signed: true)) · \(benchmark.benchmarkSymbol) \(AppFormat.percent(benchmark.benchmarkReturnPct, signed: true)) → excess \(AppFormat.percent(benchmark.excessReturnPct, signed: true)) across \(benchmark.points) observations.",
                 systemImage: ahead ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis",
                 tone: ahead ? .positive : .attention
             ))

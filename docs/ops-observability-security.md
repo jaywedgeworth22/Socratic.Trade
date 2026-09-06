@@ -22,8 +22,19 @@ This app now has opt-in scaffolding for the seven selected tools:
   `socratic-trade`); set the build-time secret `SENTRY_AUTH_TOKEN` to upload source maps
   for de-minified production stack traces. `app/global-error.tsx` reports root-layout
   render errors. The previous build-wrapper instability did not reproduce on
-  `@sentry/nextjs@10` + Next 16. Browser Session Replay is opt-in
-  (`NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true`) and masks all text + blocks all media when on.
+  `@sentry/nextjs@10` + Next 16.  Browser Session Replay is opt-in and must be
+  `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true` at **Coolify build time** (Next inlines
+  `NEXT_PUBLIC_*`); do not default Replay on in code.  When on: 1% session / 100%
+  on error, mask all text, block all media.  Browser envelopes tunnel through
+  same-origin `/monitoring` (`tunnelRoute`; middleware matcher excludes it).
+  Server continuous profiling (`@sentry/profiling-node`, `profileLifecycle: "trace"`)
+  is Node-only — not browser UI profiling.  Sparse `Sentry.logger` + Application
+  Metrics (`src/lib/sentry-metrics.ts`) cover `scheduler.tick`/`scheduler.overrun`,
+  `rag.rejected`, `embed.failed`, and `broker.call`.  LLM/embed HTTP is wrapped in
+  `gen_ai.*` spans (`src/lib/sentry-gen-ai.ts`) without prompt contents.  iOS Cocoa
+  reads `SENTRY_DSN` from Info.plist only (no hardcoded fallback) and sets
+  `releaseName`/`dist` from `CFBundleShortVersionString`/`CFBundleVersion`.
+  Datadog stays the log warehouse; do not dual-ship the access-log firehose.
   RAG provider failures, Pinecone index/metric checks, ingest budget trips, Pinecone Write
   Unit budget trips, malformed embedding rejections, and retrieval degradations are captured
   as warning/error events tagged `component=rag`, `rag.provider`, `rag.operation`, and

@@ -3,6 +3,228 @@
 ## 2026-08-31 GROK — Hung scheduler-tick watchdog (Firefighter SOCRATIC-TRADE-4)
 
 Live SHA `189f5a31` stayed up while Autopilot died:  `scheduler-tick` missed check-in (lastSeen 13:36Z), `schedulerLastTick` 13:30:42Z, lease expired 13:32:12Z, `schedulerStale` / `tradingLivenessDegraded` true, market open, `/api/health` 15s timeout.  Root cause:  `__tickInFlight` skipped every later interval while `tickInner` awaited a hung lane, and Sentry was told `ok` at tick start.  Fix:  15s watchdog unwedge (2 min budget, generation token), honest `in_progress`/`ok`/`error` Crons, `lastTick` on finish, deadlines on drain + `checkBrokerHealth`, do not await strategy runs on the tick path.  No extra-ship.  No Coolify mutate.  Rollout:  `docs/rollouts/2026-08-31-hung-scheduler-tick-watchdog.md`.
+## 2026-09-04 GROK — R2 weekly gzip freshen (skip-prune + inventory)
+
+Gzip upload path already on main via #3135 (`cold-snapshots/app-<ISO-date>.db.gz`,
+retain=1, KEY_PATTERN matches `.db` and `.db.gz`).  Live Litestream replica is B2
+`jays-socratic-trade-eu`; R2 is weekly DR only.  Read-only inventory 2026-09-04
+(SocraticTrade.com / `socratic-trade-bucket`): object_count=1, bucket_size ~9.68 GB;
+sole key `cold-snapshots/app-2026-08-30.db` size=9679310848 (~9.02 GiB);
+`trading-live/` empty (0); `weekly/` empty (0).  This lane adds
+`R2_COLD_SNAPSHOT_SKIP_PRUNE` so a freshen can land `.db.gz` without deleting the
+legacy 9 GiB object (Jay has not approved that delete).  Read-only inventory
+script; no live prune; no Coolify; no extra-ship; no merge from this lane.
+Branch `grok/r2-weekly-gzip-freshen`.  Rollout:
+`docs/rollouts/2026-09-04-r2-weekly-gzip-freshen.md`.
+## 2026-09-04 BF-Fixer — Gather internal time budget (P0 06df80cf)
+
+Leftover `claude/gather-budget` had zero unique commits; `/tmp/st-gather` is gone.
+Reconstructed on `origin/main` `de236a63d`: internal enrichment-wave budget so gather
+returns a live tape before the 8-minute wall, plus one `skipped_broker_unhealthy`
+row when the scheduler health gate auto-halts an active account (equity 0).
+Abort + last-good (#3013/#3018) stay.  Not #3138/#3158/#3162.  No extra-ship.
+No TestFlight.  Branch `grok/gather-budget`, worktree `~/apps/trading-grok-gather-budget`.
+Rollout: `docs/rollouts/2026-09-04-gather-internal-budget.md`.
+
+## 2026-09-04 GROK — Vitest teardown flake after #3162
+
+Main verify on `80515c15` failed with `EnvironmentTeardownError` /
+`onUserConsoleLog` pending in `test/economic-calendar-prompt-wiring.test.ts`
+after 7761 passing tests.  `#3046`'s `onConsoleLog: () => false` still
+forwards logs over RPC.  Fix: `disableConsoleIntercept: true` plus quiet
+log/info/debug in the existing setup file.  Targeted vitest 3/3 in 6.67s,
+eslint on touched files exit 0.  Branch `grok/vitest-teardown-console`,
+worktree `~/apps/trading-grok-verify-flake`.  PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/3163
+SHA `4fba321ff`.  No Coolify.  No extra-ship.  No merge from this lane.
+Remaining gate: GitHub `verify`.  Rollout:
+`docs/rollouts/2026-09-04-vitest-teardown-console.md`.
+
+## 2026-09-03 GROK — Cash-flow-matched S&P overlay
+
+Owner asked where vs-S&P lives and for the overlay graph of account vs S&P if the same cash
+had been added and withdrawn.  Numbers already existed as TWR % on Results (web) and Home /
+Results / Insights (iOS).  The dollar overlay was computed as unused index series.  This
+lane draws account $ vs same-cash SPY $, with every deposit/withdrawal as a breakpoint and
+a daily last-snapshot curve so early transfers survive.  Branch `grok/spy-cashflow-chart`,
+worktree `~/apps/trading-grok-spy-chart`, board `7b71186c`.  Rollout:
+`docs/rollouts/2026-09-03-spy-cashflow-chart.md`.
+
+## 2026-09-01 GROK — Qdrant Stage 2 write/delete/inventory cutover
+
+Owner-directed full Qdrant integration.  Stage 1 reads already serve (`RAG_VECTOR_READ_QDRANT`, PR #3138).  Stage 2 routes upserts, deletes, payload patches, and metadata inventory to self-hosted collection `socratic-trade` via new `src/lib/vector-store/qdrant-write.ts` and knob `RAG_VECTOR_WRITE_QDRANT` (default true when `QDRANT_URL` is set).  Runtime default no longer calls Pinecone upsert/deleteMany/list/fetch, does not wrap those paths in `withRagApiHealth("pinecone")`, and does not park ingest on `pineconeWuExhaustedUntil` or the daily Pinecone WU fuse.  Provider authority on the Qdrant path comes from durable SQLite commits (`durableProviderAuthority`) so writes do not no-op.  Point ids stay uuid5(`st:{ns}:{pc_id}`) with payload `pc_id`/`ns` so Stage 1 reads keep matching.  Metering is provider `"qdrant"` with zero phantom WUs.  `@pinecone-database/pinecone` stays installed behind the pinecone backend flag.  Did not run a Pinecone delta copy (would burn remaining read units).  Branch `grok/qdrant-write-cutover`, worktree `~/apps/trading-grok-qdrant-writes`, issue #3151, boards 97b5894b / 9e19673a / dc98d716 / c741db8e.  Rollout: `docs/rollouts/2026-09-01-qdrant-write-cutover.md`.
+## 2026-09-01 GROK — Litestream structural: L2/L3 off, honest detector, scheduled L1 trim
+
+Owner-directed: stop the trim-and-heal cycle.  Product compaction is L0 + bounded L1 +
+24h snapshots.  Litestream 0.5.12 has no disable-L2 flag; `litestream.coolify.yml`
+`levels: [{interval: 30s}]` is the off switch (`Config.Levels` is L1..N).  No
+compaction-backoff yaml key either -- removing L2/L3 is the backoff (the storm was
+re-downloading the whole L1 chain every 5 minutes).
+
+Detector: per-level log recovery (L1 complete does not clear L2 fail).  Health pages
+stale L9 even when L0 age is 0.  Leftover L2/L3 objects do not page
+(`LITESTREAM_PRODUCT_DISABLED_TIERS`).  Boot log rotation (#3135) is enough.
+
+L1 boundary-trim is a first-class scheduled unit in-repo (`scripts/ops/litestream-l1-boundary-trim.timer`,
+00:04 UTC).  Do not fight tonight's transient oneshots.  Host install is remaining ops.
+Do not bounce Coolify.  Do not FORCE_RESTORE.  Do not touch live B2 `trading-live/**`.
+
+Branch `grok/litestream-structural`, worktree `~/apps/trading-grok-litestream-struct`,
+issue #3153, boards 081c8ecf / 1e3df744.  Rollout:
+`docs/rollouts/2026-09-01-litestream-structural.md`.
+## 2026-09-01 GROK — Money-path orders: MCP write idempotency, Alpaca `stop` wire, provenance
+
+Owner-directed fix of three live-order bugs (#3152 / efd2a783, ef0dccb3, d4cb5e75, d36c2233).  MCP place/cancel no longer REST-falls-back after an 8s timeout or 5xx (reconcile by `client_order_id` / order id; fallback only on tool-not-found or 4xx-before-send).  Writes map `stop_market` to Alpaca `stop`.  Auto-replace treats a nonempty Alpaca UUID as owner-placed unless the id has prefix `protstop-`/`sstop-` or a tracked intent row.  No live orders from this Mac.  Branch `grok/money-path-orders`, worktree `~/apps/trading-grok-money-path`.  Rollout: `docs/rollouts/2026-09-01-money-path-orders.md`.
+## 2026-09-01 GROK — Qdrant Stage 2 write/delete/inventory cutover
+
+Owner-directed full Qdrant integration.  Stage 1 reads already serve (`RAG_VECTOR_READ_QDRANT`, PR #3138).  Stage 2 routes upserts, deletes, payload patches, and metadata inventory to self-hosted collection `socratic-trade` via new `src/lib/vector-store/qdrant-write.ts` and knob `RAG_VECTOR_WRITE_QDRANT` (default true when `QDRANT_URL` is set).  Runtime default no longer calls Pinecone upsert/deleteMany/list/fetch, does not wrap those paths in `withRagApiHealth("pinecone")`, and does not park ingest on `pineconeWuExhaustedUntil` or the daily Pinecone WU fuse.  Provider authority on the Qdrant path comes from durable SQLite commits (`durableProviderAuthority`) so writes do not no-op.  Point ids stay uuid5(`st:{ns}:{pc_id}`) with payload `pc_id`/`ns` so Stage 1 reads keep matching.  Metering is provider `"qdrant"` with zero phantom WUs.  `@pinecone-database/pinecone` stays installed behind the pinecone backend flag.  Did not run a Pinecone delta copy (would burn remaining read units).  Branch `grok/qdrant-write-cutover`, worktree `~/apps/trading-grok-qdrant-writes`, issue #3151, boards 97b5894b / 9e19673a / dc98d716 / c741db8e.  Rollout: `docs/rollouts/2026-09-01-qdrant-write-cutover.md`.
+
+## 2026-09-01 GROK — Sentry fleet adoption remainder (tunnel, iOS DSN, profiling, logger, gen_ai)
+
+Remaining ST Sentry work after AG #3146 (`enableLogs`, Replay 0.01/1.0, traces 0.2, no Vercel monitors).  Enables `tunnelRoute: "/monitoring"` with middleware matcher + public-prefix exclusion so ad-blockers cannot drop browser envelopes.  iOS `SentryTelemetry.swift` no longer hardcodes a DSN fallback — Info.plist `SENTRY_DSN` only, skip init if missing; Cocoa Session Replay with mask-all-text / mask-all-images / no screenshots; `releaseName`/`dist` from `CFBundleShortVersionString`/`CFBundleVersion`.  Server continuous profiling via `@sentry/profiling-node` on `sentry.server.config.ts` only (`profileLifecycle: "trace"`).  Sparse `Sentry.logger` + Application Metrics from existing `src/lib/sentry-metrics.ts` on scheduler tick/overrun, rag.rejected, embed.failed, broker.call.  OpenRouter/Voyage/Pinecone/earningscalls HTTP wrapped in `gen_ai.*` / `db` spans without prompt contents.  Official `@sentry/nextjs` AI integrations stay registered for any SDK path.
+
+**Coolify (not in this PR):** set `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true` at **build time** to actually emit web Replay.  The code default stays off.  iOS TestFlight ship must pass `SENTRY_DSN` as an xcodebuild setting or Cocoa stays inert.
+
+Branch `grok/sentry-fleet-adoption`, worktree `~/apps/trading-grok-sentry-adopt`.  Rollout: `docs/rollouts/2026-09-01-sentry-fleet-adoption.md`.
+## 2026-08-31 ANTIGRAVITY — Default RAG reads to Qdrant, decouple from Pinecone & immediate restart sweep
+
+Fixed strategy run failures from Pinecone rate limits (429 / WU exhaustion) and orphaned process restart runs.  Defaulted `RAG_VECTOR_READ_QDRANT` to `true` across server knobs and `vectorReadBackend()` so retrieval natively queries self-hosted Qdrant on Hetzner without Pinecone prerequisites; fully decoupled `retrieveContextDetailed`, `denseTierQuery`, and `denseResults` from Pinecone client and index objects; resolved provider authority fallback from durable SQLite commits; broke `db-execution` circular dependency via standalone `strategy-run-execution-registry.ts`; handled Pinecone 429 rate limits gracefully during hourly background reconciliation; updated `markStaleRunningRuns` to immediately sweep dead runs from previous process lifecycles upon startup.  Full verification gate passed: lint, tsc, 7,696 vitest tests (700 files), Next.js build.  Rollout: `docs/rollouts/2026-08-31-qdrant-default-strategy-fix.md`.
+
+## 2026-09-01 CLAUDE — L1 boundary-trim hardened, and Congress.Trade found wedged too
+
+Closes the three guard gaps the #3140 review raised, plus two defects that only showed up
+when the tool was run for real against a 2,400-object level.  The repo copy is resynced
+byte-identical to the hardened host tool — sha256 `a6bfc2bf…8087`, 9721 bytes, mode 755,
+verified on both sides.
+
+Guards: `--app {socratic,congress,usage-monitor}` replaces the Socratic-only bucket/prefix
+constants; a **relative** truncation guard aborts under 50% of the previous snapshot (the
+100 MB absolute floor cannot reject a truncated ~4.5 GB snapshot, and the boundary is read
+from the filename, which looks authoritative regardless of content); contiguity is walked
+across the **entire** kept set for internal txid gaps (twins allowed) with its own exit code,
+because L2 stays wedged on non-contiguous input no matter how much L1 is trimmed;
+`--max-snapshot-age-hours` (default 48, scheduled units pass 6) makes a late nightly abort
+loudly instead of trimming to a stale boundary; and a new guard aborts when nothing is
+superseded while L1 still holds more than 200 objects.
+
+Two fixes came out of running it:
+
+**Deletes are batched.**  The per-object `rclone delete --include` loop re-listed the whole
+prefix on every call — O(n^2), measured at ~12s per delete on CT, about 8 hours for 2,362
+objects.  Now chunks of 500 names go through one `rclone delete --files-from --transfers 16
+--checkers 16` per chunk.
+
+**Deletes are hides, NOT `--b2-hard-delete`, and that is deliberate.**  The host's scoped
+`fleet-backup-writer` key may hide a version but returns `Unknown 401 (401 unauthorized)` on
+`b2_delete_file_version` — so with the flag set rclone reported progress while deleting
+**nothing**, and roughly 800 "deletes" against CT were a complete no-op.  A hide is enough to
+unwedge compaction (litestream stops seeing the object immediately) and the bucket lifecycle
+rule `daysFromHidingToDeleting=1` frees the bytes about a day later.  Hard deletes need the
+B2 master key, so same-hour space reclamation means running the trim from an operator
+workstation.  The ~73 GB hide-marker overhang (199.59 GB billed vs 126.49 GB logical) is
+still the reason the distinction matters — the host just cannot avoid it.
+
+Consequently the tool **no longer trusts its own exit codes**: after applying it re-lists L1
+and reports `APPLIED app=X deleted=N survived=M batch_errors=E` from what actually remains,
+naming survivors.  Exit codes: 0 ok/no-op, 1 objects survived, 2 no snapshot, 3 guard,
+4 restore hole, 5 kept-chain gaps, 6 boundary did not advance.
+
+**Congress.Trade had never been trimmed at all.**  Its L1 held 2,413 objects, 2,362 of them
+(24.6 GB) superseded by the fresh 2026-09-01T00:00:02Z snapshot, leaving 51 (12 MB) — and its
+L2 held **zero** objects, the same wedge state ST was in.  Six transient one-shot units
+(`l1trim-st-*`, `l1trim-ct-*`) are armed for 2026-09-02 00:04/00:20/00:40 UTC with
+`--max-snapshot-age-hours 6`, two retries of headroom for a late snapshot; they replace the
+single `l1-boundary-trim-oneshot`, now stopped.  Transient on purpose — they expire on reboot
+rather than quietly becoming a nightly policy, since trimming below a snapshot costs sub-daily
+PITR granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
+only; no runtime code touched.  Rollout: `docs/rollouts/2026-09-01-l1-trim-hardening.md`.
+
+**The fixed tool then worked.**  CT re-run at 07:46:53Z reported
+`APPLIED app=congress deleted=2361 survived=0 batch_errors=0`, and the bucket recount agrees:
+CT L1 went **2,413 -> 82** (82 = the 51 originally-kept objects plus new arrivals), in minutes
+rather than the ~8 hours the per-object loop projected.  `--b2-versions` shows **2,444**
+versions against those 82 listed entries — the trimmed objects are hidden, not gone, and stay
+recoverable until the `daysFromHidingToDeleting=1` reaper runs.  That single listing shows both
+the cost (bytes billed ~24h longer) and the safety margin (a mistaken trim is reversible inside
+that window) of the hide-based approach.
+
+**Next action:** deletion is proven, **recovery is not** — CT's L2 is still at zero objects, as
+is ST's, and ST has not been trimmed with this build (L1 at 255).  A trim that removes objects
+without restarting compaction has fixed nothing, so confirm `msg="compaction complete" …
+level=2` and an advancing L2 `<min>` TXID on both apps after the 00:04-00:40 UTC window.  Do
+not read the ~24h lag in freed bytes as failure; the host can only hide.
+
+
+## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed (PR #3140, `271e5ff8e`)
+## 2026-09-01 CLAUDE — PR #3139 plist comment: actually fix the XML `--` bug
+
+PR #3139 claimed moving the template comment above `<!DOCTYPE>` down into `<dict>` fixed
+`plistlib.loads` raising `ExpatError: not well-formed` on
+`scripts/com.jay.provider-knob-sync.plist` — it did not.  XML comments cannot contain the
+sequence `--` anywhere in their body regardless of position, and the relocated comment
+still had two literal `--apply` mentions (lines 8 and 18).  `chatgpt-codex-connector`
+caught this and was right: `plistlib.load` on the PR's head still raised the identical
+error.  Reworded both `--apply` mentions to "the apply flag" (no `--` sequence remains in
+the comment); the real `--apply` CLI argument in `<key>ProgramArguments</key>` is untouched
+since it's a `<string>` value, not comment text.  Verified with `python3 -c "import
+plistlib; plistlib.load(open('scripts/com.jay.provider-knob-sync.plist','rb'))"` on both
+`/usr/bin/python3` and `/opt/homebrew/bin/python3` — parses clean now, raised before.  No
+repo test/CI step runs plistlib against this file.  Rollout:
+`docs/rollouts/2026-09-01-pr-3139-plist-comment-fix.md`.
+
+## 2026-09-01 CLAUDE — L2 unwedge: snapshot-boundary L1 trim tool landed
+
+Litestream level-2 compaction has been wedged since 2026-08-29 with no alert — L0/L1
+replication and `/api/live` stayed green the whole time, so the only signal was `level=2`
+lines in container logs.  Root cause is the mega-upload, not the Backblaze download cap:
+L2 folds the whole remaining L1 chain into one object, so while it is stalled L1 grows and
+each retry is a larger multipart upload that dies.  The cap DID reset at 00:00Z (zero cap
+errors 00:00–01:39Z) and L2 still failed 19 times in that window, every one on the upload;
+the first cap-exceeded came only at 01:39:33Z.  Lands
+`scripts/litestream-l1-boundary-trim.py` — byte-identical to the installed host tool
+(sha256 `b1a05816…f1d2`) — which deletes L1 objects already contained in the newest L9
+snapshot, dry-run by default, refusing to leave a restore hole.  Deletes and listings are
+Class A/C, so it works while downloads are capped.  A one-shot timer is armed for
+2026-09-02 00:02Z, right after the nightly snapshot advances the boundary; it is
+deliberately NOT a recurring timer, because trimming below a snapshot costs sub-daily PITR
+granularity and the app's 168h snapshot retention stays authoritative.  Docs-and-script
+only; no runtime code touched.  Rollout:
+`docs/rollouts/2026-09-01-l2-unwedge-boundary-trim.md`.
+
+Codex review found three real guard gaps, all accepted and none fixed here — the script is
+landed as a verbatim mirror of the installed host copy, so hardening it must change repo and
+host together, which is a production write outside this unit.  They are: snapshot integrity
+(the 100 MB floor cannot catch a truncated ~4.5 GB snapshot whose filename still supplies the
+boundary), kept-chain contiguity (only the first kept object is checked, and internal L1 gaps
+are a demonstrated wedge), and scheduled-run freshness (the 48h guard accepts yesterday's
+snapshot, so a late nightly makes the 00:02Z one-shot under-heal and then lapse).  Covered
+meanwhile by the "Pre-flight before `--apply`" checklist in `docs/litestream.md`.
+
+**Next action:** after 2026-09-02 00:02Z confirm a `compaction complete … level=2` line and
+the L2 `<min>` TXID advancing past `0000000000134700`.  If it still fails, the suspect is a
+poisoned L2/L3 object — that is `scripts/litestream-l1-suffix-heal.py`'s job, since
+boundary-trim never touches those levels.
+
+## 2026-08-31 GROK — Top-to-bottom full-stack audit (web, iOS, backend)
+
+Report-only.  Branch `grok/full-stack-audit`, worktree `~/apps/trading-grok-full-audit`, board `52592a4d`, tree `ff7a562d9`.  Nine-agent scan plus orchestrator file:line verification.  Catalog: `docs/reviews/2026-08-31-grok-full-stack-audit.md`.  Still open on `main`: Alpaca `stop_market` write (`d4cb5e75`), MCP place timeout REST fallback (`ef0dccb3`), any-`client_order_id` provenance (`d36c2233`), oldest-500 fills, iOS `uniqueKeysWithValues`, web 401 freeze.  Guardrails Discard and `/mobile` redirect are fixed.  Do not implement in this PR.  Do not steal Claude `06df80cf`.  Do not HOTFIX during RTH.  Rollout: `docs/rollouts/2026-08-31-grok-full-stack-audit.md`.
+
+## 2026-08-31 CLAUDE — Backup remediation: gzip weekly R2 cold snapshot + log rotation
+
+The weekly R2 cold snapshot now gzip-streams during upload
+(`cold-snapshots/app-YYYY-MM-DD.db.gz`, ~2.5-4 GB expected vs 9.7 GB raw at ~90%
+of the R2 free tier); retention prunes across both `.db` and `.db.gz` so the
+legacy `app-2026-08-30.db` deletes after the first gzipped success.  Restore
+now needs `gunzip` first — recipe in `docs/litestream.md`.  Container boot
+rotates `/app/data/litestream-runtime.log` (was 237 MB) at 64 MB, keeping the
+newest 16 MB.  Docs: B2 lifecycle hide-14d/delete-1d hard-caps B2 restore depth
+at ~15 days; all three apps run litestream in-container; 2026-08-31 L1 suffix
+heal precedent recorded.  PR #3135 merged (squash `0d69d9063`); the deploy is
+correctly deferred by the weekday RTH latch (Monday; build refused 14:39 UTC
+with `rth-blocked`) and the post-close 21:20 UTC drain ships it — do not HOTFIX
+or hand-trigger.  Next action: after the drain, `bash scripts/verify-deploy-sha.sh
+0d69d9063`; then verify the first `.gz` upload after Sunday 03:17 UTC and the
+rotation line on that boot.  Rollout:
+`docs/rollouts/2026-08-31-backup-remediation.md`.
 
 ## 2026-08-30 BF-Fixer — PR #3120 Codex thread unstick
 

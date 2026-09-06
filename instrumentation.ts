@@ -64,6 +64,15 @@ export async function register() {
 
   if (process.env.SENTRY_DSN) {
     await import("./sentry.server.config");
+    try {
+      const { nodeProfilingIntegration } = await import(
+        /* webpackIgnore: true */ "@sentry/profiling-node"
+      );
+      const Sentry = await import("@sentry/nextjs");
+      Sentry.addIntegration(nodeProfilingIntegration());
+    } catch {
+      // Native profiler is optional.  Missing binary must not take down Sentry.init.
+    }
   }
 
   const { datadogApmEnabled, datadogLogsEnabled } = await import("./src/lib/datadog-env");

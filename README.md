@@ -38,7 +38,8 @@ and a dated rollout note before commit/push. Do not recreate a single
 ## What It Does
 
 - Multi-account cockpit: balances, positions, orders, proposals, activity, Results
-  (vs SPY), Markets/Assets, Insights, Settings / Connections.
+  (vs SPY — time-weighted % and a same-cash dollar overlay), Markets/Assets, Insights,
+  Settings / Connections.
 - Equity strategy loop in **ask-first** (proposals wait for approval) or
   **autopilot** (decides within guardrails) authority.
 - Scans the allowed equity universe with quote data, fundamentals, technicals,

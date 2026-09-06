@@ -1,4 +1,6 @@
 import { nativeSlugFor } from "./llm-model-catalog";
+import { withGenAiSpan } from "./sentry-gen-ai";
+import { withDatadogLlmObs } from "./datadog-llmobs";
 import type { LlmReasoningEffort } from "./types";
 
 /** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
@@ -402,7 +404,11 @@ export async function llmFetch(url: string, init: RequestInit = {}): Promise<Res
   if (url.includes("generativelanguage.googleapis.com")) {
     await geminiRateLimiter.wait(process.env.GEMINI_RPM_LIMIT);
   }
-  return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) });
+  return withDatadogLlmObs(url, init, () =>
+    withGenAiSpan(url, init, () =>
+      fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) })
+    )
+  );
 }
 
 /**
@@ -459,7 +465,11 @@ export async function llmFetchCapturing(
   const started = Date.now();
   const softMs = opts.softTimeoutMs;
   const hardCap = Math.max(softMs, opts.hardCapMs ?? Math.max(softMs * 2, 300_000));
-  const fetchPromise = fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) });
+  const fetchPromise = withDatadogLlmObs(url, init, () =>
+    withGenAiSpan(url, init, () =>
+      fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) })
+    )
+  );
 
   const emit = opts.onOutcome;
   if (emit) {

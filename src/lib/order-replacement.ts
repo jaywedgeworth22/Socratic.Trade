@@ -96,9 +96,15 @@ export interface MarketReplaceInput {
    *  risk-CREATING market placement so a window that lost its lease cannot place into another
    *  sequence. The CANCEL half runs unfenced — cancels are risk-reducing and proceed on loss. */
   fence?: () => void;
+  /**
+   * Manual replace (owner explicitly asked).  Auto-remediation must not set this —
+   * owner-placed Alpaca UUIDs would otherwise be cancel-replaced.
+   */
+  allowOwnerPlaced?: boolean;
 }
 
 export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput): Promise<MarketReplaceResult> {
+  input = { ...input, allowOwnerPlaced: true };
   const userId = input.userId ?? "local";
   const db = getDb();
   
@@ -347,8 +353,11 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         audit("stale_exit_remediation_skipped_held", { orderId: originalOrder.id, symbol, side: originalOrder.side, state: originalOrder.state }, userId, input.policy.connectedAccountId);
         throw new MarketReplacePreconditionError(errStr, 409);
       }
-      const provenanceSkip = autoReplaceProvenanceSkipReason(originalOrder);
-      if (provenanceSkip) {
+      const provenanceSkip = autoReplaceProvenanceSkipReason(originalOrder, {
+        userId,
+        accountNumber: input.policy.accountNumber
+      });
+      if (provenanceSkip && !(input.allowOwnerPlaced && provenanceSkip === "not_app_placed")) {
         const errStr = provenanceSkip === "bracket_leg"
           ? `${symbol} ${originalOrder.side} order is a bracket leg — cannot be auto-replaced with a market order.`
           : `${symbol} ${originalOrder.side} order was not placed by the app — cannot be auto-replaced.`;
@@ -775,7 +784,10 @@ export async function autoRemediateStaleExitOrders(input: {
       if (String(item.order.state ?? "").trim().toLowerCase() === "held") continue;
 
       const symbol = normalizeSymbol(item.order.symbol);
-      const provenanceSkip = autoReplaceProvenanceSkipReason(item.order);
+      const provenanceSkip = autoReplaceProvenanceSkipReason(item.order, {
+        userId,
+        accountNumber: input.policy.accountNumber
+      });
       if (provenanceSkip) {
         out.deferred++;
         audit(

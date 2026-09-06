@@ -32,7 +32,11 @@ export default defineConfig({
     maxWorkers: 1,
     testTimeout: 60_000,
     hookTimeout: 60_000,
-    onConsoleLog: () => false,
+    // Skip Vitest's console spy.  `onConsoleLog: () => false` still forwards every
+    // log over RPC (`onUserConsoleLog`); if the worker tears down while one is in
+    // flight, CI fails with EnvironmentTeardownError even when every test passed
+    // (hit on main after #3162, attributed to economic-calendar-prompt-wiring).
+    disableConsoleIntercept: true,
     globalSetup: "./test/global-setup.ts",
     setupFiles: ["./test/setup-peer-lane-cleanup.ts"],
     // Force isTradingDay()'s no-argument "today" check true so strategy/scheduler tests don't flake

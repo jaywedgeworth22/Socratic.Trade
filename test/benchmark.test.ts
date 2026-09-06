@@ -376,6 +376,49 @@ describe("normalizeAgainstBenchmark", () => {
     // Rebase with 0% for the wiped period — leftover $5k is new principal, not a −95% loss.
     expect(r.accountReturnPct).toBeCloseTo(0, 1);
   });
+
+  it("builds a same-cash S&P dollar shadow (deposit is a breakpoint, not a gain)", () => {
+    // $100k, SPY +10%, then a $50k deposit with a flat tape. Shadow should earn the 10% on
+    // the original $100k, then add $50k at the cutoff — $160k. Account that sat in cash is $150k.
+    const equity = cashCurve([
+      ["2026-01-02T16:00:00Z", 100_000, 100_000],
+      ["2026-01-03T16:00:00Z", 100_000, 100_000],
+      ["2026-01-04T16:00:00Z", 150_000, 150_000]
+    ]).map((p) => ({ ...p, positionsValue: 0 }));
+    const spy = [
+      { date: "2026-01-02", close: 500 },
+      { date: "2026-01-03", close: 550 },
+      { date: "2026-01-04", close: 550 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-01-04")).toBeCloseTo(50_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.shadowBenchmarkSeries).toHaveLength(3);
+    expect(r.shadowBenchmarkSeries[0].value).toBeCloseTo(100_000, 2);
+    expect(r.shadowBenchmarkSeries[1].value).toBeCloseTo(110_000, 2);
+    expect(r.shadowBenchmarkSeries[2].value).toBeCloseTo(160_000, 2);
+    expect(r.shadowValue).toBeCloseTo(160_000, 2);
+    expect(r.accountEquitySeries[2].value).toBeCloseTo(150_000, 2);
+    expect(r.dollarExcess).toBeCloseTo(-10_000, 2);
+  });
+
+  it("same-cash shadow sells S&P on a withdrawal then compounds the remainder", () => {
+    const equity = cashCurve([
+      ["2026-05-01T16:00:00Z", 100_000, 100_000],
+      ["2026-05-02T16:00:00Z", 60_000, 60_000],
+      ["2026-05-03T16:00:00Z", 60_000, 60_000]
+    ]).map((p) => ({ ...p, positionsValue: 0 }));
+    const spy = [
+      { date: "2026-05-01", close: 500 },
+      { date: "2026-05-02", close: 500 },
+      { date: "2026-05-03", close: 550 }
+    ];
+    const flows = inferExternalCashFlows(equity, []);
+    expect(flows.get("2026-05-02")).toBeCloseTo(-40_000, 2);
+    const r = normalizeAgainstBenchmark(equity, spy, "SPY", flows)!;
+    expect(r.shadowValue).toBeCloseTo(66_000, 2);
+    expect(r.dollarExcess).toBeCloseTo(-6_000, 2);
+  });
 });
 
 describe("computeSpyBenchmark synthetic curve guard", () => {

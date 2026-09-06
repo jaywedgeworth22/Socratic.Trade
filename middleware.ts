@@ -78,6 +78,9 @@ const PUBLIC_PREFIXES = [
   "/welcome",
   "/strategy",
   "/framework",
+  // Sentry browser tunnel (next.config.mjs tunnelRoute). Must stay anonymous
+  // so ad-blocked clients can still deliver envelopes. Matcher also excludes it.
+  "/monitoring",
   "/how-it-works",
   "/design/socratic-trade",
   "/privacy-policy",
@@ -510,5 +513,5 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
 export const config = {
   // Run on everything except Next internals and static image assets.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|monitoring|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)"]
 };

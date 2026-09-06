@@ -6,6 +6,7 @@ import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
 import type { SymbolWebSignal } from "./web-sources";
 import { clearFundHoldingsCache, fetchBlackRockHoldingSymbols, isBlackRockHoldingUniverse } from "./fund-holdings";
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
+import { enrichmentPlanForDeadline } from "./gather-budget";
 import { INDEX_UNIVERSES, isIndexMemberSymbol } from "./index-universes";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -194,7 +195,8 @@ export function buildEnrichmentPreselectionPool(
   ranked: MarketQuote[],
   eventExtra: MarketQuote[],
   heldSymbols: Set<string>,
-  candidateLimit: number
+  candidateLimit: number,
+  poolCapOverride?: number
 ): MarketQuote[] {
   const multiplier = clampInteger(
     envNumber("MARKET_SCAN_ENRICHMENT_POOL_MULTIPLIER", DEFAULT_ENRICHMENT_POOL_MULTIPLIER),
@@ -206,7 +208,11 @@ export function buildEnrichmentPreselectionPool(
     candidateLimit,
     MAX_ENRICHMENT_POOL_CAP
   );
-  const targetSize = Math.min(ranked.length, Math.min(candidateLimit * multiplier, configuredCap));
+  const effectiveCap =
+    typeof poolCapOverride === "number" && Number.isFinite(poolCapOverride)
+      ? Math.max(candidateLimit, Math.min(configuredCap, Math.round(poolCapOverride)))
+      : configuredCap;
+  const targetSize = Math.min(ranked.length, Math.min(candidateLimit * multiplier, effectiveCap));
   const seen = new Set<string>();
   const add = (quote: MarketQuote, pool: MarketQuote[]) => {
     if (pool.length >= targetSize || seen.has(quote.symbol)) return;
@@ -279,6 +285,7 @@ export async function scanMarket(
     /** Slow-changing fields from the last completed strategy scan. Interactive
      * refreshes can reuse these locally while replacing price-family fields. */
     seedEnrichment?: Record<string, MarketQuoteSummary>;
+    deadlineAt?: number;
   } = {}
 ): Promise<MarketScan> {
   const scan = await nasdaqDelayedProvider.scan(symbols, positions, {
@@ -292,7 +299,8 @@ export async function scanMarket(
     universeFloor: scanOptions.universeFloor,
     congressMultiplier: scanOptions.congressMultiplier,
     enrichmentMode: scanOptions.enrichmentMode,
-    seedEnrichment: scanOptions.seedEnrichment
+    seedEnrichment: scanOptions.seedEnrichment,
+    deadlineAt: scanOptions.deadlineAt
   });
   // Forward the candidate company refs to congress.trade (App A) so it can avoid spending the shared
   // FMP quota. No-op unless CONGRESS_TRADE_TOKEN + CONGRESS_SHARE_ENABLED are set; per-symbol
@@ -474,11 +482,22 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     // on top field-by-field. Live cascade overwrites when it returns values. This is what keeps
     // PE/EPS/div visible after strategy_run audits omit the full MarketScan, and keeps yesterday's
     // symbols' last known fields available even if they are not in today's ranked set.
-    const provider = options?.enrichmentMode === "skip"
-      ? undefined
-      : getEnrichmentProvider(options?.userId);
+    const enrichPlan = enrichmentPlanForDeadline(options?.deadlineAt);
+    const skipLiveEnrich = options?.enrichmentMode === "skip" || enrichPlan.skipLiveEnrich;
+    const provider = skipLiveEnrich ? undefined : getEnrichmentProvider(options?.userId);
     let rescoredRanked: MarketQuote[] = ranked;
-    const preselectionPool = buildEnrichmentPreselectionPool(ranked, eventExtra, heldSymbols, candidateLimit);
+    const preselectionPool = buildEnrichmentPreselectionPool(
+      ranked,
+      eventExtra,
+      heldSymbols,
+      candidateLimit,
+      enrichPlan.shrinkPoolToCandidates ? candidateLimit : undefined
+    );
+    if (provider && enrichPlan.shrinkPoolToCandidates) {
+      warnings.push(
+        "Enrichment pool shrunk to the ranked candidate cut to finish gather before the deadline."
+      );
+    }
     const seedBySymbol = await loadDurableEnrichmentSeed(
       preselectionPool.map((q) => q.symbol),
       options?.seedEnrichment
@@ -489,47 +508,56 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       return applyEnrichment(quote, persistedSlowEnrichment(prior));
     };
 
+    const applySeededPool = (): MarketQuote[] => {
+      const seededBySymbol = new Map(
+        preselectionPool.map((quote) => {
+          const enriched = applySeedBaseline(quote);
+          const factorBreakdown = scoreFactors(enriched, weights);
+          return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
+        })
+      );
+      return ranked
+        .map((quote) => seededBySymbol.get(quote.symbol) ?? quote)
+        .sort(compareMarketQuotes);
+    };
+
     if (preselectionPool.length > 0 && provider) {
       try {
         if (options?.signal?.aborted) {
-          throw options.signal.reason instanceof Error
-            ? options.signal.reason
-            : new Error("Market scan cancelled.");
+          warnings.push(
+            "Live enrichment skipped after gather abort; using the ranked Nasdaq tape plus durable field-store values."
+          );
+          rescoredRanked = applySeededPool();
+        } else {
+          // Seed first so cascade gaps never blank a field we already know.
+          const baselinePool = preselectionPool.map(applySeedBaseline);
+          const enrichment = await provider.enrich(baselinePool.map((quote) => quote.symbol), {
+            signal: options?.signal,
+            deadlineAt: options?.deadlineAt
+          });
+          const rescoredBySymbol = new Map(
+            baselinePool.map((quote) => {
+              const live = enrichment[quote.symbol];
+              const enriched = live ? applyEnrichment(quote, live) : quote;
+              const factorBreakdown = scoreFactors(enriched, weights);
+              return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
+            })
+          );
+          rescoredRanked = ranked
+            .map((quote) => rescoredBySymbol.get(quote.symbol) ?? applySeedBaseline(quote))
+            .sort(compareMarketQuotes);
         }
-        // Seed first so cascade gaps never blank a field we already know.
-        const baselinePool = preselectionPool.map(applySeedBaseline);
-        const enrichment = await provider.enrich(baselinePool.map((quote) => quote.symbol), {
-          signal: options?.signal
-        });
-        const rescoredBySymbol = new Map(
-          baselinePool.map((quote) => {
-            const live = enrichment[quote.symbol];
-            const enriched = live ? applyEnrichment(quote, live) : quote;
-            const factorBreakdown = scoreFactors(enriched, weights);
-            return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
-          })
-        );
-        rescoredRanked = ranked
-          .map((quote) => rescoredBySymbol.get(quote.symbol) ?? applySeedBaseline(quote))
-          .sort(compareMarketQuotes);
       } catch (error) {
+        // Abort during enrich used to rethrow and throw away today's ranked Nasdaq
+        // tape, forcing yesterday's last-good.  Keep the live ranks + durable seed.
         if (options?.signal?.aborted) {
-          throw options.signal.reason instanceof Error
-            ? options.signal.reason
-            : new Error("Market scan cancelled.");
+          warnings.push(
+            "Live enrichment aborted; using the ranked Nasdaq tape plus durable field-store values."
+          );
+        } else {
+          warnings.push(error instanceof Error ? `Enrichment failed: ${error.message}` : "Enrichment failed.");
         }
-        warnings.push(error instanceof Error ? `Enrichment failed: ${error.message}` : "Enrichment failed.");
-        // Fall back to durable seed so a cascade throw never blanks the table.
-        const seededBySymbol = new Map(
-          preselectionPool.map((quote) => {
-            const enriched = applySeedBaseline(quote);
-            const factorBreakdown = scoreFactors(enriched, weights);
-            return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
-          })
-        );
-        rescoredRanked = ranked
-          .map((quote) => seededBySymbol.get(quote.symbol) ?? quote)
-          .sort(compareMarketQuotes);
+        rescoredRanked = applySeededPool();
       }
     } else if (preselectionPool.length > 0) {
       // Skip mode (interactive) or no provider: still surface last-known per-field data.
@@ -550,7 +578,12 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         warnings.push(
           `Slow fundamentals reuse the durable field store (${seedHits} names with last-known values; each field keeps its own as_of/fetched_at).`
         );
-      } else if (options?.enrichmentMode === "skip") {
+      }
+      if (enrichPlan.skipLiveEnrich && options?.enrichmentMode !== "skip") {
+        warnings.push(
+          "Live enrichment skipped to finish gather before the 8-minute deadline; using durable field-store values."
+        );
+      } else if (seedHits === 0 && options?.enrichmentMode === "skip") {
         warnings.push(
           "Deep fundamentals refresh is deferred for this interactive scan and no durable field-store rows were found yet; open a ticker for on-demand data or wait for a full enrichment run."
         );

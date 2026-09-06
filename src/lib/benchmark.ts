@@ -1,15 +1,20 @@
 // SPY-benchmark equity-curve scoreboard.
 //
 // Compares the account's equity curve (from portfolio_snapshots) to SPY over the same window —
-// the honest "are we beating the market net of cost" readout. Both series are normalized to 100
-// at the first common date so they overlay on one axis. SPY daily closes come from the same
-// key-free history cascade every chart uses (fetchDailyOHLC). Never fabricates: if there isn't
-// enough history or SPY can't be fetched, returns null and the UI degrades to "—".
+// the honest "are we beating the market net of cost" readout. Two series share the same knots:
+//   - TWR indexes (both start at 100) for manager-skill % tiles.
+//   - Same-cash dollars: a shadow S&P book that starts with the same equity, grows with SPY
+//     each sub-period, then applies that day's verified deposit/withdrawal at the daily cutoff.
+// SPY daily closes come from the same key-free history cascade every chart uses (fetchDailyOHLC).
+// Never fabricates: if there isn't enough history or SPY can't be fetched, returns null and the
+// UI degrades to "—".
 //
-// Deposits/withdrawals: no broker transfer ledger exists in this app, so external cash flows are
-// INFERRED per snapshot gap (deposits +, withdrawals −, paper resets, ACH). See cash-flows.ts.
+// Deposits/withdrawals: prefer the broker transfer ledger when present; otherwise INFERRED per
+// snapshot gap (deposits +, withdrawals −, paper resets, ACH). See cash-flows.ts.
+// Same-day additions and withdrawals are treated as landing at that day's cutoff (the last
+// snapshot of the calendar day).
 //
-// Multi-period time-weighted return (TWR) — the GIPS-style method the owner described:
+// Multi-period time-weighted return (TWR) — the GIPS-style method:
 //   Split the overall window into back-to-back sub-periods at each deposit/withdrawal.
 //   Sub-period account growth = V_end / (V_start + flow_at_end)  (flow is the external cash
 //   that lands on the end snapshot; 0 when no transfer that day).
@@ -17,6 +22,11 @@
 //   Chain: overall = ∏(1 + r_i) − 1 for account and for SPY independently.
 // So "$100 for 10 days then $10 for 100 days" weights each regime's market performance by
 // geometric linking, not by simple (end−start−flows)/start which overweights the big balance.
+//
+// Same-cash shadow (dollars):
+//   shadow_0 = first equity.  Each later day: shadow *= SPY_factor, then += verified flow.
+//   dollarExcess = last account equity − last shadow.  That is "what you would have had if
+//   the same cash had tracked the S&P."
 //
 // excessReturnPct = accountTWR − spyTWR (percentage points).
 
@@ -29,6 +39,7 @@ import { fetchDailyOHLC } from "./history";
 import { inferExternalCashFlows, isInferredFlowUnverified, isoDate, round2 } from "./cash-flows";
 import type {
   BenchmarkComparison,
+  BenchmarkDollarPoint,
   BenchmarkSeriesPoint,
   BenchmarkSubPeriod,
   BenchmarkUnavailability,
@@ -101,13 +112,19 @@ export function normalizeAgainstBenchmark(
 
   const equityIndex: BenchmarkSeriesPoint[] = [];
   const benchmarkIndex: BenchmarkSeriesPoint[] = [];
+  const accountEquitySeries: BenchmarkDollarPoint[] = [];
+  const shadowBenchmarkSeries: BenchmarkDollarPoint[] = [];
   const subPeriods: BenchmarkSubPeriod[] = [];
 
   // Both series start at 100 on the first aligned date.
   let accountIndex = 100;
   let spyIndex = 100;
+  // Same-cash S&P shadow starts with the same dollars that were in the account.
+  let shadow = aligned[0].equity;
   equityIndex.push({ date: aligned[0].date, index: 100 });
   benchmarkIndex.push({ date: aligned[0].date, index: 100 });
+  accountEquitySeries.push({ date: aligned[0].date, value: round2(aligned[0].equity) });
+  shadowBenchmarkSeries.push({ date: aligned[0].date, value: round2(shadow) });
 
   let flowsApplied = 0;
   let netExternalFlows = 0;
@@ -164,6 +181,13 @@ export function normalizeAgainstBenchmark(
     equityIndex.push({ date: cur.date, index: round2(accountIndex) });
     benchmarkIndex.push({ date: cur.date, index: round2(spyIndex) });
 
+    // Grow previously invested dollars with this sub-period's SPY return, then apply today's
+    // verified flow at the daily cutoff. Unverified inferred transfers are already zeroed.
+    shadow = shadow * spyFactor + flow;
+    if (!Number.isFinite(shadow) || shadow < 0) shadow = 0;
+    accountEquitySeries.push({ date: cur.date, value: round2(cur.equity) });
+    shadowBenchmarkSeries.push({ date: cur.date, value: round2(shadow) });
+
     // Record every sub-period that either has a flow or is a material market move — and always
     // when a flow lands, so the UI can show "between transfers" segments. Snap quiet flat days
     // into coarser segments? Keep every step for honesty; callers may aggregate.
@@ -192,9 +216,14 @@ export function normalizeAgainstBenchmark(
   // recompute factors from endpoints). Keep every flow boundary as a hard cut.
   const coalesced = coalesceSubPeriods(subPeriods);
 
+  const lastAccountEquity = aligned[aligned.length - 1]!.equity;
   return {
     equityIndex,
     benchmarkIndex,
+    accountEquitySeries,
+    shadowBenchmarkSeries,
+    shadowValue: round2(shadow),
+    dollarExcess: round2(lastAccountEquity - shadow),
     accountReturnPct,
     benchmarkReturnPct,
     excessReturnPct: round2(accountReturnPct - benchmarkReturnPct),

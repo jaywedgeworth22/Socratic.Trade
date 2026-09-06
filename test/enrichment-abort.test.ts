@@ -39,4 +39,30 @@ describe("CascadingEnrichmentProvider gather abort", () => {
     controller.abort(new Error("strategy gather timeout"));
     await expect(pending).rejects.toThrow("strategy gather timeout");
   });
+
+  it("skips the keyed wave when remaining gather budget is below the keyed minimum", async () => {
+    let paidCalled = false;
+    const free: MarketEnrichmentProvider = {
+      name: "yahoo-finance",
+      configured: true,
+      costTier: "free",
+      async enrich() {
+        return {};
+      }
+    };
+    const paid: MarketEnrichmentProvider = {
+      name: "finnhub",
+      configured: true,
+      costTier: "paid",
+      suppliesFields: ["peRatio"],
+      async enrich() {
+        paidCalled = true;
+        return { AAPL: { peRatio: 18 } };
+      }
+    };
+
+    const cascade = new CascadingEnrichmentProvider([free, paid]);
+    await cascade.enrich(["AAPL"], { deadlineAt: Date.now() + 1_000 });
+    expect(paidCalled).toBe(false);
+  });
 });

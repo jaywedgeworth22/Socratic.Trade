@@ -1,3 +1,8 @@
+import {
+  STRATEGY_GATHER_DEADLINE_MS,
+  STRATEGY_GATHER_QUOTE_FALLBACK_MS,
+  STRATEGY_GATHER_TIMEOUT_MESSAGE
+} from "./gather-budget";
 import { withDeadline } from "./inflight-deadline";
 import { newestPersistedMarketScan } from "./market-scan-freshness";
 import { mergeQuoteData, scanMarket } from "./market";
@@ -5,16 +10,19 @@ import { normalizeSymbol } from "./money";
 import { fetchFreshQuotesCascade } from "./quotes-cascade";
 import type { EquityPosition, IndexUniverse, MarketScan, ScoringWeights, TradingPolicy, UniverseFloor } from "./types";
 
-/**
- * Live Roth `9d71dda4` sat in gather from 00:58:57Z until sweep-failed 01:29:44Z
- * (`stalled_no_progress`, llm=0).  Bound scan + quote cascade so a hung
- * Robinhood/Yahoo/congress.trade pass cannot keep the claimed request
- * `running` until the 30m sweep.  Green starts after this returns.
- */
-export const STRATEGY_GATHER_DEADLINE_MS = 8 * 60_000;
-export const STRATEGY_GATHER_TIMEOUT_MESSAGE = "strategy gather timeout";
-/** Short quote refresh after a timed-out scan, using the last completed tape. */
-export const STRATEGY_GATHER_QUOTE_FALLBACK_MS = 45_000;
+export {
+  STRATEGY_GATHER_DEADLINE_MS,
+  STRATEGY_GATHER_FULL_POOL_MIN_MS,
+  STRATEGY_GATHER_KEYED_WAVE_MIN_MS,
+  STRATEGY_GATHER_LIVE_ENRICH_MIN_MS,
+  STRATEGY_GATHER_QUOTE_FALLBACK_MS,
+  STRATEGY_GATHER_RETURN_RESERVE_MS,
+  STRATEGY_GATHER_SCARCE_WAVE_MIN_MS,
+  STRATEGY_GATHER_TIMEOUT_MESSAGE,
+  enrichmentPlanForDeadline,
+  gatherRemainingMs,
+  planGatherEnrichment
+} from "./gather-budget";
 
 export type StrategyGatherResult = {
   baseMarketScan: MarketScan;
@@ -92,6 +100,7 @@ async function refreshTopCandidateQuotes(
 export async function gatherStrategyMarket(input: StrategyGatherInput): Promise<StrategyGatherResult> {
   const deadlineMs = input.deadlineMs ?? STRATEGY_GATHER_DEADLINE_MS;
   const quoteFallbackMs = input.quoteFallbackMs ?? STRATEGY_GATHER_QUOTE_FALLBACK_MS;
+  const deadlineAt = Date.now() + deadlineMs;
   const controller = new AbortController();
   const { signal } = controller;
 
@@ -109,7 +118,8 @@ export async function gatherStrategyMarket(input: StrategyGatherInput): Promise<
             outlierReserve: input.outlierReserve,
             universeFloor: input.universeFloor,
             congressMultiplier: input.congressMultiplier,
-            signal
+            signal,
+            deadlineAt
           }
         );
         throwIfGatherAborted(signal);

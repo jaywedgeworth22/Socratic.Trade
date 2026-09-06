@@ -61,6 +61,36 @@ describe("order provenance guard", () => {
     expect(gateway.placeEquityOrder).not.toHaveBeenCalled();
   });
 
+  it("does not auto-remediate a stale owner-placed GTC sell whose Alpaca UUID is not an app prefix", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const { getDb } = await import("../src/lib/db");
+    const staleOwnerSell = order({
+      id: "owner-gtc-uuid",
+      side: "sell",
+      type: "limit",
+      state: "accepted",
+      clientOrderId: "6fa459ea-ee8a-3ca4-894e-db77e160355e",
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+    const gateway = gatewayMock({ orders: [[staleOwnerSell]], positions: [position({ quantity: 10 })] });
+
+    const out = await autoRemediateStaleExitOrders({
+      userId: "local",
+      policy: paperPolicy(),
+      activeAccount: account("paper"),
+      gateway,
+      orders: [staleOwnerSell]
+    });
+
+    expect(out).toMatchObject({ attempted: 0, remediated: 0, deferred: 1 });
+    const row = getDb()
+      .prepare("SELECT 1 FROM order_replacements WHERE original_order_id = ?")
+      .get("owner-gtc-uuid");
+    expect(row).toBeUndefined();
+    expect(gateway.placeEquityOrder).not.toHaveBeenCalled();
+    expect(gateway.cancelEquityOrder).not.toHaveBeenCalled();
+  });
+
   it("does not auto-remediate a stale owner-placed GTC sell without clientOrderId", async () => {
     const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
     const { getDb } = await import("../src/lib/db");

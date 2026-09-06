@@ -2080,7 +2080,13 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
   try {
     brokerOrders = await gateway.getEquityOrders(accountNumber);
   } catch (e) {
-    console.error("[placing-sweep] broker unreachable for recovery; will retry next run:", e);
+    const { logError, recordBrokerCall } = await import("./sentry-metrics");
+    recordBrokerCall("unknown", "getEquityOrders", 0, "failure");
+    logError("broker.call", {
+      broker: "unknown",
+      endpoint: "getEquityOrders",
+      error: e instanceof Error ? e.message : String(e)
+    });
     for (const row of stale) {
       audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, note: "Stale placing intent; broker unreachable for recovery — will retry." }, userId, connectedAccountId);
     }

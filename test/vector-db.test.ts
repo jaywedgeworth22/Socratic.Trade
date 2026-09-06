@@ -107,6 +107,8 @@ beforeEach(() => {
   process.env.PINECONE_API_KEY = "pinecone-test";
   process.env.VOYAGE_API_KEY = "voyage-test";
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
+  process.env.RAG_VECTOR_WRITE_QDRANT = "0";
+  delete process.env.QDRANT_URL;
   delete process.env.PINECONE_INDEX_NAME;
   delete process.env.VECTOR_EMBED_BATCH_SIZE;
   delete process.env.VECTOR_EMBED_BATCH_DELAY_MS;

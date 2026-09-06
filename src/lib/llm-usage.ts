@@ -10,6 +10,7 @@ import crypto from "crypto";
 import { audit, getDb } from "./db";
 import { apiKeyEnvVarForService, DELETED_KEY_TOMBSTONE, getUserApiKey, keyFingerprint, LOCAL_USER, maskApiKeyPreview, type LlmKeySource } from "./db-api-keys";
 import { canonicalModelId } from "./model-identity";
+import { setGenAiUsageOnActiveSpan } from "./sentry-gen-ai";
 import { pushLlmUsage } from "./usage-monitor-push";
 export { keyFingerprint };
 
@@ -348,6 +349,12 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
         costSource,
         occurredAt
       );
+    setGenAiUsageOnActiveSpan({
+      provider,
+      model,
+      promptTokens: entry.promptTokens,
+      completionTokens: entry.completionTokens
+    });
     // Fire-and-forget forward to the API Usage Monitor (no-op unless configured; never throws).
     pushLlmUsage({
       sourceEventId: usageId,

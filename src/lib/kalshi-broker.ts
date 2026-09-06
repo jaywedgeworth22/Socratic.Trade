@@ -28,6 +28,7 @@ import type {
   ReviewedOrder
 } from "./types";
 import { knownBrokerLimits, mergeAccountCapabilities } from "./venue-contract-pure";
+import { logError, logWarn, recordBrokerCall } from "./sentry-metrics";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -77,6 +78,7 @@ export class KalshiBrokerGateway implements BrokerGateway {
         reqBody = JSON.stringify(body);
       }
 
+      const started = Date.now();
       const res = await fetch(url, {
         method,
         headers,
@@ -86,14 +88,22 @@ export class KalshiBrokerGateway implements BrokerGateway {
       });
 
       if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        console.warn(`[kalshi-broker] ${method} ${path} failed with status ${res.status}: ${errText}`);
+        await res.text().catch(() => "");
+        recordBrokerCall("kalshi", `${method} ${path}`, Date.now() - started, "failure");
+        logWarn("broker.call", { broker: "kalshi", method, path, status: res.status });
         return null;
       }
 
+      recordBrokerCall("kalshi", `${method} ${path}`, Date.now() - started, "success");
       return (await res.json()) as T;
     } catch (err) {
-      console.warn(`[kalshi-broker] ${method} ${path} error:`, err);
+      recordBrokerCall("kalshi", `${method} ${path}`, 0, "failure");
+      logError("broker.call", {
+        broker: "kalshi",
+        method,
+        path,
+        error: err instanceof Error ? err.message : String(err)
+      });
       return null;
     } finally {
       clearTimeout(timeout);

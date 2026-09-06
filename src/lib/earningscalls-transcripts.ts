@@ -80,6 +80,7 @@
 
 import { CircuitOpenError } from "./api-circuit-breaker";
 import { fetchWithRetry } from "./data-providers";
+import { withSentrySpan } from "./sentry-gen-ai";
 import { audit, getDb } from "./db";
 import { resolveSourceNumber } from "./source-settings";
 import {
@@ -803,21 +804,27 @@ async function earningsCallsGet(path: string, nowMs: number): Promise<EarningsCa
   if (tryReserveEarningsCallsRequests(1, nowMs) < 1) return { ok: false, kind: "budget" };
   let response: Response;
   try {
-    response = await fetchWithRetry(
-      `${base}${path}`,
-      {
-        headers,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      },
-      {
-        // retries: 0 is load-bearing — one reservation must never become two provider-side
-        // requests.
-        retries: 0,
-        service: "earningscalls",
-        apiKey,
-        keySource: "env",
-        suppressHealthStatuses: [PRE_SUBSCRIPTION_STATUS]
-      }
+    response = await withSentrySpan(
+      "earningscalls.get",
+      "gen_ai.chat",
+      () =>
+        fetchWithRetry(
+          `${base}${path}`,
+          {
+            headers,
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+          },
+          {
+            // retries: 0 is load-bearing — one reservation must never become two provider-side
+            // requests.
+            retries: 0,
+            service: "earningscalls",
+            apiKey,
+            keySource: "env",
+            suppressHealthStatuses: [PRE_SUBSCRIPTION_STATUS]
+          }
+        ),
+      { "gen_ai.system": "earningscalls", "gen_ai.operation.name": "transcript" }
     );
   } catch (error) {
     if (error instanceof CircuitOpenError) {

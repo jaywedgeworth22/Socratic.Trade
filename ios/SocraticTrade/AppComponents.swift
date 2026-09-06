@@ -1722,3 +1722,145 @@ struct EquityChartView: View {
         }
     }
 }
+
+// MARK: - Account vs same-cash S&P chart
+
+struct BenchmarkCompareChart: View {
+    let account: [BenchmarkDollarPoint]
+    let shadow: [BenchmarkDollarPoint]
+    var accountLabel: String = "Your Account"
+    var benchmarkLabel: String = "SPY"
+
+    @State private var selectedDate: String?
+
+    private var selectedAccount: BenchmarkDollarPoint? {
+        guard let selectedDate else { return nil }
+        return account.first(where: { $0.date == selectedDate }) ?? account.last
+    }
+
+    private var selectedShadow: BenchmarkDollarPoint? {
+        guard let selectedDate else { return nil }
+        return shadow.first(where: { $0.date == selectedDate }) ?? shadow.last
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Account vs \(benchmarkLabel)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let accountPoint = selectedAccount, let shadowPoint = selectedShadow {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(accountPoint.date)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(accountLabel) \(AppFormat.money(accountPoint.value))")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(AppPalette.accent)
+                        Text("\(benchmarkLabel) \(AppFormat.money(shadowPoint.value))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let lastAccount = account.last, let lastShadow = shadow.last {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("\(accountLabel) \(AppFormat.money(lastAccount.value))")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(AppPalette.accent)
+                        Text("\(benchmarkLabel) \(AppFormat.money(lastShadow.value))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if account.count < 2 || shadow.count < 2 {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(uiColor: .tertiarySystemFill))
+                    .frame(height: 140)
+                    .overlay {
+                        Text("Not enough overlapping history to draw \(benchmarkLabel) yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 12)
+                    }
+            } else {
+                Chart {
+                    ForEach(shadow) { point in
+                        LineMark(
+                            x: .value("Date", point.date),
+                            y: .value(benchmarkLabel, point.value)
+                        )
+                        .foregroundStyle(.secondary)
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                        .interpolationMethod(.linear)
+                    }
+                    ForEach(account) { point in
+                        LineMark(
+                            x: .value("Date", point.date),
+                            y: .value(accountLabel, point.value)
+                        )
+                        .foregroundStyle(AppPalette.accent)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                        .interpolationMethod(.linear)
+                    }
+                    if let selected = selectedAccount {
+                        RuleMark(x: .value("Date", selected.date))
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) {
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.2))
+                        AxisTick()
+                        AxisValueLabel()
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.2))
+                        AxisTick()
+                        if let val = value.as(Double.self) {
+                            AxisValueLabel {
+                                Text(AppFormat.money(val, compact: true))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        guard let plotFrame = proxy.plotFrame else { return }
+                                        let origin = geo[plotFrame].origin
+                                        let location = CGPoint(
+                                            x: value.location.x - origin.x,
+                                            y: value.location.y - origin.y
+                                        )
+                                        if let date: String = proxy.value(atX: location.x) {
+                                            selectedDate = date
+                                        }
+                                    }
+                                    .onEnded { _ in
+                                        selectedDate = nil
+                                    }
+                            )
+                    }
+                }
+                .frame(height: 140)
+            }
+        }
+    }
+}

@@ -143,6 +143,26 @@ maybe_arm_datadog() {
 }
 maybe_arm_datadog
 
+# Boot-time rotation for the litestream runtime log (2026-08-31).  The tee at the
+# bottom of this script appends forever, and the file lives on the persistent
+# production data volume -- it reached 237 MB unrotated.  At container start, if
+# the log exceeds 64 MB: move the whole old log aside as .1 (overwriting any
+# previous .1, so at most one generation is kept), then seed a fresh log with the
+# newest 16 MB so runtime-health's litestream log scan keeps recent context.
+LITESTREAM_LOG_ROTATE_BYTES=$((64 * 1024 * 1024))
+LITESTREAM_LOG_KEEP_BYTES=$((16 * 1024 * 1024))
+if [ -f "$LITESTREAM_LOG_FILE" ]; then
+  litestream_log_size="$(wc -c < "$LITESTREAM_LOG_FILE" | tr -d '[:space:]')"
+  case "$litestream_log_size" in
+    ''|*[!0-9]*) litestream_log_size=0 ;;
+  esac
+  if [ "$litestream_log_size" -gt "$LITESTREAM_LOG_ROTATE_BYTES" ]; then
+    log "rotating litestream runtime log ($litestream_log_size bytes > $LITESTREAM_LOG_ROTATE_BYTES)"
+    mv -f "$LITESTREAM_LOG_FILE" "$LITESTREAM_LOG_FILE.1"
+    tail -c "$LITESTREAM_LOG_KEEP_BYTES" "$LITESTREAM_LOG_FILE.1" > "$LITESTREAM_LOG_FILE"
+  fi
+fi
+
 MODE="${DB_BOOTSTRAP:-fresh}"
 
 # Production exit-code contract (docs/rollouts/2026-08-02-exit0-outage-audit.md):
@@ -223,7 +243,7 @@ fi
 # R2 free-tier kill-switch (owner directive 2026-08-01): when the app's R2 usage
 # monitor projects >70% of the free tier it writes this marker and restarts the
 # container. ONLY applies when the active litestream replica is still Cloudflare
-# R2 — once AWS_S3_ENDPOINT is Backblaze B2 (or any non-R2 S3), ignore the marker
+# R2 -- once AWS_S3_ENDPOINT is Backblaze B2 (or any non-R2 S3), ignore the marker
 # so historic R2 free-tier pressure cannot pause the real backup target.
 # Resume (R2-era only): POST /api/admin/r2-usage/resume or delete the marker.
 R2_DISABLE_MARKER="${R2_USAGE_DISABLE_MARKER:-$DATA_DIR/.litestream-r2-disabled}"

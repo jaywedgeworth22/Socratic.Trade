@@ -1,10 +1,10 @@
 /**
- * STAGE-1 (READ PATH ONLY) Qdrant backend for RAG retrieval.
+ * STAGE-1 (READ PATH) Qdrant backend for RAG retrieval.
  *
  * When the runtime knob routes reads to Qdrant, each dense tier query in vector-db.ts hits the
- * self-hosted Qdrant mirror (collection "socratic-trade", one point per copied Pinecone vector —
- * see scripts/qdrant/pinecone-to-qdrant-copy.py) instead of Pinecone.  Writes, deletes, and
- * inventory stay on Pinecone in this stage.
+ * self-hosted Qdrant collection (collection "socratic-trade", one point per copied Pinecone vector —
+ * see scripts/qdrant/pinecone-to-qdrant-copy.py) instead of Pinecone.  Stage 2 writes, deletes, and
+ * inventory live in qdrant-write.ts.
  *
  * Backend selection (checked fresh per retrieval pass, flippable without redeploy):
  *   1. Admin > Operations DB override for the catalogued boolean knob RAG_VECTOR_READ_QDRANT
@@ -34,7 +34,19 @@ const DEFAULT_COLLECTION = "socratic-trade";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export function qdrantConfigured(): boolean {
-  return Boolean(process.env.QDRANT_URL?.trim());
+  const url = process.env.QDRANT_URL?.trim();
+  if (!url) return false;
+  // Remote / production Qdrant endpoints require an API key unless explicitly permitted anonymously
+  if (
+    !process.env.QDRANT_API_KEY?.trim() &&
+    process.env.QDRANT_ALLOW_ANONYMOUS !== "true" &&
+    process.env.NODE_ENV !== "test" &&
+    !url.includes("127.0.0.1") &&
+    !url.includes("localhost")
+  ) {
+    return false;
+  }
+  return true;
 }
 
 let warnedUnconfigured = false;
@@ -62,6 +74,9 @@ export function vectorReadBackend(): VectorReadBackend {
     const backend = process.env.RAG_VECTOR_READ_BACKEND?.trim().toLowerCase();
     if (backend === "qdrant") enabled = true;
     else if (backend === "pinecone") enabled = false;
+  }
+  if (enabled === undefined) {
+    enabled = true;
   }
   if (enabled !== true) return "pinecone";
   if (!qdrantConfigured()) {

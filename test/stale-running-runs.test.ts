@@ -364,6 +364,26 @@ describe("markStaleRunningRuns", () => {
     expect(row.summary).toContain("Process restarted mid-run");
     expect(JSON.parse(crashedReceipts(db, userId)[0].payload).reason).toBe("process_restarted_mid_run");
   });
+
+  it("immediately sweeps a prior-process run that started only 1 minute before boot without waiting 30 minutes", async () => {
+    const db = await import("../src/lib/db");
+    const userId = `recent-restart-user-${randomUUID()}`;
+    const runId = randomUUID();
+    // Simulate run started 1 minute ago, but process booted 10 seconds ago
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+
+    db.insertStrategyRun(runId, userId);
+    db.getDb().prepare("UPDATE strategy_runs SET started_at = ? WHERE id = ?").run(startedAt, runId);
+
+    // Running sweep now should immediately catch it as process_restarted_mid_run
+    expect(db.markStaleRunningRuns(Date.now())).toBe(1);
+    const row = db
+      .getDb()
+      .prepare("SELECT status, summary FROM strategy_runs WHERE id = ?")
+      .get(runId) as { status: string; summary: string | null };
+    expect(row.status).toBe("failed");
+    expect(row.summary).toContain("Process restarted mid-run");
+  });
 });
 
 // Regression (2026-08-18, #2848 follow-up): `db-execution` is reachable from the BROWSER bundle

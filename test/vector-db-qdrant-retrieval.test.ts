@@ -1,0 +1,207 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-qdrant-retrieval-${randomUUID()}.db`)}`;
+});
+
+import {
+  retrieveContextDetailed,
+  reconcileManagedVectorRecords,
+  storeContexts,
+  inventoryVectorRecordsByMetadata,
+  getCurrentVectorProviderAuthority,
+  hasPineconeWriteBudget
+} from "../src/lib/vector-db";
+import { setServerKnobOverride, invalidateServerKnobCache } from "../src/lib/server-knobs";
+import { qdrantPointId } from "../src/lib/vector-store/qdrant-write";
+import { PINECONE_WU_EXHAUSTED_UNTIL_KEY } from "../src/lib/pinecone-wu-breaker";
+import { setInternalSetting } from "../src/lib/db";
+
+describe("retrieveContextDetailed with Qdrant read backend", () => {
+  beforeEach(() => {
+    process.env.QDRANT_URL = "http://127.0.0.1:6333";
+    process.env.QDRANT_API_KEY = "live-qdrant-key";
+    process.env.SILICONFLOW_API_KEY = "live-sf-key";
+    process.env.RAG_EMBED_PROVIDER = "siliconflow";
+    process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
+    process.env.VECTOR_EMBED_RETRY_DELAY_MS = "0";
+    invalidateServerKnobCache();
+  });
+
+  afterEach(() => {
+    delete process.env.QDRANT_URL;
+    delete process.env.QDRANT_API_KEY;
+    delete process.env.SILICONFLOW_API_KEY;
+    delete process.env.RAG_EMBED_PROVIDER;
+    delete process.env.PINECONE_API_KEY;
+    delete process.env.VOYAGE_API_KEY;
+    delete process.env.PINECONE_MONTHLY_WU_BUDGET;
+    delete process.env.VECTOR_EMBED_BATCH_DELAY_MS;
+    delete process.env.VECTOR_EMBED_RETRY_DELAY_MS;
+    setServerKnobOverride("RAG_VECTOR_READ_QDRANT", null);
+    setServerKnobOverride("RAG_VECTOR_WRITE_QDRANT", null);
+    invalidateServerKnobCache();
+    vi.unstubAllGlobals();
+  });
+
+  it("retrieves context from Qdrant by default without Pinecone key or client", async () => {
+    delete process.env.PINECONE_API_KEY;
+
+    const mockFetch = vi.fn(async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("embeddings")) {
+        return new Response(
+          JSON.stringify({
+            data: [{ embedding: new Array(1024).fill(0.01) }]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (urlStr.includes("/points/search")) {
+        return new Response(
+          JSON.stringify({
+            result: [
+              {
+                id: "d8c1c4b7-0000-0000-0000-000000000001",
+                score: 0.88,
+                payload: {
+                  pc_id: "sec-filings:AAPL:10-k:2026:chunk-1",
+                  symbol: "AAPL",
+                  doc_type: "10-k",
+                  scope: "shared",
+                  tenant_scope: "shared:operator",
+                  userId: "local",
+                  text: "Apple Inc. reported quarterly revenue of 100B."
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    });
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    const chunks = await retrieveContextDetailed("Apple revenue", "AAPL", 5, "local");
+    expect(chunks).toBeDefined();
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[0].text).toContain("Apple Inc. reported quarterly revenue");
+    expect(chunks[0].id).toBe("sec-filings:AAPL:10-k:2026:chunk-1");
+  });
+
+  it("reconcileManagedVectorRecords inventories Qdrant without a Pinecone client", async () => {
+    delete process.env.PINECONE_API_KEY;
+    const mockFetch = vi.fn(async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/points/scroll")) {
+        return new Response(
+          JSON.stringify({ result: { points: [], next_page_offset: null } }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    const res = await reconcileManagedVectorRecords({ userId: "local", dryRun: true });
+    expect(res).toBeDefined();
+    expect(res.promoted).toBe(0);
+    expect(res.deleted).toBe(0);
+    expect(mockFetch.mock.calls.some((call) => String(call[0]).includes("/points/scroll"))).toBe(true);
+  });
+
+  it("storeContexts upserts to Qdrant without a Pinecone client or pinecone health wrap", async () => {
+    delete process.env.PINECONE_API_KEY;
+    delete process.env.VOYAGE_API_KEY;
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      const urlStr = String(url);
+      if (urlStr.includes("/points")) {
+        return new Response(JSON.stringify({ result: { status: "ok" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await storeContexts([
+      {
+        text: "AAPL 10-K body for qdrant write",
+        metadata: { symbol: "AAPL", source: "sec-edgar", timestamp: "2026-06-20", accession: "a1" }
+      }
+    ]);
+    expect(result.indexed).toBe(1);
+    expect(result.wuExhausted).toBeUndefined();
+    const upsert = calls.find((call) => call.url.includes("/points?wait=true") && call.init.method === "PUT");
+    expect(upsert).toBeDefined();
+    const body = JSON.parse(String(upsert!.init.body));
+    expect(body.points[0].payload.pc_id).toBeTruthy();
+    expect(body.points[0].payload.ns).toBe("");
+    expect(body.points[0].id).toBe(qdrantPointId("", body.points[0].payload.pc_id));
+    expect(calls.every((call) => !call.url.includes("pinecone"))).toBe(true);
+  });
+
+  it("storeContexts does not park on an exhausted Pinecone WU marker when writes are Qdrant", async () => {
+    delete process.env.PINECONE_API_KEY;
+    process.env.PINECONE_MONTHLY_WU_BUDGET = "5000000";
+    setInternalSetting(PINECONE_WU_EXHAUSTED_UNTIL_KEY, "2099-01-01T00:00:00.000Z");
+    const mockFetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("/points")) {
+        return new Response(JSON.stringify({ result: { status: "ok" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    const result = await storeContexts([
+      { text: "MSFT 8-K despite WU park", metadata: { symbol: "MSFT", source: "sec-8k", timestamp: "2026-06-20" } }
+    ]);
+    expect(result.wuExhausted).toBeUndefined();
+    expect(result.indexed).toBe(1);
+    expect(hasPineconeWriteBudget("local")).toBe(true);
+  });
+
+  it("inventoryVectorRecordsByMetadata scrolls Qdrant and does not require a Pinecone key", async () => {
+    delete process.env.PINECONE_API_KEY;
+    const mockFetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("/points/scroll")) {
+        return new Response(
+          JSON.stringify({
+            result: {
+              points: [
+                {
+                  id: "aaaaaaaa-bbbb-5ccc-8ddd-eeeeeeeeeeee",
+                  payload: { pc_id: "occ:v3:inv-1", ns: "", symbol: "AAPL", source: "sec-edgar" }
+                }
+              ],
+              next_page_offset: null
+            }
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    const rows = await inventoryVectorRecordsByMetadata({ userId: "local", namespace: "default" });
+    expect(rows).toEqual([
+      { id: "occ:v3:inv-1", metadata: { symbol: "AAPL", source: "sec-edgar" } }
+    ]);
+  });
+
+  it("getCurrentVectorProviderAuthority returns a durable/qdrant authority without Pinecone", async () => {
+    delete process.env.PINECONE_API_KEY;
+    const authority = await getCurrentVectorProviderAuthority({ userId: "local" });
+    expect(typeof authority).toBe("string");
+    expect(authority?.length).toBeGreaterThan(20);
+  });
+});

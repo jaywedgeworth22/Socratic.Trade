@@ -20,12 +20,13 @@ import {
 } from "lucide-react";
 import type { DashboardSnapshot, StrategyDecision } from "../dashboard-types";
 import { formatSourceList, friendlySource } from "@/lib/dashboard-ui";
-import type { MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFrameworkProposal, TradeProposal } from "@/lib/types";
+import type { BenchmarkComparison, MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFrameworkProposal, TradeProposal } from "@/lib/types";
+import { BenchmarkChart } from "./components/benchmark-chart";
 import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
 import { ReadinessChecklistHero } from "./components/readiness-checklist";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
-import { cx, EM_DASH, fmtDay, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
+import { cx, EM_DASH, fmtDay, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, SENTENCE_GAP, timeUntil } from "./lib/format";
 import { describeLastRun } from "./lib/last-run";
 import {
   decisionStatusLabel,
@@ -342,6 +343,7 @@ export default function ConsoleHomePage() {
           </Card>
 
           <MarkToMarketCard markToMarket={markToMarket} equityWindow={equityWindow} />
+          <VsMarketCard benchmark={snapshot.performance?.benchmark} />
           <PositionsCard snapshot={snapshot} />
 
           {previousTrades.length > 0 && (
@@ -460,6 +462,57 @@ export default function ConsoleHomePage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+function VsMarketCard({ benchmark }: { benchmark?: BenchmarkComparison }) {
+  if (!benchmark) return null;
+  const symbol = benchmark.benchmarkSymbol;
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-1.5">
+          <TrendingUp size={13} /> Versus {symbol}
+        </span>
+      }
+      action={
+        <Link href="/console/results" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
+          Results <ArrowRight size={12} />
+        </Link>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Stat
+          label="Your account"
+          value={fmtPct(benchmark.accountReturnPct, 2, true)}
+          sub={`${benchmark.startDate} → ${benchmark.endDate}`}
+        />
+        <Stat label={symbol} value={fmtPct(benchmark.benchmarkReturnPct, 2, true)} sub="same cash, chained" />
+        <div>
+          <div className="con-card-title">You vs that</div>
+          <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold leading-tight">
+            <SignedText value={benchmark.dollarExcess}>{fmtSignedMoney(benchmark.dollarExcess)}</SignedText>
+            <span className="mt-0.5 block text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+              {fmtPct(benchmark.excessReturnPct, 2, true)} time-weighted
+            </span>
+          </div>
+        </div>
+      </div>
+      {benchmark.accountEquitySeries.length >= 2 && benchmark.shadowBenchmarkSeries.length >= 2 && (
+        <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
+          <BenchmarkChart
+            account={benchmark.accountEquitySeries}
+            shadow={benchmark.shadowBenchmarkSeries}
+            accountLabel="Your account"
+            benchmarkLabel={symbol}
+          />
+        </div>
+      )}
+      <p className="mt-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Same deposits and withdrawals as this account, applied at each day's cutoff.{SENTENCE_GAP}
+        The dashed line is what those dollars would be if they had tracked {symbol}.
+      </p>
+    </Card>
   );
 }
 

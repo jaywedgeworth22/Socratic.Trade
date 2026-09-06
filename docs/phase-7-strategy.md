@@ -2,6 +2,10 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-09-04 Gather internal time budget (do not raise the 8-minute cap)
+
+Board `06df80cf` leftover after #3013/#3018 abort + last-good.  `gatherStrategyMarket` still has an 8-minute wall.  The walk now plans remaining time after a 50s quote-refresh reserve: skip live enrich under 20s usable, skip keyed Finnhub Wave B under 90s, skip scarce RapidAPI Wave C under 20s, and shrink the enrichment pool to the ranked cut under 3 minutes.  A trimmed live tape is preferred over racing timeout then last-good.  Scheduler `broker-health-gate` auto-halt of an active account (including equity 0) now writes one `skipped_broker_unhealthy` `strategy_runs` row.  Skip rows are not liveness completions.  Rollout: `docs/rollouts/2026-09-04-gather-internal-budget.md`.
+
 ## 2026-08-21 Gather deadline must abort + last-good tape
 
 Ops snapshot 2026-08-21 19:18Z: Roth 12 and Paper 27 consecutive `strategy gather timeout` after both completed the prior close (20:16Z / 20:22Z).  Scheduler was ticking.  LLM keys were configured.  Live sha `e0a4959a` already included #2852 (Robinhood max-10) and #2854 (no Pinecone inventory).  The 8-minute gather `withDeadline` was a pure race: the run failed and the Nasdaq/enrichment/broker walk kept going, so the next account's gather stacked on top until nothing finished.  `gatherStrategyMarket` now aborts that controller, stops cascade/enrichment waves on the signal (keyed/scarce waves keep that signal — Finnhub is the slow paced free-tier wave), and if a last completed MarketScan exists continues the run with that real tape plus a 45s quote refresh so Green can start.  No last-good row still fails the run.  Do not raise the 8-minute cap as the fix.  Rollout: `docs/rollouts/2026-08-21-gather-timeout-abort.md`.

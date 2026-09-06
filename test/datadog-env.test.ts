@@ -6,6 +6,7 @@ import {
   datadogLogsEnabled,
   datadogRumEnabled,
   resolveDatadogApiKey,
+  resolveDatadogEnv,
   resolveDatadogSite,
   resolveLogsIntakeUrl,
   resolvePublicRumConfig,
@@ -72,6 +73,11 @@ describe("datadog env resolution", () => {
     expect(resolveDatadogSite()).toBe(DEFAULT_DD_SITE);
     expect(DEFAULT_DD_SITE).toBe("us5.datadoghq.com");
     expect(DEFAULT_DD_SERVICE).toBe("socratic-trade");
+  });
+
+  it("canonicalizes Coolify DD_ENV=prod to production", () => {
+    process.env.DD_ENV = "prod";
+    expect(resolveDatadogEnv()).toBe("production");
   });
 
   it("is fail-closed without an API key or agent host", () => {

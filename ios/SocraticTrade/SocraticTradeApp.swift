@@ -26,6 +26,7 @@ struct SocraticTradeApp: App {
     }
 
     init() {
+        SentryTelemetry.start()
         // Nav bars and tab items are drawn by UIKit and never see SwiftUI's .font, so the
         // Lato swap has to be installed here or the chrome stays on SF while content moves.
         AppAppearance.applyFonts()

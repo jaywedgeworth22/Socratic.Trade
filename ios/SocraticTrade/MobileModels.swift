@@ -707,6 +707,12 @@ struct EquityCurvePoint: Decodable, Identifiable, Equatable {
     }
 }
 
+struct BenchmarkDollarPoint: Decodable, Identifiable, Equatable {
+    var id: String { date }
+    let date: String
+    let value: Double
+}
+
 struct BenchmarkComparison: Decodable {
     let accountReturnPct: Double
     let benchmarkReturnPct: Double
@@ -717,6 +723,10 @@ struct BenchmarkComparison: Decodable {
     let benchmarkSymbol: String
     let cashFlowAdjusted: Bool?
     let netExternalFlows: Double?
+    let accountEquitySeries: [BenchmarkDollarPoint]?
+    let shadowBenchmarkSeries: [BenchmarkDollarPoint]?
+    let shadowValue: Double?
+    let dollarExcess: Double?
 }
 
 struct FillEvent: Decodable, Identifiable, Equatable {

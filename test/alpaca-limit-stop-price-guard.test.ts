@@ -126,7 +126,7 @@ describe("Alpaca REST path — stop_price gating by order type", () => {
       marketHours: "regular_hours",
       refId: "ref-stop-1"
     });
-    expect(lastCreateOrderOpts.type).toBe("stop_market");
+    expect(lastCreateOrderOpts.type).toBe("stop");
     expect(lastCreateOrderOpts.stop_price).toBe(55.25);
   });
 
@@ -228,5 +228,25 @@ describe("Alpaca MCP path — stop_price gating by order type", () => {
     const args = argsSeen[argsSeen.length - 1];
     expect(args.type).toBe("stop_limit");
     expect(args.stop_price).toBe("158");
+  });
+
+  it("maps stop_market to Alpaca wire type stop on the MCP tool args", async () => {
+    await seedMcpAccount();
+    const argsSeen = stubMcpFetch();
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    await getAlpacaGateway("local").placeEquityOrder({
+      accountNumber: "MOCK_ACC",
+      symbol: "EQT",
+      side: "sell",
+      type: "stop_market",
+      quantity: 4,
+      stopPrice: 55.25,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      refId: "ref-mcp-stop-1"
+    });
+    const args = argsSeen[argsSeen.length - 1];
+    expect(args.type).toBe("stop");
+    expect(args.stop_price).toBe("55.25");
   });
 });

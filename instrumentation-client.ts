@@ -8,28 +8,54 @@ import { redactForTelemetry } from "./src/lib/telemetry-sanitize";
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
 if (dsn) {
-  // Session Replay can record DOM/network around errors. It is opt-in and, when
-  // on, masks all text and blocks all media so portfolio/account values are not
-  // captured. Default sample rates are 0 (errors only via replaysOnErrorSampleRate).
-  const replayEnabled = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED === "true";
+  // Designer 2026-09-04 update: ST web Session Replay defaults to 10%
+  // session / 100% error, mask-all.  Kill switch:
+  // NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=false.  Override rates via sample-rate
+  // env; do not rely on Coolify-only documentation.
+  const replayRaw = process.env.NEXT_PUBLIC_SENTRY_REPLAY_ENABLED?.trim();
+  const replayDisabled = replayRaw ? /^(false|0|off|no)$/i.test(replayRaw) : false;
   const replaySessionSampleRate = Number(
-    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0"
+    process.env.NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE ?? "0.1"
   );
   const replayErrorSampleRate = Number(
-    process.env.NEXT_PUBLIC_SENTRY_REPLAY_ERROR_SAMPLE_RATE ?? "1"
+    process.env.NEXT_PUBLIC_SENTRY_REPLAY_ERROR_SAMPLE_RATE ?? "1.0"
   );
+  const feedbackRaw = process.env.NEXT_PUBLIC_SENTRY_FEEDBACK_ENABLED?.trim();
+  const feedbackDisabled = feedbackRaw ? /^(false|0|off|no)$/i.test(feedbackRaw) : false;
 
   Sentry.init({
     dsn,
     environment:
       process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || process.env.NODE_ENV,
-    tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? "0.1"),
+    tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? "0.2"),
+    enableLogs: true,
     sendDefaultPii: false,
-    replaysSessionSampleRate: replayEnabled ? replaySessionSampleRate : 0,
-    replaysOnErrorSampleRate: replayEnabled ? replayErrorSampleRate : 0,
-    integrations: replayEnabled
-      ? [Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })]
-      : [],
+    tracePropagationTargets: [
+      "localhost",
+      /^https:\/\/([\w-]+\.)?socratictrade\.com/,
+      /^https:\/\/([\w-]+\.)?congress\.trade/,
+      /^https:\/\/([\w-]+\.)?jays\.services/,
+      /^https:\/\/usage\.jays\.services/,
+    ],
+    replaysSessionSampleRate: !replayDisabled ? replaySessionSampleRate : 0,
+    replaysOnErrorSampleRate: !replayDisabled ? replayErrorSampleRate : 0,
+    integrations: [
+      ...(!replayDisabled
+        ? [Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })]
+        : []),
+      ...(!feedbackDisabled
+        ? [
+            Sentry.feedbackIntegration({
+              colorScheme: "light",
+              autoInject: true,
+              showBranding: false,
+              buttonLabel: "Report a problem",
+              submitButtonLabel: "Send",
+              formTitle: "Report a problem",
+            }),
+          ]
+        : []),
+    ],
     beforeSend(event) {
       return redactForTelemetry(event) as typeof event;
     }

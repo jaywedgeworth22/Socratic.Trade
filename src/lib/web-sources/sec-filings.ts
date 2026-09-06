@@ -550,10 +550,13 @@ export async function ingestFiling(
   // Same preflight for the MONTHLY Pinecone write-unit breaker: while it is active every
   // storeDocument call is refused before embedding anyway, so skip the EDGAR fetch/chunk work
   // entirely and let the bulk loop stop (budgetExhausted semantics — the accession stays
-  // un-recorded and retries after the marker expires).
-  const { pineconeWuExhaustedUntil } = await import("../pinecone-wu-breaker");
-  if (pineconeWuExhaustedUntil()) {
-    return { skipped: true, chunks: 0, budgetExhausted: true };
+  // un-recorded and retries after the marker expires).  Qdrant writes ignore this park.
+  const { vectorWriteBackend } = await import("../vector-store/qdrant-write");
+  if (vectorWriteBackend() === "pinecone") {
+    const { pineconeWuExhaustedUntil } = await import("../pinecone-wu-breaker");
+    if (pineconeWuExhaustedUntil()) {
+      return { skipped: true, chunks: 0, budgetExhausted: true };
+    }
   }
 
   let html: string | null = null;

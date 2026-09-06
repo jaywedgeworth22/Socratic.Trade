@@ -34,11 +34,22 @@ settings:
     CURRENT_PROJECT_VERSION: "202608132022"
     INFOPLIST_KEY_CFBundleDisplayName: "Socratic Trade"
     INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.finance"
+    # Native Sentry. Empty unless xcodebuild/CI passes SENTRY_DSN=...
+    # SentryTelemetry.swift skips init when this expands to empty or $(SENTRY_DSN).
+    SENTRY_DSN: ""
+
+packages:
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa.git
+    from: "8.44.0"
 
 targets:
   SocraticTrade:
     type: application
     platform: iOS
+    dependencies:
+      - package: Sentry
+        product: Sentry
     sources:
       - path: SocraticTrade
         excludes:
@@ -78,6 +89,7 @@ targets:
         # regression (fixed in PR #2639) got introduced by an unrelated regen.
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SENTRY_DSN: $(SENTRY_DSN)
         CFBundleDisplayName: Socratic Trade
         LSApplicationCategoryType: public.app-category.finance
         ITSAppUsesNonExemptEncryption: false
