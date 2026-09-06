@@ -44,7 +44,16 @@ beforeEach(() => {
   // Defensive reset: the guard is globalThis-pinned (by design — see scheduler.ts's tickGuardHost
   // comment) so it survives module reset and could otherwise leak from another test file sharing
   // this worker process.
-  (globalThis as { __tickInFlight?: boolean }).__tickInFlight = false;
+  const host = globalThis as {
+    __tickInFlight?: boolean;
+    __tickStartedAtMs?: number;
+    __tickGeneration?: number;
+    __tickSentryCheckInId?: string;
+  };
+  host.__tickInFlight = false;
+  host.__tickStartedAtMs = undefined;
+  host.__tickGeneration = 0;
+  host.__tickSentryCheckInId = undefined;
 });
 
 afterEach(() => {

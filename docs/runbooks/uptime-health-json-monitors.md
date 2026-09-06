@@ -71,7 +71,12 @@ liveness check.  Do not convert it into a keyword monitor.
 
 - `schedulerStale` is always a boolean.  `true` when `scheduler:lastTick` is
   older than 5 minutes, or when there is no tick after the process has been up
-  longer than 5 minutes.
+  longer than 5 minutes.  `lastTick` is stamped when a leader tick *finishes*
+  (not when it starts), so a hung await goes stale.  An in-process watchdog
+  (15s poll, 2-minute budget in `src/lib/scheduler.ts`) clears a wedged
+  `__tickInFlight` bit so the next interval can run without a container restart.
+  A fully blocked event loop still cannot run that watchdog:  keep the HTTP
+  timeout monitor and this JSON flag.
 - `tradingLiveness` is always present.  `degraded` is a **count** of
   active-autonomy accounts that are stale (market open) or over the consecutive
   failure cap.  Halted accounts do not count.  `degraded: 0` is healthy.
