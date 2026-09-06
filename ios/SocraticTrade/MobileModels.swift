@@ -204,7 +204,10 @@ struct Readiness: Decodable {
         selectedAccountNumber = try? values.decodeIfPresent(String.self, forKey: .selectedAccountNumber)
         activeConnectedAccount = try? values.decodeIfPresent(ConnectedAccount.self, forKey: .activeConnectedAccount)
         commandBacklog = (try? values.decode(CommandBacklog.self, forKey: .commandBacklog)) ?? CommandBacklog(queued: 0, running: 0)
-        needsAppConsent = try? values.decodeIfPresent(Bool.self, forKey: .needsAppConsent)
+        // Missing/null is the legacy shape.  A present non-Boolean value is a
+        // malformed consent contract and must reject the snapshot rather than
+        // degrading to nil, which would present the user as already consented.
+        needsAppConsent = try values.decodeIfPresent(Bool.self, forKey: .needsAppConsent)
     }
 }
 

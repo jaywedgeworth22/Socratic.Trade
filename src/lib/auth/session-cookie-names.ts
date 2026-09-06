@@ -57,7 +57,7 @@ export async function sessionTokenForCurrentCookie(input: {
   cookieName: string;
   secret: string | undefined;
   env?: NodeJS.ProcessEnv;
-}): Promise<{ cookieName: KnownSessionCookieName; token: string } | undefined> {
+}): Promise<{ cookieName: KnownSessionCookieName; token: string; maxAge?: number } | undefined> {
   const currentName = currentAuthjsSessionCookieName(input.env);
   if (!input.sessionToken) return undefined;
   if (input.cookieName === currentName) {
@@ -71,11 +71,16 @@ export async function sessionTokenForCurrentCookie(input: {
     salt: input.cookieName,
   });
   if (!payload) return undefined;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp !== "number") return undefined;
+  const maxAge = Math.floor(payload.exp - nowSeconds);
+  if (maxAge <= 0) return undefined;
   const { iat: _iat, exp: _exp, nbf: _nbf, ...claims } = payload;
   const token = await encodeSessionToken({
     token: claims as JWTPayload,
     secret: input.secret,
     salt: currentName,
+    maxAge,
   });
-  return { cookieName: currentName, token };
+  return { cookieName: currentName, token, maxAge };
 }

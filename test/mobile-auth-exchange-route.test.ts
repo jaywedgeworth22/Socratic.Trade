@@ -10,6 +10,7 @@ function challenge(verifier: string): string {
 
 describe("mobile OAuth exchange route", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
   });
 
@@ -65,6 +66,34 @@ describe("mobile OAuth exchange route", () => {
     expect(
       await decodeSessionToken({ token: cookieValue, secret, salt: "next-auth.session-token" }),
     ).toBeNull();
+  });
+
+  it("sets the reissued cookie to the legacy session's remaining lifetime", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-30T12:00:00.000Z"));
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("AUTH_SECRET", secret);
+    const verifier = "v".repeat(43);
+    const legacyToken = await encodeSessionToken({
+      token: { sub: "user-1" },
+      secret,
+      salt: "next-auth.session-token",
+      maxAge: 120,
+    });
+    vi.setSystemTime(new Date("2026-08-30T12:00:30.000Z"));
+    const code = createMobileAuthHandoff({
+      sessionToken: legacyToken,
+      cookieName: "next-auth.session-token",
+      codeChallenge: challenge(verifier),
+    });
+
+    const response = await POST(new Request("https://socratictrade.com/api/mobile/auth/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code, codeVerifier: verifier }),
+    }));
+
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=90");
+    vi.useRealTimers();
   });
 
   it("rejects a legacy session whose JWT cannot be verified under the source salt", async () => {
