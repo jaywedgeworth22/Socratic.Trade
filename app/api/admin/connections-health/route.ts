@@ -75,7 +75,11 @@ function canonicalServiceHealthLog(
   const requested = Math.max(0, limit + offset);
   return healthLaneAliases(service)
     .flatMap((alias) => getServiceHealthLog(alias, requested, 0, keySource))
-    .sort((left, right) => right.ts.localeCompare(left.ts) || right.id.localeCompare(left.id))
+    // Stable sort on ts alone.  Each alias query already returns ORDER BY ts DESC, rowid
+    // DESC, and Array.prototype.sort is stable, so insertion order survives within a lane.
+    // Tie-breaking on the random UUID `id` would instead order same-millisecond rows
+    // arbitrarily and disagree with getLaneHealth's own ts DESC, rowid DESC "last 5" window.
+    .sort((left, right) => right.ts.localeCompare(left.ts))
     .slice(offset, offset + limit);
 }
 
