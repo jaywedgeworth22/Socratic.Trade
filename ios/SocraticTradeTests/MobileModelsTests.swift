@@ -124,6 +124,14 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertFalse(snapshot.readiness.requiresAppConsent)
     }
 
+    func testMalformedConsentValueRejectsTheSnapshot() {
+        let json = #"""
+        {"readiness":{"hasAccount":true,"hasUniverse":true,"systemState":"active","strategyAuthority":"decide","commandBacklog":{"queued":0,"running":0},"needsAppConsent":"false"},
+         "policy":{"systemState":"active","strategyAuthority":"decide"}}
+        """#
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8)))
+    }
+
     func testSnapshotDecodesCompactLatestScan() throws {
         let json = Data(#"""
         {
