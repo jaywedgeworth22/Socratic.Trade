@@ -53,7 +53,9 @@ What was actually verified pre-merge: `node --experimental-strip-types --check` 
 1. `sendSentrySchedulerCheckIn` built one `payload` object pre-typed as `status: SentrySchedulerCheckInStatus` (a 3-way union of `"in_progress" | "ok" | "error"`) and passed it to the real `@sentry/nextjs` `captureCheckIn`, whose `CheckIn` parameter type is a discriminated union with only two arms (`"in_progress"` vs `"ok" | "error"`).  A pre-widened `status` field cannot structurally match either arm even though every individual call is valid at runtime.  Fixed by branching on `status` first so each call site's object literal narrows to the exact arm.
 2. `test/scheduler-tick-watchdog.test.ts`'s `sentryMock.captureCheckIn` was `vi.fn(() => "check-in-id")` — a zero-parameter mock implementation, so vitest inferred its `.mock.calls` element type as an empty tuple, and the test's own `(call[0] as { status: string })` casts failed with "neither type sufficiently overlaps".  Fixed by giving the mock's implementation function real (unused) parameters so `call[0]` infers as `unknown`, which the casts can validly narrow from.
 
-Still not executed locally (no `node_modules`) — these fixes are informed by reading the exact `tsc` error text from the CI run, not from a local type-check.
+A second CI run after that fix caught a third error the first two masked: the branch-on-`status` fix still forwarded `checkInId` on the `"in_progress"` arm, but the SDK's `InProgressCheckIn` type has no `checkInId` field at all — opening a check-in always mints a fresh ID (returned from the call); only the closing `"ok"`/`"error"` arm can carry one to resume it. Neither production code nor any test ever calls `sendSentrySchedulerCheckIn("in_progress", someId)`, so dropping `checkInId` from that branch is a pure type fix with no behavior change.
+
+Still not executed locally (no `node_modules`) — all three fixes are informed by reading the exact `tsc` error text from consecutive CI runs, not from a local type-check.
 
 ## Next Steps & Blockers
 

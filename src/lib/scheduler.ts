@@ -284,12 +284,12 @@ export async function sendSentrySchedulerCheckIn(
     // Branch on `status` (rather than building one object typed as the 3-way union) so each
     // call site's object literal narrows to the exact arm of the SDK's CheckIn union — a
     // pre-widened `status: SentrySchedulerCheckInStatus` field cannot structurally match either
-    // arm and fails `tsc` even though every individual call is valid.
+    // arm and fails `tsc` even though every individual call is valid. The SDK's
+    // `InProgressCheckIn` arm has no `checkInId` field at all — opening always mints a fresh
+    // ID (that's the return value); only the closing "ok"/"error" arm can carry one to resume it.
     const id =
       status === "in_progress"
-        ? checkInId
-          ? captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status, checkInId }, SENTRY_CRON_MONITOR_CONFIG)
-          : captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status }, SENTRY_CRON_MONITOR_CONFIG)
+        ? captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status }, SENTRY_CRON_MONITOR_CONFIG)
         : checkInId
           ? captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status, checkInId }, SENTRY_CRON_MONITOR_CONFIG)
           : captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status }, SENTRY_CRON_MONITOR_CONFIG);
