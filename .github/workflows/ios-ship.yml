@@ -5,8 +5,8 @@ name: iOS TestFlight ship
 # ios-build.yml. Do not run xcodebuild locally. Do not restart the retired
 # self-hosted mac-xcode26-socratic runner or /Users/jay/apps/ios-fleet.
 #
-# Signing: scripts/ios-appstore-gm-prepare.sh writes ~/.secrets from GitHub
-# Actions secrets (same names as Congress.Trade: ASC_KEY_ID, ASC_ISSUER_ID,
+# Signing: scripts/ios-appstore-gm-prepare.sh writes ~/.secrets from Infisical prod
+# (identity stays on GitHub; leftover GH ASC_/IOS_DIST_ for later cleanup) (same names as Congress.Trade: ASC_KEY_ID, ASC_ISSUER_ID,
 # ASC_KEY_P8, IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD). Never mint a new
 # App Store Connect key. The fleet script also declares export compliance
 # so a missing ITSAppUsesNonExemptEncryption cannot leave a VALID-but-unusable
@@ -127,17 +127,77 @@ jobs:
 
       # Do not use `secrets.*` in `if:` -- GitHub's dispatch parser rejects it
       # (`Unrecognized named-value: secrets`) and the whole workflow dies at 0s.
-      - name: Import signing + ASC key
+
+      # Identity stays on GitHub.  Apple/iOS signing material comes from Infisical prod.
+      - name: Load Infisical signing secrets
         if: steps.gate.outputs.should_ship == '1'
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
-          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+          INFISICAL_PROJECT_ID: ${{ secrets.INFISICAL_PROJECT_ID }}
+          INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${{ secrets.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID }}
+          INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${{ secrets.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET }}
+          INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+        run: |
+          set +o xtrace
+          set -euo pipefail
+          export INFISICAL_DISABLE_UPDATE_CHECK=true
+
+          if ! command -v infisical >/dev/null 2>&1; then
+            NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1 brew install infisical/get-cli/infisical
+          fi
+          command -v infisical >/dev/null 2>&1 || {
+            echo "::error::Infisical CLI is not installed."
+            exit 1
+          }
+
+          if [ -z "${INFISICAL_PROJECT_ID:-}" ]; then
+            echo "::error::Missing INFISICAL_PROJECT_ID GitHub secret."
+            exit 1
+          fi
+          CLIENT_ID="${INFISICAL_UNIVERSAL_AUTH_CLIENT_ID:-${INFISICAL_CLIENT_ID:-}}"
+          CLIENT_SECRET="${INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET:-${INFISICAL_CLIENT_SECRET:-}}"
+          if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+            echo "::error::Missing Infisical machine identity.  Set INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET (fallback INFISICAL_CLIENT_ID/SECRET) on the repo."
+            exit 1
+          fi
+
+          TOKEN="$(
+            env -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET -u INFISICAL_TOKEN \
+              INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$CLIENT_ID" \
+              INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$CLIENT_SECRET" \
+              infisical login --method=universal-auth --silent --plain --telemetry=false 2>/dev/null || true
+          )"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Infisical universal-auth login failed."
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 \
+                      IOS_DIST_P12_BASE64 IOS_DIST_P12_PASSWORD; do
+            val="$(
+              INFISICAL_TOKEN="$TOKEN" infisical secrets get "$name" \
+                --plain --silent --telemetry=false --expand=false \
+                --projectId="$INFISICAL_PROJECT_ID" --env=prod --path=/ \
+                2>/dev/null || true
+            )"
+            if [ -z "$val" ]; then
+              continue
+            fi
+            echo "::add-mask::$val"
+            {
+              echo "${name}<<INFISICAL_EOF"
+              printf '%s\n' "$val"
+              echo "INFISICAL_EOF"
+            } >> "$GITHUB_ENV"
+          done
+          unset TOKEN CLIENT_ID CLIENT_SECRET val
+
+      - name: Import signing + ASC key
+        if: steps.gate.outputs.should_ship == '1'
         run: |
           if [ -z "${ASC_KEY_ID}" ]; then
-            echo "::error::ASC_KEY_ID is missing on this GitHub repo. Copy ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD from Congress.Trade (same team CC8UTF7ATG). Do not mint a new key. Do not restart a Mac runner."
+            echo "::error::ASC_KEY_ID empty after Infisical prod export. Copy ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD from Congress.Trade (same team CC8UTF7ATG). Do not mint a new key. Do not restart a Mac runner."
             exit 1
           fi
           bash "$GITHUB_WORKSPACE/scripts/ios-appstore-gm-prepare.sh"
