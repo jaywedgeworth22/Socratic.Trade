@@ -561,6 +561,13 @@ export function startScheduler(): void {
 }
 
 async function tickInner(): Promise<void> {
+  // Captured immediately: `tick()` bumps `__tickGeneration` synchronously right before invoking
+  // `tickInner`, so this is always this call's own generation. Guards the Sentry check-in close in
+  // the `finally` below the same way `tick()`'s own `finally` already guards `clearTickGuard()` —
+  // otherwise an abandoned tick that the watchdog already unwedged can settle later and either
+  // close its own now-stale check-in a second time, or worse, clobber a newer tick's still-open
+  // in-progress check-in (tickGuardHost.__tickSentryCheckInId by then belongs to that newer tick).
+  const myTickGeneration = tickGuardHost.__tickGeneration;
   // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill,
   // and close the matching strategy_run_requests row so Manual Run once is not left locked.
   // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
@@ -1270,7 +1277,15 @@ async function tickInner(): Promise<void> {
         try { releaseLease(LEASE_OWNER); } catch { /* never throw on shutdown */ }
       }
     }
-    await sendSentrySchedulerCheckIn(sentryStatus, tickGuardHost.__tickSentryCheckInId ?? sentryCheckInId);
+    if (tickGuardHost.__tickGeneration === myTickGeneration) {
+      await sendSentrySchedulerCheckIn(sentryStatus, tickGuardHost.__tickSentryCheckInId ?? sentryCheckInId);
+    } else {
+      // The watchdog already unwedged this tick (and closed its check-in as "error") while it was
+      // still running. The global guard state now belongs to a newer generation, so sending here
+      // would either duplicate that close or, worse, apply this abandoned tick's status to the
+      // newer tick's still-open check-in. Suppress it — the watchdog's own close already reported.
+      console.warn("[scheduler] stale tick finished after watchdog unwedge; suppressing its Sentry check-in");
+    }
   }
 }
 
