@@ -11,7 +11,10 @@ const triggerMocks = vi.hoisted(() => ({
 }));
 
 const sentryMock = vi.hoisted(() => ({
-  captureCheckIn: vi.fn(() => "check-in-id")
+  // Typed with real (if unused) params so `.mock.calls[i][0]` infers as `unknown` rather than
+  // a zero-length tuple — a bare `() => "check-in-id"` makes tsc reject every `call[0] as {...}`
+  // cast below with "neither type sufficiently overlaps".
+  captureCheckIn: vi.fn((_checkIn: unknown, _monitorConfig?: unknown) => "check-in-id")
 }));
 
 vi.mock("../src/lib/triggers", async (importOriginal) => {

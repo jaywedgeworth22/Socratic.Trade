@@ -281,13 +281,18 @@ export async function sendSentrySchedulerCheckIn(
     // The upsert monitor config auto-creates/updates the monitor on first check-in: expected
     // every minute (TICK_MS), flagged missed after a 5-minute margin. maxRuntime 10 minutes
     // is the Sentry-side backstop if in_progress never closes (watchdog unwedge is faster).
-    const payload: {
-      monitorSlug: string;
-      status: SentrySchedulerCheckInStatus;
-      checkInId?: string;
-    } = { monitorSlug: SENTRY_CRON_MONITOR_SLUG, status };
-    if (checkInId) payload.checkInId = checkInId;
-    const id = captureCheckIn(payload, SENTRY_CRON_MONITOR_CONFIG);
+    // Branch on `status` (rather than building one object typed as the 3-way union) so each
+    // call site's object literal narrows to the exact arm of the SDK's CheckIn union — a
+    // pre-widened `status: SentrySchedulerCheckInStatus` field cannot structurally match either
+    // arm and fails `tsc` even though every individual call is valid.
+    const id =
+      status === "in_progress"
+        ? checkInId
+          ? captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status, checkInId }, SENTRY_CRON_MONITOR_CONFIG)
+          : captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status }, SENTRY_CRON_MONITOR_CONFIG)
+        : checkInId
+          ? captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status, checkInId }, SENTRY_CRON_MONITOR_CONFIG)
+          : captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status }, SENTRY_CRON_MONITOR_CONFIG);
     return typeof id === "string" && id.length > 0 ? id : undefined;
   } catch (err) {
     logError("scheduler.tick", { event: "cron_checkin_failed", error: safeErrorMessage(err) });

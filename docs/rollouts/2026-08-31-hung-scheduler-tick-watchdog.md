@@ -48,6 +48,13 @@ npm run build
 
 What was actually verified pre-merge: `node --experimental-strip-types --check` (Node 26) parsed `src/lib/scheduler.ts` and all three touched test files clean (exit 0) after the merge — confirms no structural/brace damage from the merge, not a type-check or a real test run.  Manual trace of `test/scheduler-tick-watchdog.test.ts`'s five cases against the merged file confirms the exported surface (`_runSchedulerTickForTest`, `runSchedulerTickWatchdog`, `DEFAULT_TICK_WATCHDOG_MS`, `SENTRY_CRON_MONITOR_SLUG`, and the `__tick*` globalThis fields) is unchanged by the merge, and `test/scheduler-leader-heartbeat.test.ts` (untouched by this branch) still returns before any of the merged code runs on the follower path.  CI's `verify` gate is the first real test execution — auto-merge is armed on that gate, not on this note.
 
+**Real `tsc` failure caught by CI, fixed post-push:** the first CI run (`verify-hosted`) failed `npx tsc --noEmit` — the local syntax check above cannot catch type errors.  Two issues, both fixed:
+
+1. `sendSentrySchedulerCheckIn` built one `payload` object pre-typed as `status: SentrySchedulerCheckInStatus` (a 3-way union of `"in_progress" | "ok" | "error"`) and passed it to the real `@sentry/nextjs` `captureCheckIn`, whose `CheckIn` parameter type is a discriminated union with only two arms (`"in_progress"` vs `"ok" | "error"`).  A pre-widened `status` field cannot structurally match either arm even though every individual call is valid at runtime.  Fixed by branching on `status` first so each call site's object literal narrows to the exact arm.
+2. `test/scheduler-tick-watchdog.test.ts`'s `sentryMock.captureCheckIn` was `vi.fn(() => "check-in-id")` — a zero-parameter mock implementation, so vitest inferred its `.mock.calls` element type as an empty tuple, and the test's own `(call[0] as { status: string })` casts failed with "neither type sufficiently overlaps".  Fixed by giving the mock's implementation function real (unused) parameters so `call[0]` infers as `unknown`, which the casts can validly narrow from.
+
+Still not executed locally (no `node_modules`) — these fixes are informed by reading the exact `tsc` error text from the CI run, not from a local type-check.
+
 ## Next Steps & Blockers
 
 - Merge via auto-merge when `verify` is green.  No extra-ship.  No Coolify mutate.  No container restart from this seat.  Weekday RTH latch still applies:  runtime change on `main` builds after the cash close (or with `HOTFIX=1`).
