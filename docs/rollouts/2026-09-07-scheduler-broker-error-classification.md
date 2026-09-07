@@ -173,14 +173,16 @@ Round-2 (this session), actual results — not just the command list, and now in
   `test/broker-health-auto-pause.test.ts` — 125 tests, all green. A whole-repo `npm test` was not
   run to completion in this session (large suite) — CI's `verify` check is the authoritative
   full-suite gate and runs automatically on push.
-- `npm run build` — this worktree's `node_modules` was stale relative to `package-lock.json`
-  (same `ERR_PACKAGE_PATH_NOT_EXPORTED` on `@sentry/nextjs/config` seen and fixed the same way on
-  the sibling `claude/ingest-error-classification` and `claude/congress-share-401-observability`
-  lanes); `npm install` resynced it. A fresh `tsc`/`build` re-run after that install did not
-  complete within this session (this Mac had several other worktrees' installs/builds/test runs
-  in flight concurrently at the time) — not re-attempted further to avoid burning the session on
-  a local resource-contention issue unrelated to this PR's code. CI's `verify` check builds this
-  exact commit and is the authoritative confirmation.
+- `npm run build` — clean, exit 0. This worktree's `node_modules` was initially stale relative to
+  `package-lock.json` (same `ERR_PACKAGE_PATH_NOT_EXPORTED` on `@sentry/nextjs/config` seen and
+  fixed the same way on the sibling `claude/ingest-error-classification` and
+  `claude/congress-share-401-observability` lanes); `npm install` resynced it, and after merging
+  `origin/main` (see below) both `tsc --noEmit` and `npm run build` completed clean.
+- Merged `origin/main` after PR #3187 landed (STATUS.md/PLAN.md/docs/EFFORT-LOG.md conflicts
+  auto-resolved by git's `ort` strategy, both sides kept; `src/lib/vector-db.ts` also auto-merged
+  cleanly against PR #3187's changes — verified no conflict markers and both PRs' edits coexist).
+  `tsc`, targeted vitest (89 tests across 3 re-checked files), and `npm run build` all re-confirmed
+  clean after the merge.
 
 ## Follow-ups
 

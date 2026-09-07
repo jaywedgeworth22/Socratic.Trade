@@ -37,12 +37,12 @@ fixes the resulting per-tick account_skip_started re-emission. (5) `cancelBracke
 GET was never actually opted into `retryTransient` despite the rollout note claiming it was — now
 fixed to match. Five new regression tests across `test/scheduler-lane-observability.test.ts` and
 `test/tradier.test.ts` (125 total across the 7 targeted files, all green). `npx tsc --noEmit`
-clean (confirmed right after the code edits), `npm run lint` 0 errors. `npm run build` hit the
-same stale-`node_modules` issue as the sibling ingest-errors/congress-401 lanes
-(`ERR_PACKAGE_PATH_NOT_EXPORTED` on `@sentry/nextjs/config`); `npm install` resynced it, but a
-fresh post-install `tsc`/`build` re-run did not complete within this session (several other
-worktrees' installs/builds were running concurrently on this Mac) — not force-verified further;
-CI's `verify` check builds this exact commit and is the authoritative gate.
+clean, `npm run lint` 0 errors, `npm run build` clean (after `npm install` resynced this
+worktree's stale `node_modules`, same `ERR_PACKAGE_PATH_NOT_EXPORTED` seen on the sibling
+ingest-errors/congress-401 lanes). Merged `origin/main` after PR #3187 landed
+(STATUS.md/PLAN.md/docs/EFFORT-LOG.md conflicts auto-resolved, `src/lib/vector-db.ts` also
+auto-merged cleanly against #3187's changes); re-confirmed tsc/targeted-vitest/build clean
+post-merge.
 
 **Blockers:** none.
 **Next action:** none — all 7 round-1 review threads resolved, auto-merge armed, this PR merges
