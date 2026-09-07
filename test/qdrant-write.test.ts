@@ -311,3 +311,103 @@ describe("qdrantProviderAuthority", () => {
     expect(a).toBe(b);
   });
 });
+
+// Production evidence (litestream-runtime.log, 2026-08-29..2026-09-07): 92 "[vector-db] Error
+// storing contexts: TypeError: fetch failed" events on the RAG write path since the 2026-09-01
+// Qdrant write cutover. Every write in this module is idempotent by construction (deterministic
+// uuid5 point ids, ns+pc_id-filtered deletes), so a whole-request retry on a transient network
+// blip is safe. These tests pin that retry and its two boundaries: a caller abort/timeout is
+// never retried, and a non-retryable 4xx (e.g. a real validation error) fails immediately.
+describe("qdrantUpsertPoints — retry on a transient network failure", () => {
+  beforeEach(() => {
+    process.env.QDRANT_URL = "http://qdrant.example:6333";
+    process.env.QDRANT_API_KEY = "test-key";
+  });
+
+  it("retries a dead-socket TypeError and succeeds on the fresh connection", async () => {
+    let attempt = 0;
+    const fetchMock = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError("fetch failed");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ result: { status: "ok" } }),
+        text: async () => ""
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await qdrantUpsertPoints({
+      namespace: "socratic-abc",
+      records: [{ id: "occ:v3:abc", values: [0.1, 0.2] }]
+    });
+
+    expect(attempt).toBe(2);
+    expect(result.upserted).toBe(1);
+  });
+
+  it("retries a transient Qdrant 5xx response", async () => {
+    let attempt = 0;
+    const fetchMock = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        return { ok: false, status: 503, json: async () => ({}), text: async () => "temporarily unavailable" } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({ result: { status: "ok" } }), text: async () => "" } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await qdrantUpsertPoints({
+      namespace: "socratic-abc",
+      records: [{ id: "occ:v3:abc", values: [0.1, 0.2] }]
+    });
+
+    expect(attempt).toBe(2);
+    expect(result.upserted).toBe(1);
+  });
+
+  it("gives up after exhausting attempts on a sustained network failure", async () => {
+    let attempt = 0;
+    const fetchMock = vi.fn(async () => {
+      attempt += 1;
+      throw new TypeError("fetch failed");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      qdrantUpsertPoints({ namespace: "socratic-abc", records: [{ id: "occ:v3:abc", values: [0.1, 0.2] }] })
+    ).rejects.toThrow(/fetch failed/);
+    expect(attempt).toBe(3); // bounded — never retries forever
+  });
+
+  it("does NOT retry a caller-side abort/timeout", async () => {
+    let attempt = 0;
+    const fetchMock = vi.fn(async () => {
+      attempt += 1;
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      qdrantUpsertPoints({ namespace: "socratic-abc", records: [{ id: "occ:v3:abc", values: [0.1, 0.2] }] })
+    ).rejects.toThrow();
+    expect(attempt).toBe(1);
+  });
+
+  it("does NOT retry a non-retryable 4xx validation failure", async () => {
+    let attempt = 0;
+    const fetchMock = vi.fn(async () => {
+      attempt += 1;
+      return { ok: false, status: 400, json: async () => ({}), text: async () => "bad request" } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      qdrantUpsertPoints({ namespace: "socratic-abc", records: [{ id: "occ:v3:abc", values: [0.1, 0.2] }] })
+    ).rejects.toThrow(/HTTP 400/);
+    expect(attempt).toBe(1);
+  });
+});

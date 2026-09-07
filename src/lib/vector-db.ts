@@ -8,6 +8,7 @@ import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } fro
 import { isProviderDispatchLeaseLostError } from "./db-provider-dispatch";
 import { logApiHealth } from "./db-health";
 import { isLocalDbFaultError, localDbFaultReason, noteLocalDbFault } from "./local-db-fault";
+import { isTransientNetworkError } from "./network-errors";
 import {
   auditPineconeWuGateSkip,
   isPineconeWuExhaustedError,
@@ -3857,13 +3858,23 @@ async function storeContextsImpl(
         userId
       });
     } else if (!wasRagSentryCaptured(err)) {
+      // Qdrant write-path fetch failures (self-hosted, network-level "TypeError: fetch failed")
+      // used to be reported here as a Pinecone failure regardless of which backend actually
+      // wrote — the hardcoded `provider: "pinecone"` mislabeled every post-cutover Qdrant write
+      // error the same way docs/rollouts/2026-08-09-pinecone-lock-mislabel.md already called out
+      // for the local-DB case just above. `writeBackend` already reflects the real backend for
+      // this call, and `qdrantRequest` (vector-store/qdrant-write.ts) has already retried a
+      // transient network failure with backoff before this catch ever sees it — so `isTransient`
+      // here means the retries themselves were exhausted, not a single blip, and is worth a
+      // distinct triage signal rather than folding into the generic reason string.
       await captureRagSentryMessage("error", "RAG vector store failed", {
-        provider: "pinecone",
+        provider: writeBackend,
         operation: "storeContexts",
         source: userId === "local" ? "operator" : "user",
         attempted: validDocuments.length,
         indexed,
-        reason: error
+        reason: error,
+        ...(isTransientNetworkError(err) ? { isTransient: true } : {})
       }, options?.leaseGuard);
     }
     return { attempted: validDocuments.length, indexed, error, ...(embedsFromStage > 0 ? { embedsFromStage } : {}) };

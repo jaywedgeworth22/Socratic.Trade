@@ -1,0 +1,151 @@
+# 2026-09-07 - scheduler broker error classification, backoff, and observability
+
+## Summary
+
+Error-classification / backoff / observability fix for three high-volume production error
+families identified from the ST container's own `/app/data/litestream-runtime.log`
+(2026-08-29..2026-09-07, ~9 days). Scope is explicitly limited to classification, backoff, and
+log de-duplication — **no trading-decision logic changed** (what orders get placed, when stops
+trigger, or how positions are managed is byte-identical before and after this change).
+
+1. **Tradier order-capability probe (1,364 occurrences)** — `src/lib/tradier.ts`
+   `probeOrderCapability`. Fixed a regex gap that mis-sorted Tradier's actual "Unexpected server
+   error" wording (and any timeout) into a generic, unthrottled fallback bucket; added a
+   `category` field (`capability_ok` / `server_error` / `timeout` / `connectivity` /
+   `unclassified`) and an exponential-backoff cache TTL (2m -> 4m -> ... capped at 60m) keyed on
+   consecutive same-`(ok, category)` results, so a sustained condition is re-probed far less
+   often instead of every 60s tick. The `ok`/`reason` contract returned to callers
+   (`checkBrokerHealth`) is unchanged for every input the old code already classified — this is
+   strictly fewer probes and fewer log lines, not a different health verdict.
+2. **Scheduler broker-timeout family (79 / 78 / 75 occurrences)** — `src/lib/scheduler.ts`.
+   - De-duplicated the per-tick "`[scheduler] Skipping account ...`" health-gate warn
+     (`logHealthGateSkip` / `clearHealthGateSkip`): logs on the first occurrence of a cause and on
+     any change, otherwise stays silent except for a heartbeat every 30 ticks (~30 min). This is
+     the direct fix for the 1,364-line volume — the underlying pause/resume/persist/audit
+     decisions are unconditional and unchanged.
+   - Added lane-failure classification + degraded-subsystem surfacing
+     (`classifyLaneFailure` / `recordLaneFailure` / `recordLaneRecovery`) for the synthetic-stop
+     monitor and stale-limit-order handling lanes: every failure is still logged and classified
+     (`timeout` / `transient_network` / `other`), and a **sustained** streak (3+ consecutive
+     same-category failures) escalates to one Sentry `lane_degraded` structured event instead of
+     dissolving into per-tick noise, with a matching `lane_recovered` event on the next success.
+   - Added a bounded, safe retry-with-backoff for the underlying broker READ calls (see next
+     item) — this is the actual mechanism that reduces how often a transient dead-socket error
+     reaches these lanes' `withDeadline` timeout in the first place, without retrying (and
+     risking duplicating) any order-placing lane itself.
+3. **Tradier read-path retry** — `src/lib/tradier.ts` `trackHealth`. Added an opt-in
+   `retryTransient` option (default `false`, unlike Alpaca's opt-out default, to stay
+   conservative on a mixed read/write gateway): one retry with backoff on a transient
+   dead-socket/DNS/reset error (`isTransientNetworkError`), never on a caller abort/timeout.
+   Opted in ONLY on GET reads (`getAccounts`, `getPortfolio`, `getEquityPositions`,
+   `getOptionPositions`, `getEquityOrders`, `getEquityQuotes`, the GET inside
+   `cancelBracketSiblingLegs`) and the side-effect-free preview probe
+   (`probeOrderCapability`, `preview: "true"`). Every real order-placing/canceling write
+   (`placeEquityOrder`, the bracket POST, `placeOptionOrder`, `cancelEquityOrder`) is
+   deliberately left NON-retrying — a retried write after Tradier may have already accepted the
+   first attempt risks a genuine duplicate order or a false "rejected" read of the broker's own
+   dedupe response (same risk class Alpaca's `trackHealth` already documents for `createOrder`).
+4. **`vector-db` Qdrant write path (92 occurrences)** — `src/lib/vector-store/qdrant-write.ts`
+   `qdrantRequest` + `src/lib/vector-db.ts` `storeContextsImpl` catch block.
+   - Added a bounded (3-attempt) retry with backoff on `qdrantRequest` for a transient network
+     failure or a transient Qdrant 5xx — safe because every caller in this module is idempotent
+     by construction (deterministic uuid5 point ids for upsert, ns+pc_id-filtered deletes,
+     id-scoped payload sets, read-only scroll/collection-info). A caller abort/timeout is never
+     retried.
+   - Fixed a mislabeling bug: the `storeContexts` failure path hardcoded
+     `provider: "pinecone"` in the Sentry/structured-log report regardless of which backend
+     actually wrote, so every post-cutover Qdrant write failure was misattributed to Pinecone —
+     the same mislabel class already called out in
+     `docs/rollouts/2026-08-09-pinecone-lock-mislabel.md` for the local-DB case sitting right next
+     to it. Now reports `provider: writeBackend` (the actual backend) plus an `isTransient` flag
+     when the underlying cause was a network error the retry above had already exhausted.
+   - Stayed strictly on the `vector-db.ts` context-storage write path per the concurrent
+     `claude/ingest-error-classification` lane's boundary; did not touch SEC ingest or
+     query-embed code.
+
+## Why
+
+Production evidence from the ST container's `litestream-runtime.log` (2026-08-29..2026-09-07):
+1,364 "Tradier order capability probe failed" lines, 79/78/75 scheduler broker-timeout lines
+(`runSyntheticStopMonitor timeout`, `[cause]: SocketError: other side closed`,
+`stale-limit-scan broker timeout`), and 92 "[vector-db] Error storing contexts: TypeError: fetch
+failed" lines. None of these represented a NEW failure mode each time — a single restricted or
+otherwise misbehaving account/connection kept re-triggering the SAME condition every 60s
+scheduler tick (or on every Qdrant write attempt), and the code re-logged / re-probed / re-warned
+identically every time. The fix is entirely about not re-deriving and re-announcing an unchanged
+state: classify once, cache/back off while the state holds, and emit one actionable event when it
+changes (or when a streak proves it is sustained) rather than every tick.
+
+## Complementary to PR #3174 (not duplicated)
+
+PR #3174 ("hung scheduler-tick watchdog with honest Sentry check-ins", commit `4c75472cb`) added
+a **whole-tick** 15s watchdog (2-minute budget, generation token) that renews the leader lease
+while a tick is in-budget, unwedges a hung tick past budget, and made Sentry Crons check-ins
+honest (`in_progress` -> `ok`/`error` only when the tick body actually finishes). It also added
+`withDeadline` around the material-event drain and `checkBrokerHealth`, and stopped awaiting
+strategy runs on the tick critical path.
+
+This change operates one layer down, inside the individual lanes and broker calls that #3174's
+watchdog supervises from the outside:
+- #3174 answers "is the WHOLE TICK still alive?" — this change answers "is THIS PARTICULAR
+  broker call/probe/lane healthy, and has it been unhealthy long enough to matter?"
+- #3174 does not touch `probeOrderCapability`'s classification, the per-account health-gate skip
+  log, the stop-monitor/stale-exit lane failure logging, or Tradier's/Qdrant's own retry
+  behavior — all genuinely untouched surface, confirmed by reading the PR #3174 diff before
+  starting this work.
+- Neither change alters `SCHEDULER_BROKER_TIMEOUT_MS`, `SCHEDULER_HEALTH_PROBE_TIMEOUT_MS`, or
+  the watchdog's own budget/polling constants.
+
+## Files
+
+- `src/lib/tradier.ts` — probe classification + backoff cache; `trackHealth` `retryTransient`
+  option; opted-in read call sites.
+- `src/lib/scheduler.ts` — `logHealthGateSkip` / `clearHealthGateSkip` de-dup; `classifyLaneFailure`
+  / `recordLaneFailure` / `recordLaneRecovery` degraded-lane surfacing; wired into the health gate
+  and the stale-exit / synthetic-stop-monitor lanes.
+- `src/lib/vector-store/qdrant-write.ts` — bounded retry with backoff in `qdrantRequest`.
+- `src/lib/vector-db.ts` — `storeContextsImpl` catch block reports the real `writeBackend`
+  instead of a hardcoded `"pinecone"`, plus an `isTransient` flag.
+- `test/tradier.test.ts` — probe classification, exponential backoff, backoff-reset-on-recovery,
+  read-retry-succeeds, write-never-retries.
+- `test/scheduler-lane-observability.test.ts` (new) — health-gate skip dedup/heartbeat/recovery,
+  lane-failure classification, degraded/recovered escalation.
+- `test/qdrant-write.test.ts` — `qdrantRequest` retry on transient network failure and on a
+  transient 5xx, gives up after exhausting attempts, never retries an abort/timeout or a
+  non-retryable 4xx.
+- `test/vector-db-qdrant-retrieval.test.ts` — `storeContexts` labels a sustained Qdrant write
+  failure `provider: "qdrant"`, not the old hardcoded `"pinecone"`.
+- `STATUS.md`, `docs/EFFORT-LOG.md`, `/Users/jay/apps/TRADING-EFFORT-LOG.md` — handoff records.
+
+## Verification
+
+- `npx tsc --noEmit`
+- `npm test` (targeted: `test/tradier.test.ts test/scheduler-lane-observability.test.ts
+  test/qdrant-write.test.ts test/vector-db-qdrant-retrieval.test.ts test/scheduler-tick-watchdog.test.ts
+  test/scheduler-tick-reentrancy.test.ts test/broker-health-auto-pause.test.ts`, then full
+  `npm test`)
+- `npm run build` via `scripts/land.sh`
+
+(Exact command output recorded at PR time — see the PR description / CI `verify` check.)
+
+## Follow-ups
+
+- The Tradier probe still has no way to positively distinguish a genuinely PERMANENT
+  broker-side account restriction (e.g. a confirmed close-only/disabled account) from a
+  transient condition that has simply been failing for a long time — this fix backs off the
+  re-probe interval on a sustained streak (up to 60 minutes) rather than caching forever, so a
+  truly permanent condition still gets re-verified hourly instead of never. If Tradier ever
+  returns an unambiguous "account restricted" signal, `probeOrderCapability` should classify it
+  into its own permanent category with a much longer (or infinite, operator-clearable) TTL.
+- Did not touch the `pending-fill-reconcile` lane's error log (`src/lib/scheduler.ts`) — it was
+  not one of the three named high-volume families in the production evidence, so it was left
+  out of scope to keep this diff tight.
+- Left the actual retry semantics for Tradier ORDER-PLACING writes untouched by design (see
+  Summary #3) — adding idempotency-safe retry there would need a broker-side idempotency key or
+  a client-side dedup check first, which is trade-decision-adjacent enough that it needs owner
+  review rather than a leaf-worker call.
+
+## Blockers
+
+- None. Scope stayed inside classification/backoff/observability; no trading-decision logic was
+  touched.

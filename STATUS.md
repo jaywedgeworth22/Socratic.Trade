@@ -1,5 +1,23 @@
 # Current Status
 
+## 2026-09-07 CLAUDE — Scheduler/broker error classification, backoff, and observability
+
+Production evidence from `/app/data/litestream-runtime.log` (2026-08-29..2026-09-07, ~9 days):
+1,364 "Tradier order capability probe failed" lines, 79/78/75 scheduler broker-timeout lines
+(synthetic-stop monitor / stale-limit-scan timeouts + `SocketError: other side closed`), and 92
+"[vector-db] Error storing contexts: TypeError: fetch failed" lines on the post-2026-09-01 Qdrant
+write path. Fixed a regex gap in `tradier.ts` `probeOrderCapability` that mis-sorted Tradier's
+actual "Unexpected server error" wording into a generic unthrottled fallback; added
+category-aware exponential-backoff caching there. Added de-duplicated health-gate skip logging
+and lane-failure classification + degraded-subsystem surfacing in `scheduler.ts` for the
+synthetic-stop-monitor / stale-limit-order lanes. Added a safe opt-in read/preview-only retry to
+Tradier's `trackHealth` (never on a real order-placing write). Added bounded retry-with-backoff
+to the Qdrant write path (`qdrant-write.ts`) and fixed a `storeContexts` catch-block bug that
+hardcoded `provider: "pinecone"` regardless of the actual write backend. Scope is strictly
+classification/backoff/observability — no trading-decision logic changed. Complements (does not
+duplicate) PR #3174's whole-tick watchdog. Rollout:
+`docs/rollouts/2026-09-07-scheduler-broker-error-classification.md`.
+
 ## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
 
 Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.
