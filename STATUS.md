@@ -1,8 +1,8 @@
 # Current Status
 
-## 2026-09-07 Autofix (codex-autofix) — observability group handoff records (PR #3178)
+## 2026-09-07 Autofix (codex-autofix) — observability group dependency bump (PR #3178)
 
-Dependabot bumped the observability group on branch `dependabot/npm_and_yarn/observability-bc808230b8` (commit `437e08531`):  `@opentelemetry/instrumentation` 0.221.0 -> 0.222.0, `@opentelemetry/sdk-trace-node` 2.10.0 -> 2.11.0, `@sentry/nextjs` 10.71.0 -> 10.73.0, `@sentry/profiling-node` 10.71.0 -> 10.73.0 (7 updates total incl. transitive lockfile).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-observability-group-bump.md`.
+Dependabot bumped the observability group on branch `dependabot/npm_and_yarn/observability-bc808230b8` (commit `437e08531`):  `@opentelemetry/instrumentation` 0.221.0 -> 0.222.0, `@opentelemetry/sdk-trace-node` 2.10.0 -> 2.11.0, `@sentry/nextjs` 10.71.0 -> 10.73.0, `@sentry/profiling-node` 10.71.0 -> 10.73.0 (7 updates total incl. transitive lockfile).  This is a runtime dependency-only change:  production deps + lockfile are runtime watch paths, so merge triggers a production image build; it does not behave like a docs-only update.  This lane authored no product source; it adds the required handoff records (STATUS.md / docs/EFFORT-LOG.md / rollout note / PLAN.md) and swaps the `next.config.mjs` Sentry import to `@sentry/nextjs/config` (the root `withSentryConfig` re-export is deprecated in Sentry 10.73 and removed in v11).  Verification:  `npx tsc --noEmit` PASS, `npm run build` PASS; the local `npm test` run has 9 pre-existing LLM key-routing failures that reproduce on the pristine branch in this seat's env (no relation to this change); the repo `verify` CI gate is authoritative.  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-observability-group-bump.md`.
 
 ## 2026-09-07 — Vitest 5.0.0 upgrade recorded (dependabot PR #3179, codex-autofix)
 

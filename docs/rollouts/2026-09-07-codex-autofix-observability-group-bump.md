@@ -1,26 +1,32 @@
-# 2026-09-07 — Codex-autofix handoff records for observability group bump (PR #3178)
+# 2026-09-07 — Codex-autofix for observability group dependency bump (PR #3178)
 
-## Summary
+## Context & Objective
 
-Dependabot bumped the `observability` dependency group (PR #3178, commit `437e08531`):  `@opentelemetry/instrumentation` 0.221.0 → 0.222.0, `@opentelemetry/sdk-trace-node` 2.10.0 → 2.11.0, `@sentry/nextjs` 10.71.0 → 10.73.0, `@sentry/profiling-node` 10.71.0 → 10.73.0 (plus transitive lockfile updates, 7 updates total per Dependabot).  Codex flagged the bump as missing the repo's mandatory handoff records (STATUS.md + docs/EFFORT-LOG.md) before landing.  This codex-autofix round adds those records so the repository snapshot and cross-agent ledger reflect the dependency upgrade.  No runtime code changed.
+Dependabot bumped the `observability` dependency group (PR #3178, commit `437e08531`):  `@opentelemetry/instrumentation` 0.221.0 → 0.222.0, `@opentelemetry/sdk-trace-node` 2.10.0 → 2.11.0, `@sentry/nextjs` 10.71.0 → 10.73.0, `@sentry/profiling-node` 10.71.0 → 10.73.0 (7 updates total per Dependabot, incl. transitive lockfile updates).  Codex review flagged the bump as missing the repo's mandatory handoff records (STATUS.md + docs/EFFORT-LOG.md + PLAN.md) before landing, flagged that the lockfile bump must be classified as a runtime change, and asked that `next.config.mjs` import `withSentryConfig` from `@sentry/nextjs/config`.  This codex-autofix round adds the handoff records and the Sentry import fix so PR #3178 clears the review gate.
 
-## Why
+## Changes Made
 
-The repo handoff protocol (AGENTS.md) requires STATUS.md and docs/EFFORT-LOG.md updates before a change lands on main, and the merge gate requires every Codex review thread to be resolved.  A Dependabot bump cannot write those records itself, so the codex-autofix lane adds them for PR #3178 — the same pattern already used for PR #3177 (`docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`).
+- `next.config.mjs` — import `withSentryConfig` from `@sentry/nextjs/config` instead of the deprecated root re-export `@sentry/nextjs`.  Verified in the installed 10.73.0 package:  the root export is a deprecation shim that `console.warn`s once per process on build/dev, is typed `@deprecated`, and is removed in v11; `@sentry/nextjs/config` is silent and has the identical function signature, so this is a pure import-path swap.
+- `STATUS.md` — updated the dated snapshot entry for the bump and this round.
+- `docs/EFFORT-LOG.md` — updated the `[codex-autofix]` row (runtime dependency-only; IN PROGRESS).
+- `PLAN.md` — added a scope note (no roadmap change; runtime dependency-only) per the repo handoff protocol.
+- `docs/rollouts/2026-09-07-codex-autofix-observability-group-bump.md` — this note.
+- `package.json` / `package-lock.json` — the Dependabot commit `437e08531` itself (authored by Dependabot, untouched by this lane).
 
-## Files
+## Decisions & Trade-offs
 
-- `STATUS.md`
-- `docs/EFFORT-LOG.md`
-- `docs/rollouts/2026-09-07-codex-autofix-observability-group-bump.md`
-- `package.json` / `package-lock.json` (the dependabot commit `437e08531` itself)
+- **Classified as runtime, not docs-only.**  The lockfile + production-dependency change is a runtime watch path (AGENTS.md auto-deploy / `watch_paths`), so the handoff records call this a runtime dependency-only change rather than "no runtime code changed."  The earlier phrasing in this note, STATUS.md, and docs/EFFORT-LOG.md was corrected after Codex's P2 so the three agree.
+- **Fixed the Sentry config import now rather than deferring.**  The deprecation warning is real in 10.73.0 (verified in the installed package source) and the v11 removal is documented upstream, so swapping the import now keeps build logs clean and avoids a later build break.  No behavior change:  the `./config` export has the identical `withSentryConfig<C>(nextConfig?, sentryBuildOptions?)` signature.  Only `next.config.mjs` imports the symbol; every other `@sentry/nextjs` consumer in the repo uses a namespace import of the SDK entry, which never touches the deprecated shim, so no other site needed changing.
+- **No pushback on the doc-record findings.**  Recording the bump in STATUS.md / docs/EFFORT-LOG.md / PLAN.md is harmless and consistent with the repo handoff protocol.
 
-## Verification
+## Verification State
 
-- `npx tsc --noEmit`
-- `npm test`
-- `npm run build`
+```bash
+npx tsc --noEmit   # PASS (exit 0) on this branch at this commit
+npm test           # 7782 passed / 9 failed / 51 skipped on this cloud seat; the 9 failures are pre-existing LLM key-routing tests that reproduce on the pristine branch with these changes stashed (they depend on seat-injected secrets) and do not touch this change; the repo `verify` CI gate runs without those secrets and is authoritative
+npm run build      # PASS (exit 0)
+```
 
-## Follow-ups
+## Next Steps & Blockers
 
-- Auto-merge (squash) lands PR #3178 once the required checks pass and the Codex thread is resolved.  No further code action expected.
+- Auto-merge (squash) lands PR #3178 once the repo `verify` / required checks pass and the Codex threads are resolved.  No further code action expected.
