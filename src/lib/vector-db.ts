@@ -149,12 +149,25 @@ const RAG_INGEST_BUDGET_ALERT_COOLDOWN_MS = 30 * 60_000;
  * condition) and buried the handful of real "embed connection failed" events underneath it.
  */
 function shouldEmitRagIngestBudgetSentry(userId: string, nowMs: number = Date.now()): boolean {
-  const key = `${RAG_INGEST_BUDGET_ALERT_PREFIX}:${userId}`;
-  const last = getInternalSetting<string>(key);
-  const lastMs = last ? Date.parse(last) : Number.NaN;
-  if (Number.isFinite(lastMs) && nowMs - lastMs < RAG_INGEST_BUDGET_ALERT_COOLDOWN_MS) return false;
-  setInternalSetting(key, new Date(nowMs).toISOString());
-  return true;
+  // Fail-soft (2026-09-07 P2 fix): getInternalSetting/setInternalSetting are synchronous SQLite
+  // calls and can throw (e.g. SQLITE_BUSY under contention). This helper only gates an optional
+  // Sentry warning — it must never let a persistence error escape into storeContextsImpl's
+  // control flow and turn an expected budget-skip into a rejected store operation. On any read/
+  // write failure, fail open (emit) rather than throw or silently suppress forever.
+  try {
+    const key = `${RAG_INGEST_BUDGET_ALERT_PREFIX}:${userId}`;
+    const last = getInternalSetting<string>(key);
+    const lastMs = last ? Date.parse(last) : Number.NaN;
+    if (Number.isFinite(lastMs) && nowMs - lastMs < RAG_INGEST_BUDGET_ALERT_COOLDOWN_MS) return false;
+    setInternalSetting(key, new Date(nowMs).toISOString());
+    return true;
+  } catch (err) {
+    logWarn("rag.ingest_budget_cooldown_persist_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return true;
+  }
 }
 const VECTOR_COMMIT_LEASE_MS = 15 * 60_000;
 const VECTOR_RECONCILE_CONFIRMATION_GRACE_MS = 5 * 60_000;
@@ -1519,15 +1532,18 @@ export type EmbedFailureClass = "permanent" | "transient";
  * letters filled with permanently-failing 400s masked as a budget problem, while Sentry
  * separately buried the real signal — see shouldEmitRagIngestBudgetSentry above).
  *
- * A 429 is capacity/pacing, not a rejected request — transient, worth a bounded retry. Any OTHER
- * 4xx means the provider rejected the request itself (bad payload, auth, size, not-found):
- * retrying byte-identical content can never succeed, so it is permanent. Everything else (5xx,
- * timeouts, connection resets, unrecognized shapes) defaults to transient: the existing
+ * A 429 is capacity/pacing, not a rejected request — transient, worth a bounded retry. 408
+ * (Request Timeout) is also transient: the provider never actually evaluated the request, so a
+ * retry is not "byte-identical content that can never succeed" the way a 400 is. Any OTHER 4xx
+ * means the provider rejected the request itself (bad payload, auth, size, not-found): retrying
+ * byte-identical content can never succeed, so it is permanent. Everything else (5xx, timeouts,
+ * connection resets, unrecognized shapes) defaults to transient: the existing
  * stage_attempts/max_stage_attempts ceiling already bounds a wrong "retry" guess, while a wrong
  * "permanent" guess would dead-letter a possibly-recoverable document on one bad read.
  */
 export function classifyEmbedFailure(message: string): EmbedFailureClass {
   if (/\b429\b/.test(message)) return "transient";
+  if (/\b408\b/.test(message)) return "transient";
   if (/\b4\d\d\b/.test(message)) return "permanent";
   return "transient";
 }
@@ -6696,7 +6712,26 @@ export interface RetrieveOptions {
 }
 
 /** Invoke `options?.onStatus` best-effort; a throwing callback must never affect retrieval. */
-function reportRetrievalStatus(options: RetrieveOptions | undefined, status: RetrievalStatus): void {
+function reportRetrievalStatus(
+  options: RetrieveOptions | undefined,
+  status: RetrievalStatus,
+  ctx?: { userId: string; symbol: string }
+): void {
+  // P1 fix (2026-09-07): `retrieveContextDetailed` is the shared retrieval path every production
+  // caller actually uses (chat orchestrator, strategy, proposer-dossier, experience-memory,
+  // lookahead-audit — see test/rag-production-path-contract.test.ts "audit R1", which pins
+  // strategy/chat to this function and explicitly forbids retrieveFusedContext in those paths).
+  // The search-fusion.ts wrapper's own dense-recall-degraded signal only fires for callers of
+  // retrieveFusedContext, which today has zero production callers — so a real query-embed
+  // failure on every actual production path went unreported. Emit here instead, unconditionally,
+  // so it fires regardless of whether the caller supplied its own onStatus. budget_skipped is
+  // deliberately excluded (a caller passing ctx should only do so for a genuine lookup failure;
+  // see the call sites below) — a deliberate budget skip is not a provider/lookup failure and
+  // must not flood Sentry or inflate the embed-failure metric.
+  if (status === "lookup_failed" && ctx) {
+    recordEmbedFailure(activeEmbeddingProvider(ctx.userId), "dense-recall-lookup-failed");
+    logError("rag.dense_recall_degraded", { symbol: ctx.symbol, userId: ctx.userId, reason: "lookup_failed" });
+  }
   if (!options?.onStatus) return;
   try {
     options.onStatus(status);
@@ -7120,7 +7155,7 @@ export async function retrieveContextDetailed(
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
-    reportRetrievalStatus(options, "lookup_failed");
+    reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
     return finish([]);
   }
   if (readBackend === "pinecone" && !pc) {
@@ -7129,7 +7164,7 @@ export async function retrieveContextDetailed(
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
-    reportRetrievalStatus(options, "lookup_failed");
+    reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
     return finish([]);
   }
   // R16 (2026-07-01 RAG backlog): default-off, very-high-ceiling per-run budget check. When
@@ -7226,7 +7261,7 @@ export async function retrieveContextDetailed(
 
     if (readBackend === "pinecone") {
       if (!pc || !(await indexExists(pc, pineconeSource, userId))) {
-        reportRetrievalStatus(options, "lookup_failed");
+        reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
         return finish([]);
       }
       defaultIndex = vectorDataIndex(pc, "default");
@@ -7616,7 +7651,7 @@ export async function retrieveContextDetailed(
         // nothing — fall back to the plain single-query path rather than returning `[]`.
         const single = await embedAndMatchOneQuery(query);
         if (single == null) {
-          reportRetrievalStatus(options, "lookup_failed");
+          reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
           return finish([]);
         }
         matches = single;
@@ -7700,7 +7735,7 @@ export async function retrieveContextDetailed(
     } else {
       const single = await embedAndMatchOneQuery(query);
       if (single == null) {
-        reportRetrievalStatus(options, "lookup_failed");
+        reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
         return finish([]);
       }
       matches = single;
@@ -8094,7 +8129,7 @@ export async function retrieveContextDetailed(
         reason: err instanceof Error ? err.message : String(err)
       });
     }
-    reportRetrievalStatus(options, "lookup_failed");
+    reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
     return finish([]);
   }
 }

@@ -231,5 +231,31 @@ describe("Hybrid Search Fusion and MMR Cosine Filtering (P6)", () => {
       expect(wasDenseRecallDegraded(results)).toBe(false);
       expect(sentryMetricsMocks.logError).not.toHaveBeenCalled();
     });
+
+    // P2 fix (2026-09-07): budget_skipped is a deliberate skip (caller reached its configured RAG
+    // budget), not a provider/lookup failure. It must still mark the result degraded (dense
+    // recall genuinely did not run) but must NOT emit the error-level Sentry log or bump
+    // embed.failed — a persistently exhausted daily budget would otherwise flood Sentry and
+    // falsely inflate provider-failure metrics on every fused retrieval.
+    it("marks the result degraded on budget_skipped but does NOT report it as a failure", async () => {
+      insertDocumentChunkFts(
+        "hash-budget-skip",
+        "NVDA",
+        "sec-edgar",
+        "acc-nvda",
+        "NVDA data center revenue guidance discussed."
+      );
+      vi.mocked(retrieveContextDetailed).mockImplementationOnce(async (_query, _symbol, _limit, _userId, options) => {
+        options?.onStatus?.("budget_skipped");
+        return [];
+      });
+
+      const results = await retrieveFusedContext("NVDA data center", "NVDA", 2);
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(wasDenseRecallDegraded(results)).toBe(true);
+      expect(sentryMetricsMocks.logError).not.toHaveBeenCalled();
+      expect(sentryMetricsMocks.recordEmbedFailure).not.toHaveBeenCalled();
+    });
   });
 });

@@ -80,6 +80,14 @@ describe("classifyEmbedFailure", () => {
     expect(classifyEmbedFailure("Embedding API failed (isOpenRouter=false): 429 rate limited")).toBe("transient");
   });
 
+  // P2 fix (2026-09-07): a 408 means the provider never actually evaluated the request, so a
+  // retry is not "byte-identical content that can never succeed" the way a genuine 400 rejection
+  // is. The blanket `/\b4\d\d\b/` permanent match previously misclassified this as permanent and
+  // dead-lettered a filing that could have succeeded on retry.
+  it("classifies a 408 (request timeout) as transient, not permanent", () => {
+    expect(classifyEmbedFailure("Embedding API failed (isOpenRouter=false): 408 Request Timeout")).toBe("transient");
+  });
+
   it("classifies a bare connection failure (no HTTP status at all) as transient", () => {
     expect(classifyEmbedFailure("fetch failed")).toBe("transient");
     expect(classifyEmbedFailure("UND_ERR_SOCKET: other side closed")).toBe("transient");

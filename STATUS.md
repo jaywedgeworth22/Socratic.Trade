@@ -21,6 +21,32 @@ embed/connection failure log at `error` level instead of always `warning`.  Bran
 `claude/ingest-error-classification`, worktree `~/apps/trading-claude-ingest-errors`.  `npx tsc
 --noEmit` clean, `npm run lint` 0 errors, full vitest suite green.  Rollout:
 `docs/rollouts/2026-09-07-sec-ingest-error-classification.md`.
+
+## 2026-09-07 CLAUDE — PR #3187 round-2 Codex triage (same branch, before merge)
+
+Fixed four real findings from Codex round-1 review, one batch: (1) `classifyEmbedFailure`
+classified 408 (Request Timeout) as permanent alongside 429; 408 now also transient, since the
+provider never evaluated the request. (2) `retrieveFusedContext` has zero non-test production
+callers (`test/rag-production-path-contract.test.ts` "audit R1" pins strategy/chat to
+`retrieveContextDetailed` directly), so the defect-2 degradation signal never reached any real
+production path; `reportRetrievalStatus` in `vector-db.ts` now emits it centrally on
+`lookup_failed` for every caller of the shared `retrieveContextDetailed` function. (3) that
+central emission and the existing `search-fusion.ts` wrapper both now exclude `budget_skipped`
+from the Sentry/metric emission — a deliberate budget skip is not a provider failure and must not
+flood Sentry. (4) `shouldEmitRagIngestBudgetSentry`'s cooldown persistence is now wrapped
+fail-soft so a SQLite contention throw cannot escape into `storeContextsImpl` and reject an
+otherwise-successful budget-skip. Regression tests added for all four
+(`test/pinecone-metadata-and-rag-limits.test.ts`, `test/rag-retrieval-status.test.ts`,
+`test/search-fusion.test.ts`, new `test/rag-ingest-budget-sentry-cooldown.test.ts`). `npx tsc
+--noEmit` clean (pre-existing unrelated `app/console/components/nav.tsx` errors on `origin/main`
+excepted), `npm run lint` 0 errors, `npm run build` clean, targeted vitest (128 tests across the
+7 affected files) green; whole-repo `npm test` was kicked off but did not finish in-session, so
+CI's `verify` check is the full-suite gate of record.
+
+**Blockers:** none.
+**Next action:** none — all 8 round-1 review threads resolved, auto-merge armed, this PR merges
+once CI reports green.
+
 ## 2026-09-07 CLAUDE — Remove redundant postcss override (recurring Dependabot failure)
 
 Every Dependabot Updates job touching postcss failed since 2026-08-24 (recurred

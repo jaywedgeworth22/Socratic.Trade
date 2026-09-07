@@ -131,13 +131,22 @@ export async function retrieveFusedContext(
   // (structured log, real telemetry) and mark the returned pool as degraded instead.
   let denseRecallDegraded = false;
   const denseRecallDegradedReasons = new Set<string>();
+  // P2 fix (2026-09-07): `budget_skipped` means the caller deliberately reached its configured
+  // RAG budget — retrieveContextDetailed never attempted an embed call, so it is not a
+  // provider/lookup failure. It still counts toward `denseRecallDegraded` (dense recall genuinely
+  // did not run, so wasDenseRecallDegraded() must say so) but must NOT feed the error-level
+  // Sentry log or the embed.failed metric below: a persistently exhausted daily budget would
+  // otherwise flood Sentry and falsely inflate provider-failure metrics on every fused retrieval,
+  // even though no provider call ever failed. Only genuine failures ("lookup_failed", "threw")
+  // are reportable.
+  const reportableDegradationReasons = new Set<string>();
   const reportDenseRecallDegradation = (): void => {
-    if (!denseRecallDegraded) return;
+    if (reportableDegradationReasons.size === 0) return;
     void import("../sentry-metrics").then(({ logError, recordEmbedFailure }) => {
       recordEmbedFailure("search-fusion", "dense-recall-degraded");
       logError("rag.dense_recall_degraded", {
         symbol,
-        reasons: Array.from(denseRecallDegradedReasons).join(",") || "unknown",
+        reasons: Array.from(reportableDegradationReasons).join(",") || "unknown",
         userId
       });
     }).catch(() => {
@@ -220,6 +229,7 @@ export async function retrieveFusedContext(
             if (status === "lookup_failed" || status === "budget_skipped") {
               denseRecallDegraded = true;
               denseRecallDegradedReasons.add(status);
+              if (status === "lookup_failed") reportableDegradationReasons.add(status);
             }
             callerOnStatus?.(status);
           }
@@ -227,6 +237,7 @@ export async function retrieveFusedContext(
       } catch (err) {
         denseRecallDegraded = true;
         denseRecallDegradedReasons.add("threw");
+        reportableDegradationReasons.add("threw");
         console.warn("[search-fusion] Vector search failed (non-fatal):", err instanceof Error ? err.message : String(err));
       }
     }
