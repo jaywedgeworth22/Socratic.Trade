@@ -24,6 +24,9 @@ shared `db-health.ts` pipeline itself is untouched (concurrently owned by
 Verification:  `npx tsc --noEmit` clean, targeted `npx eslint` 0 errors on changed files,
 targeted `npx vitest run` 35/35 passed; full-repo gate results in the PR body.  Rollout:
 `docs/rollouts/2026-09-07-web-401-routes-to-login.md`.
+## 2026-09-07 Autofix (codex-autofix) — eslint-config-next 16.3.4 handoff records (PR #3181)
+
+Dependabot bumped `eslint-config-next` 16.3.1 -> 16.3.4 on branch `dependabot/npm_and_yarn/eslint-config-next-16.3.4` (commit `fbc0f4fe1`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Round 2 recorded the verification outcomes Codex asked for (tsc/lint/build pass; the 5 LLM-key-sensitive test files fail only under the runner's injected Anthropic env and pass scrubbed; CI `verify`/`verify-hosted` green).  Round 3 added the remaining Codex handoff items:  a PLAN.md entry and a Decisions & Trade-offs section in the rollout note.  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-eslint-config-next-16-3-4.md`.
 
 ## 2026-09-07 — Vitest 5.0.0 upgrade recorded (dependabot PR #3179, codex-autofix)
 
