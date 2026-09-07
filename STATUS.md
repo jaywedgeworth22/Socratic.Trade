@@ -4,6 +4,15 @@
 
 Dependabot bumped the observability group on branch `dependabot/npm_and_yarn/observability-bc808230b8` (commit `437e08531`):  `@opentelemetry/instrumentation` 0.221.0 -> 0.222.0, `@opentelemetry/sdk-trace-node` 2.10.0 -> 2.11.0, `@sentry/nextjs` 10.71.0 -> 10.73.0, `@sentry/profiling-node` 10.71.0 -> 10.73.0 (7 updates total incl. transitive lockfile).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-observability-group-bump.md`.
 
+## 2026-09-07 — Vitest 5.0.0 upgrade recorded (dependabot PR #3179, codex-autofix)
+
+Dependabot bumped the testing group's `vitest` from `^4.1.11` to `^5.0.0` (commit
+`37e8850d`); dev-dependency only, no runtime path.  This doc-only follow-up answers the
+Codex P1 finding that a dependency bump must be recorded in handoff state:  it adds this
+STATUS.md snapshot, a `docs/EFFORT-LOG.md` row, and a rollout note.  Verification state:
+the `verify` / `verify-hosted` CI gate (`npx tsc --noEmit` → `npm test` → `npm run build`)
+runs on the PR, and a green gate is required before auto-merge.  Rollout:
+`docs/rollouts/2026-09-07-vitest-5-bump.md`.
 ## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
 
 Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.
