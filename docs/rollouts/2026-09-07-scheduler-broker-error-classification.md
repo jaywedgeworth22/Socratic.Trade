@@ -161,7 +161,8 @@ watchdog supervises from the outside:
 Round-2 (this session), actual results — not just the command list, and now including the
 `npm run lint` gate the round-1 record omitted:
 
-- `npx tsc --noEmit` — clean, zero errors.
+- `npx tsc --noEmit` — clean, zero errors, confirmed immediately after making the round-2 code
+  edits.
 - `npm run lint` (`src/lib/scheduler.ts`, `src/lib/tradier.ts`,
   `test/scheduler-lane-observability.test.ts`, `test/tradier.test.ts`) — 0 errors, 2 pre-existing
   unused-import warnings in `scheduler.ts` unrelated to this change, `warn`-only per
@@ -172,8 +173,14 @@ Round-2 (this session), actual results — not just the command list, and now in
   `test/broker-health-auto-pause.test.ts` — 125 tests, all green. A whole-repo `npm test` was not
   run to completion in this session (large suite) — CI's `verify` check is the authoritative
   full-suite gate and runs automatically on push.
-- `npm run build` — production build clean (after `npm install` to resync this worktree's stale
-  `node_modules` against `package-lock.json`; unrelated to this PR's code).
+- `npm run build` — this worktree's `node_modules` was stale relative to `package-lock.json`
+  (same `ERR_PACKAGE_PATH_NOT_EXPORTED` on `@sentry/nextjs/config` seen and fixed the same way on
+  the sibling `claude/ingest-error-classification` and `claude/congress-share-401-observability`
+  lanes); `npm install` resynced it. A fresh `tsc`/`build` re-run after that install did not
+  complete within this session (this Mac had several other worktrees' installs/builds/test runs
+  in flight concurrently at the time) — not re-attempted further to avoid burning the session on
+  a local resource-contention issue unrelated to this PR's code. CI's `verify` check builds this
+  exact commit and is the authoritative confirmation.
 
 ## Follow-ups
 
