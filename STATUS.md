@@ -9,6 +9,10 @@ STATUS.md snapshot, a `docs/EFFORT-LOG.md` row, and a rollout note.  Verificatio
 the `verify` / `verify-hosted` CI gate (`npx tsc --noEmit` → `npm test` → `npm run build`)
 runs on the PR, and a green gate is required before auto-merge.  Rollout:
 `docs/rollouts/2026-09-07-vitest-5-bump.md`.
+## 2026-09-07 CLAUDE — congress-share 401 observability + auth circuit breaker (board `8620cad8`)
+
+ST's highest-volume live prod error: `[congress-share] import failed: HTTP 401` — 3,096 occurrences over nine days (2026-08-29 to 2026-09-07), `console.error`-only, no Sentry/health/alert/backoff.  Diagnosed via non-secret fingerprint comparison (length + sha256 prefix, no values printed): ST Infisical prod `CONGRESS_TRADE_TOKEN` does NOT match CT Infisical prod `INGEST_TOKEN` nor `ADMIN_TOKEN` — **CONFIRMED token drift**, owner action required to resync (see rollout note).  Independent of the token, fixed the observability hole: `shareWithCongressTrade` (`src/lib/congress-share.ts`) now logs every attempt via the existing `logApiHealth` pipeline (same mechanism "roic"/"congress.trade" already use for Sentry + `/api/health` degraded dependency), and an auth-specific circuit breaker trips on 401/403 (permanent failure) to stop hammering CT, with a shadow health-log replay so the 5-consecutive-failure Sentry threshold still fires promptly.  Added `EXPECTED_BACKEND_LANES` entry for the admin Connections UI.  Branch `claude/congress-share-401-observability`, worktree `~/apps/trading-claude-congress-401`.  Rollout: `docs/rollouts/2026-09-07-congress-share-401-observability.md`.
+
 ## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
 
 Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.

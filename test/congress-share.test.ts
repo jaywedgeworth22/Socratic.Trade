@@ -31,6 +31,7 @@ import {
   canonicalOutboundSymbol,
   chunkPrices,
   dropInvalidShareRows,
+  isCongressAuthBreakerTripped,
   isCongressDailyShareDue,
   isCongressShareAutoEnabled,
   marketQuoteToAnalyst,
@@ -40,6 +41,7 @@ import {
   ohlcBarsToPriceEntry,
   fetchCongressPriceNeeds,
   mergeShareUniverse,
+  resetCongressAuthBreakerForTests,
   resetCongressRefThrottle,
   runCongressDailyShare,
   runCongressDailyShareIfDue,
@@ -48,6 +50,7 @@ import {
   type CongressPrice
 } from "../src/lib/congress-share";
 import { setInternalSetting } from "../src/lib/db";
+import { getServiceHealthLog } from "../src/lib/db-health";
 import { flushDurableStateNow, resetDurableStateCacheForTests } from "../src/lib/durable-state";
 
 const recentDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
@@ -64,7 +67,9 @@ beforeEach(() => {
   delete process.env.CONGRESS_SHARE_FUNDAMENTALS_ENABLED;
   delete process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER;
   delete process.env.CONGRESS_TRADE_BASE_URL;
+  delete process.env.CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS;
   resetCongressRefThrottle();
+  resetCongressAuthBreakerForTests();
   mockedFetchDailyOHLC.mockReset();
 });
 
@@ -316,6 +321,111 @@ describe("shareWithCongressTrade", () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network down"); }));
     const res = await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
     expect(res).toMatchObject({ ok: false, error: "network down" });
+  });
+
+  // ── Health-log observability (prod incident 2026-09-07: 3,096 silent 401s over 9 days,
+  // console.error only — no Sentry, no /api/health signal). shareWithCongressTrade now logs
+  // every attempt into api_health_log via logApiHealth, the SAME generic pipeline "roic" and
+  // "congress.trade" already use to surface a degraded /api/health dependency and (after 5
+  // consecutive hard failures) a Sentry capture. ────────────────────────────────────────────
+
+  it("logs a failed health-log row (service congress-share) on an HTTP error", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("denied", { status: 401 })));
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
+    const rows = getServiceHealthLog("congress-share", 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ ok: 0, key_source: "env" });
+    expect(rows[0].error_text).toContain("HTTP 401");
+  });
+
+  it("logs an ok health-log row on success", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
+    const rows = getServiceHealthLog("congress-share", 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ ok: 1, key_source: "env" });
+  });
+
+  // ── Auth circuit breaker: a 401/403 is a PERMANENT failure (the shared token is wrong), not a
+  // transient one, so it must stop hammering App A at full cadence — unlike a 5xx/timeout, which
+  // stays on the existing per-caller backoff since it may well clear on its own. ─────────────────
+
+  it("trips the auth breaker on HTTP 401 and short-circuits the next call without hitting fetch", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    const fetchSpy = vi.fn(async () => new Response("denied", { status: 401 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const first = await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
+    expect(first).toMatchObject({ ok: false, status: 401 });
+    expect(isCongressAuthBreakerTripped()).toBe(true);
+
+    const second = await shareWithCongressTrade({ refs: [{ ticker: "MSFT" }] });
+    expect(second).toMatchObject({ ok: false, skipped: false, reason: "auth-breaker-tripped" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // second call never touched the network
+  });
+
+  it("trips the auth breaker on HTTP 403 as well", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("forbidden", { status: 403 })));
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
+    expect(isCongressAuthBreakerTripped()).toBe(true);
+  });
+
+  it("does NOT trip the breaker on a non-auth HTTP error — every call still hits fetch", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    const fetchSpy = vi.fn(async () => new Response("boom", { status: 500 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
+    await shareWithCongressTrade({ refs: [{ ticker: "MSFT" }] });
+    expect(isCongressAuthBreakerTripped()).toBe(false);
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // no short-circuit — 5xx may be transient
+  });
+
+  it("does NOT trip the breaker on a transport error", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network down"); }));
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
+    expect(isCongressAuthBreakerTripped()).toBe(false);
+  });
+
+  it("replays the cached failure into the health log while the breaker is tripped, without a live retry", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    const fetchSpy = vi.fn(async () => new Response("denied", { status: 401 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] }); // real 401, trips breaker
+    await shareWithCongressTrade({ refs: [{ ticker: "MSFT" }] }); // absorbed by breaker
+    await shareWithCongressTrade({ refs: [{ ticker: "GOOG" }] }); // absorbed by breaker
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // only the first call ever reached the network
+    const rows = getServiceHealthLog("congress-share", 10);
+    // All three attempts (1 real + 2 breaker-absorbed) still land a failed health-log row, so the
+    // 5-consecutive-hard-failure Sentry/degraded threshold accrues at the caller's normal cadence.
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.ok === 0)).toBe(true);
+    expect(rows[0].error_text).toContain("breaker cooldown active");
+  });
+
+  it("clears the breaker and resumes real sends after a successful post-cooldown probe", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS = "5"; // near-zero cooldown for the test
+    const fetchSpy = vi
+      .fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response("denied", { status: 401 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] }); // trips breaker
+    expect(isCongressAuthBreakerTripped()).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 20)); // let the 5ms cooldown elapse
+
+    const res = await shareWithCongressTrade({ refs: [{ ticker: "MSFT" }] }); // real probe
+    expect(res).toMatchObject({ ok: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(isCongressAuthBreakerTripped()).toBe(false); // success clears the breaker
   });
 });
 

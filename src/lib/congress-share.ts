@@ -46,7 +46,16 @@ import {
   type OperationLeaseAware,
   type OperationLeaseClaim
 } from "./operation-lease";
-import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
+import {
+  audit,
+  deleteInternalSetting,
+  getInternalSetting,
+  getPolicy,
+  listUsers,
+  listWatchlistSymbols,
+  setInternalSetting
+} from "./db";
+import { logApiHealth } from "./db-health";
 import { createDurableMap } from "./durable-state";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
@@ -59,6 +68,75 @@ import { fetchNasdaqScreenerResponse } from "./nasdaq-screener-fetch";
 const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf anchors per call — give it room
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
+
+/**
+ * Auth circuit-breaker (prod incident 2026-09-07): HTTP 401/403 from App A means the shared
+ * bearer token is wrong on one side — a PERMANENT condition until an operator rotates/resyncs it,
+ * not a transient blip. Before this breaker, every caller kept retrying at its normal cadence
+ * forever: the scan-hook throttle is rolled back on ANY failure (so the very next scan re-POSTs),
+ * and the nightly batch's own 60-minute failure backoff (isCongressDailyShareDue) still let a
+ * single "due" run fan out into a dozen-plus chunked POSTs (refs/spx/insider/shortVolume/prices
+ * are independent bounded requests — see the chunking note above runCongressDailyShareUnlocked's
+ * payload loop), each one failing the same way. That combination produced 3,096 identical
+ * `[congress-share] import failed: HTTP 401` log lines over nine days
+ * (2026-08-29 through 2026-09-07) with no Sentry capture, no health signal, and no brake.
+ *
+ * This breaker is keyed ONE way for the whole module — every caller funnels through
+ * `shareWithCongressTrade`, so tripping it here stops the scan-hook, the in-flight nightly-batch
+ * loop's REMAINING chunks, and the next nightly run alike, without touching any of their own
+ * separate gating. A non-auth failure (5xx/timeout/network) does NOT trip it — those stay on the
+ * existing per-caller backoff, since they may well be transient.
+ */
+const AUTH_BREAKER_KEY = "congress-share:authBreaker";
+
+interface CongressAuthBreakerState {
+  /** Epoch ms the breaker stays tripped until; a fresh real attempt is allowed once now >= this. */
+  untilMs: number;
+  /** The HTTP-error text from the real 401/403 that tripped the breaker, replayed into the health
+   *  log (see below) for every call the breaker silently absorbs, so the failure stays diagnosable
+   *  without a live retry. */
+  lastError: string;
+}
+
+function authBreakerCooldownMs(): number {
+  const v = Number(process.env.CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS ?? 6 * 60 * 60_000); // 6h default
+  return Number.isFinite(v) && v > 0 ? v : 6 * 60 * 60_000;
+}
+
+function readCongressAuthBreakerState(): CongressAuthBreakerState | undefined {
+  try {
+    return getInternalSetting<CongressAuthBreakerState>(AUTH_BREAKER_KEY);
+  } catch {
+    return undefined; // fail open — never let breaker-state reads block a legitimate send
+  }
+}
+
+/** True while a prior HTTP 401/403 has the breaker tripped (cooldown not yet elapsed). */
+export function isCongressAuthBreakerTripped(now: number = Date.now()): boolean {
+  const state = readCongressAuthBreakerState();
+  return state !== undefined && now < state.untilMs;
+}
+
+function tripCongressAuthBreaker(now: number, errorText: string): void {
+  try {
+    setInternalSetting(AUTH_BREAKER_KEY, { untilMs: now + authBreakerCooldownMs(), lastError: errorText });
+  } catch {
+    // best-effort; a failed write just means the next call probes sooner than intended
+  }
+}
+
+function clearCongressAuthBreaker(): void {
+  try {
+    deleteInternalSetting(AUTH_BREAKER_KEY);
+  } catch {
+    // best-effort
+  }
+}
+
+/** Test seam: reset the auth breaker between tests (mirrors resetCongressRefThrottle below). */
+export function resetCongressAuthBreakerForTests(): void {
+  clearCongressAuthBreaker();
+}
 
 /**
  * Module-level single-flight for the nightly batch (P2.4 / activity-feed audit §1.4).
@@ -597,6 +675,26 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
+  const now = Date.now();
+  const breakerState = readCongressAuthBreakerState();
+  if (breakerState && now < breakerState.untilMs) {
+    // Auth breaker open: a recent real 401/403 means the token is broken until an operator fixes
+    // it — skip the network call entirely (no fetch) rather than hammering App A again. Every
+    // caller (scan-hook + nightly batch, including the REST of an in-flight batch's chunk loop)
+    // shares this one check, so tripping it once silences the whole storm. Still replay the
+    // cached failure into the health store (no console.error — that already fired for the real
+    // attempt) so the "5 consecutive failures" Sentry/health-degraded threshold (logApiHealth ->
+    // alertConnectionFailure, same mechanism "roic"/"congress.trade" already use) is reached at
+    // the caller's NORMAL cadence instead of only once per cooldown window.
+    logApiHealth({
+      service: "congress-share",
+      ok: false,
+      errorText: `${breakerState.lastError} [auth breaker cooldown active; not re-sent]`,
+      keySource: "env"
+    });
+    return { ok: false, skipped: false, reason: "auth-breaker-tripped", sent };
+  }
+
   const url = `${congressTradeBaseUrl()}${API_PATHS.ADMIN_SECURITIES_IMPORT}`;
   const timeoutMs = Number(process.env.CONGRESS_SHARE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
@@ -613,10 +711,21 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error(`[congress-share] import failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+      const errorText = `HTTP ${res.status} ${text.slice(0, 300)}`;
+      console.error(`[congress-share] import failed: ${errorText}`);
+      const isAuthFailure = res.status === 401 || res.status === 403;
+      if (isAuthFailure) tripCongressAuthBreaker(now, errorText);
+      // Surface every failure to the shared health store: feeds Sentry (via logApiHealth's own
+      // 5-consecutive-hard-failure alertConnectionFailure path — same mechanism "roic"/
+      // "congress.trade" already use) AND the "congress-share" entry in /api/health's
+      // `checks.dependencies` map. keySource "env" matches how CONGRESS_TRADE_TOKEN is resolved
+      // (process.env only — see congressTradeToken above).
+      logApiHealth({ service: "congress-share", ok: false, errorText, keySource: "env" });
       return { ok: false, status: res.status, error: text.slice(0, 500) || `HTTP ${res.status}`, sent };
     }
     const response = await res.json().catch(() => undefined);
+    clearCongressAuthBreaker(); // a successful call proves the token is good again
+    logApiHealth({ service: "congress-share", ok: true, keySource: "env" });
     return { ok: true, status: res.status, response, sent };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -626,6 +735,9 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
         `(refs=${sent.refs} spx=${sent.spx} prices=${sent.prices} closes=${sent.closes} ` +
         `insider=${sent.insider} shortVolume=${sent.shortVolume} fundamentals=${sent.fundamentals} analyst=${sent.analyst})`
     );
+    // Transport/timeout failures are NOT auth failures — do not trip the auth breaker, but still
+    // surface them to the health store (same 5-consecutive-hard-failure gate before Sentry fires).
+    logApiHealth({ service: "congress-share", ok: false, errorText: error, keySource: "env" });
     return { ok: false, error, sent };
   } finally {
     clearTimeout(timer);
