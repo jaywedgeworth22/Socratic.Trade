@@ -165,6 +165,10 @@ Create `src/lib/scheduler.ts`:
      respects the run lock); set `nextRunAt = now + cadence`. Wrap in try/catch so a thrown
      error never kills the timer.
 - Use `.unref()` on the timer so it doesn't hold the process open in dev.
+- 2026-08-31:  a whole-tick in-flight guard must not skip lease renew / lastTick / Sentry
+  forever.  `startScheduler()` also starts a 15s watchdog (2-minute budget, generation token)
+  that unwedges a hung `tickInner`; Sentry Crons opens `in_progress` and closes `ok`/`error`.
+  See `docs/rollouts/2026-08-31-hung-scheduler-tick-watchdog.md`.
 - Export `getSchedulerState(): { lastRunAt: string | null; nextRunAt: string | null }`.
 
 **Dev caveat to document in code:** Next dev with HMR may call `register()` more than once

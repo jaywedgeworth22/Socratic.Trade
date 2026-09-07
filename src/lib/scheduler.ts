@@ -240,19 +240,33 @@ export function _schedulerTickHealthCheck(): { failures: number; threshold: numb
 
 // Sentry Crons heartbeat for the scheduler tick. Addresses a confirmed monitoring gap: a
 // dead/hung scheduler still leaves /api/health returning 200, so an external dead-man's-switch
-// is needed. When enabled, every tick reports "ok" to the 'scheduler-tick' monitor and Sentry
-// alerts when check-ins stop arriving. Opt-in — requires BOTH SENTRY_DSN (the SDK is only
-// initialized in instrumentation.ts when it is set) AND SENTRY_CRONS_ENABLED=1 — and fully
-// try/catch-wrapped: monitoring must never be able to break trading.
+// is needed. Honest check-ins: the leader opens `in_progress` when the tick body starts and
+// closes `ok` / `error` when it finishes (or the watchdog unwedge sends `error`). A standalone
+// `ok` at tick *start* used to mark a hung tick healthy until the next check-in was missed.
+// Opt-in — requires BOTH SENTRY_DSN (the SDK is only initialized in instrumentation.ts when it
+// is set) AND SENTRY_CRONS_ENABLED=1 — and fully try/catch-wrapped: monitoring must never be
+// able to break trading.
 export const SENTRY_CRON_MONITOR_SLUG = "scheduler-tick";
+
+export type SentrySchedulerCheckInStatus = "in_progress" | "ok" | "error";
 
 function sentryCronsEnabled(): boolean {
   return Boolean(process.env.SENTRY_DSN) && process.env.SENTRY_CRONS_ENABLED === "1";
 }
 
+const SENTRY_CRON_MONITOR_CONFIG = {
+  schedule: { type: "interval" as const, value: 1, unit: "minute" as const },
+  checkinMargin: 5,
+  maxRuntime: 10,
+  timezone: "UTC"
+};
+
 /** Exported for tests only — asserts the env gate and that failures can never propagate. */
-export async function sendSentrySchedulerCheckIn(): Promise<void> {
-  if (!sentryCronsEnabled()) return;
+export async function sendSentrySchedulerCheckIn(
+  status: SentrySchedulerCheckInStatus = "ok",
+  checkInId?: string
+): Promise<string | undefined> {
+  if (!sentryCronsEnabled()) return undefined;
   try {
     // Dynamic import keeps the Sentry SDK out of the module graph of every scheduler consumer
     // (tests, API routes) and makes the disabled path a true no-op. Interop note: depending on
@@ -263,20 +277,26 @@ export async function sendSentrySchedulerCheckIn(): Promise<void> {
       default?: typeof import("@sentry/nextjs");
     };
     const captureCheckIn = mod.captureCheckIn ?? mod.default?.captureCheckIn;
-    if (typeof captureCheckIn !== "function") return;
+    if (typeof captureCheckIn !== "function") return undefined;
     // The upsert monitor config auto-creates/updates the monitor on first check-in: expected
-    // every minute (TICK_MS), flagged missed after a 5-minute margin.
-    captureCheckIn(
-      { monitorSlug: SENTRY_CRON_MONITOR_SLUG, status: "ok" },
-      {
-        schedule: { type: "interval", value: 1, unit: "minute" },
-        checkinMargin: 5,
-        maxRuntime: 10,
-        timezone: "UTC"
-      }
-    );
+    // every minute (TICK_MS), flagged missed after a 5-minute margin. maxRuntime 10 minutes
+    // is the Sentry-side backstop if in_progress never closes (watchdog unwedge is faster).
+    // Branch on `status` (rather than building one object typed as the 3-way union) so each
+    // call site's object literal narrows to the exact arm of the SDK's CheckIn union — a
+    // pre-widened `status: SentrySchedulerCheckInStatus` field cannot structurally match either
+    // arm and fails `tsc` even though every individual call is valid. The SDK's
+    // `InProgressCheckIn` arm has no `checkInId` field at all — opening always mints a fresh
+    // ID (that's the return value); only the closing "ok"/"error" arm can carry one to resume it.
+    const id =
+      status === "in_progress"
+        ? captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status }, SENTRY_CRON_MONITOR_CONFIG)
+        : checkInId
+          ? captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status, checkInId }, SENTRY_CRON_MONITOR_CONFIG)
+          : captureCheckIn({ monitorSlug: SENTRY_CRON_MONITOR_SLUG, status }, SENTRY_CRON_MONITOR_CONFIG);
+    return typeof id === "string" && id.length > 0 ? id : undefined;
   } catch (err) {
     logError("scheduler.tick", { event: "cron_checkin_failed", error: safeErrorMessage(err) });
+    return undefined;
   }
 }
 
@@ -307,13 +327,104 @@ const staleExitGuardHost = globalThis as unknown as { __staleExitInFlight?: Set<
 const staleExitInFlight: Set<string> =
   staleExitGuardHost.__staleExitInFlight ?? (staleExitGuardHost.__staleExitInFlight = new Set<string>());
 
-// Whole-tick re-entrancy guard: `tick()` awaits full multi-minute LLM strategy runs, so a slow tick
-// must not let the next 60s interval start an overlapping tick.  Overlapping ticks do NOT duplicate
-// trades — `lastRunAt` advances before a run is launched — the harm is re-running both sweep lanes
-// (~30 `journalLane` calls, roughly 60 synchronous SQLite writes each pass) and a `checkBrokerHealth`
-// network call per account, multiplying write pressure on a synchronous DB. globalThis-pinned so
-// Next.js HMR module duplication can't defeat the guard with two module instances.
-const tickGuardHost = globalThis as unknown as { __tickInFlight?: boolean };
+// Whole-tick re-entrancy guard: a still-running tick must not let the next 60s interval start an
+// overlapping sweep/health pass.  Overlapping ticks do NOT duplicate trades — `lastRunAt` advances
+// before a run is launched and per-account strategy locks hold the money path — the harm is
+// re-running sweep lanes (~30 `journalLane` calls) and a `checkBrokerHealth` network call per
+// account. globalThis-pinned so Next.js HMR module duplication can't defeat the guard.
+//
+// Generation token: the 2026-08-31 hung-tick incident left `__tickInFlight` true until process
+// restart because `tickInner` never returned.  The watchdog clears the guard and bumps generation
+// so a later `finally` from the abandoned tick cannot clobber a newer tick's in-flight bit.
+const tickGuardHost = globalThis as unknown as {
+  __tickInFlight?: boolean;
+  __tickStartedAtMs?: number;
+  __tickGeneration?: number;
+  __tickSentryCheckInId?: string;
+};
+
+/** Default wall-clock budget for one tick body before the watchdog unwedge.  2 minutes is under
+ *  `/api/health` schedulerStale (5 min) and the Sentry checkinMargin (5 min) so autopilot can
+ *  resume before those pages.  Override with SCHEDULER_TICK_WATCHDOG_MS. */
+export const DEFAULT_TICK_WATCHDOG_MS = 120_000;
+export const TICK_WATCHDOG_POLL_MS = 15_000;
+/** Serial per-account health probe ceiling.  Longer than SCHEDULER_BROKER_TIMEOUT_MS (15s)
+ *  because checkBrokerHealth runs getAccounts+getPortfolio whose first+retry budget is 16+8s. */
+export const SCHEDULER_HEALTH_PROBE_TIMEOUT_MS = 30_000;
+
+export type SchedulerTickWatchdogResult = "idle" | "waiting" | "unwedged";
+
+export function schedulerTickWatchdogLimitMs(): number {
+  const v = Number(process.env.SCHEDULER_TICK_WATCHDOG_MS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_TICK_WATCHDOG_MS;
+}
+
+function nextTickGeneration(): number {
+  const next = (tickGuardHost.__tickGeneration ?? 0) + 1;
+  tickGuardHost.__tickGeneration = next;
+  return next;
+}
+
+function clearTickGuard(): void {
+  tickGuardHost.__tickInFlight = false;
+  tickGuardHost.__tickStartedAtMs = undefined;
+  tickGuardHost.__tickSentryCheckInId = undefined;
+}
+
+/** Test-only: drop the process-pinned in-flight bit so files sharing a vitest worker stay isolated. */
+export function _resetSchedulerTickGuardForTest(): void {
+  clearTickGuard();
+  tickGuardHost.__tickGeneration = 0;
+}
+
+/**
+ * Independent of `setInterval(tick)`.  A tick that never returns used to skip every later
+ * interval (lease expired at TTL 90s, lastTick froze, Sentry `ok` had already fired at start).
+ * While the body is still inside the budget, renew the leader lease so a slow-but-alive tick
+ * does not look expired.  Do NOT write `scheduler:lastTick` here — that stamp means a tick
+ * body finished, so a wedged tick goes stale honestly.
+ *
+ * After the budget, bump generation, clear the guard, close the Sentry check-in as `error`,
+ * and kick a fresh tick so autopilot does not sit dead until a container restart.
+ */
+export function runSchedulerTickWatchdog(now = Date.now()): SchedulerTickWatchdogResult {
+  if (!tickGuardHost.__tickInFlight) return "idle";
+  const started = tickGuardHost.__tickStartedAtMs;
+  const limitMs = schedulerTickWatchdogLimitMs();
+  if (typeof started === "number" && Number.isFinite(started) && now - started < limitMs) {
+    if (singleLeaderEnabled()) {
+      try {
+        acquireOrRenewLeadership(new Date(now));
+      } catch {
+        /* lease renew must never throw out of the watchdog */
+      }
+    }
+    return "waiting";
+  }
+  const hungForMs =
+    typeof started === "number" && Number.isFinite(started) ? now - started : Number.NaN;
+  const checkInId = tickGuardHost.__tickSentryCheckInId;
+  nextTickGeneration();
+  clearTickGuard();
+  logError("scheduler.tick", {
+    event: "watchdog_unwedge",
+    hung_for_ms: Number.isFinite(hungForMs) ? hungForMs : undefined
+  });
+  recordSchedulerTick("error", Number.isFinite(hungForMs) ? hungForMs : undefined);
+  void sendSentrySchedulerCheckIn("error", checkInId);
+  void tick();
+  return "unwedged";
+}
+
+let watchdogTimer: NodeJS.Timeout | null = null;
+
+function startTickWatchdog(): void {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(() => {
+    runSchedulerTickWatchdog();
+  }, TICK_WATCHDOG_POLL_MS);
+  watchdogTimer.unref();
+}
 
 /**
  * Boot-time autonomy interlock. A persisted `systemState === "active"` must NOT silently resume
@@ -445,10 +556,18 @@ export function startScheduler(): void {
 
   timer = setInterval(tick, TICK_MS);
   timer.unref(); // don't hold the process open in dev
-  console.log("[scheduler] started (tick every 60s)");
+  startTickWatchdog();
+  console.log("[scheduler] started (tick every 60s; watchdog every 15s)");
 }
 
 async function tickInner(): Promise<void> {
+  // Captured immediately: `tick()` bumps `__tickGeneration` synchronously right before invoking
+  // `tickInner`, so this is always this call's own generation. Guards the Sentry check-in close in
+  // the `finally` below the same way `tick()`'s own `finally` already guards `clearTickGuard()` —
+  // otherwise an abandoned tick that the watchdog already unwedged can settle later and either
+  // close its own now-stale check-in a second time, or worse, clobber a newer tick's still-open
+  // in-progress check-in (tickGuardHost.__tickSentryCheckInId by then belongs to that newer tick).
+  const myTickGeneration = tickGuardHost.__tickGeneration;
   // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill,
   // and close the matching strategy_run_requests row so Manual Run once is not left locked.
   // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
@@ -506,37 +625,25 @@ async function tickInner(): Promise<void> {
     return; // not the leader this tick — no side effects
   }
 
-  // Liveness heartbeat — AFTER the leader gate, so a follower that never runs the tick body cannot
-  // keep /api/health fresh while the leader is wedged (which would let synthetic stops and strategy
-  // runs grow stale without tripping the stale-scheduler check). Also self-guards the health-failure
-  // threshold: only the leader tracks heartbeat failures — a follower with a dead DB won't abdicate
-  // (it never got past the gate anyway), and the leader does.
-  try {
-    setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    if (getHealthFailures() > 0) resetHealthFailures();
-  } catch (err) {
-    console.error("[scheduler] heartbeat write error:", err);
-    const failures = incrementHealthFailures();
-    const threshold = healthFailureThreshold();
-    if (failures >= threshold && singleLeaderEnabled()) {
-      console.error(
-        `[scheduler] health threshold reached (${failures}/${threshold} consecutive heartbeat failures) — abdicating leadership`
-      );
-      try { releaseLease(LEASE_OWNER); } catch { /* never throw on shutdown */ }
-      return; // stop this tick — we can't prove leadership anyway with a dead DB
-    }
-  }
+  // Open an honest Sentry Crons job after the leader gate: only the process running the tick
+  // body reports, so idle followers cannot mask a dead leader. `ok` is sent in `finally` once
+  // the body finishes — not here — so a hung await cannot look like a successful tick.
+  const sentryCheckInId = await sendSentrySchedulerCheckIn("in_progress");
+  if (sentryCheckInId) tickGuardHost.__tickSentryCheckInId = sentryCheckInId;
+  let sentryStatus: SentrySchedulerCheckInStatus = "ok";
 
-  // Sentry Crons check-in (opt-in, see sendSentrySchedulerCheckIn above). Deliberately AFTER the
-  // single-leader gate: only the process actually running the tick body reports "ok", so a dead
-  // leader is not masked by idle followers. Fire-and-forget + self-guarded — can't break a tick.
-  void sendSentrySchedulerCheckIn();
+  try {
 
   // Drain durable material-event inboxes on every leader tick, independent of SEC ingestion
   // flags. Events may be produced by filings, transcripts, broker state, or operator actions;
-  // gating this on one source would strand queued work indefinitely.
+  // gating this on one source would strand queued work indefinitely. Deadline so a hung drain
+  // cannot pin `__tickInFlight` past the watchdog (live 2026-08-31 scheduler-tick miss).
   try {
-    await journalLane("material-event-drain", {}, () => drainMaterialEventQueue());
+    await withDeadline(
+      journalLane("material-event-drain", {}, () => drainMaterialEventQueue()),
+      SCHEDULER_BROKER_TIMEOUT_MS,
+      "material-event-drain timeout"
+    );
   } catch (err) {
     console.error("[scheduler] material-event drain error:", err);
   }
@@ -824,8 +931,6 @@ async function tickInner(): Promise<void> {
     )
     .catch((err) => console.error("[scheduler] lookahead audit error:", err));
 
-  try {
-
     // ── Operator-level monthly LLM spend ceiling ──────────────────────────────
     // Checked once per tick after the single-leader gate. When breached, the scheduler
     // skips LLM work (strategy runs) for all users but still runs non-LLM safety
@@ -997,7 +1102,23 @@ async function tickInner(): Promise<void> {
         // order path is down (Tradier OMS 500s, Alpaca trading_blocked), or elevated place failures.
         // Unhealthy + active → auto-halt systemState so future ticks stay paused until recovery.
         const wasActiveForHealthGate = policy.systemState === "active";
-        const healthSignals = await checkBrokerHealth(userId, account, brokerGateway);
+        // Hard deadline: Alpaca REST has hung past 14s (inflight-deadline.ts); without this the
+        // serial per-account await pins `__tickInFlight`, skips later interval ticks, and the
+        // 90s lease expires (Firefighter SOCRATIC-TRADE-4, 2026-08-31).
+        let healthSignals: Awaited<ReturnType<typeof checkBrokerHealth>>;
+        try {
+          healthSignals = await withDeadline(
+            checkBrokerHealth(userId, account, brokerGateway),
+            SCHEDULER_HEALTH_PROBE_TIMEOUT_MS,
+            "checkBrokerHealth timeout"
+          );
+        } catch (err) {
+          healthSignals = {
+            isHealthy: false,
+            reason: `Broker health check timed out: ${safeErrorMessage(err)}`,
+            category: "connectivity"
+          };
+        }
         const pauseResult = await applyBrokerOrderPlacementPause({
           userId,
           connectedAccountId: accountId,
@@ -1097,10 +1218,6 @@ async function tickInner(): Promise<void> {
       }
     }
 
-    // Run with bounded concurrency (max 3 at a time) to balance throughput and API rate limits
-    const MAX_CONCURRENCY = 3;
-    const executing = new Set<Promise<unknown>>();
-
     // Skip LLM strategy runs when the monthly operator spend ceiling is breached.
     // Non-LLM safety tasks (reconciliation, stop monitor, stale orders, proposal expiry)
     // have already run above — only the LLM-heavy strategy execution is gated here.
@@ -1118,53 +1235,65 @@ async function tickInner(): Promise<void> {
           }
         }
       }
-      return;
-    }
-
-    let jitterMs = 0;
-    for (const { userId, accountId } of dueRuns) {
-      // P2.9: Stagger/jitter LLM calls to prevent concurrent-account bursts from blowing QPM.
-      // Offset each simultaneous launch by 2-5s to stagger their LLM phase.
-      const runDelayMs = jitterMs;
-      jitterMs += 2000 + Math.random() * 3000;
-
-      // The daily LLM budget ceiling is enforced INSIDE runStrategyOnce (after its non-LLM risk
-      // breakers + reconciliation, before proposal generation), NOT here — suppressing the run at this
-      // outer gate would also skip the drawdown/volatility breakers + fill reconciliation, disabling
-      // safety maintenance for the rest of the day. So we always enter the run; it skips only LLM work.
-      const p = (async () => {
-        if (runDelayMs > 0) await new Promise((r) => setTimeout(r, runDelayMs));
-        await journalLane("strategy-run", { userId, connectedAccountId: accountId }, async () => {
-          const result = await runScheduledStrategyAndMaybeTune(userId, accountId);
-          return { status: "ok" as const, summary: `status=${result.status}` };
-        });
-      })()
-        // Item 1 (opt-in): after a successful cadence run, attempt account-bound, cadence-gated
-        // autonomous weight tuning. Failed/busy runs never tune; the helper owns that invariant.
-        .catch((err) => {
+    } else {
+      // Do NOT await the strategy promises: a hung LLM/gather used to pin `__tickInFlight` until
+      // process restart, which skipped every later 60s interval (no lease renew, no lastTick, no
+      // Sentry close). Per-account strategy locks still prevent duplicate money-path work.
+      // Stagger launches so concurrent-account bursts do not blow QPM (P2.9).
+      let jitterMs = 0;
+      for (const { userId, accountId } of dueRuns) {
+        const runDelayMs = jitterMs;
+        jitterMs += 2000 + Math.random() * 3000;
+        void (async () => {
+          if (runDelayMs > 0) await new Promise((r) => setTimeout(r, runDelayMs));
+          await journalLane("strategy-run", { userId, connectedAccountId: accountId }, async () => {
+            const result = await runScheduledStrategyAndMaybeTune(userId, accountId);
+            return { status: "ok" as const, summary: `status=${result.status}` };
+          });
+        })().catch((err) => {
           console.error(`[scheduler] error running strategy for ${userId}/${accountId}:`, err);
-        })
-        .finally(() => {
-          executing.delete(p);
         });
-
-      executing.add(p);
-      if (executing.size >= MAX_CONCURRENCY) {
-        await Promise.race(executing);
       }
     }
-    
-    await Promise.all(executing);
   } catch (err) {
     // Never let a thrown error kill the timer
+    sentryStatus = "error";
     logError("scheduler.tick", { event: "tick_error", error: safeErrorMessage(err) });
+  } finally {
+    // Heartbeat AFTER the leader body so a hung tick cannot keep /api/health fresh. Followers
+    // never reach this finally. A completed tick (ok or error) proves the loop is alive;
+    // the watchdog does not write lastTick on unwedge.
+    try {
+      setInternalSetting("scheduler:lastTick", new Date().toISOString());
+      if (getHealthFailures() > 0) resetHealthFailures();
+    } catch (err) {
+      console.error("[scheduler] heartbeat write error:", err);
+      const failures = incrementHealthFailures();
+      const threshold = healthFailureThreshold();
+      if (failures >= threshold && singleLeaderEnabled()) {
+        console.error(
+          `[scheduler] health threshold reached (${failures}/${threshold} consecutive heartbeat failures) — abdicating leadership`
+        );
+        try { releaseLease(LEASE_OWNER); } catch { /* never throw on shutdown */ }
+      }
+    }
+    if (tickGuardHost.__tickGeneration === myTickGeneration) {
+      await sendSentrySchedulerCheckIn(sentryStatus, tickGuardHost.__tickSentryCheckInId ?? sentryCheckInId);
+    } else {
+      // The watchdog already unwedged this tick (and closed its check-in as "error") while it was
+      // still running. The global guard state now belongs to a newer generation, so sending here
+      // would either duplicate that close or, worse, apply this abandoned tick's status to the
+      // newer tick's still-open check-in. Suppress it — the watchdog's own close already reported.
+      console.warn("[scheduler] stale tick finished after watchdog unwedge; suppressing its Sentry check-in");
+    }
   }
 }
 
 // Thin guarded wrapper: `startScheduler` fires this both immediately (`void tick()`) and on every
 // `setInterval(tick, TICK_MS)` callback, so the guard must live here rather than only around the
 // interval registration to cover both entry points.  Released in `finally` so a throw inside
-// `tickInner` can never wedge the scheduler permanently.
+// `tickInner` can never wedge the scheduler permanently.  Generation must match so a watchdog
+// unwedge cannot be undone by this `finally` when the abandoned body later settles.
 async function tick(): Promise<void> {
   if (tickGuardHost.__tickInFlight) {
     logWarn("scheduler.overrun", { reason: "in_flight" });
@@ -1172,7 +1301,9 @@ async function tick(): Promise<void> {
     return;
   }
   tickGuardHost.__tickInFlight = true;
-  const started = Date.now();
+  tickGuardHost.__tickStartedAtMs = Date.now();
+  const started = tickGuardHost.__tickStartedAtMs;
+  const myGen = nextTickGeneration();
   try {
     await tickInner();
     const durationMs = Date.now() - started;
@@ -1181,7 +1312,11 @@ async function tick(): Promise<void> {
     recordSchedulerTick("error", Date.now() - started);
     throw err;
   } finally {
-    tickGuardHost.__tickInFlight = false;
+    if (tickGuardHost.__tickGeneration === myGen) {
+      clearTickGuard();
+    } else {
+      console.warn("[scheduler] stale tick finished after watchdog unwedge; leaving current guard in place");
+    }
   }
 }
 

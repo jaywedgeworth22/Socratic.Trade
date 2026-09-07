@@ -55,14 +55,17 @@ This app now has opt-in scaffolding for the seven selected tools:
   pages moderate+ from Sentry.  `/api/health` and `/api/live` stay independent of
   Datadog.  Inertness is asserted by `test/datadog-inert.test.ts`.
 - **Sentry Crons scheduler heartbeat**: a dead/hung scheduler still returns 200 from
-  `/api/health`, so the scheduler tick can additionally report an "ok" check-in to the
-  Sentry Crons monitor `scheduler-tick` every 60s tick (`sendSentrySchedulerCheckIn` in
-  `src/lib/scheduler.ts`); Sentry alerts when check-ins stop. Opt-in — requires BOTH
-  `SENTRY_DSN` and `SENTRY_CRONS_ENABLED=1` — placed after the single-leader gate so idle
-  followers can't mask a dead leader, and fully try/catch-wrapped so monitoring can never
-  break trading. The monitor is auto-created via the upsert config on first check-in
-  (interval 1 minute, 5-minute checkin margin). Inertness is asserted by
-  `test/sentry-inert.test.ts`.
+  `/api/health`, so the leader tick opens an `in_progress` check-in on `scheduler-tick` and
+  closes `ok` / `error` when that body finishes (`sendSentrySchedulerCheckIn` in
+  `src/lib/scheduler.ts`).  A standalone `ok` at tick start is dishonest:  the 2026-08-31
+  hang had already checked in `ok` before the await froze.  Sentry alerts on missed
+  check-ins and on `in_progress` past `maxRuntime` 10 minutes.  The in-process watchdog
+  (15s poll, 2-minute budget) closes `error` and clears `__tickInFlight` sooner so Autopilot
+  can resume without a restart.  Opt-in — requires BOTH `SENTRY_DSN` and
+  `SENTRY_CRONS_ENABLED=1` — placed after the single-leader gate so idle followers can't
+  mask a dead leader, and fully try/catch-wrapped so monitoring can never break trading.
+  The monitor is auto-created via the upsert config on first check-in (interval 1 minute,
+  5-minute checkin margin).  Inertness is asserted by `test/sentry-inert.test.ts`.
 - **Scheduler and strategy ownership leases**: scheduler single-leader coordination is ON by
   default, including when `SCHEDULER_SINGLE_LEADER` is unset or empty; only an explicit
   `false`/`off`/`0`/`no` disables it. Each strategy/approval invocation owns its account-scoped

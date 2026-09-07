@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-08-31 GROK — Hung scheduler-tick watchdog (Firefighter SOCRATIC-TRADE-4)
+
+Live SHA `189f5a31` stayed up while Autopilot died:  `scheduler-tick` missed check-in (lastSeen 13:36Z), `schedulerLastTick` 13:30:42Z, lease expired 13:32:12Z, `schedulerStale` / `tradingLivenessDegraded` true, market open, `/api/health` 15s timeout.  Root cause:  `__tickInFlight` skipped every later interval while `tickInner` awaited a hung lane, and Sentry was told `ok` at tick start.  Fix:  15s watchdog unwedge (2 min budget, generation token), honest `in_progress`/`ok`/`error` Crons, `lastTick` on finish, deadlines on drain + `checkBrokerHealth`, do not await strategy runs on the tick path.  No extra-ship.  No Coolify mutate.  Rollout:  `docs/rollouts/2026-08-31-hung-scheduler-tick-watchdog.md`.
 ## 2026-09-04 GROK — R2 weekly gzip freshen (skip-prune + inventory)
 
 Gzip upload path already on main via #3135 (`cold-snapshots/app-<ISO-date>.db.gz`,
