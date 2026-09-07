@@ -61,9 +61,21 @@ Qdrant, decouple from Pinecone and sweep restart runs immediately") and its foll
 
 ## Verification
 
-- `npm run lint`
-- `npx tsc --noEmit`
-- `npm test` (`vitest run`)
+Run in `~/apps/trading-claude-restart-sweep`.
+
+- `npx tsc --noEmit` — exit 0, no output.
+- `npm run lint` (`eslint .`) — exit 0, `801 problems (0 errors, 801 warnings)`; the warning count is the repo's existing baseline.
+- Targeted vitest:  `test/stale-running-runs-adoption-grace.test.ts` 4/4, `test/vector-db-qdrant-index-metric.test.ts` 1/1, and
+  `test/vector-db-document-receipts.test.ts` + `test/vector-db-qdrant-retrieval.test.ts` + `test/qdrant-read.test.ts` 39/39.
+- Both new regression tests were confirmed to FAIL with their fix reverted and pass with it restored.
+- Full `npm test` did **not** complete locally.  This Mac was severely degraded during the session — a single test file's
+  vitest `transform` took 65s against 17s earlier in the same session — and the 700-file suite made no progress in ~35
+  minutes.  The GitHub `verify` check (`tsc --noEmit` -> `npm test` -> `npm run build`) is the authoritative full-suite run
+  for this PR.
+- Note:  `test/stale-running-runs.test.ts` fails two cases on this machine under that load, reproduced identically on an
+  unmodified `git stash` of `origin/main`, so it is a pre-existing environment flake and not caused by this change.  Its
+  "started only 1 minute before boot" case depends on the vitest worker's own `process.uptime()` staying under 60 seconds,
+  which is why the new adoption-grace cases live in their own file rather than being appended to it.
 
 ## Notes and follow-ups
 
