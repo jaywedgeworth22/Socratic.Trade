@@ -50,13 +50,21 @@ export function isRedirectingToLogin(): boolean {
 /** Idempotent: a second 401 arriving while the navigation is already underway (e.g. the
  *  dashboard poll and a mutation both fail around the same time) is a no-op, and this refuses
  *  to fire at all from /login itself — the one guard that keeps a 401 from an auth-adjacent
- *  page from ever bouncing back to itself in a loop. */
-function redirectToLogin(): void {
+ *  page from ever bouncing back to itself in a loop. Exported so the console's OTHER
+ *  self-contained request clients (settings/lib.ts, orders/api.ts — deliberately not merged
+ *  into this file's own `request<T>`, see those files' headers) can fail closed on a 401
+ *  through the same one destination instead of leaving the user on a dead session until the
+ *  next dashboard poll notices. */
+export function redirectToLogin(): void {
   if (typeof window === "undefined") return;
   if (redirectingToLogin) return;
   if (window.location.pathname === "/login" || window.location.pathname.startsWith("/login/")) return;
   redirectingToLogin = true;
-  const callbackUrl = `${window.location.pathname}${window.location.search}`;
+  // Fragment-driven console views (app/console/guardrails#autonomy, app/console/strategy#models,
+  // settings/connections anchors) read window.location.hash to pick or scroll to a subsection —
+  // dropping it here would land a fresh sign-in back on the route's default view instead of
+  // where the user actually was.
+  const callbackUrl = `${window.location.pathname}${window.location.search}${window.location.hash || ""}`;
   // A hard navigation (not useRouter().push()/next/navigation's redirect(), which need a
   // component render/event-handler context this plain client module doesn't have) is the
   // correct choice here, not a shortcut: it forces a fresh request through middleware.ts's own

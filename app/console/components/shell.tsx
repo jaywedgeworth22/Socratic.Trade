@@ -113,6 +113,16 @@ function ShellFrame({ children }: { children: ReactNode }) {
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Redirecting you to sign in.{SENTENCE_GAP}This screen no longer reflects live data.
           </p>
+          {/* The automatic window.location.href navigation in api.ts's redirectToLogin fires a
+              native beforeunload prompt when a dirty draft is registered (useDirtyGuard.tsx) —
+              if the user cancels that prompt, redirectingToLogin is already latched true and
+              never retries, leaving this screen up with no way out but a manual reload or
+              address-bar edit. A real link is always clickable regardless of that outcome. */}
+          <div className="mt-4 flex justify-center">
+            <a href={`/login?callbackUrl=${encodeURIComponent(pathname || "/console")}`} className="con-btn con-btn-primary con-btn-sm">
+              Sign in
+            </a>
+          </div>
         </div>
       </div>
     );

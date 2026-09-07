@@ -17,8 +17,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-function fakeWindow(pathname: string, search = "") {
-  return { location: { pathname, search, href: "" } };
+function fakeWindow(pathname: string, search = "", hash = "") {
+  return { location: { pathname, search, hash, href: "" } };
 }
 
 describe("console api client — 401 redirects to /login (not treated like a network blip)", () => {
@@ -95,5 +95,35 @@ describe("console api client — 401 redirects to /login (not treated like a net
     win.location.href = "";
     await expect(fetchDashboard()).rejects.toBeInstanceOf(Error);
     expect(win.location.href).toBe(""); // still empty — the second 401 did not trigger another navigation
+  });
+
+  it("preserves the URL fragment in the login callback (fragment-driven views like #autonomy read it back)", async () => {
+    const win = fakeWindow("/console/guardrails", "", "#autonomy");
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unauthorized", { status: 401 })));
+
+    const { fetchDashboard } = await import("../app/console/lib/api");
+    await expect(fetchDashboard()).rejects.toBeInstanceOf(Error);
+    expect(win.location.href).toBe(`/login?callbackUrl=${encodeURIComponent("/console/guardrails#autonomy")}`);
+  });
+
+  it("settings/lib.ts's separate request wrapper also redirects on a 401 through the shared redirectToLogin", async () => {
+    const win = fakeWindow("/console/settings/brokers");
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unauthorized", { status: 401 })));
+
+    const { fetchSourceFeatures } = await import("../app/console/settings/lib");
+    await expect(fetchSourceFeatures()).rejects.toMatchObject({ status: 401 });
+    expect(win.location.href).toBe(`/login?callbackUrl=${encodeURIComponent("/console/settings/brokers")}`);
+  });
+
+  it("orders/api.ts's separate post wrapper also redirects on a 401 through the shared redirectToLogin", async () => {
+    const win = fakeWindow("/console/orders");
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unauthorized", { status: 401 })));
+
+    const { cancelOrder } = await import("../app/console/orders/api");
+    await expect(cancelOrder("order-1")).rejects.toMatchObject({ status: 401 });
+    expect(win.location.href).toBe(`/login?callbackUrl=${encodeURIComponent("/console/orders")}`);
   });
 });

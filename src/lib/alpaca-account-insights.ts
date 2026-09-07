@@ -132,7 +132,11 @@ async function getJson<T>(
         continue;
       }
       const rawMessage = err instanceof Error ? err.message : String(err);
-      const errorText = scrubProviderErrorText(appendErrorCause(rawMessage, err), secretKey);
+      // Both credentials are sent as auth material (authHeaders above: APCA-API-KEY-ID +
+      // APCA-API-SECRET-KEY, or a Bearer apiKey when secretKey is absent), so both must be
+      // scrubbed from a transport-error cause before it reaches api_health_log — scrubbing only
+      // secretKey left apiKey exposed verbatim whenever it appeared in the appended cause text.
+      const errorText = scrubProviderErrorText(scrubProviderErrorText(appendErrorCause(rawMessage, err), secretKey), apiKey);
       logApiHealth({
         service,
         ok: false,

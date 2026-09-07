@@ -417,5 +417,29 @@ describe("alpaca-account-insights", () => {
       expect(after[0]?.error_text).not.toContain("super-secret-value");
       expect(after[0]?.error_text).toContain("***");
     });
+
+    it("scrubs the account's API key out of a logged transport error too (not just the secret key)", async () => {
+      // apiKey is sent as auth material either way — APCA-API-KEY-ID alongside the secret key,
+      // or as the Bearer token when there is no secret key — so a cause echoing it back must be
+      // scrubbed exactly like the secret key above.
+      await seedConnectedAlpaca("u-apikey-scrub", "paper", "leak-api-key-value", "key-secret");
+      const before = getServiceHealthLog(SERVICE, 1000).length;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(
+          Object.assign(new TypeError("fetch failed"), {
+            cause: new Error("upstream said: leak-api-key-value is not authorized"),
+          })
+        )
+      );
+
+      const activities = await fetchAlpacaAccountActivities("u-apikey-scrub");
+
+      expect(activities).toEqual([]);
+      const after = getServiceHealthLog(SERVICE, 1000);
+      expect(after.length).toBe(before + 1);
+      expect(after[0]?.error_text).not.toContain("leak-api-key-value");
+      expect(after[0]?.error_text).toContain("***");
+    });
   });
 });

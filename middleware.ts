@@ -106,6 +106,18 @@ function isPublicPath(pathname: string): boolean {
   return pathname.startsWith("/api/auth/callback/") || pathname.startsWith("/api/auth/signin/");
 }
 
+/** True for `/login` and its subpaths. The mobile/console host-routing blocks below must
+ *  exempt this (same test as PUBLIC_PREFIXES' own "/login" entry) so a client-side 401
+ *  redirect (app/console/lib/api.ts's redirectToLogin, a plain relative `window.location.href
+ *  = "/login?..."` navigation) actually reaches the sign-in page on those hosts instead of
+ *  being rewritten to the protected `/console/login` (which does not exist as a route and, more
+ *  importantly, is not public — an unauthenticated request to it hits the page-level fail-closed
+ *  branch below, which redirects back to `/login`, which the host block rewrites to
+ *  `/console/login` again: an infinite loop that never shows the sign-in page). */
+function isLoginPath(pathname: string): boolean {
+  return pathname === "/login" || pathname.startsWith("/login/");
+}
+
 /** Token-gated peer-read market routes. Handlers still call verifySecuritiesImportToken.
  *  Keep this list explicit so /api/market/flatfile stays session-gated. */
 function isPeerMarketReadPath(pathname: string): boolean {
@@ -321,7 +333,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (pathname === "/" || pathname === "/mobile" || pathname.startsWith("/mobile/")) {
       return NextResponse.redirect(new URL("/console", req.url));
     }
-    if (!pathname.startsWith("/console") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
+    if (
+      !pathname.startsWith("/console") &&
+      !pathname.startsWith("/api") &&
+      !pathname.startsWith("/_next") &&
+      !pathname.startsWith("/favicon") &&
+      !isLoginPath(pathname)
+    ) {
       return NextResponse.redirect(new URL(`/console${pathname}`, req.url));
     }
   }
@@ -346,7 +364,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (pathname === "/") {
       return NextResponse.redirect(new URL("/console", req.url));
     }
-    if (!pathname.startsWith("/console") && !pathname.startsWith("/api") && !pathname.startsWith("/_next") && !pathname.startsWith("/favicon")) {
+    if (
+      !pathname.startsWith("/console") &&
+      !pathname.startsWith("/api") &&
+      !pathname.startsWith("/_next") &&
+      !pathname.startsWith("/favicon") &&
+      !isLoginPath(pathname)
+    ) {
       return NextResponse.redirect(new URL(`/console${pathname}`, req.url));
     }
   }
