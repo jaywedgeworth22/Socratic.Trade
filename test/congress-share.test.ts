@@ -329,12 +329,16 @@ describe("shareWithCongressTrade", () => {
   // "congress.trade" already use to surface a degraded /api/health dependency and (after 5
   // consecutive hard failures) a Sentry capture. ────────────────────────────────────────────
 
+  // NOTE: api_health_log lives in the SAME per-file SQLite DB every test in this suite shares
+  // (one DATABASE_URL, created once in beforeAll — see the top of this file), so rows from
+  // earlier tests persist. getServiceHealthLog orders `ts DESC, rowid DESC`, so rows[0] is always
+  // THIS test's most recent write — assert on that instead of the log's total length.
+
   it("logs a failed health-log row (service congress-share) on an HTTP error", async () => {
     process.env.CONGRESS_TRADE_TOKEN = "tok";
     vi.stubGlobal("fetch", vi.fn(async () => new Response("denied", { status: 401 })));
     await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
     const rows = getServiceHealthLog("congress-share", 10);
-    expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ ok: 0, key_source: "env" });
     expect(rows[0].error_text).toContain("HTTP 401");
   });
@@ -344,7 +348,6 @@ describe("shareWithCongressTrade", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
     await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] });
     const rows = getServiceHealthLog("congress-share", 10);
-    expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ ok: 1, key_source: "env" });
   });
 
@@ -401,17 +404,19 @@ describe("shareWithCongressTrade", () => {
     await shareWithCongressTrade({ refs: [{ ticker: "GOOG" }] }); // absorbed by breaker
 
     expect(fetchSpy).toHaveBeenCalledTimes(1); // only the first call ever reached the network
-    const rows = getServiceHealthLog("congress-share", 10);
-    // All three attempts (1 real + 2 breaker-absorbed) still land a failed health-log row, so the
+    // Most recent 3 rows (DESC order): the 2 breaker-absorbed replays land first, then the
+    // original real 401 — all three still land a failed health-log row, so the
     // 5-consecutive-hard-failure Sentry/degraded threshold accrues at the caller's normal cadence.
-    expect(rows).toHaveLength(3);
-    expect(rows.every((r) => r.ok === 0)).toBe(true);
-    expect(rows[0].error_text).toContain("breaker cooldown active");
+    const [mostRecent, secondMostRecent, thirdMostRecent] = getServiceHealthLog("congress-share", 10);
+    expect([mostRecent, secondMostRecent, thirdMostRecent].every((r) => r.ok === 0)).toBe(true);
+    expect(mostRecent.error_text).toContain("breaker cooldown active");
+    expect(secondMostRecent.error_text).toContain("breaker cooldown active");
+    expect(thirdMostRecent.error_text).toContain("HTTP 401"); // the original real failure
   });
 
   it("clears the breaker and resumes real sends after a successful post-cooldown probe", async () => {
     process.env.CONGRESS_TRADE_TOKEN = "tok";
-    process.env.CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS = "5"; // near-zero cooldown for the test
+    process.env.CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS = "300"; // short but not flaky-short
     const fetchSpy = vi
       .fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response("denied", { status: 401 }));
@@ -420,7 +425,7 @@ describe("shareWithCongressTrade", () => {
     await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] }); // trips breaker
     expect(isCongressAuthBreakerTripped()).toBe(true);
 
-    await new Promise((resolve) => setTimeout(resolve, 20)); // let the 5ms cooldown elapse
+    await new Promise((resolve) => setTimeout(resolve, 400)); // let the 300ms cooldown elapse
 
     const res = await shareWithCongressTrade({ refs: [{ ticker: "MSFT" }] }); // real probe
     expect(res).toMatchObject({ ok: true });
