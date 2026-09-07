@@ -22,9 +22,14 @@ vi.mock("../src/lib/web-sources/http", () => ({
   BROWSER_UA: "Mozilla/5.0 test"
 }));
 
-vi.mock("../src/lib/vector-db", () => ({
-  storeDocument: vi.fn()
-}));
+vi.mock("../src/lib/vector-db", async (importOriginal) => {
+  // classifyEmbedFailure is a pure classifier the worker now calls directly to decide
+  // retryable-vs-dead-letter (2026-08-23 P0 fix) — keep the REAL implementation so these tests
+  // exercise the same classification production does, and only stub the provider-calling
+  // storeDocument.
+  const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
+  return { ...actual, storeDocument: vi.fn() };
+});
 
 describe("SEC Ingestion Worker and State Machine (P5)", () => {
   it("should claim a discovered task, run the pipeline checkpoints, and mark it complete", async () => {
@@ -747,7 +752,13 @@ describe("embed_queued FTS slice + durable resume", () => {
     expect(vi.mocked(storeDocument)).not.toHaveBeenCalled();
   });
 
-  it("keeps the capacity-exceeded throw and does not write FTS when storeDocument is incomplete", async () => {
+  // 2026-08-23 P0 fix: an incomplete storeDocument result used to ALWAYS throw the generic
+  // "Ingestion budget or capacity exceeded mid-task" message, which the runTick catch then
+  // dead-lettered with retryable:true — misclassifying a permanent embed rejection (HTTP 400) the
+  // same as a transient one (429/connection failure) and requeuing it forever on every worker
+  // restart (see the errorLike requeue test above). The worker now fails the task directly with a
+  // real errorType/message and classifies retryable-vs-not by what the failure actually is.
+  it("dead-letters immediately (not retryable) on a permanent embed rejection (HTTP 400), with the real reason recorded", async () => {
     const { getSecIngestTask } = await import("../src/lib/db-rag-ingest");
     const { storeDocument } = await import("../src/lib/vector-db");
     vi.mocked(storeDocument).mockClear();
@@ -755,20 +766,70 @@ describe("embed_queued FTS slice + durable resume", () => {
       skipped: false,
       attempted: 10,
       indexed: 0,
-      documentComplete: false
+      documentComplete: false,
+      error: "Embedding API failed (isOpenRouter=false): 400 {\"error\":\"invalid input\"}"
     } as any);
 
     const accession = "0000320193-26-000097";
     const { task } = await seedEmbedQueued({ accession, chunks: 10 });
     const worker = new SecIngestWorker();
-    await expect(worker.processTask(task)).rejects.toThrow("Ingestion budget or capacity exceeded mid-task");
+    await expect(worker.processTask(task)).resolves.toBeUndefined();
 
     const after = getSecIngestTask(task.id)!;
     expect(after.checkpoint).toBe("embed_queued");
+    expect(after.status).toBe("dead_letter");
+    expect(after.lastErrorType).toBe("embed-permanent-error");
+    expect(after.lastError).toContain("400");
     const rows = getDb()
       .prepare("SELECT COUNT(*) AS n FROM document_chunks_fts WHERE accession = ?")
       .get(`${accession}:1:document.html`) as { n: number };
     expect(rows.n).toBe(0);
+  });
+
+  it("retries (not dead-lettered) on a transient embed failure (HTTP 429), recorded with the real reason", async () => {
+    const { getSecIngestTask } = await import("../src/lib/db-rag-ingest");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    vi.mocked(storeDocument).mockClear();
+    vi.mocked(storeDocument).mockResolvedValue({
+      skipped: false,
+      attempted: 10,
+      indexed: 0,
+      documentComplete: false,
+      error: "Embedding API failed (isOpenRouter=false): 429 {\"error\":\"rate limited\"}"
+    } as any);
+
+    const accession = "0000320193-26-000095";
+    const { task } = await seedEmbedQueued({ accession, chunks: 10 });
+    const worker = new SecIngestWorker();
+    await expect(worker.processTask(task)).resolves.toBeUndefined();
+
+    const after = getSecIngestTask(task.id)!;
+    expect(after.checkpoint).toBe("embed_queued");
+    expect(after.status).toBe("retry_wait");
+    expect(after.lastErrorType).toBe("embed-transient-error");
+    expect(after.lastError).toContain("429");
+  });
+
+  it("retries (not dead-lettered) on a connection failure with no HTTP status at all", async () => {
+    const { getSecIngestTask } = await import("../src/lib/db-rag-ingest");
+    const { storeDocument } = await import("../src/lib/vector-db");
+    vi.mocked(storeDocument).mockClear();
+    vi.mocked(storeDocument).mockResolvedValue({
+      skipped: false,
+      attempted: 10,
+      indexed: 0,
+      documentComplete: false,
+      error: "fetch failed"
+    } as any);
+
+    const accession = "0000320193-26-000094";
+    const { task } = await seedEmbedQueued({ accession, chunks: 10 });
+    const worker = new SecIngestWorker();
+    await expect(worker.processTask(task)).resolves.toBeUndefined();
+
+    const after = getSecIngestTask(task.id)!;
+    expect(after.status).toBe("retry_wait");
+    expect(after.lastErrorType).toBe("embed-transient-error");
   });
 
   it("runTick claims at most SEC_INGEST_TASKS_PER_TICK tasks across all running jobs", async () => {

@@ -15,6 +15,7 @@ import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useMutationBusy } from "../lib/useMutationBusy";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
+import { SENTENCE_GAP } from "../lib/format";
 import { useConsoleFont } from "../lib/useConsoleFont";
 import { useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
@@ -83,11 +84,49 @@ const SNAPSHOT_INDEPENDENT_ROUTES = new Set(["/console/usage"]);
 const SELF_SKELETON_ROUTES = new Set(["/console/connections"]);
 
 function ShellFrame({ children }: { children: ReactNode }) {
-  const { snapshot, fetchedAt, loading, slowFirstLoad, error, stream, refresh, online } = useConsoleData();
+  const { snapshot, fetchedAt, loading, slowFirstLoad, error, sessionExpired, stream, refresh, online } =
+    useConsoleData();
   const { theme, dataTheme, set: setTheme } = useConsoleTheme();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
   const { dataConsoleFont } = useConsoleFont();
   const pathname = usePathname();
+
+  // A 401 anywhere in the console (the polled snapshot or a mutation) means the session is
+  // gone, not merely slow — api.ts's redirectToLogin is already sending the browser to /login.
+  // This takes over the ENTIRE shell, before the loading/failed/ready branches below: the last
+  // good snapshot must not keep rendering as though it were still live for whatever brief
+  // window the navigation takes (previously this only ever showed a small "delayed" freshness
+  // chip while the rest of the trading desk kept rendering normally — see FreshnessStrip/
+  // MobileFreshnessBar's `error` handling further down, which this branch deliberately bypasses).
+  if (sessionExpired) {
+    return (
+      <div
+        className="console-root flex min-h-dvh items-center justify-center px-6"
+        data-theme={dataTheme}
+        data-textbox-font={dataTextBoxFont}
+        data-console-font={dataConsoleFont}
+        suppressHydrationWarning
+      >
+        <div className="con-card max-w-md p-6 text-center" role="alert">
+          <div className="con-card-title">Socratic Trade</div>
+          <p className="mt-2 font-semibold">Your session has expired</p>
+          <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+            Redirecting you to sign in.{SENTENCE_GAP}This screen no longer reflects live data.
+          </p>
+          {/* The automatic window.location.href navigation in api.ts's redirectToLogin fires a
+              native beforeunload prompt when a dirty draft is registered (useDirtyGuard.tsx) —
+              if the user cancels that prompt, redirectingToLogin is already latched true and
+              never retries, leaving this screen up with no way out but a manual reload or
+              address-bar edit. A real link is always clickable regardless of that outcome. */}
+          <div className="mt-4 flex justify-center">
+            <a href={`/login?callbackUrl=${encodeURIComponent(pathname || "/console")}`} className="con-btn con-btn-primary con-btn-sm">
+              Sign in
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // A route that needs nothing from the snapshot — or that skeletons its snapshot-dependent
   // parts itself — renders immediately instead of waiting behind the full-screen loader (and
