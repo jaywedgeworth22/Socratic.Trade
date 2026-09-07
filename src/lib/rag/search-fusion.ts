@@ -84,6 +84,30 @@ export async function fetchAlternativeEmbedding(texts: string[], userId: string 
   return res.data.map((d: any) => d.embedding);
 }
 
+/**
+ * Marks a FusionResult[] as having recalled without dense (vector) matches from at least one
+ * sub-query because the embed/lookup itself failed — not because the corpus genuinely had no
+ * semantic match. `retrieveFusedContext` proceeds lexical-only on this condition (see the P1
+ * fix below) rather than hard-failing the whole hybrid query, but callers that care about
+ * silent quality loss can check this instead of treating every result as equally trustworthy.
+ */
+export function wasDenseRecallDegraded(results: FusionResult[]): boolean {
+  return Boolean((results as unknown as { __denseRecallDegraded?: boolean })?.__denseRecallDegraded);
+}
+
+function markDenseRecallDegraded<T extends FusionResult[]>(results: T): T {
+  try {
+    Object.defineProperty(results, "__denseRecallDegraded", {
+      value: true,
+      enumerable: false,
+      configurable: true
+    });
+  } catch {
+    // best-effort marker only — must never break retrieval
+  }
+  return results;
+}
+
 export async function retrieveFusedContext(
   query: string,
   symbol: string,
@@ -99,6 +123,27 @@ export async function retrieveFusedContext(
   const k = 60;
   const scoreMap = new Map<string, number>();
   const chunkDetails = new Map<string, { content_hash: string; accession: string; symbol: string; source: string; text: string }>();
+
+  // P1 fix (2026-09-07): a query-embed 400/429/connection failure used to return an empty
+  // `vectorResults` array indistinguishable from "the corpus genuinely has no semantic match" —
+  // this loop swallowed the failure into a bare console.warn and the fused result silently
+  // proceeded lexical-only with no signal anywhere. Track it explicitly so we can fail loudly
+  // (structured log, real telemetry) and mark the returned pool as degraded instead.
+  let denseRecallDegraded = false;
+  const denseRecallDegradedReasons = new Set<string>();
+  const reportDenseRecallDegradation = (): void => {
+    if (!denseRecallDegraded) return;
+    void import("../sentry-metrics").then(({ logError, recordEmbedFailure }) => {
+      recordEmbedFailure("search-fusion", "dense-recall-degraded");
+      logError("rag.dense_recall_degraded", {
+        symbol,
+        reasons: Array.from(denseRecallDegradedReasons).join(",") || "unknown",
+        userId
+      });
+    }).catch(() => {
+      // Observability must never affect retrieval control flow.
+    });
+  };
 
   // Process each sub-query
   for (const subQuery of subQueries) {
@@ -163,10 +208,26 @@ export async function retrieveFusedContext(
 
     let vectorResults: any[] = [];
     if (intent === "semantic" || intent === "hybrid") {
+      const callerOnStatus = options?.onStatus;
       try {
-        vectorResults = await retrieveContextDetailed(subQuery, symbol, 100, userId, options);
+        vectorResults = await retrieveContextDetailed(subQuery, symbol, 100, userId, {
+          ...options,
+          onStatus: (status: string) => {
+            // "lookup_failed" (missing keys or a caught embed/provider error) and
+            // "budget_skipped" both mean dense recall did NOT run for this sub-query — distinct
+            // from "no_memory" (it ran cleanly and found nothing). Only those two make this
+            // sub-query's empty vectorResults a degradation rather than a genuine empty corpus.
+            if (status === "lookup_failed" || status === "budget_skipped") {
+              denseRecallDegraded = true;
+              denseRecallDegradedReasons.add(status);
+            }
+            callerOnStatus?.(status);
+          }
+        });
       } catch (err) {
-        console.warn("[search-fusion] Vector search failed (non-fatal):", err);
+        denseRecallDegraded = true;
+        denseRecallDegradedReasons.add("threw");
+        console.warn("[search-fusion] Vector search failed (non-fatal):", err instanceof Error ? err.message : String(err));
       }
     }
 
@@ -225,7 +286,10 @@ export async function retrieveFusedContext(
       score
     }));
 
-  if (rawCandidates.length === 0) return [];
+  if (rawCandidates.length === 0) {
+    reportDenseRecallDegradation();
+    return denseRecallDegraded ? markDenseRecallDegraded([]) : [];
+  }
 
   // Batch query to resolve chunk_ids for all unique content_hashes in rawCandidates
   const hashes = rawCandidates.map(c => c.content_hash);
@@ -356,7 +420,8 @@ export async function retrieveFusedContext(
       selected.push(candidates[bestIndex]);
     }
 
-    return selected;
+    reportDenseRecallDegradation();
+    return denseRecallDegraded ? markDenseRecallDegraded(selected) : selected;
   }
 
   // Fallback Jaccard MMR similarity (no alternative embedding provider configured, or its call failed)
@@ -389,5 +454,6 @@ export async function retrieveFusedContext(
     selected.push(candidates[bestIndex]);
   }
 
-  return selected;
+  reportDenseRecallDegradation();
+  return denseRecallDegraded ? markDenseRecallDegraded(selected) : selected;
 }

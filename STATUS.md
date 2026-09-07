@@ -1,5 +1,27 @@
 # Current Status
 
+## 2026-09-07 CLAUDE — SEC ingest error classification (P0 9f875d62 + P1 41fba175 + P1 3cbfcbef)
+
+Fixed three error-handling defects in the RAG/SEC ingest path filed 2026-08-23.  (1) P0:
+`sec-ingest-worker.ts`'s embed_queued checkpoint mislabeled every non-budget `storeDocument`
+failure (including permanent HTTP 400s) as `"Ingestion budget or capacity exceeded mid-task"`
+and blindly requeued it forever via the worker's own dead-letter cleanup; now classifies the
+real failure (`classifyEmbedFailure` in `vector-db.ts`) and dead-letters a permanent failure
+immediately instead of retry-looping it.  (2) P1: `retrieveFusedContext` (`search-fusion.ts`)
+let a query-embed failure silently degrade to lexical-only recall with zero signal; now marks
+the result degraded (`wasDenseRecallDegraded`) and emits a structured `rag.dense_recall_degraded`
+error log + metric — deliberately proceeds degraded rather than hard-failing, since this path
+backs chat/dossier answer quality broadly.  (3) P1: `refreshFilingBodiesUnlocked`
+(`sec-filings.ts`) checked `skipped` before `error`, so a failure that also returned
+`skipped: true` was silently counted as a benign skip instead of an error — refresh reported
+success while having failed.  Also cooldown-gated and gave a distinct fingerprint lane to the
+uncapped "RAG ingest text budget reached" Sentry warning (SOCRATIC-TRADE-27: 8,036 events in 2
+days burying the 5 real "embed connection failed" events), and made a genuinely unclassified
+embed/connection failure log at `error` level instead of always `warning`.  Branch
+`claude/ingest-error-classification`, worktree `~/apps/trading-claude-ingest-errors`.  `npx tsc
+--noEmit` clean, `npm run lint` 0 errors, full vitest suite green.  Rollout:
+`docs/rollouts/2026-09-07-sec-ingest-error-classification.md`.
+
 ## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
 
 Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.

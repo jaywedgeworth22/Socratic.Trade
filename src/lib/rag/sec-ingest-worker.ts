@@ -16,7 +16,7 @@ import { politeFetchText } from "../web-sources/http";
 import { timeSync, yieldEventLoop } from "../slow-sync-guard";
 import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
-import { storeDocument } from "../vector-db";
+import { storeDocument, classifyEmbedFailure } from "../vector-db";
 import { readLocalArtifact, writeLocalArtifact } from "../web-sources/sec-filings";
 import { insertDocumentChunkFtsBatch, countDocumentChunkFts, getDb } from "../db";
 import { hasInFlightStrategyWork } from "../db-execution";
@@ -428,7 +428,31 @@ export class SecIngestWorker {
               });
               return;
             }
-            throw new Error("Ingestion budget or capacity exceeded mid-task");
+            // A real embed/store failure, not a budget/quota condition — classify it by what it
+            // actually is instead of collapsing it into the generic "budget or capacity exceeded"
+            // message that every failure used to get. That message was then unconditionally
+            // requeued on every worker restart (see requeueSecIngestDeadLetters call in start()
+            // above), so a permanent HTTP 400 — which can never succeed on retry — was
+            // dead-lettered and revived forever instead of being flagged (2026-08-23 P0; prod
+            // dead-lettered ~1k filings, buried under 8,036 misleading "budget reached" Sentry
+            // warnings in 2 days per SOCRATIC-TRADE-27/-1X).  Fail the task directly (rather than
+            // throwing into the generic catch below, which always used retryable:true) so a
+            // permanent failure dead-letters immediately with its real reason, and only a genuinely
+            // transient one (429/connection/5xx) consumes a bounded retry.
+            const failureReason =
+              res.error?.trim() ||
+              res.embedFailureMessage?.trim() ||
+              "storeDocument returned an incomplete result with no error detail";
+            const failureClass = classifyEmbedFailure(failureReason);
+            failSecIngestTask({
+              taskId: task.id,
+              owner,
+              leaseToken,
+              retryable: failureClass !== "permanent",
+              errorType: failureClass === "permanent" ? "embed-permanent-error" : "embed-transient-error",
+              error: failureReason
+            });
+            return;
           }
 
           await writeLocalArtifact(task.cik, task.accession, sequence, "storeResult.json", JSON.stringify(res));
