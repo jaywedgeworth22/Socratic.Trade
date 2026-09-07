@@ -2,6 +2,32 @@ import Foundation
 import Combine
 import Sentry
 
+// MARK: - Duplicate command folding
+//
+// The `/api/mobile` snapshot can legitimately list the same `MobileCommand.id` twice
+// (overlapping poll windows, or a paginated fetch that straddles a page boundary).
+// Every command lookup folds those duplicates to the same deterministic winner so the
+// tracker (`CommandAttemptTracker.reconcile`) and the proposal-card feedback lookup
+// (`MobileStore.proposalActionFeedback`) can never disagree about which version of a
+// command is current.
+
+extension MobileCommand {
+    /// Deterministic fold of two versions of the same command id: the freshest
+    /// `updatedAt` wins (ISO8601 timestamps sort lexicographically), an exact timestamp
+    /// tie prefers the terminal state, and a full tie keeps the existing value.  The
+    /// outcome for a pair is order-independent, so lookups no longer depend on whatever
+    /// array order the server happened to send.
+    static func foldDuplicate(existing: MobileCommand, incoming: MobileCommand) -> MobileCommand {
+        if incoming.updatedAt != existing.updatedAt {
+            return incoming.updatedAt > existing.updatedAt ? incoming : existing
+        }
+        if incoming.isTerminal != existing.isTerminal {
+            return incoming.isTerminal ? incoming : existing
+        }
+        return existing
+    }
+}
+
 struct CommandAttemptTracker {
     private struct PendingAttempt {
         let fingerprint: String
@@ -47,21 +73,27 @@ struct CommandAttemptTracker {
         // The server can legitimately report the same command id twice (e.g. overlapping
         // poll windows or a paginated fetch that straddles a page boundary), and
         // `Dictionary(uniqueKeysWithValues:)` traps (hard crash) on any duplicate key.
-        // Policy: last-wins by `updatedAt` (ISO8601 strings sort lexicographically), so
-        // the freshest status for that command id survives regardless of array order.
-        // A collision here means the server sent inconsistent data, so it's worth
-        // surfacing rather than silently swallowing.
-        var duplicateCommandIDs = Set<String>()
-        let commandsByID = Dictionary(
-            commands.map { ($0.id, $0) },
-            uniquingKeysWith: { existing, incoming in
-                duplicateCommandIDs.insert(incoming.id)
-                return incoming.updatedAt >= existing.updatedAt ? incoming : existing
+        // Fold duplicates to a single deterministic winner instead: freshest by
+        // `updatedAt`, and on an exact timestamp tie the terminal state wins
+        // (`MobileCommand.foldDuplicate`).  A collision here means the server sent
+        // inconsistent data, so surface it — but only when a pending attempt is actually
+        // waiting on that command id, so a server-side duplicate that no local operation
+        // is tracking cannot re-report itself on every poll and flood Sentry.
+        var commandsByID: [String: MobileCommand] = [:]
+        var duplicateIDsOnTrackedAttempts = Set<String>()
+        for command in commands {
+            if let existing = commandsByID[command.id] {
+                commandsByID[command.id] = MobileCommand.foldDuplicate(existing: existing, incoming: command)
+                if attempts.values.contains(where: { $0.commandID == command.id }) {
+                    duplicateIDsOnTrackedAttempts.insert(command.id)
+                }
+            } else {
+                commandsByID[command.id] = command
             }
-        )
-        if !duplicateCommandIDs.isEmpty {
+        }
+        if !duplicateIDsOnTrackedAttempts.isEmpty {
             SentrySDK.capture(
-                message: "MobileStore.reconcile: dropped \(duplicateCommandIDs.count) duplicate command id(s) from server response"
+                message: "MobileStore.reconcile: dropped \(duplicateIDsOnTrackedAttempts.count) duplicate command id(s) from server response"
             ) { scope in
                 scope.setLevel(.warning)
             }
@@ -242,7 +274,7 @@ final class MobileStore: ObservableObject {
         }
         guard
             let commandID = proposalCommandIds[proposalId],
-            let command = snapshot?.recentCommands.first(where: { $0.id == commandID })
+            let command = recentCommand(id: commandID)
         else {
             return nil
         }
@@ -268,6 +300,23 @@ final class MobileStore: ObservableObject {
         default:
             return nil
         }
+    }
+
+    /// Folds every `recentCommands` entry that carries `commandID` through the same
+    /// duplicate policy the tracker uses (`MobileCommand.foldDuplicate`).  A naive
+    /// `first(where:)` could select the stale member of a duplicated id and show the card
+    /// stuck in `queued` while `reconcile` already saw the terminal update.
+    private func recentCommand(id commandID: String) -> MobileCommand? {
+        guard let commands = snapshot?.recentCommands else { return nil }
+        var folded: MobileCommand?
+        for command in commands where command.id == commandID {
+            guard let current = folded else {
+                folded = command
+                continue
+            }
+            folded = MobileCommand.foldDuplicate(existing: current, incoming: command)
+        }
+        return folded
     }
 
     private func approvePlacementFeedback(
