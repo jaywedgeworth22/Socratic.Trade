@@ -4,6 +4,19 @@
 
 Two P1 money-path regressions from PR #3138 (2026-09-01) and its follow-up #3158.  (1) The immediate restart sweep in `markStaleRunningRuns` selects every run that started before this process booted, however young, and its only liveness grace was the process-local `isStrategyRunExecutionLive` map plus an audit probe a seconds-old run has not populated — so a run another node had legitimately adopted was marked `failed` mid-flight and its request row freed for a duplicate.  Fix:  new `hasLiveStrategyRunLease` reads the durable strategy run lock (owner === run id, renewed every 60s with a 5-minute TTL by `startStrategyLockGuard`) and spares such a run, but only on the pre-boot arm — a time-stale wedged run is still swept.  (2) `assertIndexMetric`, the R7 cosine-metric guard, stopped running once `RAG_VECTOR_READ_QDRANT` defaulted true; it now runs on both read backends whenever a Pinecone client exists, without reintroducing the `indexExists` preflight.  The committed-receipts gate now fails closed explicitly on an unknown provider authority.  Auto-merge deliberately NOT armed:  merging auto-deploys live-money production, and board `bdc2b662` is an open P0 on agent code reaching live trading unreviewed.  Rollout:  `docs/rollouts/2026-09-07-restart-sweep-grace.md`.
 
+## 2026-09-07 Autofix (codex-autofix) — eslint-config-next 16.3.4 handoff records (PR #3181)
+
+Dependabot bumped `eslint-config-next` 16.3.1 -> 16.3.4 on branch `dependabot/npm_and_yarn/eslint-config-next-16.3.4` (commit `fbc0f4fe1`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Round 2 recorded the verification outcomes Codex asked for (tsc/lint/build pass; the 5 LLM-key-sensitive test files fail only under the runner's injected Anthropic env and pass scrubbed; CI `verify`/`verify-hosted` green).  Round 3 added the remaining Codex handoff items:  a PLAN.md entry and a Decisions & Trade-offs section in the rollout note.  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-eslint-config-next-16-3-4.md`.
+
+## 2026-09-07 — Vitest 5.0.0 upgrade recorded (dependabot PR #3179, codex-autofix)
+
+Dependabot bumped the testing group's `vitest` from `^4.1.11` to `^5.0.0` (commit
+`37e8850d`); dev-dependency only, no runtime path.  This doc-only follow-up answers the
+Codex P1 finding that a dependency bump must be recorded in handoff state:  it adds this
+STATUS.md snapshot, a `docs/EFFORT-LOG.md` row, and a rollout note.  Verification state:
+the `verify` / `verify-hosted` CI gate (`npx tsc --noEmit` → `npm test` → `npm run build`)
+runs on the PR, and a green gate is required before auto-merge.  Rollout:
+`docs/rollouts/2026-09-07-vitest-5-bump.md`.
 ## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
 
 Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.
