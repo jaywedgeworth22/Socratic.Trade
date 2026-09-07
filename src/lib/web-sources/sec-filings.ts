@@ -1096,10 +1096,16 @@ async function refreshFilingBodiesUnlocked(
         result.deferredForBudget = Math.max(0, Math.min(pending.length, cap) - processed);
         break;
       }
-      if (ingestResult.skipped) {
-        result.skipped++;
-      } else if (ingestResult.error) {
+      // Check `error` BEFORE `skipped`: ingestFiling can return `{ skipped: true, error: ... }`
+      // (e.g. "document-commit-proof-missing"/"document-commit-proof-lost" below) for a genuine
+      // failure that also happened to stop short of a full ingest. The old `skipped`-first order
+      // took that branch and silently dropped the error — `result.errors` stayed empty and this
+      // refresh reported success (skipped: true is normally benign) while it had actually failed,
+      // so monitoring never fired (P1, 2026-08-23).
+      if (ingestResult.error) {
         result.errors.push(`ingestFiling(${ticker} ${ref.accession}): ${ingestResult.error}`);
+      } else if (ingestResult.skipped) {
+        result.skipped++;
       } else {
         result.ingested++;
       }
