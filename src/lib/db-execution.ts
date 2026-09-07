@@ -288,6 +288,62 @@ export function releaseStrategyLock(owner: string, userId: string = "local", con
   }).immediate();
 }
 
+/** Default lease window of `acquireStrategyLock` / `startStrategyLockGuard` (5 min TTL, renewed
+ *  every 60s).  Duplicated as a literal rather than imported from `strategy-lock-guard.ts`,
+ *  which imports `renewStrategyLock` from this module — importing it back would recreate the
+ *  db -> db-execution cycle that PR #3138 already had to break once. */
+const STRATEGY_LOCK_LEASE_MS = 5 * 60_000;
+
+/**
+ * Durable, cross-process proof that `runId` is still being executed by SOMEONE.
+ *
+ * `runStrategyOnce` acquires the per-account strategy run lock with the run id itself as `owner`
+ * (strategy.ts, `acquireStrategyLock(runId, ...)`) BEFORE `insertStrategyRun` writes the
+ * `running` row, and releases it in the `finally` AFTER `finishStrategyRun`.  While the run is
+ * in flight `startStrategyLockGuard` renews that lease every 60s with a 5-minute TTL.  So an
+ * unexpired lock whose `owner` is the run id is durable evidence the run is alive — evidence
+ * that survives a process boundary, unlike `isStrategyRunExecutionLive`, whose map is
+ * process-local by construction and is EMPTY for a run another node legitimately adopted.
+ *
+ * Scans BOTH lock-key shapes for the user — the account-scoped `strategy_run_lock:<u>:<acct>`
+ * and the legacy user-wide `strategy_run_lock:<u>` — rather than deriving one key from the run
+ * row's `connected_account_id`.  `runStrategyOnce` locks under the account it resolved at entry,
+ * which is not guaranteed to be the id later persisted on the row, and the drain path releases
+ * with no account id at all; matching on `owner === runId` is the exact, shape-independent test.
+ */
+export function hasLiveStrategyRunLease(
+  runId: string,
+  userId: string,
+  nowMs: number = Date.now()
+): boolean {
+  try {
+    const database = getDb();
+    const rows = database
+      .prepare("SELECT value FROM settings WHERE key = ? OR key LIKE ?")
+      .all(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`) as Array<{ value: string }>;
+    for (const row of rows) {
+      let parsed: { owner?: string; expiresAt?: string; acquiredAt?: string; lockedAt?: string };
+      try {
+        parsed = JSON.parse(row.value) as typeof parsed;
+      } catch {
+        continue; // malformed lock value is not evidence of life
+      }
+      if (parsed.owner !== runId) continue;
+      const expiresAt = parsed.expiresAt
+        ? Date.parse(parsed.expiresAt)
+        : (parsed.acquiredAt ?? parsed.lockedAt)
+          ? Date.parse((parsed.acquiredAt ?? parsed.lockedAt)!) + STRATEGY_LOCK_LEASE_MS
+          : NaN;
+      if (Number.isFinite(expiresAt) && expiresAt > nowMs) return true;
+    }
+    return false;
+  } catch {
+    // A settings read fault must not be read as "definitely dead" — money-path sweeps fail closed
+    // by LEAVING the run alone.  A genuinely crashed run is swept on the next tick.
+    return true;
+  }
+}
+
 export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string, accountNumber?: string, policyRevision?: string): void {
   const existing = getDb()
     .prepare("SELECT status FROM strategy_runs WHERE id = ? AND user_id = ?")
@@ -566,6 +622,20 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
   let count = 0;
   for (const row of stale) {
     if (isStrategyRunExecutionLive(row.id)) continue;
+    // Pre-boot grace (money path).  `started_at >= cutoff` means this row is NOT time-stale — the
+    // restart sweep alone selected it, purely because it started before this process booted.  On a
+    // multi-instance deploy (and during a rolling restart) that is exactly the shape of a run
+    // another node legitimately adopted seconds ago: `isStrategyRunExecutionLive` cannot see it,
+    // and a run that young has usually emitted no `$.runId` audit row yet, so both existing graces
+    // miss it and the sweep marks a LIVE trading run failed mid-flight — and frees its request row
+    // for a duplicate.  An unexpired strategy run lock owned by the run id is durable, cross-process
+    // proof of ownership, renewed every 60s by `startStrategyLockGuard`; honour it here.
+    //
+    // Deliberately NOT applied to the time-stale path: a wedged run whose lock guard interval keeps
+    // renewing must still be swept after STALE_RUN_THRESHOLD_MS, which is the stuck-run bug the
+    // sweep exists to fix.
+    const preBootOnly = row.started_at >= cutoff;
+    if (preBootOnly && hasLiveStrategyRunLease(row.id, row.user_id, now)) continue;
     const cause = staleRunningRunSweepCause(row.started_at, processStarted);
     // Unconditional audit activity grace: check if the run is still emitting audit rows recently
     const recentActivity = db

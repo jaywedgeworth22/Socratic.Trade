@@ -279,6 +279,31 @@ describe("storeDocument receipt transaction", () => {
       undefined,
       { userId: "local", providerAuthority, ledgerAuthority: otherLedgerAuthority }
     )).toEqual([]);
+    // Fail closed on an UNKNOWN authority, not just a wrong one.  With nothing to compare
+    // `metadata.provider_authority` / `receipt.providerAuthority` against there is no way to prove
+    // a managed record belongs to this deployment's index, so none is admissible — while unrelated
+    // legacy/direct records still pass.  (Qdrant read cutover, #3138/#3158 follow-up.)
+    const legacyDirectMatch = {
+      id: "sec-filings:AAPL:10-k:2026:chunk-1",
+      metadata: { symbol: "AAPL", scope: "shared", tenant_scope: "shared:operator", userId: "local" },
+      score: 0.4
+    };
+    for (const missingAuthority of [
+      undefined,
+      { userId: "local", ledgerAuthority },
+      { userId: "local", providerAuthority: "", ledgerAuthority }
+    ]) {
+      expect(filterMatchesForCommittedReceipts(
+        [{ ...committedRecord, score: 0.9 }],
+        undefined,
+        missingAuthority
+      )).toEqual([]);
+      expect(filterMatchesForCommittedReceipts(
+        [legacyDirectMatch],
+        undefined,
+        missingAuthority
+      )).toEqual([legacyDirectMatch]);
+    }
 
     // INSERT OR IGNORE must not turn a stale/conflicting prior occurrence into a false completion.
     db.prepare("UPDATE chunk_occurrences SET content_hash = 'stale-conflict'").run();

@@ -7051,6 +7051,16 @@ export function filterMatchesForCommittedReceipts<T extends {
   );
   const managed = matches.filter(isManaged);
   if (managed.length === 0) return matches;
+  // Fail closed, explicitly and early, when the caller could not name the physical provider
+  // authority.  Every managed match must prove `metadata.provider_authority === providerAuthority`
+  // AND `receipt.providerAuthority === providerAuthority`; with no authority to compare against
+  // there is no way to prove a record belongs to THIS deployment's index/collection, so no managed
+  // record is admissible.  This was previously only implied by a conjunct buried at the end of a
+  // ~25-term predicate below — stated here so it cannot be weakened by accident, and so it also
+  // covers the receipts lookup itself.
+  if (typeof providerAuthority !== "string" || providerAuthority.length === 0) {
+    return matches.filter((match) => !isManaged(match));
+  }
   const ids = managed.map((match) => typeof match.id === "string" ? match.id : "").filter(Boolean);
   try {
     const ledgerAuthority = authority?.ledgerAuthority ?? managedVectorLedgerAuthority();
@@ -7250,13 +7260,25 @@ export async function retrieveContextDetailed(
     let privateIndex: any;
     let fmpIndex: any;
 
-    if (readBackend === "pinecone" && pc && initCacheKey) {
+    // R7 index-metric assertion runs on BOTH read backends whenever a Pinecone client exists.
+    // #3138 skipped it when `pc` was absent; #3158 narrowed it further to `readBackend ===
+    // "pinecone"`, which silently dropped BOTH of its jobs on the Qdrant path: the cosine-metric
+    // warning, and populating `indexAuthorityByInitKey` — the only in-process source of a
+    // Pinecone-derived provider authority.  It is cached per init key (`indexMetricChecked`) and
+    // documented never to throw for provider/metric faults, so running it here costs at most one
+    // `describeIndex` per process and cannot fail a retrieval pass.  Only the AUTHORITY it mints
+    // stays backend-specific: on the Qdrant path the records were committed under the durable
+    // authority read from the commit ledger below, so the Pinecone host authority must NOT
+    // pre-empt it — taking it here would drop every managed match on an authority mismatch.
+    if (pc && initCacheKey) {
       try {
         await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
       } catch {
         // fail-soft on metric check
       }
-      stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+      if (readBackend === "pinecone") {
+        stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+      }
     }
 
     if (readBackend === "pinecone") {
@@ -7287,14 +7309,18 @@ export async function retrieveContextDetailed(
       !stableProviderAuthority ||
       hasUnreachableCommittedManagedRecords(ledgerAuthority, stableProviderAuthority)
     );
-    const queryManagedNamespace = readBackend === "qdrant"
-      ? currentManagedRecordsExpected
-      : Boolean(stableProviderAuthority && currentManagedRecordsExpected);
+    // Fail closed without an authority.  `managedAuthorityClause` below pins
+    // `provider_authority: { $eq: stableProviderAuthority }`; an undefined value is dropped by
+    // JSON serialization, so the provider would receive `provider_authority: {}` — the
+    // server-side half of the committed-receipts gate silently widened to "any authority"
+    // instead of refusing.  If we cannot name the authority we do not query the receipt-bearing
+    // namespaces at all.  (The Pinecone branch already had this guard; the Qdrant branch did not.)
+    const queryManagedNamespace = Boolean(stableProviderAuthority && currentManagedRecordsExpected);
     if (pc && queryManagedNamespace) {
       managedIndex = vectorDataIndex(pc, "managed", ledgerAuthority);
     }
     const queryPrivateNamespace = readBackend === "qdrant"
-      ? true
+      ? Boolean(stableProviderAuthority)
       : hasCurrentPrivateVectorNamespaceRecords(
           userId,
           ledgerAuthority,
@@ -7304,7 +7330,7 @@ export async function retrieveContextDetailed(
       privateIndex = vectorDataIndex(pc, "private", ledgerAuthority, userId);
     }
     const queryFmpNamespace = readBackend === "qdrant"
-      ? Boolean(currentFmpRecordsExpected && fmpTranscriptRightsActive())
+      ? Boolean(stableProviderAuthority && currentFmpRecordsExpected && fmpTranscriptRightsActive())
       : Boolean(
           stableProviderAuthority &&
           currentFmpRecordsExpected &&
