@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-09-07 — Vitest 5.0.0 upgrade recorded (dependabot PR #3179, codex-autofix)
+
+Dependabot bumped the testing group's `vitest` from `^4.1.11` to `^5.0.0` (commit
+`37e8850d`); dev-dependency only, no runtime path.  This doc-only follow-up answers the
+Codex P1 finding that a dependency bump must be recorded in handoff state:  it adds this
+STATUS.md snapshot, a `docs/EFFORT-LOG.md` row, and a rollout note.  Verification state:
+the `verify` / `verify-hosted` CI gate (`npx tsc --noEmit` → `npm test` → `npm run build`)
+runs on the PR, and a green gate is required before auto-merge.  Rollout:
+`docs/rollouts/2026-09-07-vitest-5-bump.md`.
+
 ## 2026-08-31 GROK — Hung scheduler-tick watchdog (Firefighter SOCRATIC-TRADE-4)
 
 Live SHA `189f5a31` stayed up while Autopilot died:  `scheduler-tick` missed check-in (lastSeen 13:36Z), `schedulerLastTick` 13:30:42Z, lease expired 13:32:12Z, `schedulerStale` / `tradingLivenessDegraded` true, market open, `/api/health` 15s timeout.  Root cause:  `__tickInFlight` skipped every later interval while `tickInner` awaited a hung lane, and Sentry was told `ok` at tick start.  Fix:  15s watchdog unwedge (2 min budget, generation token), honest `in_progress`/`ok`/`error` Crons, `lastTick` on finish, deadlines on drain + `checkBrokerHealth`, do not await strategy runs on the tick path.  No extra-ship.  No Coolify mutate.  Rollout:  `docs/rollouts/2026-08-31-hung-scheduler-tick-watchdog.md`.
