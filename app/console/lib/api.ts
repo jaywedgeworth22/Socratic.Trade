@@ -22,6 +22,59 @@ export class ConsoleApiError extends Error {
   }
 }
 
+// ── Session-expiry → login redirect ─────────────────────────────────────────
+//
+// middleware.ts already fails closed on an unauthenticated PAGE navigation (redirect to
+// /login) and on an unauthenticated /api/* request (plain 401). What it cannot do is notice a
+// session that expires WHILE the console is already open: every console screen reads live data
+// from one polled GET /api/dashboard snapshot (useConsoleData.tsx) plus one-off mutations
+// through `request` below, and a 401 from either used to be handled exactly like a network
+// blip — logged as a generic error string while the last-good snapshot kept rendering as if it
+// were still live. On a trading desk that is dangerous: the user keeps looking at stale
+// positions/orders that stopped updating the moment their session died, with no signal that
+// anything is wrong beyond a small "delayed" chip.
+//
+// Fix: ANY 401 that reaches this client's fetch wrapper sends the browser to the SAME /login
+// page middleware already uses for a page-level fail-closed redirect (no second auth-redirect
+// mechanism invented), preserving the current location as `callbackUrl` so a fresh sign-in
+// returns the user where they were.
+let redirectingToLogin = false;
+
+/** True once a 401 has been seen and the browser is being sent to /login. useConsoleData reads
+ *  this so it can stop treating the in-memory snapshot as live and stop scheduling further
+ *  background fetches once the session is known dead — the redirect itself is not instant. */
+export function isRedirectingToLogin(): boolean {
+  return redirectingToLogin;
+}
+
+/** Idempotent: a second 401 arriving while the navigation is already underway (e.g. the
+ *  dashboard poll and a mutation both fail around the same time) is a no-op, and this refuses
+ *  to fire at all from /login itself — the one guard that keeps a 401 from an auth-adjacent
+ *  page from ever bouncing back to itself in a loop. Exported so the console's OTHER
+ *  self-contained request clients (settings/lib.ts, orders/api.ts — deliberately not merged
+ *  into this file's own `request<T>`, see those files' headers) can fail closed on a 401
+ *  through the same one destination instead of leaving the user on a dead session until the
+ *  next dashboard poll notices. */
+export function redirectToLogin(): void {
+  if (typeof window === "undefined") return;
+  if (redirectingToLogin) return;
+  if (window.location.pathname === "/login" || window.location.pathname.startsWith("/login/")) return;
+  redirectingToLogin = true;
+  // Fragment-driven console views (app/console/guardrails#autonomy, app/console/strategy#models,
+  // settings/connections anchors) read window.location.hash to pick or scroll to a subsection —
+  // dropping it here would land a fresh sign-in back on the route's default view instead of
+  // where the user actually was.
+  const callbackUrl = `${window.location.pathname}${window.location.search}${window.location.hash || ""}`;
+  // A hard navigation (not useRouter().push()/next/navigation's redirect(), which need a
+  // component render/event-handler context this plain client module doesn't have) is the
+  // correct choice here, not a shortcut: it forces a fresh request through middleware.ts's own
+  // fail-closed auth gate rather than trusting any client-side router cache, matching the same
+  // window.location.href pattern this codebase already uses for auth-adjacent navigation (e.g.
+  // settings/danger.tsx's sign-out redirect, settings/brokers.tsx's OAuth start).
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- intentional hard navigation, see above
+  window.location.href = `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+}
+
 /** Thrown when the approve endpoint answers 409 LIVE_CONFIRMATION_REQUIRED.
  *  `expectedText` is the server-authoritative phrase (e.g. "APPROVE LIVE NVDA"). */
 export class LiveConfirmationRequiredError extends Error {
@@ -111,6 +164,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   const payload = await parseBody(res);
   if (!res.ok) {
+    if (res.status === 401) redirectToLogin();
     throw buildResponseError(res, payload, `Request failed (${res.status}).`);
   }
   return payload as T;
@@ -127,6 +181,7 @@ export async function fetchDashboard<T>(signal?: AbortSignal): Promise<T> {
     throw new ConsoleApiError("Network error — the server could not be reached.", 0);
   }
   if (!res.ok) {
+    if (res.status === 401) redirectToLogin();
     const payload = await parseBody(res);
     throw buildResponseError(res, payload, `Snapshot failed (${res.status}).`);
   }

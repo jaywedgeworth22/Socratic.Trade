@@ -1,5 +1,29 @@
 # Current Status
 
+## 2026-09-07 CLAUDE — Web 401 routes to /login; alpaca-account-insights classify + bounded retry (board `30809a0c` / `ab03d8c9`)
+
+Primary (P1, live, board `30809a0c`):  a web API 401 never routed the signed-out user to
+`/login` — `useConsoleData.tsx`'s polled `GET /api/dashboard` treated a 401 exactly like a
+network blip, so the trading desk kept rendering the last-good snapshot as though it were
+live with only a small "delayed" freshness chip.  `app/console/lib/api.ts`'s `request<T>`
+and `fetchDashboard` now redirect to `/login?callbackUrl=<location>` on ANY 401 — the same
+fail-closed destination `middleware.ts` already uses for a page-level 401 — idempotently
+and never from `/login` itself (no bounce loop).  `useConsoleData.tsx` stops its poll/
+background-refresh loop and exposes `sessionExpired`; `shell.tsx` replaces the entire
+console shell with an explicit "Your session has expired" notice the instant that flips,
+so stale trading data cannot keep rendering as live while the navigation is in flight.
+Secondary, lower priority (board `ab03d8c9`, Sentry `SOCRATIC-TRADE-28`,
+"alpaca-account-insights connection failed", 9 events/12 days — low-volume, not a
+money-path emergency):  `src/lib/alpaca-account-insights.ts`'s `getJson` call site now
+classifies a transient transport error (the shared `network-errors.ts`/
+`provider-rate-limit.ts` helpers `data-providers.ts` already uses) with one bounded retry
+before it counts as a health failure, and logs its own request-timeout abort soft — the
+shared `db-health.ts` pipeline itself is untouched (concurrently owned by
+`claude/congress-share-401-observability`).  New tests:
+`test/console-session-expired.test.ts`, additions to `test/alpaca-account-insights.test.ts`.
+Verification:  `npx tsc --noEmit` clean, targeted `npx eslint` 0 errors on changed files,
+targeted `npx vitest run` 35/35 passed; full-repo gate results in the PR body.  Rollout:
+`docs/rollouts/2026-09-07-web-401-routes-to-login.md`.
 ## 2026-09-07 CLAUDE — Remove redundant postcss override (recurring Dependabot failure)
 
 Every Dependabot Updates job touching postcss failed since 2026-08-24 (recurred
