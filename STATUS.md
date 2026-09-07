@@ -21,6 +21,34 @@ embed/connection failure log at `error` level instead of always `warning`.  Bran
 `claude/ingest-error-classification`, worktree `~/apps/trading-claude-ingest-errors`.  `npx tsc
 --noEmit` clean, `npm run lint` 0 errors, full vitest suite green.  Rollout:
 `docs/rollouts/2026-09-07-sec-ingest-error-classification.md`.
+## 2026-09-07 CLAUDE — Remove redundant postcss override (recurring Dependabot failure)
+
+Every Dependabot Updates job touching postcss failed since 2026-08-24 (recurred
+08-24 x3, 08-25, 08-31, 09-07) with `postcss / dependency_file_not_resolvable /
+"Override for postcss@8.5.28 conflicts with direct dependency."`.  Root cause:
+`package.json` pinned postcss identically in both the direct devDependency
+(`^8.5.15`) and the `overrides` block (`^8.5.15`) -- Dependabot cannot bump one
+side without the other going stale, and flags the pair as unresolvable.
+Checked whether the override was load-bearing before removing it.  It was:
+npm's top-level `overrides` is transitive by design and was forcing EVERY
+postcss occurrence (including `next`'s own exact `8.5.23` dependency) down to
+the shared `8.5.15` -- confirmed via the pre-change lockfile, which had exactly
+one `postcss` entry (`8.5.15`) tree-wide, no nested copy under `next` at all.
+None of that forcing was protecting against something OLDER than what the
+dependents wanted, though -- `@tailwindcss/postcss` declares `^8.5.16`, `vite`
+declares `^8.5.26` (both newer than the override), and `next` declares an
+exact `8.5.23` (also newer).
+Removed the redundant `overrides.postcss` entry (kept `overrides.axios`).
+Post-removal, `npm ls postcss` shows the devDependency + `@tailwindcss/postcss`
++ `vite` dedupe to `postcss@8.5.28`, and `next` now gets its own real nested
+`8.5.23` copy (previously forced to 8.5.15) -- a likely-correctness-improving
+but real behavior change, verified by a clean `npm run build` (Tailwind/PostCSS
+pipeline exercised end-to-end) and this repo's `verify-hosted` CI full-suite
+gate passing on the PR head.  `npx tsc --noEmit` clean, `npm run lint` 0 errors
+/ 801 grandfathered warnings (same baseline as `main`).  Branch
+`claude/postcss-override-conflict`, worktree `~/apps/trading-claude-postcss`.
+Rollout:
+`docs/rollouts/2026-09-07-postcss-override-conflict.md`.
 
 ## 2026-09-07 Autofix (codex-autofix) — observability group dependency bump (PR #3178)
 
