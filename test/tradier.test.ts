@@ -1128,6 +1128,27 @@ describe("Tradier adapter — cancelBracketSiblingLegs (bracket sibling-leg tear
     const { getTradierGateway } = await import("../src/lib/tradier");
     await expect(getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "901-transient")).rejects.toThrow();
   });
+
+  // Codex round-1 review (2026-09-07): the rollout note claimed this idempotent GET was opted
+  // into the transient-retry option, but the actual trackHealth call site omitted it — a dead
+  // keep-alive socket would consume one of the pending teardown row's ten attempts and defer to
+  // another scheduler tick instead of retrying once in-process.
+  it("retries once on a dead-socket TypeError instead of consuming a teardown-row attempt", async () => {
+    await seedTradier();
+    let attempt = 0;
+    vi.stubGlobal("fetch", async () => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError("fetch failed");
+      return new Response(
+        JSON.stringify({ order: { id: 900, class: "equity", symbol: "AAPL", status: "filled" } }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "900");
+    expect(attempt).toBe(2);
+    expect(result.cancelledOrderIds).toEqual([]);
+  });
 });
 
 describe("Tradier adapter — option positions", () => {
@@ -1324,6 +1345,51 @@ describe("Tradier adapter — probeOrderCapability exponential backoff", () => {
     vi.setSystemTime(start + 2 * 60_000 + 1 + 2 * 60_000 + 1);
     result = await gateway.probeOrderCapability!(ACCT);
     expect(result.ok).toBe(false);
+  });
+
+  // Codex round-1 review (2026-09-07): the backoff previously applied to a HEALTHY streak too,
+  // so a long run of consecutive successes could ride the cached "ok" result all the way to the
+  // 60-minute ceiling — if the order path then actually went down, checkBrokerHealth could keep
+  // accepting that stale success for up to an hour instead of the intended 2-minute base window.
+  it("keeps successful probes at the base 2-minute TTL — never backs off a healthy streak", async () => {
+    vi.useFakeTimers();
+    await seedTradier({ environment: "paper" });
+    const { records } = installFetchMock([
+      {
+        match: (u, m) => m === "POST" && u.includes(`/accounts/${ACCT}/orders`),
+        status: 200,
+        body: { order: { id: "1", status: "ok" } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gateway = getTradierGateway("local");
+    const probeCalls = () =>
+      records.filter((r) => r.method === "POST" && r.url.includes(`/accounts/${ACCT}/orders`)).length;
+
+    const start = Date.now();
+    vi.setSystemTime(start);
+    // Build up a long consecutive-success streak — if success were backed off like failure, this
+    // would grow the cache TTL well past the base 2 minutes.
+    for (let i = 0; i < 6; i++) {
+      vi.setSystemTime(start + i * 2 * 60_000 + 1);
+      const result = await gateway.probeOrderCapability!(ACCT);
+      expect(result.ok).toBe(true);
+    }
+    expect(probeCalls()).toBe(6); // each call landed exactly on the base 2-minute boundary and re-probed
+
+    const lastSuccessAt = start + 5 * 2 * 60_000 + 1; // the final loop iteration's timestamp
+
+    // A probe requested only ~90s after the last success (under the 2-minute base TTL) must still
+    // be served from cache...
+    vi.setSystemTime(lastSuccessAt + 90_000);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(6);
+
+    // ...but past the base 2-minute TTL, it must re-probe immediately — NOT wait out an
+    // exponentially-grown window the way a failing streak would.
+    vi.setSystemTime(lastSuccessAt + 2 * 60_000 + 1);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(7);
   });
 });
 

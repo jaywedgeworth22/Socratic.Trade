@@ -192,4 +192,89 @@ describe("recordLaneFailure / recordLaneRecovery", () => {
       expect.objectContaining({ event: "lane_recovered", lane: "synthetic-stop monitor", key: "local:acct-3" })
     );
   });
+
+  // Codex round-1 review (2026-09-07): a failure-category change while already degraded used to
+  // reset `degraded` to false even though nothing had actually recovered, which both suppressed
+  // the eventual lane_recovered event and let the entry silently lose its degraded status.
+  it("preserves degraded status across a failure-category change (does not require a fresh streak to re-degrade)", async () => {
+    const { recordLaneFailure, recordLaneRecovery, LANE_DEGRADED_STREAK_THRESHOLD, _resetSchedulerObservabilityStateForTest } =
+      await import("../src/lib/scheduler");
+    _resetSchedulerObservabilityStateForTest();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    // Cross the threshold on "transient_network" — now degraded, one lane_degraded emitted.
+    for (let i = 0; i < LANE_DEGRADED_STREAK_THRESHOLD; i++) {
+      recordLaneFailure("stale-limit-order handling", "local:acct-4", new TypeError("fetch failed"));
+    }
+    expect(sentryMetricsMock.logError).toHaveBeenCalledTimes(1);
+
+    // Category flips to "timeout" — streak restarts at 1 for the new category, but the lane
+    // was already degraded and nothing has actually recovered, so it must STAY degraded: no
+    // duplicate lane_degraded emission, and a subsequent recovery must still announce.
+    recordLaneFailure("stale-limit-order handling", "local:acct-4", new Error("stale-limit-scan broker timeout"));
+    expect(sentryMetricsMock.logError).toHaveBeenCalledTimes(1); // no re-emission
+
+    recordLaneRecovery("stale-limit-order handling", "local:acct-4");
+    expect(sentryMetricsMock.logWarn).toHaveBeenCalledWith(
+      "scheduler.lane",
+      expect.objectContaining({ event: "lane_recovered", lane: "stale-limit-order handling", key: "local:acct-4" })
+    );
+  });
+});
+
+// Codex round-1 review (2026-09-07, sentry + chatgpt-codex-connector, duplicate findings): a race
+// condition let a timed-out lane that later succeeded in the background incorrectly clear its own
+// just-recorded failure streak, because recordLaneRecovery was attached to the RAW work promise
+// instead of the withDeadline-raced promise. This exercises the exact wiring pattern scheduler.ts
+// now uses for both the stale-limit-order and synthetic-stop-monitor lanes: recovery/failure must
+// both key off the SAME deadline-raced promise so a late background fulfillment cannot silently
+// clear a failure the deadline already recorded.
+describe("recordLaneRecovery / recordLaneFailure wiring against withDeadline (race-condition fix)", () => {
+  it("a late background fulfillment after a timeout must NOT clear the failure streak", async () => {
+    const { withDeadline } = await import("../src/lib/inflight-deadline");
+    const {
+      recordLaneFailure,
+      recordLaneRecovery,
+      LANE_DEGRADED_STREAK_THRESHOLD,
+      _resetSchedulerObservabilityStateForTest
+    } = await import("../src/lib/scheduler");
+    _resetSchedulerObservabilityStateForTest();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const lane = "stale-limit-order handling";
+    const key = "local:acct-race";
+
+    for (let i = 0; i < LANE_DEGRADED_STREAK_THRESHOLD; i++) {
+      // Slow work that resolves AFTER the deadline elapses — the exact race condition: a lane
+      // that always times out but always eventually succeeds in the background.
+      const slowWork = new Promise<void>((resolve) => setTimeout(resolve, 30));
+      const raced = withDeadline(slowWork, 5, "test lane timeout");
+      // The fixed wiring: recovery/failure both attach to `raced`, never to `slowWork` directly.
+      const settled = raced
+        .then(() => recordLaneRecovery(lane, key))
+        .catch((err) => recordLaneFailure(lane, key, err));
+      await settled; // the deadline (5ms) always loses to slowWork (30ms) here, so this rejects
+      await slowWork; // let the background work ALSO finish, as it would in production
+    }
+
+    // Every iteration timed out, and the buggy wiring would have let each late fulfillment of
+    // slowWork call recordLaneRecovery and wipe the streak — asserting escalation here proves it
+    // did not.
+    expect(sentryMetricsMock.logError).toHaveBeenCalledTimes(1);
+    expect(sentryMetricsMock.logError).toHaveBeenCalledWith(
+      "scheduler.lane",
+      expect.objectContaining({ event: "lane_degraded", lane, key, category: "timeout" })
+    );
+    expect(sentryMetricsMock.logWarn).not.toHaveBeenCalled(); // no spurious lane_recovered
+  });
+});
+
+describe("isHaltedPauseAction", () => {
+  it("treats both the transition tick (halted) and every later tick (still_paused) as halted", async () => {
+    const { isHaltedPauseAction } = await import("../src/lib/scheduler");
+    expect(isHaltedPauseAction("halted")).toBe(true);
+    expect(isHaltedPauseAction("still_paused")).toBe(true);
+    expect(isHaltedPauseAction("resumed")).toBe(false);
+    expect(isHaltedPauseAction("none")).toBe(false);
+  });
 });

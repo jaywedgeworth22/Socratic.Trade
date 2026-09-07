@@ -63,6 +63,40 @@ trigger, or how positions are managed is byte-identical before and after this ch
      `claude/ingest-error-classification` lane's boundary; did not touch SEC ingest or
      query-embed code.
 
+**Codex/Sentry round-1 review (fixed in this same PR before merge):**
+
+5. **Race condition let a late background success clear a just-recorded failure (P0-adjacent,
+   flagged independently by both `sentry` and `chatgpt-codex-connector`)** — `src/lib/scheduler.ts`.
+   `recordLaneRecovery` was attached to the RAW `staleExitWork`/`stopMonitorWork` promise, not the
+   `withDeadline`-raced one. A lane that timed out (recording a failure) but later fulfilled in
+   the background would silently clear that same failure streak the moment it finished — so a
+   lane that always times out but always eventually succeeds could never reach `lane_degraded`.
+   Both lanes now attach recovery/failure to the SAME deadline-raced promise; the in-flight-guard
+   release stays on the raw promise (unchanged, intentional).
+6. **Degraded state lost on a failure-category change (P2)** — `recordLaneFailure`'s
+   `alreadyDegraded` check required `prev.category === category`, so a category flip (e.g.
+   `timeout` → `transient_network`) while already degraded silently reset `degraded` to `false`
+   even though nothing had recovered — suppressing the eventual `lane_recovered` event. Now
+   preserved across category changes; only `recordLaneRecovery` (an actual success) clears it.
+7. **Tradier probe backoff applied to successes too (P2)** — a long healthy streak could ride the
+   exponential backoff TTL up to the 60-minute ceiling, so a real regression after that point
+   could go undetected for up to an hour instead of the intended 2-minute base window. Successful
+   probes now always use the base TTL; only a failing streak backs off.
+8. **Health-gate skip dedup misread the one-tick halt transition (P2)** — `pauseResult.action ===
+   "halted"` fires only the ONE tick a halt actually happens; a still-halted account reports
+   `"still_paused"` on every later tick. Using that check directly made the halt flag flip
+   true/false every tick after the first, which `logHealthGateSkip` read as a state change —
+   resetting its dedup counter and re-emitting `account_skip_started` every tick, the exact noise
+   this was built to remove. New `isHaltedPauseAction` helper treats both `"halted"` and
+   `"still_paused"` as currently-halted.
+9. **`cancelBracketSiblingLegs`'s GET not actually opted into the documented retry (P2)** — the
+   original summary above (item 3) claimed this idempotent lookup was opted into
+   `retryTransient`, but the actual `trackHealth` call site omitted the option. A dead keep-alive
+   socket would consume one of the pending teardown row's ten attempts and defer to another
+   scheduler tick instead of retrying in-process. Now actually passes `{ retryTransient: true }`.
+10. **Verification record listed commands with no actual results, and omitted `npm run lint`
+    entirely (P1)** — see the rewritten Verification section below.
+
 ## Why
 
 Production evidence from the ST container's `litestream-runtime.log` (2026-08-29..2026-09-07):
@@ -115,18 +149,31 @@ watchdog supervises from the outside:
   non-retryable 4xx.
 - `test/vector-db-qdrant-retrieval.test.ts` — `storeContexts` labels a sustained Qdrant write
   failure `provider: "qdrant"`, not the old hardcoded `"pinecone"`.
-- `STATUS.md`, `docs/EFFORT-LOG.md`, `/Users/jay/apps/TRADING-EFFORT-LOG.md` — handoff records.
+- `STATUS.md`, `docs/EFFORT-LOG.md`, `/Users/jay/apps/TRADING-EFFORT-LOG.md`, `PLAN.md`, this
+  rollout note — handoff records.
+- Round-2: `src/lib/scheduler.ts` (`isHaltedPauseAction`; the withDeadline-recovery rewiring; the
+  degraded-state-preservation fix), `src/lib/tradier.ts` (success-TTL fix;
+  `cancelBracketSiblingLegs` `retryTransient: true`), `test/scheduler-lane-observability.test.ts`
+  and `test/tradier.test.ts` (new regression tests for all five round-2 code fixes).
 
 ## Verification
 
-- `npx tsc --noEmit`
-- `npm test` (targeted: `test/tradier.test.ts test/scheduler-lane-observability.test.ts
-  test/qdrant-write.test.ts test/vector-db-qdrant-retrieval.test.ts test/scheduler-tick-watchdog.test.ts
-  test/scheduler-tick-reentrancy.test.ts test/broker-health-auto-pause.test.ts`, then full
-  `npm test`)
-- `npm run build` via `scripts/land.sh`
+Round-2 (this session), actual results — not just the command list, and now including the
+`npm run lint` gate the round-1 record omitted:
 
-(Exact command output recorded at PR time — see the PR description / CI `verify` check.)
+- `npx tsc --noEmit` — clean, zero errors.
+- `npm run lint` (`src/lib/scheduler.ts`, `src/lib/tradier.ts`,
+  `test/scheduler-lane-observability.test.ts`, `test/tradier.test.ts`) — 0 errors, 2 pre-existing
+  unused-import warnings in `scheduler.ts` unrelated to this change, `warn`-only per
+  `eslint.config.mjs`.
+- `npm test` (vitest), targeted — `test/tradier.test.ts`, `test/scheduler-lane-observability.test.ts`,
+  `test/qdrant-write.test.ts`, `test/vector-db-qdrant-retrieval.test.ts`,
+  `test/scheduler-tick-watchdog.test.ts`, `test/scheduler-tick-reentrancy.test.ts`,
+  `test/broker-health-auto-pause.test.ts` — 125 tests, all green. A whole-repo `npm test` was not
+  run to completion in this session (large suite) — CI's `verify` check is the authoritative
+  full-suite gate and runs automatically on push.
+- `npm run build` — production build clean (after `npm install` to resync this worktree's stale
+  `node_modules` against `package-lock.json`; unrelated to this PR's code).
 
 ## Follow-ups
 

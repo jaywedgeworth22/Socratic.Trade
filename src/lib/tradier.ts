@@ -936,8 +936,16 @@ class TradierBrokerGateway implements BrokerGateway {
   async probeOrderCapability(accountNumber: string): Promise<{ ok: boolean; reason?: string }> {
     const key = `${this.baseUrl}|${accountNumber}`;
     const cached = tradierProbeCache.get(key);
-    if (cached && Date.now() - cached.at < tradierProbeTtlMs(cached.streak)) {
-      return { ok: cached.ok, reason: cached.reason };
+    if (cached) {
+      // Back off only FAILED probes (2026-09-07 fix). Exponential backoff applied to a healthy
+      // streak too would let a stale "ok" result ride all the way to the 60-minute ceiling; if
+      // the order path then actually went down, checkBrokerHealth could keep accepting that
+      // stale success for up to an hour instead of catching it within the intended 2-minute
+      // base window. Successful results always use the base TTL; only a failing streak backs off.
+      const ttlMs = cached.ok ? TRADIER_PROBE_BASE_TTL_MS : tradierProbeTtlMs(cached.streak);
+      if (Date.now() - cached.at < ttlMs) {
+        return { ok: cached.ok, reason: cached.reason };
+      }
     }
     const remember = (ok: boolean, category: TradierProbeCategory, reason?: string): { ok: boolean; reason?: string } => {
       const streak = cached && cached.ok === ok && cached.category === category ? cached.streak + 1 : 0;
@@ -1086,8 +1094,10 @@ class TradierBrokerGateway implements BrokerGateway {
   async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
     let body: { order?: Record<string, unknown> };
     try {
-      body = await this.trackHealth(() =>
-        this.request<{ order?: Record<string, unknown> }>("GET", `/accounts/${accountNumber}/orders/${originalOrderId}`)
+      body = await this.trackHealth(
+        () =>
+          this.request<{ order?: Record<string, unknown> }>("GET", `/accounts/${accountNumber}/orders/${originalOrderId}`),
+        { retryTransient: true }
       );
     } catch (error) {
       // "Order gone" means nothing to tear down, safe to resolve as done — Tradier surfaces this

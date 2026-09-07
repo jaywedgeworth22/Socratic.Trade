@@ -17,6 +17,32 @@ hardcoded `provider: "pinecone"` regardless of the actual write backend. Scope i
 classification/backoff/observability — no trading-decision logic changed. Complements (does not
 duplicate) PR #3174's whole-tick watchdog. Rollout:
 `docs/rollouts/2026-09-07-scheduler-broker-error-classification.md`.
+
+## 2026-09-07 CLAUDE — PR #3189 round-2 Codex/Sentry triage (same branch, before merge)
+
+Fixed five real findings from round-1 review, one batch. (1) Race condition (flagged
+independently by both `sentry` and `chatgpt-codex-connector`): `recordLaneRecovery` was attached
+to the raw `staleExitWork`/`stopMonitorWork` promise instead of the `withDeadline`-raced one, so a
+lane that timed out (recording a failure) but later succeeded in the background would silently
+clear that same failure streak — a lane that always times out but always eventually succeeds
+could never reach `lane_degraded`. Both lanes now key recovery/failure off the same deadline-raced
+promise. (2) `recordLaneFailure`'s `alreadyDegraded` check required the failure category to match,
+so a category change while degraded silently reset `degraded` to false with nothing having
+recovered; now preserved across category changes. (3) Tradier's exponential probe backoff applied
+to successes too, so a long healthy streak could ride the TTL to the 60-minute ceiling and mask a
+real regression for up to an hour; success now always uses the base 2-minute TTL. (4) The
+health-gate skip dedup used `pauseResult.action === "halted"`, the ONE-TICK transition marker, not
+the durable halt state (`"still_paused"` on every later tick) — new `isHaltedPauseAction` helper
+fixes the resulting per-tick account_skip_started re-emission. (5) `cancelBracketSiblingLegs`'s
+GET was never actually opted into `retryTransient` despite the rollout note claiming it was — now
+fixed to match. Five new regression tests across `test/scheduler-lane-observability.test.ts` and
+`test/tradier.test.ts` (125 total across the 7 targeted files, all green). `npx tsc --noEmit`
+clean, `npm run lint` 0 errors, `npm run build` clean.
+
+**Blockers:** none.
+**Next action:** none — all 7 round-1 review threads resolved, auto-merge armed, this PR merges
+once CI reports green.
+
 ## 2026-09-07 CLAUDE — Remove redundant postcss override (recurring Dependabot failure)
 
 Every Dependabot Updates job touching postcss failed since 2026-08-24 (recurred
