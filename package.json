@@ -88,8 +88,7 @@
     "vitest": "^4.1.11"
   },
   "overrides": {
-    "axios": "^1.18.0",
-    "postcss": "^8.5.15"
+    "axios": "^1.18.0"
   },
   "allowScripts": {
     "@sentry/cli@2.58.6": true,
