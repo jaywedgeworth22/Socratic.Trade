@@ -19,11 +19,12 @@ import {
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleApiError, fetchDashboard } from "./api";
 import { deriveConsoleLoadState } from "./console-load-state";
+import { SENTENCE_GAP } from "./format";
 
 // Shown the instant a 401 is detected, replacing whatever freshness copy would otherwise
 // describe the last-good snapshot as merely "delayed" — see ShellFrame's sessionExpired branch
 // in shell.tsx, which renders this instead of the normal dashboard chrome.
-export const SESSION_EXPIRED_MESSAGE = "Your session has expired.  Redirecting you to sign in…";
+export const SESSION_EXPIRED_MESSAGE = `Your session has expired.${SENTENCE_GAP}Redirecting you to sign in…`;
 
 const POLL_MS = 15_000;
 const EVENT_REFRESH_DEBOUNCE_MS = 200;

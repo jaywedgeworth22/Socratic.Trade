@@ -15,6 +15,7 @@ import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useMutationBusy } from "../lib/useMutationBusy";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
+import { SENTENCE_GAP } from "../lib/format";
 import { useConsoleFont } from "../lib/useConsoleFont";
 import { useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
@@ -110,7 +111,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
           <div className="con-card-title">Socratic Trade</div>
           <p className="mt-2 font-semibold">Your session has expired</p>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-            Redirecting you to sign in.  This screen no longer reflects live data.
+            Redirecting you to sign in.{SENTENCE_GAP}This screen no longer reflects live data.
           </p>
         </div>
       </div>
