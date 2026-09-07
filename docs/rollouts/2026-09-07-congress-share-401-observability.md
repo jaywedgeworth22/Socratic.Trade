@@ -26,6 +26,33 @@
   cadence (no live retry) so the 5-consecutive-failure Sentry/degraded threshold is still reached
   quickly instead of only once per cooldown window.
 
+**Codex round-1 review (post-merge-gate, fixed in this same PR before merge):**
+
+- **Test isolation (P1) — already addressed.** Fixed by commit `bb0ef9689` (already on this
+  branch before the review landed): `api_health_log` lives in the one per-file SQLite DB every
+  test in `congress-share.test.ts` shares, so three new tests asserting an absolute row count
+  (`toHaveLength(1)`/`toHaveLength(3)`) only held in isolation. Now reads the N most-recent rows
+  (`getServiceHealthLog` orders `ts DESC, rowid DESC`) instead.
+- **Breaker had no identity for the tripping token (P2).** An operator resyncing
+  `CONGRESS_TRADE_TOKEN` before the 6h cooldown elapsed stayed blocked for the rest of it — a
+  container restart does not help since the breaker lives in the persistent settings DB.
+  `CongressAuthBreakerState` now stores a non-secret sha256-prefix fingerprint of the token that
+  tripped it; `activeCongressAuthBreakerState` auto-clears a breaker keyed to a different token.
+- **Nightly collection not gated on the breaker (P2).** `runCongressDailyShareUnlocked` only
+  checked the breaker at the final `shareWithCongressTrade` POSTs — `fetchCongressPriceNeeds`
+  (itself an authenticated App A request), the SPX/per-ticker OHLC fetches, and the screener refs
+  fetch all still ran every time the nightly job was due, hourly, for the whole cooldown. The
+  breaker check now gates the entire collection phase up front.
+- **Post-cooldown probe not serialized (P2).** Concurrent overlapping callers (scan-hook firing
+  while the nightly batch is mid-run) each treated an expired cooldown as their own independent
+  probe, recreating a burst of 401/403 requests. `claimCongressAuthBreakerProbe` now claims the
+  single half-open probe slot atomically (read-then-write with no `await` between them, so it is
+  atomic against any other same-process caller reaching the same window).
+- **Verification state overclaimed (P1).** The original "Verification State" section below listed
+  commands without recording any actual output. Replaced with real results (see below).
+- **Config knob undocumented (P1).** `CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS` is now in
+  `.env.example` and `docs/congress-trade-share.md` (Safety/gating prose + Configuration table).
+
 ## Why
 
 Diagnosed the token via non-secret fingerprint comparison ONLY (length + sha256 prefix; no value
@@ -66,7 +93,12 @@ being silent again.
   401/403 and short-circuits the very next call (no fetch), breaker does NOT trip on 5xx/transport
   errors, breaker-absorbed calls still replay into the health log, and the breaker clears + resumes
   real sends after the cooldown elapses and a probe succeeds. `beforeEach` now also resets the
-  breaker (`resetCongressAuthBreakerForTests()`).
+  breaker (`resetCongressAuthBreakerForTests()`). Round-2 adds: a since-resynced token clears a
+  stale breaker and probes immediately; the post-cooldown probe is serialized across concurrent
+  overlapping callers; the nightly batch skips the entire collection phase (no OHLC fetch at all)
+  when the breaker is tripped.
+- `.env.example`, `docs/congress-trade-share.md` — round-2: documented
+  `CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS`.
 - `docs/EFFORT-LOG.md`, `/Users/jay/apps/TRADING-EFFORT-LOG.md`, `STATUS.md`, `PLAN.md` — handoff
   records for this lane.
 
@@ -101,11 +133,24 @@ being silent again.
 
 ## Verification State
 
-- `npx tsc --noEmit` (via `node@24`, matching `.nvmrc`)
-- `npm test` (vitest) — full suite, plus targeted `test/congress-share.test.ts`
-- `npm run lint`
-- `npm run build`
-- Exact output pasted into the PR / final report.
+Round-2 (this session), actual results — not just the command list:
+
+- `npx tsc --noEmit` — clean, zero errors.
+- `npm run lint` (`src/lib/congress-share.ts`, `test/congress-share.test.ts`) — 0 errors,
+  20 pre-existing `no-unused-vars`/`no-explicit-any` warnings in test mock signatures, `warn`-only
+  per `eslint.config.mjs`.
+- `npm test` (vitest), targeted — `test/congress-share.test.ts`: 61 tests, all green (58 existing
+  + 3 new for the round-2 fixes). A whole-repo `npm test` run was started locally but did not
+  finish within this session (large suite; no failures observed in the output produced before it
+  was stopped) — the `verify` CI check is the authoritative full-suite gate and runs
+  automatically on push.
+- `npm run build` — production build clean. First attempt failed
+  (`ERR_PACKAGE_PATH_NOT_EXPORTED` on `@sentry/nextjs/config`) because this worktree's
+  `node_modules` was stale relative to `package-lock.json`; `npm install` resynced it. Second
+  attempt failed on `import { createHash } from "node:crypto"` — webpack could not bundle the
+  `node:` scheme through the `congress-share.ts` → `scheduler.ts` → `background-worker-startup.ts`
+  import graph; fixed by switching to the repo's own bare `"crypto"` import convention (matches
+  `db-health.ts`). Third attempt: clean, exit 0.
 
 ## Next Steps & Blockers
 

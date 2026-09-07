@@ -46,6 +46,7 @@ import {
   type OperationLeaseAware,
   type OperationLeaseClaim
 } from "./operation-lease";
+import { createHash } from "crypto";
 import {
   audit,
   deleteInternalSetting,
@@ -96,11 +97,33 @@ interface CongressAuthBreakerState {
    *  log (see below) for every call the breaker silently absorbs, so the failure stays diagnosable
    *  without a live retry. */
   lastError: string;
+  /** Non-secret fingerprint (sha256 prefix) of the CONGRESS_TRADE_TOKEN that tripped the breaker.
+   *  An operator resyncing the token before the cooldown elapses is exactly the recovery action
+   *  this breaker exists to wait for — without this, the durable breaker state has no identity
+   *  for the token that failed, so a resynced token still sits blocked for the rest of the
+   *  cooldown (a container restart does not help either: the settings DB is persistent). */
+  tokenFingerprint: string;
+  /** Epoch ms until which the single half-open probe (see claimCongressAuthBreakerProbe below)
+   *  is claimed by an in-flight caller. Self-expires (bounded by the request timeout) if the
+   *  claiming caller crashes without clearing or re-tripping the breaker. */
+  probeClaimedUntilMs?: number;
 }
 
 function authBreakerCooldownMs(): number {
   const v = Number(process.env.CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS ?? 6 * 60 * 60_000); // 6h default
   return Number.isFinite(v) && v > 0 ? v : 6 * 60 * 60_000;
+}
+
+/** How long a claimed half-open probe blocks other callers — bounded by the same timeout the
+ *  probe's own fetch is bounded by, so a crashed/hung probe cannot wedge the claim forever. */
+function authProbeClaimWindowMs(): number {
+  return Number(process.env.CONGRESS_SHARE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+}
+
+/** Non-secret token fingerprint (length-independent, no value ever printed) — same method used
+ *  to diagnose the 2026-09-07 token-drift incident: sha256 prefix only. */
+function fingerprintCongressToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
 function readCongressAuthBreakerState(): CongressAuthBreakerState | undefined {
@@ -111,17 +134,54 @@ function readCongressAuthBreakerState(): CongressAuthBreakerState | undefined {
   }
 }
 
-/** True while a prior HTTP 401/403 has the breaker tripped (cooldown not yet elapsed). */
-export function isCongressAuthBreakerTripped(now: number = Date.now()): boolean {
+/** The breaker state, but ignoring (and eagerly clearing) an entry keyed to a DIFFERENT token
+ *  than the one currently configured. Handles the operator-resync recovery path: without this,
+ *  a breaker tripped by the old broken token keeps blocking the newly-resynced good token for
+ *  the rest of the cooldown, and a container restart does not help since the settings DB (where
+ *  the breaker lives) is persistent. */
+function activeCongressAuthBreakerState(token: string | undefined): CongressAuthBreakerState | undefined {
   const state = readCongressAuthBreakerState();
+  if (!state) return undefined;
+  if (!token || state.tokenFingerprint !== fingerprintCongressToken(token)) {
+    clearCongressAuthBreaker();
+    return undefined;
+  }
+  return state;
+}
+
+/** True while a prior HTTP 401/403 has the breaker tripped (cooldown not yet elapsed) for the
+ *  CURRENTLY configured token. A breaker tripped by a since-resynced token is treated as cleared. */
+export function isCongressAuthBreakerTripped(now: number = Date.now()): boolean {
+  const state = activeCongressAuthBreakerState(congressTradeToken());
   return state !== undefined && now < state.untilMs;
 }
 
-function tripCongressAuthBreaker(now: number, errorText: string): void {
+function tripCongressAuthBreaker(now: number, errorText: string, token: string): void {
   try {
-    setInternalSetting(AUTH_BREAKER_KEY, { untilMs: now + authBreakerCooldownMs(), lastError: errorText });
+    setInternalSetting(AUTH_BREAKER_KEY, {
+      untilMs: now + authBreakerCooldownMs(),
+      lastError: errorText,
+      tokenFingerprint: fingerprintCongressToken(token)
+    });
   } catch {
     // best-effort; a failed write just means the next call probes sooner than intended
+  }
+}
+
+/** Atomically claims the single half-open probe slot once the cooldown has elapsed, so
+ *  overlapping callers (scan-hook + nightly batch) don't each treat the expired cooldown as
+ *  their own independent probe and recreate a burst of 401/403 requests. The read-then-write
+ *  below has no `await` between them, so it is atomic against any other same-process caller
+ *  reaching this same half-open window concurrently. Returns false when another caller already
+ *  holds the claim. */
+function claimCongressAuthBreakerProbe(now: number, state: CongressAuthBreakerState): boolean {
+  try {
+    const fresh = readCongressAuthBreakerState() ?? state;
+    if (fresh.probeClaimedUntilMs !== undefined && now < fresh.probeClaimedUntilMs) return false;
+    setInternalSetting(AUTH_BREAKER_KEY, { ...fresh, probeClaimedUntilMs: now + authProbeClaimWindowMs() });
+    return true;
+  } catch {
+    return true; // fail open — never let breaker bookkeeping block a legitimate probe
   }
 }
 
@@ -676,7 +736,7 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
   }
 
   const now = Date.now();
-  const breakerState = readCongressAuthBreakerState();
+  const breakerState = activeCongressAuthBreakerState(token);
   if (breakerState && now < breakerState.untilMs) {
     // Auth breaker open: a recent real 401/403 means the token is broken until an operator fixes
     // it — skip the network call entirely (no fetch) rather than hammering App A again. Every
@@ -693,6 +753,21 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
       keySource: "env"
     });
     return { ok: false, skipped: false, reason: "auth-breaker-tripped", sent };
+  }
+  if (breakerState) {
+    // Cooldown elapsed: half-open. Exactly one caller may send the real probe; any other caller
+    // reaching this same instant (scan-hook firing while the nightly batch is also mid-run, etc.)
+    // absorbs instead of independently treating the expired cooldown as its own single probe —
+    // otherwise concurrent callers recreate a burst of 401/403 requests every cooldown boundary.
+    if (!claimCongressAuthBreakerProbe(now, breakerState)) {
+      logApiHealth({
+        service: "congress-share",
+        ok: false,
+        errorText: `${breakerState.lastError} [auth breaker half-open probe already in flight; not re-sent]`,
+        keySource: "env"
+      });
+      return { ok: false, skipped: false, reason: "auth-breaker-tripped", sent };
+    }
   }
 
   const url = `${congressTradeBaseUrl()}${API_PATHS.ADMIN_SECURITIES_IMPORT}`;
@@ -714,7 +789,7 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
       const errorText = `HTTP ${res.status} ${text.slice(0, 300)}`;
       console.error(`[congress-share] import failed: ${errorText}`);
       const isAuthFailure = res.status === 401 || res.status === 403;
-      if (isAuthFailure) tripCongressAuthBreaker(now, errorText);
+      if (isAuthFailure) tripCongressAuthBreaker(now, errorText, token);
       // Surface every failure to the shared health store: feeds Sentry (via logApiHealth's own
       // 5-consecutive-hard-failure alertConnectionFailure path — same mechanism "roic"/
       // "congress.trade" already use) AND the "congress-share" entry in /api/health's
@@ -1079,6 +1154,23 @@ async function runCongressDailyShareUnlocked(
     return { ok: false, skipped: true, reason: "not-due", ...empty };
   }
   assertOperationLeaseOwnership(operationLeaseClaim);
+
+  // Gate the ENTIRE collection phase on the auth breaker (P2 fix 2026-09-07), not just the final
+  // shareWithCongressTrade POSTs below: fetchCongressPriceNeeds (itself an authenticated request
+  // to App A), the SPX/per-ticker OHLC fetches, and the screener refs fetch previously all still
+  // ran every time the nightly job was due — hourly, for the whole 6h cooldown — only to have
+  // every resulting POST rejected locally by the breaker check inside shareWithCongressTrade. A
+  // breaker keyed to a since-resynced token is already treated as cleared (see
+  // activeCongressAuthBreakerState), so this cannot block recovery once the token is fixed.
+  if (isCongressAuthBreakerTripped(now)) {
+    logApiHealth({
+      service: "congress-share",
+      ok: false,
+      errorText: "auth breaker cooldown active; skipped nightly collection entirely",
+      keySource: "env"
+    });
+    return { ok: false, skipped: false, reason: "auth-breaker-tripped", ...empty };
+  }
 
   // Congressional price-needs from App A: always consulted on scheduled runs so performance
   // gaps drain; also when admin passes fromAppANeeds. Soft-fails to empty.

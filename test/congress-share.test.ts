@@ -432,6 +432,61 @@ describe("shareWithCongressTrade", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(isCongressAuthBreakerTripped()).toBe(false); // success clears the breaker
   });
+
+  // P2 fix (2026-09-07): the durable breaker state has no identity for the token that tripped
+  // it unless it stores a fingerprint. An operator resyncing CONGRESS_TRADE_TOKEN before the
+  // cooldown elapses is exactly the recovery action this breaker exists to wait for — without
+  // the fingerprint check, the resynced (good) token still sits blocked for the rest of the
+  // cooldown, and a container restart does not help since the settings DB is persistent.
+  it("ignores a breaker tripped by a DIFFERENT (since-resynced) token and lets the new token probe immediately", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "broken-token";
+    const fetchSpy = vi.fn(async () => new Response("denied", { status: 401 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] }); // trips breaker for "broken-token"
+    expect(isCongressAuthBreakerTripped()).toBe(true);
+
+    // Operator resyncs the token — no restart, no waiting for the 6h cooldown.
+    process.env.CONGRESS_TRADE_TOKEN = "resynced-good-token";
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    expect(isCongressAuthBreakerTripped()).toBe(false); // stale entry is ignored for the new token
+    const res = await shareWithCongressTrade({ refs: [{ ticker: "MSFT" }] });
+    expect(res).toMatchObject({ ok: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // the resynced token got its own real probe, not absorbed
+  });
+
+  // P2 fix (2026-09-07): once the cooldown elapses, exactly one caller should send the real
+  // probe — concurrent overlapping callers (scan-hook firing while the nightly batch is also
+  // mid-run) previously each treated the expired cooldown as their own independent probe,
+  // recreating a burst of 401/403 requests every cooldown boundary.
+  it("serializes the post-cooldown half-open probe across concurrent overlapping callers", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS = "300";
+    const fetchSpy = vi
+      .fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response("denied", { status: 401 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] }); // trips breaker
+    expect(isCongressAuthBreakerTripped()).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 400)); // let the cooldown elapse
+
+    // Two overlapping callers both reach the half-open window at the same instant.
+    const [first, second] = await Promise.all([
+      shareWithCongressTrade({ refs: [{ ticker: "MSFT" }] }),
+      shareWithCongressTrade({ refs: [{ ticker: "GOOG" }] })
+    ]);
+
+    const results = [first, second];
+    const probed = results.filter((r) => r.ok);
+    const absorbed = results.filter((r) => !r.ok);
+    expect(probed).toHaveLength(1); // exactly one caller got the real probe
+    expect(absorbed).toHaveLength(1);
+    expect(absorbed[0]).toMatchObject({ skipped: false, reason: "auth-breaker-tripped" });
+    // Only the original trip (401) + the single half-open probe ever touched the network.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ── shareScanRefs (after-scan hook) ────────────────────────────────────────────────
@@ -534,6 +589,26 @@ describe("runCongressDailyShare", () => {
   it("skips with no token", async () => {
     const res = await runCongressDailyShare({ force: true, symbols: ["AAPL"] });
     expect(res).toMatchObject({ ok: false, skipped: true, reason: "no-token" });
+  });
+
+  // P2 fix (2026-09-07): before this, a tripped breaker only stopped the individual
+  // shareWithCongressTrade POSTs at the very end of the nightly run — fetchCongressPriceNeeds
+  // (an authenticated request to App A), the SPX/per-ticker OHLC fetches, and the screener refs
+  // fetch all still ran every time the job was due, hourly, for the entire 6h cooldown. The
+  // whole collection phase must be gated up front instead.
+  it("skips the entire collection phase (no OHLC fetch at all) when the auth breaker is tripped", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("denied", { status: 401 })));
+    await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }] }); // trips breaker
+    expect(isCongressAuthBreakerTripped()).toBe(true);
+
+    mockedFetchDailyOHLC.mockClear();
+    const now = Date.UTC(2026, 5, 22, 13, 0, 0);
+    setInternalSetting("congress-share:lastDailyRunDate", "2026-06-20");
+    const res = await runCongressDailyShare({ now, force: true, symbols: ["AAPL", "MSFT"] });
+
+    expect(res).toMatchObject({ ok: false, skipped: false, reason: "auth-breaker-tripped" });
+    expect(mockedFetchDailyOHLC).not.toHaveBeenCalled(); // collection phase never started
   });
 
   it("shares custom symbols + SPX as separate bounded POSTs and does not advance the daily marker", async () => {

@@ -49,6 +49,36 @@ runs on the PR, and a green gate is required before auto-merge.  Rollout:
 
 ST's highest-volume live prod error: `[congress-share] import failed: HTTP 401` — 3,096 occurrences over nine days (2026-08-29 to 2026-09-07), `console.error`-only, no Sentry/health/alert/backoff.  Diagnosed via non-secret fingerprint comparison (length + sha256 prefix, no values printed): ST Infisical prod `CONGRESS_TRADE_TOKEN` does NOT match CT Infisical prod `INGEST_TOKEN` nor `ADMIN_TOKEN` — **CONFIRMED token drift**, owner action required to resync (see rollout note).  Independent of the token, fixed the observability hole: `shareWithCongressTrade` (`src/lib/congress-share.ts`) now logs every attempt via the existing `logApiHealth` pipeline (same mechanism "roic"/"congress.trade" already use for Sentry + `/api/health` degraded dependency), and an auth-specific circuit breaker trips on 401/403 (permanent failure) to stop hammering CT, with a shadow health-log replay so the 5-consecutive-failure Sentry threshold still fires promptly.  Added `EXPECTED_BACKEND_LANES` entry for the admin Connections UI.  Branch `claude/congress-share-401-observability`, worktree `~/apps/trading-claude-congress-401`.  Rollout: `docs/rollouts/2026-09-07-congress-share-401-observability.md`.
 
+## 2026-09-07 CLAUDE — PR #3183 round-2 Codex triage (same branch, before merge)
+
+Fixed four real findings from Codex round-1 review, one batch, plus one already-addressed test
+fix already on the branch. (1) test isolation — already fixed by prior commit `bb0ef9689`
+(reads the N most-recent health-log rows instead of asserting an absolute count that only held
+in isolation). (2) The auth breaker had no identity for the token that tripped it, so an operator
+resyncing `CONGRESS_TRADE_TOKEN` before the 6h cooldown elapsed stayed blocked for the remainder
+— `CongressAuthBreakerState` now stores a non-secret sha256-prefix fingerprint of the tripping
+token; `activeCongressAuthBreakerState` auto-clears a breaker keyed to a since-resynced token. (3)
+The nightly batch only checked the breaker at the final `shareWithCongressTrade` POSTs —
+`fetchCongressPriceNeeds` (itself an authenticated App A request), SPX/per-ticker OHLC fetches,
+and the screener refs fetch all still ran hourly for the whole cooldown; `runCongressDailyShareUnlocked`
+now gates the entire collection phase up front. (4) Concurrent overlapping callers (scan-hook +
+nightly batch) each treated an expired cooldown as their own independent probe, recreating a 401
+burst; added `claimCongressAuthBreakerProbe` — an atomic (no `await` between read and write)
+durable claim so exactly one caller probes per cooldown boundary. Also documented
+`CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS` in `.env.example` and `docs/congress-trade-share.md`
+(both Safety/gating prose and the Configuration table). One self-inflicted bug caught before
+push: `import { createHash } from "node:crypto"` broke `npm run build` (webpack could not bundle
+the `node:` scheme via `scheduler.ts` → `background-worker-startup.ts`) — fixed to the repo's own
+bare `"crypto"` convention (matches `db-health.ts`). Six new regression tests in
+`test/congress-share.test.ts` (61 total, all green). `npx tsc --noEmit` clean, `npm run lint` 0
+errors, `npm run build` clean. Whole-repo `npm test` was kicked off but did not finish
+in-session — CI's `verify` check is the full-suite gate of record.
+
+**Blockers:** none.
+**Next action:** none — all 6 round-1 review threads resolved, auto-merge armed, this PR merges
+once CI reports green. Owner action to resync `CONGRESS_TRADE_TOKEN` between ST/CT Infisical prod
+remains outstanding (unrelated to this PR's code, tracked in the original rollout note).
+
 ## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
 
 Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.

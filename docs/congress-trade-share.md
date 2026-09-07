@@ -118,6 +118,21 @@ applied** — App A's tables don't exist until then, and pushing those rows earl
   for diagnosis.
 - A persisted marker (`congress-share:lastDailyRunDate`) makes the nightly batch
   idempotent per UTC day.
+- **Auth circuit breaker** (prod incident 2026-09-07, 3,096 silent HTTP 401s over 9 days): an
+  HTTP 401/403 from App A means the shared bearer token is wrong on one side — a permanent
+  condition until an operator rotates/resyncs it, not a transient blip. This trips a durable
+  breaker (`CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS`, default 6h) that short-circuits every
+  subsequent call — the scan-hook, the rest of an in-flight nightly batch, and the ENTIRE
+  collection phase (App A price-needs, OHLC fetches, screener refs) of the next nightly run —
+  with no network call, until the cooldown elapses. Every absorbed call still replays into
+  `api_health_log` (service `congress-share`) so the existing 5-consecutive-failure Sentry/
+  degraded-health threshold is still reached at the caller's normal cadence. The breaker stores a
+  non-secret fingerprint of the token that tripped it and auto-clears the moment
+  `CONGRESS_TRADE_TOKEN` is resynced to a different value, so an operator fix does not have to
+  wait out the rest of the cooldown. Once the cooldown elapses, exactly one caller's real probe is
+  allowed through (an atomic durable claim serializes overlapping callers); success clears the
+  breaker, a repeat 401/403 re-trips it for another full cooldown. A non-auth failure (5xx/
+  timeout/network) never trips it — those stay on the existing per-caller backoff.
 
 ## Congressional price-needs (performance vs S&P)
 
@@ -164,6 +179,7 @@ sent, responses, autoEnabled }`, where `responses` carries App A's per-POST
 | `CONGRESS_SHARE_CONCURRENCY` | `4` | Parallel history fetches in the nightly batch. |
 | `CONGRESS_SHARE_REF_TTL_MS` | `21600000` (6h) | Per-symbol scan-refs throttle. |
 | `CONGRESS_SHARE_TIMEOUT_MS` | `15000` | Per-POST timeout. |
+| `CONGRESS_SHARE_AUTH_BREAKER_COOLDOWN_MS` | `21600000` (6h) | Auth circuit-breaker cooldown after an HTTP 401/403 (see Safety / gating above). |
 
 ## Reverse direction (App A pulls App B — implemented 2026-07-31)
 
