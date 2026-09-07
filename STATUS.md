@@ -1,5 +1,27 @@
 # Current Status
 
+## 2026-09-07 CLAUDE — Remove redundant postcss override (recurring Dependabot failure)
+
+Every Dependabot Updates job touching postcss failed since 2026-08-24 (recurred
+08-24 x3, 08-25, 08-31, 09-07) with `postcss / dependency_file_not_resolvable /
+"Override for postcss@8.5.28 conflicts with direct dependency."`.  Root cause:
+`package.json` pinned postcss identically in both the direct devDependency
+(`^8.5.15`) and the `overrides` block (`^8.5.15`) -- Dependabot cannot bump one
+side without the other going stale, and flags the pair as unresolvable.
+Checked whether the override was load-bearing before removing it: no transitive
+dependency pins an OLDER postcss that it was forcing upward -- `@tailwindcss/postcss`
+and `vite` both declare `^8.5.16` (newer than the override's pin) and `next`
+bundles its own exact `8.5.23` in a nested `node_modules/next/node_modules/postcss`
+regardless of the override.  Removed the redundant `overrides.postcss` entry
+(kept `overrides.axios`).  Verified: `npm install` resolves cleanly (lockfile
+coherent, `npm ls postcss` shows a single deduped `postcss@8.5.28` satisfying
+the devDependency + `@tailwindcss/postcss` + `vite`, `next` keeps its own nested
+copy as before), `npx tsc --noEmit` clean, `npm run lint` 0 errors / 801
+grandfathered warnings (same baseline as `main`), `npm run build` PASS with
+Tailwind CSS output generated normally.  Branch `claude/postcss-override-conflict`,
+worktree `~/apps/trading-claude-postcss`.  Rollout:
+`docs/rollouts/2026-09-07-postcss-override-conflict.md`.
+
 ## 2026-09-07 Autofix (codex-autofix) — eslint-config-next 16.3.4 handoff records (PR #3181)
 
 Dependabot bumped `eslint-config-next` 16.3.1 -> 16.3.4 on branch `dependabot/npm_and_yarn/eslint-config-next-16.3.4` (commit `fbc0f4fe1`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Round 2 recorded the verification outcomes Codex asked for (tsc/lint/build pass; the 5 LLM-key-sensitive test files fail only under the runner's injected Anthropic env and pass scrubbed; CI `verify`/`verify-hosted` green).  Round 3 added the remaining Codex handoff items:  a PLAN.md entry and a Decisions & Trade-offs section in the rollout note.  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-eslint-config-next-16-3-4.md`.
