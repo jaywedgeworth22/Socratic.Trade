@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Sentry
 
 struct CommandAttemptTracker {
     private struct PendingAttempt {
@@ -43,7 +44,28 @@ struct CommandAttemptTracker {
     }
 
     mutating func reconcile(_ commands: [MobileCommand]) -> [Resolution] {
-        let commandsByID = Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0) })
+        // The server can legitimately report the same command id twice (e.g. overlapping
+        // poll windows or a paginated fetch that straddles a page boundary), and
+        // `Dictionary(uniqueKeysWithValues:)` traps (hard crash) on any duplicate key.
+        // Policy: last-wins by `updatedAt` (ISO8601 strings sort lexicographically), so
+        // the freshest status for that command id survives regardless of array order.
+        // A collision here means the server sent inconsistent data, so it's worth
+        // surfacing rather than silently swallowing.
+        var duplicateCommandIDs = Set<String>()
+        let commandsByID = Dictionary(
+            commands.map { ($0.id, $0) },
+            uniquingKeysWith: { existing, incoming in
+                duplicateCommandIDs.insert(incoming.id)
+                return incoming.updatedAt >= existing.updatedAt ? incoming : existing
+            }
+        )
+        if !duplicateCommandIDs.isEmpty {
+            SentrySDK.capture(
+                message: "MobileStore.reconcile: dropped \(duplicateCommandIDs.count) duplicate command id(s) from server response"
+            ) { scope in
+                scope.setLevel(.warning)
+            }
+        }
         var resolutions: [Resolution] = []
         for (operationID, attempt) in Array(attempts) {
             guard

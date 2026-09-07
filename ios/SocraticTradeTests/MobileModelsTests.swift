@@ -462,6 +462,45 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertNotEqual(secondOp, resolvedThenRetried)
     }
 
+    // Regression test for a hard crash: the server can legitimately report the same
+    // command id twice in one snapshot (e.g. overlapping poll windows), and
+    // `Dictionary(uniqueKeysWithValues:)` traps (fatalError, not catchable) on any
+    // duplicate key. `reconcile` must fold duplicates instead of crashing.
+    func testReconcileDoesNotCrashOnDuplicateCommandIdsAndKeepsTheFreshestByUpdatedAt() {
+        var tracker = CommandAttemptTracker()
+        _ = tracker.idempotencyKey(
+            operationID: "proposal.approve:proposal-9",
+            commandType: "proposal.approve",
+            payload: ["proposalId": "proposal-9"]
+        )
+        let queued = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
+        )
+        tracker.track(queued, operationID: "proposal.approve:proposal-9")
+
+        // Two entries share id "command-9": a fresh terminal one and a stale queued
+        // one. The stale (earlier `updatedAt`) duplicate is listed AFTER the fresh
+        // one, so if this were picking by array position instead of the documented
+        // last-wins-by-`updatedAt` policy, the assertion below would fail.
+        let fresh = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"failed","error":"Proposal expired","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:32:00.000Z"}"#
+        )
+        let staleDuplicate = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
+        )
+
+        let resolutions = tracker.reconcile([fresh, staleDuplicate])
+
+        XCTAssertEqual(
+            resolutions,
+            [CommandAttemptTracker.Resolution(
+                operationID: "proposal.approve:proposal-9",
+                status: "failed",
+                error: "Proposal expired"
+            )]
+        )
+    }
+
     @MainActor
     func testSuccessfulDeletionHTTPAlwaysClearsLocalSessionWhenOptionalReceiptFieldsDrift() async throws {
         let configuration = URLSessionConfiguration.ephemeral
