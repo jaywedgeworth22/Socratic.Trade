@@ -4,6 +4,15 @@
 
 `CommandAttemptTracker.reconcile(_:)` in `ios/SocraticTrade/MobileStore.swift` built its id→command lookup with `Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0) })`.  That initializer calls `fatalError` (uncatchable) on any duplicate key, and the server can legitimately report the same command id twice in one snapshot (overlapping poll windows).  Replaced with `Dictionary(_:uniquingKeysWith:)`: last-wins by `updatedAt` (ISO8601 sorts lexicographically), independent of array order, plus a `SentrySDK.capture(message:)` warning when a collision actually occurs so real upstream duplication is visible instead of silently swallowed.  New regression test `testReconcileDoesNotCrashOnDuplicateCommandIdsAndKeepsTheFreshestByUpdatedAt` in `ios/SocraticTradeTests/MobileModelsTests.swift` feeds two entries sharing an id (stale one listed last) and asserts the fresher one wins.  `grep -rn "uniqueKeysWithValues"` across the repo found exactly this one call site.  Build/test verified on the Mac Catalyst destination (this Mac has no iOS Simulator runtime installed — `xcrun simctl list runtimes` is empty — so a device/simulator run was not possible; Mac Catalyst compiles and runs the identical Swift sources).  31/31 tests passed.  Merging to `main` does NOT ship this fix to users — the iOS app ships separately via TestFlight, so a new TestFlight build/release is still required.  Rollout: `docs/rollouts/2026-09-07-ios-dup-command-id-crash.md`.
 
+## 2026-09-07 — Vitest 5.0.0 upgrade recorded (dependabot PR #3179, codex-autofix)
+
+Dependabot bumped the testing group's `vitest` from `^4.1.11` to `^5.0.0` (commit
+`37e8850d`); dev-dependency only, no runtime path.  This doc-only follow-up answers the
+Codex P1 finding that a dependency bump must be recorded in handoff state:  it adds this
+STATUS.md snapshot, a `docs/EFFORT-LOG.md` row, and a rollout note.  Verification state:
+the `verify` / `verify-hosted` CI gate (`npx tsc --noEmit` → `npm test` → `npm run build`)
+runs on the PR, and a green gate is required before auto-merge.  Rollout:
+`docs/rollouts/2026-09-07-vitest-5-bump.md`.
 ## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
 
 Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.
