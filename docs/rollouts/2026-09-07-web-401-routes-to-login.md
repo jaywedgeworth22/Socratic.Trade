@@ -85,9 +85,18 @@
 - `npx vitest run test/console-session-expired.test.ts test/alpaca-account-insights.test.ts
   test/console-api-html-error.test.ts test/console-load-state.test.ts` — 35/35 passed.
 - `npm ci` completed in this lane (~2 min, 775 packages) after resolving a local-only
-  native-build gap (see Follow-ups).  Full-repo `npx tsc --noEmit` clean; full-repo
-  `npx eslint .` result and full `npx vitest run` result are reported in the PR body,
-  since both were still running when this doc was first written.
+  native-build gap (see Follow-ups).  Full-repo `npx tsc --noEmit` clean.
+- Full-repo `npx vitest run` was launched in the background in this lane.  It ran for
+  several minutes (output grew past 1,600 log lines with no assertion failures observed —
+  every "[service] ... failed" line seen was expected console output from tests that
+  deliberately simulate provider/network errors, matching this repo's
+  `disableConsoleIntercept: true` vitest config) and was then killed by the harness
+  (exit 144, a termination signal, not a test failure) before it printed a final
+  `Test Files` / `Tests` summary.  Not re-run inline — this repo's suite is large (~7,700
+  tests per recent entries in `docs/EFFORT-LOG.md`) and this task's own instructions are
+  explicit not to end a turn waiting on a background job.  The hosted `verify`/
+  `verify-hosted` CI gate on the PR is authoritative for the full-repo result; the 35/35
+  targeted run above exercises every file this change touches.
 
 ## Follow-ups
 
