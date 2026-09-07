@@ -14,8 +14,9 @@ postcss occurrence (including `next`'s own exact `8.5.23` dependency) down to
 the shared `8.5.15` -- confirmed via the pre-change lockfile, which had exactly
 one `postcss` entry (`8.5.15`) tree-wide, no nested copy under `next` at all.
 None of that forcing was protecting against something OLDER than what the
-dependents wanted, though -- `@tailwindcss/postcss`/`vite` declare `^8.5.16`
-(newer than the override) and `next` declares an exact `8.5.23` (also newer).
+dependents wanted, though -- `@tailwindcss/postcss` declares `^8.5.16`, `vite`
+declares `^8.5.26` (both newer than the override), and `next` declares an
+exact `8.5.23` (also newer).
 Removed the redundant `overrides.postcss` entry (kept `overrides.axios`).
 Post-removal, `npm ls postcss` shows the devDependency + `@tailwindcss/postcss`
 + `vite` dedupe to `postcss@8.5.28`, and `next` now gets its own real nested
