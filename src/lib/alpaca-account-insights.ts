@@ -13,6 +13,8 @@
 
 import { getConnectedAccount, listConnectedAccounts, resolveAlpacaMarketData, type ApiKeySource } from "./db";
 import { logApiHealth } from "./db-health";
+import { isAbortOrTimeoutError, isTransientNetworkError } from "./network-errors";
+import { appendErrorCause, scrubProviderErrorText } from "./provider-rate-limit";
 import type { ConnectedAccount } from "./types";
 
 const DEFAULT_PAPER_BASE = "https://paper-api.alpaca.markets";
@@ -20,6 +22,11 @@ const DEFAULT_LIVE_BASE = "https://api.alpaca.markets";
 const DEFAULT_ACTIVITIES_PAGE_SIZE = 100;
 const DEFAULT_ACTIVITIES_MAX_PAGES = 20;
 const REQUEST_TIMEOUT_MS = 8000;
+// Bounded: exactly one retry for a transient transport failure, matching the classification
+// data-providers.ts's fetchWithRetry already applies to every other enrichment provider (see
+// network-errors.ts). A real outage still survives this single retry and logs hard, so the
+// consecutive-failure streak still trips — this only stops a one-off blip from counting.
+const TRANSIENT_RETRY_BACKOFF_MS = 250;
 
 function tradingBase(environment: "paper" | "live" = "paper"): string {
   const raw = String(process.env.ALPACA_TRADING_BASE_URL ?? "").trim();
@@ -73,6 +80,24 @@ function authHeaders(apiKey: string, secretKey?: string): Record<string, string>
 
 // GET the trading API and parse JSON, logging health under `service` and degrading to
 // undefined on any credential/HTTP/network failure. Never throws.
+//
+// Classification (SOCRATIC-TRADE-28, "alpaca-account-insights connection failed", 9 events/12
+// days -- genuinely low-volume, not a money-path emergency): a bare `err.message` on a Node
+// fetch failure is frequently just "fetch failed", which loses the actual transport cause
+// (ECONNRESET, DNS blip, dead keep-alive socket) and does not match any of the soft-failure
+// text patterns db-health.ts already recognizes -- so a one-off blip was logged exactly like a
+// hard, persistent outage. Two changes, both scoped to this call site:
+//  - A transient transport error (network-errors.ts: dead socket / DNS / reset) gets ONE bounded
+//    retry before it counts against this lane's health at all -- mirrors the retry-once
+//    classification data-providers.ts's fetchWithRetry already applies to every other
+//    enrichment provider. A real outage still survives the retry and logs hard, so the
+//    consecutive-failure streak is unchanged for an actual outage.
+//  - Our own REQUEST_TIMEOUT_MS abort is a caller-budget timeout, not a broken integration --
+//    logged `soft: true` (data-providers.ts does the same for its own budget aborts) so a
+//    slow-but-alive account never mints the generic "<service> connection failed" alert.
+//  - err.cause (the real network-layer reason "fetch failed" alone omits) is appended, and the
+//    account's own secret is scrubbed, before the row is ever written -- same helpers
+//    data-providers.ts uses for every other provider's health row.
 async function getJson<T>(
   baseUrl: string,
   path: string,
@@ -82,35 +107,48 @@ async function getJson<T>(
   keySource: ApiKeySource
 ): Promise<T | undefined> {
   const url = `${baseUrl}${path}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const start = Date.now();
-  try {
-    const response = await fetch(url, {
-      headers: authHeaders(apiKey, secretKey),
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    logApiHealth({
-      service,
-      ok: response.ok,
-      latencyMs: Date.now() - start,
-      errorText: response.ok ? undefined : `HTTP ${response.status}`,
-      keySource,
-    });
-    if (!response.ok) return undefined;
-    return (await response.json()) as T;
-  } catch (err) {
-    logApiHealth({
-      service,
-      ok: false,
-      latencyMs: Date.now() - start,
-      errorText: err instanceof Error ? err.message : String(err),
-      keySource,
-    });
-    return undefined;
-  } finally {
-    clearTimeout(timeout);
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        headers: authHeaders(apiKey, secretKey),
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      logApiHealth({
+        service,
+        ok: response.ok,
+        latencyMs: Date.now() - start,
+        errorText: response.ok ? undefined : `HTTP ${response.status}`,
+        keySource,
+      });
+      if (!response.ok) return undefined;
+      return (await response.json()) as T;
+    } catch (err) {
+      if (attempt === 0 && !isAbortOrTimeoutError(err) && isTransientNetworkError(err)) {
+        await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_BACKOFF_MS));
+        continue;
+      }
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      // Both credentials are sent as auth material (authHeaders above: APCA-API-KEY-ID +
+      // APCA-API-SECRET-KEY, or a Bearer apiKey when secretKey is absent), so both must be
+      // scrubbed from a transport-error cause before it reaches api_health_log — scrubbing only
+      // secretKey left apiKey exposed verbatim whenever it appeared in the appended cause text.
+      const errorText = scrubProviderErrorText(scrubProviderErrorText(appendErrorCause(rawMessage, err), secretKey), apiKey);
+      logApiHealth({
+        service,
+        ok: false,
+        latencyMs: Date.now() - start,
+        errorText,
+        keySource,
+        ...(isAbortOrTimeoutError(err) ? { soft: true } : {})
+      });
+      return undefined;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 

@@ -462,6 +462,114 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertNotEqual(secondOp, resolvedThenRetried)
     }
 
+    // Regression test for a hard crash: the server can legitimately report the same
+    // command id twice in one snapshot (e.g. overlapping poll windows), and
+    // `Dictionary(uniqueKeysWithValues:)` traps (fatalError, not catchable) on any
+    // duplicate key. `reconcile` must fold duplicates instead of crashing.
+    func testReconcileDoesNotCrashOnDuplicateCommandIdsAndKeepsTheFreshestByUpdatedAt() {
+        var tracker = CommandAttemptTracker()
+        _ = tracker.idempotencyKey(
+            operationID: "proposal.approve:proposal-9",
+            commandType: "proposal.approve",
+            payload: ["proposalId": "proposal-9"]
+        )
+        let queued = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
+        )
+        tracker.track(queued, operationID: "proposal.approve:proposal-9")
+
+        // Two entries share id "command-9": a fresh terminal one and a stale queued
+        // one. The stale (earlier `updatedAt`) duplicate is listed AFTER the fresh
+        // one, so if this were picking by array position instead of the documented
+        // last-wins-by-`updatedAt` policy, the assertion below would fail.
+        let fresh = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"failed","error":"Proposal expired","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:32:00.000Z"}"#
+        )
+        let staleDuplicate = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
+        )
+
+        let resolutions = tracker.reconcile([fresh, staleDuplicate])
+
+        XCTAssertEqual(
+            resolutions,
+            [CommandAttemptTracker.Resolution(
+                operationID: "proposal.approve:proposal-9",
+                status: "failed",
+                error: "Proposal expired"
+            )]
+        )
+    }
+
+    // Codex P2 (equal-timestamp tie): two versions of one command id can share an
+    // `updatedAt` (server timestamps are ISO8601 at millisecond precision, so fast
+    // transitions can collide).  The fold must prefer the terminal state on that tie —
+    // otherwise a `[failed, queued]` pair with equal timestamps would keep the queued
+    // entry and the tracked operation would never resolve.  Assert the terminal winner
+    // for BOTH array orders, proving the fold is order-independent.
+    func testReconcileDuplicateEqualUpdatedAtPrefersTerminalRegardlessOfArrayOrder() {
+        let queued = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}"#
+        )
+        let failed = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"failed","error":"Proposal expired","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}"#
+        )
+        for pair in [[failed, queued], [queued, failed]] {
+            var tracker = CommandAttemptTracker()
+            _ = tracker.idempotencyKey(
+                operationID: "proposal.approve:proposal-9",
+                commandType: "proposal.approve",
+                payload: ["proposalId": "proposal-9"]
+            )
+            tracker.track(queued, operationID: "proposal.approve:proposal-9")
+            XCTAssertEqual(
+                tracker.reconcile(pair),
+                [CommandAttemptTracker.Resolution(
+                    operationID: "proposal.approve:proposal-9",
+                    status: "failed",
+                    error: "Proposal expired"
+                )],
+                "equal-updatedAt duplicates must resolve to the terminal entry in any array order"
+            )
+        }
+    }
+
+    // Codex P2 (shared duplicate handling): `proposalActionFeedback` reads the stored
+    // `recentCommands`, while `reconcile` reads the same array through the tracker.  Both
+    // now fold through `MobileCommand.foldDuplicate`, so pin the shared rule: freshest
+    // `updatedAt` wins, and an exact `updatedAt` tie prefers the terminal state over a
+    // queued one regardless of argument order.
+    func testFoldDuplicateIsSharedDeterministicRuleAcrossLookups() {
+        let oldQueued = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
+        )
+        let oldFailed = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"failed","error":"Proposal expired","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
+        )
+        let newQueued = decodeCommand(
+            #"{"id":"command-9","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:32:00.000Z"}"#
+        )
+        // Freshest `updatedAt` wins even when the stale member is terminal.
+        XCTAssertEqual(
+            MobileCommand.foldDuplicate(existing: oldFailed, incoming: newQueued).updatedAt,
+            newQueued.updatedAt
+        )
+        // Exact `updatedAt` tie: terminal wins in both argument orders.
+        XCTAssertEqual(
+            MobileCommand.foldDuplicate(existing: oldQueued, incoming: oldFailed).status,
+            "failed"
+        )
+        XCTAssertEqual(
+            MobileCommand.foldDuplicate(existing: oldFailed, incoming: oldQueued).status,
+            "failed"
+        )
+        // Full tie (same timestamp, same terminality): existing wins — deterministic.
+        XCTAssertEqual(
+            MobileCommand.foldDuplicate(existing: newQueued, incoming: oldQueued).updatedAt,
+            newQueued.updatedAt
+        )
+    }
+
     @MainActor
     func testSuccessfulDeletionHTTPAlwaysClearsLocalSessionWhenOptionalReceiptFieldsDrift() async throws {
         let configuration = URLSessionConfiguration.ephemeral
