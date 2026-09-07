@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-09-07 Autofix (codex-autofix) — next-react 16.3.4 handoff records (PR #3177)
+
+Dependabot bumped `next` 16.3.3 → 16.3.4 in the next-react group on branch `dependabot/npm_and_yarn/next-react-aafae73067` (commit `671c800e`).  No runtime code authored by this lane.  Codex review required the repo's handoff records before landing, so this entry records the dependency upgrade in the snapshot and the cross-agent ledger (`docs/EFFORT-LOG.md`).  Rollout:  `docs/rollouts/2026-09-07-codex-autofix-next-react-16-3-4.md`.
+
 ## 2026-08-31 GROK — Hung scheduler-tick watchdog (Firefighter SOCRATIC-TRADE-4)
 
 Live SHA `189f5a31` stayed up while Autopilot died:  `scheduler-tick` missed check-in (lastSeen 13:36Z), `schedulerLastTick` 13:30:42Z, lease expired 13:32:12Z, `schedulerStale` / `tradingLivenessDegraded` true, market open, `/api/health` 15s timeout.  Root cause:  `__tickInFlight` skipped every later interval while `tickInner` awaited a hung lane, and Sentry was told `ok` at tick start.  Fix:  15s watchdog unwedge (2 min budget, generation token), honest `in_progress`/`ok`/`error` Crons, `lastTick` on finish, deadlines on drain + `checkBrokerHealth`, do not await strategy runs on the tick path.  No extra-ship.  No Coolify mutate.  Rollout:  `docs/rollouts/2026-08-31-hung-scheduler-tick-watchdog.md`.
