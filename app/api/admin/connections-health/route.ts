@@ -45,6 +45,7 @@ const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null 
   { service: "earningscalls-dev-rapidapi", keySource: "env" },
   { service: "roic.ai", keySource: "env" },
   { service: "congress.trade", keySource: null },
+  { service: "congress-share", keySource: "env" },
   { service: "usage-monitor", keySource: null }
 ];
 
