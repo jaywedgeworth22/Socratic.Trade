@@ -3,6 +3,77 @@
 ## 2026-09-07 CLAUDE — iOS hard-crash fix: duplicate command ids trap `Dictionary(uniqueKeysWithValues:)` (board `3b3df6ca`, dup `d9f81e44`)
 
 `CommandAttemptTracker.reconcile(_:)` in `ios/SocraticTrade/MobileStore.swift` built its id→command lookup with `Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0) })`.  That initializer calls `fatalError` (uncatchable) on any duplicate key, and the server can legitimately report the same command id twice in one snapshot (overlapping poll windows).  Replaced with `Dictionary(_:uniquingKeysWith:)`: last-wins by `updatedAt` (ISO8601 sorts lexicographically), independent of array order, plus a `SentrySDK.capture(message:)` warning when a collision actually occurs so real upstream duplication is visible instead of silently swallowed.  New regression test `testReconcileDoesNotCrashOnDuplicateCommandIdsAndKeepsTheFreshestByUpdatedAt` in `ios/SocraticTradeTests/MobileModelsTests.swift` feeds two entries sharing an id (stale one listed last) and asserts the fresher one wins.  `grep -rn "uniqueKeysWithValues"` across the repo found exactly this one call site.  Build/test verified on the Mac Catalyst destination (this Mac has no iOS Simulator runtime installed — `xcrun simctl list runtimes` is empty — so a device/simulator run was not possible; Mac Catalyst compiles and runs the identical Swift sources).  31/31 tests passed.  Merging to `main` does NOT ship this fix to users — the iOS app ships separately via TestFlight, so a new TestFlight build/release is still required.  Rollout: `docs/rollouts/2026-09-07-ios-dup-command-id-crash.md`.
+## 2026-09-07 CLAUDE — SEC ingest error classification (P0 9f875d62 + P1 41fba175 + P1 3cbfcbef)
+
+Fixed three error-handling defects in the RAG/SEC ingest path filed 2026-08-23.  (1) P0:
+`sec-ingest-worker.ts`'s embed_queued checkpoint mislabeled every non-budget `storeDocument`
+failure (including permanent HTTP 400s) as `"Ingestion budget or capacity exceeded mid-task"`
+and blindly requeued it forever via the worker's own dead-letter cleanup; now classifies the
+real failure (`classifyEmbedFailure` in `vector-db.ts`) and dead-letters a permanent failure
+immediately instead of retry-looping it.  (2) P1: `retrieveFusedContext` (`search-fusion.ts`)
+let a query-embed failure silently degrade to lexical-only recall with zero signal; now marks
+the result degraded (`wasDenseRecallDegraded`) and emits a structured `rag.dense_recall_degraded`
+error log + metric — deliberately proceeds degraded rather than hard-failing, since this path
+backs chat/dossier answer quality broadly.  (3) P1: `refreshFilingBodiesUnlocked`
+(`sec-filings.ts`) checked `skipped` before `error`, so a failure that also returned
+`skipped: true` was silently counted as a benign skip instead of an error — refresh reported
+success while having failed.  Also cooldown-gated and gave a distinct fingerprint lane to the
+uncapped "RAG ingest text budget reached" Sentry warning (SOCRATIC-TRADE-27: 8,036 events in 2
+days burying the 5 real "embed connection failed" events), and made a genuinely unclassified
+embed/connection failure log at `error` level instead of always `warning`.  Branch
+`claude/ingest-error-classification`, worktree `~/apps/trading-claude-ingest-errors`.  `npx tsc
+--noEmit` clean, `npm run lint` 0 errors, full vitest suite green.  Rollout:
+`docs/rollouts/2026-09-07-sec-ingest-error-classification.md`.
+
+## 2026-09-07 CLAUDE — PR #3187 round-2 Codex triage (same branch, before merge)
+
+Fixed four real findings from Codex round-1 review, one batch: (1) `classifyEmbedFailure`
+classified 408 (Request Timeout) as permanent alongside 429; 408 now also transient, since the
+provider never evaluated the request. (2) `retrieveFusedContext` has zero non-test production
+callers (`test/rag-production-path-contract.test.ts` "audit R1" pins strategy/chat to
+`retrieveContextDetailed` directly), so the defect-2 degradation signal never reached any real
+production path; `reportRetrievalStatus` in `vector-db.ts` now emits it centrally on
+`lookup_failed` for every caller of the shared `retrieveContextDetailed` function. (3) that
+central emission and the existing `search-fusion.ts` wrapper both now exclude `budget_skipped`
+from the Sentry/metric emission — a deliberate budget skip is not a provider failure and must not
+flood Sentry. (4) `shouldEmitRagIngestBudgetSentry`'s cooldown persistence is now wrapped
+fail-soft so a SQLite contention throw cannot escape into `storeContextsImpl` and reject an
+otherwise-successful budget-skip. Regression tests added for all four
+(`test/pinecone-metadata-and-rag-limits.test.ts`, `test/rag-retrieval-status.test.ts`,
+`test/search-fusion.test.ts`, new `test/rag-ingest-budget-sentry-cooldown.test.ts`). `npx tsc
+--noEmit` clean (pre-existing unrelated `app/console/components/nav.tsx` errors on `origin/main`
+excepted), `npm run lint` 0 errors, `npm run build` clean, targeted vitest (128 tests across the
+7 affected files) green; whole-repo `npm test` was kicked off but did not finish in-session, so
+CI's `verify` check is the full-suite gate of record.
+
+**Blockers:** none.
+**Next action:** none — all 8 round-1 review threads resolved, auto-merge armed, this PR merges
+once CI reports green.
+
+## 2026-09-07 CLAUDE — Web 401 routes to /login; alpaca-account-insights classify + bounded retry (board `30809a0c` / `ab03d8c9`)
+
+Primary (P1, live, board `30809a0c`):  a web API 401 never routed the signed-out user to
+`/login` — `useConsoleData.tsx`'s polled `GET /api/dashboard` treated a 401 exactly like a
+network blip, so the trading desk kept rendering the last-good snapshot as though it were
+live with only a small "delayed" freshness chip.  `app/console/lib/api.ts`'s `request<T>`
+and `fetchDashboard` now redirect to `/login?callbackUrl=<location>` on ANY 401 — the same
+fail-closed destination `middleware.ts` already uses for a page-level 401 — idempotently
+and never from `/login` itself (no bounce loop).  `useConsoleData.tsx` stops its poll/
+background-refresh loop and exposes `sessionExpired`; `shell.tsx` replaces the entire
+console shell with an explicit "Your session has expired" notice the instant that flips,
+so stale trading data cannot keep rendering as live while the navigation is in flight.
+Secondary, lower priority (board `ab03d8c9`, Sentry `SOCRATIC-TRADE-28`,
+"alpaca-account-insights connection failed", 9 events/12 days — low-volume, not a
+money-path emergency):  `src/lib/alpaca-account-insights.ts`'s `getJson` call site now
+classifies a transient transport error (the shared `network-errors.ts`/
+`provider-rate-limit.ts` helpers `data-providers.ts` already uses) with one bounded retry
+before it counts as a health failure, and logs its own request-timeout abort soft — the
+shared `db-health.ts` pipeline itself is untouched (concurrently owned by
+`claude/congress-share-401-observability`).  New tests:
+`test/console-session-expired.test.ts`, additions to `test/alpaca-account-insights.test.ts`.
+Verification:  `npx tsc --noEmit` clean, targeted `npx eslint` 0 errors on changed files,
+targeted `npx vitest run` 35/35 passed; full-repo gate results in the PR body.  Rollout:
+`docs/rollouts/2026-09-07-web-401-routes-to-login.md`.
 ## 2026-09-07 CLAUDE — Remove redundant postcss override (recurring Dependabot failure)
 
 Every Dependabot Updates job touching postcss failed since 2026-08-24 (recurred

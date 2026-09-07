@@ -19,6 +19,12 @@ import {
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleApiError, fetchDashboard } from "./api";
 import { deriveConsoleLoadState } from "./console-load-state";
+import { SENTENCE_GAP } from "./format";
+
+// Shown the instant a 401 is detected, replacing whatever freshness copy would otherwise
+// describe the last-good snapshot as merely "delayed" — see ShellFrame's sessionExpired branch
+// in shell.tsx, which renders this instead of the normal dashboard chrome.
+export const SESSION_EXPIRED_MESSAGE = `Your session has expired.${SENTENCE_GAP}Redirecting you to sign in…`;
 
 const POLL_MS = 15_000;
 const EVENT_REFRESH_DEBOUNCE_MS = 200;
@@ -90,6 +96,11 @@ export interface ConsoleData {
   slowFirstLoad: boolean;
   /** Last fetch error (the previous snapshot stays rendered). */
   error: string | null;
+  /** A fetch came back 401. The browser is being sent to /login (api.ts's redirectToLogin) —
+   *  this flag exists so the shell can stop rendering the last-good snapshot as live for
+   *  whatever brief window the navigation takes, instead of leaving it looking merely "delayed".
+   *  Once true it never goes back to false: the page is leaving. */
+  sessionExpired: boolean;
   /** Health of the SSE stream used for push refreshes. */
   stream: ConsoleStreamHealth;
   /** Force a refetch now (used after every mutation). */
@@ -112,6 +123,11 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  // Mirrors sessionExpired but readable synchronously inside callbacks (state updates are async),
+  // so refresh()/backgroundRefresh() can refuse to start another fetch against a session that is
+  // already known dead — once the redirect is underway there is nothing left to poll for.
+  const sessionExpiredRef = useRef(false);
   const [slowFirstLoad, setSlowFirstLoad] = useState(false);
   // True while runLoop is actively attempting (including its own immediate deadline retries). Only
   // consumed for the no-snapshot case, where it separates "still fetching" from "stopped trying".
@@ -149,6 +165,16 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       }
       if (err instanceof DOMException && err.name === "AbortError") return "aborted";
       if (!mounted.current) return "error";
+      // A 401 is not "refresh failing — showing last good data": the session is gone, not
+      // slow. fetchDashboard already kicked off the redirect to /login (api.ts); this only
+      // needs to stop the loop from retrying against a dead session and tell the shell to stop
+      // presenting the stale snapshot as live for whatever window the navigation takes.
+      if (err instanceof ConsoleApiError && err.status === 401) {
+        sessionExpiredRef.current = true;
+        setSessionExpired(true);
+        setError(SESSION_EXPIRED_MESSAGE);
+        return "error";
+      }
       setError(err instanceof ConsoleApiError ? err.message : "Could not refresh data.");
       return "error";
     } finally {
@@ -204,6 +230,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   // useConsoleData() for). The caller wants strictly fresh data right now, so this aborts and
   // replaces whatever is in flight (background or foreground).
   const refresh = useCallback(async () => {
+    if (sessionExpiredRef.current) return;
     pendingBackgroundRefresh.current = false;
     inFlight.current?.abort();
     await runLoop(true);
@@ -218,6 +245,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   // drains that flag on its own once the in-flight attempt settles, coalescing any number of
   // triggers that arrived in the meantime into a single extra fetch.
   const backgroundRefresh = useCallback(async () => {
+    if (sessionExpiredRef.current) return;
     if (inFlight.current) {
       pendingBackgroundRefresh.current = true;
       return;
@@ -349,11 +377,12 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       retrying: fetching,
       slowFirstLoad: state === "slow",
       error,
+      sessionExpired,
       stream,
       refresh,
       online
     };
-  }, [snapshot, fetchedAt, error, fetching, slowFirstLoad, stream, refresh, online]);
+  }, [snapshot, fetchedAt, error, sessionExpired, fetching, slowFirstLoad, stream, refresh, online]);
 
   return <ConsoleDataContext.Provider value={value}>{children}</ConsoleDataContext.Provider>;
 }

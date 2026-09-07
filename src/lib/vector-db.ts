@@ -138,6 +138,37 @@ function shouldEmitPineconeWuBudgetSentry(nowMs: number = Date.now()): boolean {
   return true;
 }
 const RAG_CONNECTION_ALERT_COOLDOWN_MS = 60 * 60_000;
+const RAG_INGEST_BUDGET_ALERT_PREFIX = "vectorStore:ingestBudgetAlert";
+const RAG_INGEST_BUDGET_ALERT_COOLDOWN_MS = 30 * 60_000;
+
+/**
+ * A persistent daily-ingest-budget exhaustion must page ONCE per cooldown window, not once per
+ * document/tick. Unlike alertRagConnectionFailure (which has always had a cooldown), this Sentry
+ * warning had none: SOCRATIC-TRADE-27 fired 8,036 times over 2 days (roughly every 10-20s,
+ * matching the SEC ingest worker's 5s tick x up to 5 tasks/tick claimed against one persistent
+ * condition) and buried the handful of real "embed connection failed" events underneath it.
+ */
+function shouldEmitRagIngestBudgetSentry(userId: string, nowMs: number = Date.now()): boolean {
+  // Fail-soft (2026-09-07 P2 fix): getInternalSetting/setInternalSetting are synchronous SQLite
+  // calls and can throw (e.g. SQLITE_BUSY under contention). This helper only gates an optional
+  // Sentry warning — it must never let a persistence error escape into storeContextsImpl's
+  // control flow and turn an expected budget-skip into a rejected store operation. On any read/
+  // write failure, fail open (emit) rather than throw or silently suppress forever.
+  try {
+    const key = `${RAG_INGEST_BUDGET_ALERT_PREFIX}:${userId}`;
+    const last = getInternalSetting<string>(key);
+    const lastMs = last ? Date.parse(last) : Number.NaN;
+    if (Number.isFinite(lastMs) && nowMs - lastMs < RAG_INGEST_BUDGET_ALERT_COOLDOWN_MS) return false;
+    setInternalSetting(key, new Date(nowMs).toISOString());
+    return true;
+  } catch (err) {
+    logWarn("rag.ingest_budget_cooldown_persist_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return true;
+  }
+}
 const VECTOR_COMMIT_LEASE_MS = 15 * 60_000;
 const VECTOR_RECONCILE_CONFIRMATION_GRACE_MS = 5 * 60_000;
 const MANAGED_VECTOR_LEDGER_SETTING = "vectorStore:managedLedgerAuthority";
@@ -207,6 +238,15 @@ export interface StoreContextsResult {
   wuExhausted?: boolean;
   /** ISO instant the monthly WU breaker expires (first day of next month UTC). */
   wuExhaustedUntil?: string;
+  /**
+   * The real embed-api-failed text (e.g. an HTTP 400/429 body) from the LAST rejected batch,
+   * even on the non-throwing success path — a batch-isolated embed failure just drops that
+   * batch's records and lets the call continue, so `error` (reserved for "the whole call threw")
+   * stays unset here. Producers that need to classify permanent-vs-transient when
+   * `rejectedInvalidEmbeddings > 0` (e.g. the SEC ingest worker deciding retryable-vs-dead-letter
+   * — see classifyEmbedFailure) should read this instead of assuming a total failure.
+   */
+  embedFailureMessage?: string;
 }
 
 export interface VectorStoreStats {
@@ -1483,6 +1523,31 @@ export function ragLimitStatus(message: string): RagLimitStatus | undefined {
   return undefined;
 }
 
+export type EmbedFailureClass = "permanent" | "transient";
+
+/**
+ * Classify a raw embed/store failure message so a producer (SEC ingest worker) can decide
+ * retryable-vs-dead-letter instead of collapsing every non-complete storeDocument result into a
+ * generic "budget exceeded" bucket that then gets blindly requeued forever (2026-08-23 P0: dead
+ * letters filled with permanently-failing 400s masked as a budget problem, while Sentry
+ * separately buried the real signal — see shouldEmitRagIngestBudgetSentry above).
+ *
+ * A 429 is capacity/pacing, not a rejected request — transient, worth a bounded retry. 408
+ * (Request Timeout) is also transient: the provider never actually evaluated the request, so a
+ * retry is not "byte-identical content that can never succeed" the way a 400 is. Any OTHER 4xx
+ * means the provider rejected the request itself (bad payload, auth, size, not-found): retrying
+ * byte-identical content can never succeed, so it is permanent. Everything else (5xx, timeouts,
+ * connection resets, unrecognized shapes) defaults to transient: the existing
+ * stage_attempts/max_stage_attempts ceiling already bounds a wrong "retry" guess, while a wrong
+ * "permanent" guess would dead-letter a possibly-recoverable document on one bad read.
+ */
+export function classifyEmbedFailure(message: string): EmbedFailureClass {
+  if (/\b429\b/.test(message)) return "transient";
+  if (/\b408\b/.test(message)) return "transient";
+  if (/\b4\d\d\b/.test(message)) return "permanent";
+  return "transient";
+}
+
 function markRagSentryCaptured(error: unknown): void {
   if (!error || (typeof error !== "object" && typeof error !== "function")) return;
   try {
@@ -1600,7 +1665,14 @@ async function alertRagConnectionFailure(
     // "Pinecone connection failed" plus a usage-limit while the Standard trial is unlimited.
     if (service === "pinecone" && isPineconeWuExhaustedError(message)) return;
     if (limitStatus !== "rate_limited") {
-      await captureRagSentryMessage("warning", title, {
+      // An unclassified failure (not rate-limited/billing/quota, and not caught by the transient
+      // early-return above) is a genuine broken request (e.g. an HTTP 400) or an unrecognized
+      // connection failure — report it at error level with the real status/message attached
+      // (`reason` below) instead of warning, so it cannot hide behind a benign-looking log line.
+      // 2026-09 Sentry evidence (SOCRATIC-TRADE-27/-1X): real embed failures were logged at the
+      // same warning level as expected quota/budget conditions and were easy to miss.
+      const level: "warning" | "error" = limitStatus === undefined ? "error" : "warning";
+      await captureRagSentryMessage(level, title, {
         provider: activeProvider ?? service,
         lane: service,
         source,
@@ -2895,7 +2967,16 @@ async function embedDocumentsLaneOrSkip(
   voyageSource: ApiKeySource,
   userId: string,
   leaseGuard: VectorStoreLeaseGuard | undefined
-): Promise<{ response?: { data?: unknown }; rejected: number; reason?: ValidatedDocumentEmbeddingBatch["reason"] }> {
+): Promise<{
+  response?: { data?: unknown };
+  rejected: number;
+  reason?: ValidatedDocumentEmbeddingBatch["reason"];
+  /** The real underlying failure (e.g. "Embedding API failed (isOpenRouter=false): 400 ...") so
+   *  callers can classify permanent-vs-transient instead of only knowing "embed-api-failed"
+   *  happened. See classifyEmbedFailure — losing this message is what let a real 400 get
+   *  mislabeled as budget exhaustion and retried forever (2026-08-23 P0). */
+  errorMessage?: string;
+}> {
   try {
     const embedProvider = activeEmbeddingProvider(userId);
     const response = await withRagApiHealth(
@@ -2916,7 +2997,11 @@ async function embedDocumentsLaneOrSkip(
     assertVectorStoreLease(leaseGuard);
     recordEmbedFailure(activeEmbeddingProvider(userId), "embed-api-failed");
     logWarn("embed.failed", { provider: activeEmbeddingProvider(userId), error_type: "embed-api-failed" });
-    return { rejected: Math.max(1, inputs.length), reason: "embed-api-failed" };
+    return {
+      rejected: Math.max(1, inputs.length),
+      reason: "embed-api-failed",
+      errorMessage: error instanceof Error ? error.message : String(error)
+    };
   }
 }
 
@@ -2936,6 +3021,9 @@ async function embedPackedInputGroups(
   embeddingsByInputIndex: Array<number[] | undefined>;
   rejected: number;
   reason?: ValidatedDocumentEmbeddingBatch["reason"];
+  /** Real failure text from the LAST rejected group this call, when the rejection was an actual
+   *  embed-api-failed (never set for a plain validation/malformed-response rejection). */
+  errorMessage?: string;
 }> {
   const embeddingsByInputIndex = new Array<number[] | undefined>(inputs.length);
   if (inputs.length === 0) {
@@ -2948,6 +3036,7 @@ async function embedPackedInputGroups(
   );
   let rejected = 0;
   let reason: ValidatedDocumentEmbeddingBatch["reason"] | undefined;
+  let errorMessage: string | undefined;
   let sent = false;
   for (const group of packed) {
     if (sent) await sleep(embedBatchDelayMs(), leaseGuard?.signal);
@@ -2963,6 +3052,7 @@ async function embedPackedInputGroups(
     if (embedResult.reason === "embed-api-failed" || !embedResult.response) {
       rejected += embedResult.rejected;
       reason = embedResult.reason ?? "embed-api-failed";
+      if (embedResult.errorMessage) errorMessage = embedResult.errorMessage;
       continue;
     }
     const validated = validateDocumentEmbeddingBatch(embedResult.response.data, groupTexts.length);
@@ -2975,7 +3065,7 @@ async function embedPackedInputGroups(
       embeddingsByInputIndex[group[i]!.sourceIndex] = validated.embeddings[i]!;
     }
   }
-  return { embeddingsByInputIndex, rejected, reason };
+  return { embeddingsByInputIndex, rejected, reason, errorMessage };
 }
 
 /** Serialize the complete lifecycle of one deterministic commit inside a process. A concurrent
@@ -3305,17 +3395,28 @@ async function storeContextsImpl(
       assertActive: options?.leaseGuard ? () => assertVectorStoreLease(options.leaseGuard) : undefined,
       signal: options?.leaseGuard?.signal
     }), options?.leaseGuard);
-    await settleRagSideEffect(captureRagSentryMessage("warning", "RAG ingest text budget reached", {
-      provider: activeEmbeddingProvider(userId),
-      operation: "embed-budget",
-      source: userId === "local" ? "operator" : "user",
-      requested: requestedEmbeddingTexts,
-      allowed: budget.allowed,
-      skipped: providerTextsSkipped,
-      skippedOccurrences: budgetSkipped,
-      usedLast24h: budget.used,
-      limitPer24h: budget.limit
-    }, options?.leaseGuard), options?.leaseGuard);
+    // Cooldown-gated: a persistent daily-budget exhaustion must page ONCE per window, not once
+    // per document/tick. Without this gate, SOCRATIC-TRADE-27 fired 8,036 times in 2 days (every
+    // SEC ingest worker tick re-hit the same exhausted budget) and buried the handful of real
+    // "embed connection failed" events underneath an identical-looking flood of warnings.
+    if (shouldEmitRagIngestBudgetSentry(userId)) {
+      await settleRagSideEffect(captureRagSentryMessage("warning", "RAG ingest text budget reached", {
+        provider: activeEmbeddingProvider(userId),
+        operation: "embed-budget",
+        // Explicit lane (not just `provider`) so this budget condition fingerprints as its own
+        // Sentry issue and can never collide with the rag-embed/rag-rerank connection-failure
+        // lanes that fall back to `provider` when no lane is set — see captureRagSentryMessage's
+        // groupKey selection.
+        lane: "rag-ingest-budget",
+        source: userId === "local" ? "operator" : "user",
+        requested: requestedEmbeddingTexts,
+        allowed: budget.allowed,
+        skipped: providerTextsSkipped,
+        skippedOccurrences: budgetSkipped,
+        usedLast24h: budget.used,
+        limitPer24h: budget.limit
+      }, options?.leaseGuard), options?.leaseGuard);
+    }
     if (documentsToStore.length === 0) {
       const lastIngest = {
         at: new Date().toISOString(),
@@ -3403,6 +3504,10 @@ async function storeContextsImpl(
   let indexed = 0;
   let rejectedInvalidEmbeddings = 0;
   let malformedEmbeddingCount = 0;
+  // Real embed-api-failed text (e.g. an HTTP 400/429 body), captured so the caller (storeDocument
+  // -> SEC ingest worker) can classify the ACTUAL failure instead of only seeing
+  // rejectedInvalidEmbeddings > 0 with no reason attached — see classifyEmbedFailure.
+  let embedFailureMessage: string | undefined;
   const managedRecordBatches: Array<PineconeRecord<RecordMetadata>[]> = [];
   // Managed two-phase commits keep their embed_stage rows until the committed re-upsert AND
   // markCommitted() succeed: a mid-commit failure aborts and re-runs the whole document, and
@@ -3506,6 +3611,7 @@ async function storeContextsImpl(
           );
           rejected += packedResult.rejected;
           if (packedResult.reason) rejectionReason = packedResult.reason;
+          if (packedResult.errorMessage) embedFailureMessage = packedResult.errorMessage;
           const successfulInputs: string[] = [];
           const successfulEmbeddings: number[][] = [];
           for (let inputIndex = 0; inputIndex < missingInputs.length; inputIndex++) {
@@ -3584,6 +3690,7 @@ async function storeContextsImpl(
           );
           rejected += packedResult.rejected;
           if (packedResult.reason) rejectionReason = packedResult.reason;
+          if (packedResult.errorMessage) embedFailureMessage = packedResult.errorMessage;
           const stagedDocs: Array<{ position: number; embedding: number[] }> = [];
           for (let embedIndex = 0; embedIndex < toEmbedPositions.length; embedIndex++) {
             const embedding = packedResult.embeddingsByInputIndex[embedIndex];
@@ -3824,7 +3931,21 @@ async function storeContextsImpl(
     assertVectorStoreLease(options?.leaseGuard);
     setInternalSetting(LAST_INGEST_KEY, lastIngest);
     audit("vector_store", { ok: true, attempted: validDocuments.length, indexed, rejectedInvalidEmbeddings, ...(embedsFromStage > 0 ? { embedsFromStage } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) }, userId);
-    return { attempted: validDocuments.length, indexed, ...(embedsFromStage > 0 ? { embedsFromStage } : {}), ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) };
+    return {
+      attempted: validDocuments.length,
+      indexed,
+      ...(embedsFromStage > 0 ? { embedsFromStage } : {}),
+      ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}),
+      ...(budgetSkipped > 0 ? { budgetSkipped } : {}),
+      ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}),
+      // Surfaces the real embed-api failure (HTTP status/body) even though this call did not
+      // throw — a batch-isolated embed failure just drops that batch's records and continues.
+      // Deliberately NOT `error` (reserved below for "the whole call threw"; existing callers
+      // treat a present `error` as a total failure). Without this, storeDocument's caller only
+      // saw rejectedInvalidEmbeddings > 0 with no reason, and fell back to a generic "budget
+      // exceeded" guess (2026-08-23 P0) — see classifyEmbedFailure.
+      ...(embedFailureMessage ? { embedFailureMessage } : {})
+    };
   } catch (err) {
     // Lease loss is a concurrency boundary, not a provider failure. Propagate it without writing
     // success/failure ledgers after ownership has moved to a successor. Voyage receives the abort
@@ -6591,7 +6712,26 @@ export interface RetrieveOptions {
 }
 
 /** Invoke `options?.onStatus` best-effort; a throwing callback must never affect retrieval. */
-function reportRetrievalStatus(options: RetrieveOptions | undefined, status: RetrievalStatus): void {
+function reportRetrievalStatus(
+  options: RetrieveOptions | undefined,
+  status: RetrievalStatus,
+  ctx?: { userId: string; symbol: string }
+): void {
+  // P1 fix (2026-09-07): `retrieveContextDetailed` is the shared retrieval path every production
+  // caller actually uses (chat orchestrator, strategy, proposer-dossier, experience-memory,
+  // lookahead-audit — see test/rag-production-path-contract.test.ts "audit R1", which pins
+  // strategy/chat to this function and explicitly forbids retrieveFusedContext in those paths).
+  // The search-fusion.ts wrapper's own dense-recall-degraded signal only fires for callers of
+  // retrieveFusedContext, which today has zero production callers — so a real query-embed
+  // failure on every actual production path went unreported. Emit here instead, unconditionally,
+  // so it fires regardless of whether the caller supplied its own onStatus. budget_skipped is
+  // deliberately excluded (a caller passing ctx should only do so for a genuine lookup failure;
+  // see the call sites below) — a deliberate budget skip is not a provider/lookup failure and
+  // must not flood Sentry or inflate the embed-failure metric.
+  if (status === "lookup_failed" && ctx) {
+    recordEmbedFailure(activeEmbeddingProvider(ctx.userId), "dense-recall-lookup-failed");
+    logError("rag.dense_recall_degraded", { symbol: ctx.symbol, userId: ctx.userId, reason: "lookup_failed" });
+  }
   if (!options?.onStatus) return;
   try {
     options.onStatus(status);
@@ -7015,7 +7155,7 @@ export async function retrieveContextDetailed(
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
-    reportRetrievalStatus(options, "lookup_failed");
+    reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
     return finish([]);
   }
   if (readBackend === "pinecone" && !pc) {
@@ -7024,7 +7164,7 @@ export async function retrieveContextDetailed(
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
-    reportRetrievalStatus(options, "lookup_failed");
+    reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
     return finish([]);
   }
   // R16 (2026-07-01 RAG backlog): default-off, very-high-ceiling per-run budget check. When
@@ -7121,7 +7261,7 @@ export async function retrieveContextDetailed(
 
     if (readBackend === "pinecone") {
       if (!pc || !(await indexExists(pc, pineconeSource, userId))) {
-        reportRetrievalStatus(options, "lookup_failed");
+        reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
         return finish([]);
       }
       defaultIndex = vectorDataIndex(pc, "default");
@@ -7511,7 +7651,7 @@ export async function retrieveContextDetailed(
         // nothing — fall back to the plain single-query path rather than returning `[]`.
         const single = await embedAndMatchOneQuery(query);
         if (single == null) {
-          reportRetrievalStatus(options, "lookup_failed");
+          reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
           return finish([]);
         }
         matches = single;
@@ -7595,7 +7735,7 @@ export async function retrieveContextDetailed(
     } else {
       const single = await embedAndMatchOneQuery(query);
       if (single == null) {
-        reportRetrievalStatus(options, "lookup_failed");
+        reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
         return finish([]);
       }
       matches = single;
@@ -7989,7 +8129,7 @@ export async function retrieveContextDetailed(
         reason: err instanceof Error ? err.message : String(err)
       });
     }
-    reportRetrievalStatus(options, "lookup_failed");
+    reportRetrievalStatus(options, "lookup_failed", { userId, symbol });
     return finish([]);
   }
 }
