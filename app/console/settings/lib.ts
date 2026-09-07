@@ -4,7 +4,7 @@
  *  is reused so every settings error surfaces through the same toast pattern.
  *  Every function talks to REAL existing endpoints — nothing here simulates. */
 
-import { ConsoleApiError } from "../lib/api";
+import { ConsoleApiError, redirectToLogin } from "../lib/api";
 import { beginConsoleMutation, endConsoleMutation, isConsoleMutationMethod } from "../lib/mutation-busy";
 
 async function parseBody(res: Response): Promise<unknown> {
@@ -42,6 +42,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   const payload = await parseBody(res);
   if (!res.ok) {
+    // Same fail-closed destination as lib/api.ts's own `request<T>` — this file is a separate
+    // client (see header) but a dead session is a dead session regardless of which wrapper
+    // noticed it first.
+    if (res.status === 401) redirectToLogin();
     throw new ConsoleApiError(messageFrom(payload, `Request failed (${res.status}).`), res.status, payload);
   }
   return payload as T;
