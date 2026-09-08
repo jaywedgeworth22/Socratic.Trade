@@ -56,17 +56,46 @@
 // R2_COLD_SNAPSHOT_ENABLED=0/off/false/no is the explicit kill switch.
 // R2_COLD_SNAPSHOT_SKIP_PRUNE=1/true/on/yes is the opt-in freshen gate (default off).
 //
-// Failure: audited, and surfaced once via the existing storage_warning notification path
-// (db-health.ts alertStorageWarning — 12h per-warning-type cooldown), then retried with
-// due-job backoff. Never throws into the scheduler tick.
+// Snapshot mechanism (2026-09-08, CLAUDE): `VACUUM INTO` in a short-lived CHILD PROCESS,
+// NOT better-sqlite3 `backup()`.  Root cause of the 9-day archive stall: SQLite's online
+// backup API restarts from page 1 whenever the source DB is modified through a DIFFERENT
+// connection (sqlite3_backup_step -> SQLITE_BUSY/restart).  app.db is written continuously
+// by the live trading app AND checkpointed by litestream, so on a ~10.7 GB DB the copy can
+// never outrun the writers.  Production evidence 2026-09-08: the temp backup file sat at
+// exactly 5666406400 bytes across three samples 8 minutes apart while its mtime advanced
+// every few seconds, and `week-2026-09-06` reached attempts=27 with `last_error` NULL and
+// ZERO `r2_cold_snapshot.error`/`.success` audit rows — it hung, it never failed.  Locally
+// reproduced on better-sqlite3 13.0.3 (the production version): 2698 restarts in 15s with
+// remainingPages pinned at 10601/10701.  `VACUUM INTO` runs inside ONE read transaction, so
+// concurrent writers cannot restart it; it also emits a COMPACTED copy (smaller upload).  It
+// is synchronous and would block the event loop for minutes, so it runs in a child process
+// spawned with a MINIMAL env (no secrets) and is killed at the deadline below.
+//
+// Deadline: every snapshot attempt is bounded by R2_COLD_SNAPSHOT_DEADLINE_MIN (default 45,
+// well under the 2h job lease) so a stuck snapshot FAILS LOUDLY instead of hanging until the
+// lease expires and the next drain silently restarts it.  Bounding the attempt below the
+// lease also stops overlapping attempts from piling up inside one process lifetime (each
+// attempt's start-of-run sweep unlinks the previous attempt's temp file while that attempt
+// still holds the fd — invisible multi-GB disk usage).
+//
+// Failure: audited, surfaced once via the existing storage_warning notification path
+// (db-health.ts alertStorageWarning — 12h per-warning-type cooldown) AND as a Sentry
+// structured log, then retried with due-job backoff. Never throws into the scheduler tick.
+//
+// Freshness watchdog: `reportR2WeeklyFreshness()` (called from the scheduler lane) watches
+// the SAME `checks.storage.r2Weekly` state the public health endpoint publishes and emits
+// ONE Sentry event per state TRANSITION (ok <-> archive_stale/archive_not_run), persisted in
+// an internal setting.  Before this, nothing watched that field: the archive went stale on
+// 2026-09-06 and was still silent 9 days later.
 
 // Bare "fs"/"os"/"path" (not the "node:" scheme) so Next.js webpack can externalize this
 // module for server bundles — same trap as r2-usage.ts / egress-guard.
+import { spawn } from "child_process";
 import crypto from "crypto";
 import { createReadStream, existsSync, readdirSync, statSync, unlinkSync } from "fs";
 import { dirname, join } from "path";
 import { createGzip } from "zlib";
-import { audit, databasePath, getDb } from "./db";
+import { audit, databasePath } from "./db";
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import {
   claimDueJobs,
@@ -76,6 +105,7 @@ import {
   getDueJobStats,
 } from "./db-jobs";
 import { getR2UsageSnapshots, R2_FREE_TIER } from "./r2-usage";
+import { logError, logWarn } from "./sentry-metrics";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -95,7 +125,13 @@ export const R2_COLD_SNAPSHOT_MIN_PART_BYTES = 5 * 1024 * 1024;
  *  of the free tier (read from the r2-usage monitor's persisted snapshot). */
 export const R2_COLD_SNAPSHOT_BUDGET_GUARD_PCT = 50;
 
+/** Hard bound on ONE snapshot attempt (the step that hung for 9 days).  Must stay well
+ *  under the 2h due-job lease so an attempt can never outlive its own claim. */
+export const R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS = 45 * 60_000;
+
 const DISABLED_AUDIT_KEY = "r2coldsnap:disabledAuditedReason";
+/** Last `checks.storage.r2Weekly` state reported to Sentry — transitions only, not ticks. */
+export const R2_COLD_SNAPSHOT_HEALTH_STATE_KEY = "r2coldsnap:lastHealthState";
 /** Persisted after every successful weekly upload — health reads this, never R2. */
 export const R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY = "r2coldsnap:lastSuccess";
 /** Last failure (observability only; does not alone fail health). */
@@ -183,6 +219,8 @@ export interface R2ColdSnapshotConfig {
    * `cold-snapshots/app-2026-08-30.db`.
    */
   skipPrune: boolean;
+  /** Hard bound on the snapshot step, from `R2_COLD_SNAPSHOT_DEADLINE_MIN`. */
+  snapshotDeadlineMs: number;
 }
 
 /**
@@ -218,6 +256,12 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
       ? Math.floor(partMbRaw * 1024 * 1024)
       : R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES;
 
+  const deadlineMinRaw = Number(process.env.R2_COLD_SNAPSHOT_DEADLINE_MIN ?? "");
+  const snapshotDeadlineMs =
+    Number.isFinite(deadlineMinRaw) && deadlineMinRaw > 0
+      ? Math.floor(deadlineMinRaw * 60_000)
+      : R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS;
+
   const killRaw = process.env.R2_COLD_SNAPSHOT_ENABLED?.trim().toLowerCase();
   const killed = killRaw === "0" || killRaw === "off" || killRaw === "false" || killRaw === "no";
   const hasCreds = Boolean(bucket && endpoint && accessKeyId && secretAccessKey);
@@ -234,6 +278,7 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
     retain,
     partSizeBytes,
     skipPrune,
+    snapshotDeadlineMs,
   };
 }
 
@@ -293,8 +338,14 @@ const hmac = (key: crypto.BinaryLike, s: string): Buffer => crypto.createHmac("s
 
 export interface R2ColdSnapshotDeps {
   fetchImpl?: typeof fetch;
-  /** Test seam for better-sqlite3's online-backup API. Default: getDb().backup(dest). */
+  /**
+   * Test seam for the consistent-snapshot step.  Default: `VACUUM INTO` in a child
+   * process (see {@link runVacuumIntoSnapshot}) — NOT better-sqlite3 `backup()`, which
+   * cannot converge against a concurrently written DB.
+   */
   backupImpl?: (destPath: string) => Promise<unknown>;
+  /** Test seam for the per-attempt snapshot deadline (production uses config). */
+  snapshotDeadlineMs?: number;
   /** Test seam for the storage_warning advisory (db-health.alertStorageWarning). */
   alertImpl?: (warningType: string, message: string) => Promise<void>;
   /** Test seam for small multipart parts (production uses config partSizeBytes). */
@@ -502,6 +553,116 @@ async function deleteObject(cfg: R2ColdSnapshotConfig, key: string, deps: R2Cold
   if (!res.ok && res.status !== 404) throw new Error(`DeleteObject ${key} HTTP ${res.status}`);
 }
 
+// ── Consistent snapshot: VACUUM INTO in a child process ──────────────────────
+
+/**
+ * Child-process source for the snapshot step.  Runs standalone under `node -e`, so it
+ * must not close over anything here and must resolve better-sqlite3 itself.
+ *
+ * Why a child process: `VACUUM INTO` is a single synchronous statement that takes
+ * minutes on a ~10 GB DB.  In-process it would block the event loop, stall
+ * `GET /api/health`, and risk a Coolify healthcheck restart mid-snapshot.  A child also
+ * gives a real kill switch for the deadline — an in-process hang cannot be cancelled,
+ * which is exactly how this lane stayed stuck for 9 days.
+ *
+ * The source connection is READ-ONLY, so the child can never mutate live trading state.
+ * It is spawned with a MINIMAL env: no Infisical secrets are handed to it.
+ */
+const VACUUM_INTO_CHILD_SOURCE = `
+const { createRequire } = require("module");
+const src = process.env.R2SNAP_SRC;
+const dest = process.env.R2SNAP_DEST;
+const base = process.env.R2SNAP_REQUIRE_BASE;
+if (!src || !dest) { console.error("R2SNAP_SRC/R2SNAP_DEST required"); process.exit(2); }
+let Database;
+try { Database = createRequire(base)("better-sqlite3"); }
+catch { Database = require("better-sqlite3"); }
+const db = new Database(src, { readonly: true, fileMustExist: true });
+try {
+  db.pragma("busy_timeout = 60000");
+  // VACUUM INTO runs inside ONE read transaction: concurrent writers cannot restart it
+  // (unlike sqlite3_backup_step), and the output is a compacted, consistent copy.
+  db.prepare("VACUUM INTO ?").run(dest);
+} finally {
+  try { db.close(); } catch {}
+}
+`;
+
+/**
+ * Take a consistent, compacted copy of the live DB at `destPath` using `VACUUM INTO`
+ * inside a child process, killed at `deadlineMs`.  Rejects (never hangs) on child
+ * failure, non-zero exit, or deadline.
+ */
+export async function runVacuumIntoSnapshot(
+  srcPath: string,
+  destPath: string,
+  deadlineMs: number = R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timedOut = false;
+    const child = spawn(process.execPath, ["-e", VACUUM_INTO_CHILD_SOURCE], {
+      // Minimal env on purpose — the snapshot child needs no application secrets.
+      env: {
+        NODE_ENV: process.env.NODE_ENV,
+        PATH: process.env.PATH ?? "",
+        R2SNAP_SRC: srcPath,
+        R2SNAP_DEST: destPath,
+        R2SNAP_REQUIRE_BASE: `${process.cwd()}/`,
+      },
+      stdio: ["ignore", "ignore", "pipe"] as const,
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      if (stderr.length < 2000) stderr += String(chunk);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    }, deadlineMs);
+    const finish = (err?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err); else resolve();
+    };
+    child.on("error", (err: unknown) => finish(err instanceof Error ? err : new Error(String(err))));
+    child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      if (timedOut) {
+        finish(new Error(`snapshot_deadline_exceeded after ${Math.round(deadlineMs / 1000)}s (VACUUM INTO killed)`));
+        return;
+      }
+      if (code === 0) { finish(); return; }
+      finish(new Error(`VACUUM INTO child exited code=${code} signal=${signal ?? "none"}: ${stderr.trim().slice(0, 300)}`));
+    });
+  });
+}
+
+/**
+ * Bound ANY snapshot implementation by the deadline.  The child-process default is
+ * genuinely cancelled; a `deps.backupImpl` seam that ignores cancellation at least stops
+ * blocking the run, so the attempt fails loudly inside its own lease instead of hanging.
+ */
+export async function withSnapshotDeadline<T>(
+  work: () => Promise<T>,
+  deadlineMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`snapshot_deadline_exceeded after ${Math.round(deadlineMs / 1000)}s`)),
+          deadlineMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // ── The snapshot itself ──────────────────────────────────────────────────────
 
 export interface R2ColdSnapshotRunResult {
@@ -602,9 +763,17 @@ export async function performR2ColdSnapshot(
   try {
     audit("r2_cold_snapshot.start", { key, tempPath, partSizeBytes });
 
-    // Consistent online backup — NEVER a raw copy of the live WAL-mode file.
-    const backupImpl = deps.backupImpl ?? ((dest: string) => getDb().backup(dest));
-    await backupImpl(tempPath);
+    // Consistent snapshot — NEVER a raw copy of the live WAL-mode file, and NEVER
+    // better-sqlite3 `backup()`: the online-backup API restarts from page 1 on every
+    // write from another connection, so on this ~10.7 GB continuously-written DB it
+    // never converges (see the header note; production hung 27 attempts this way).
+    // `VACUUM INTO` in a child process takes ONE read snapshot and cannot be restarted.
+    const snapshotDeadlineMs = deps.snapshotDeadlineMs ?? cfg.snapshotDeadlineMs;
+    const snapshotStartedAt = Date.now();
+    const backupImpl =
+      deps.backupImpl ?? ((dest: string) => runVacuumIntoSnapshot(databasePath(), dest, snapshotDeadlineMs));
+    await withSnapshotDeadline(() => Promise.resolve(backupImpl(tempPath)), snapshotDeadlineMs);
+    const snapshotMs = Date.now() - snapshotStartedAt;
     const rawBytes = statSync(tempPath).size;
 
     uploadId = await createMultipartUpload(cfg, key, deps);
@@ -660,6 +829,7 @@ export async function performR2ColdSnapshot(
       key,
       bytes: compressedBytes,
       rawBytes,
+      snapshotMs,
       parts: completedParts.length,
       pruned,
       wouldPrune,
@@ -695,6 +865,9 @@ export async function performR2ColdSnapshot(
     } catch {
       /* never throw */
     }
+    // Sentry: a failed run is visible immediately, not only once the 8-day staleness
+    // window trips.  Bounded by the due-job backoff (max 5 attempts/week), so cheap.
+    logError("r2 cold snapshot run failed", { key, reason: message.slice(0, 300) });
     try {
       await alert(
         "r2_cold_snapshot_failed",
@@ -803,4 +976,99 @@ export async function drainR2ColdSnapshotJobs(
     stats: getDueJobStats(R2_COLD_SNAPSHOT_JOB_TYPE),
   });
   return { drained: jobs.length, lastRun };
+}
+
+// ── Freshness watchdog (watches what /api/health publishes) ──────────────────
+
+export type R2WeeklyHealthState = "ok" | "archive_stale" | "archive_not_run";
+
+/** Collapse the public health shape to the single state we alert transitions on. Pure. */
+export function r2WeeklyHealthState(status: R2WeeklyHealthStatus): R2WeeklyHealthState {
+  if (status.ok) return "ok";
+  return status.reason === "archive_stale" ? "archive_stale" : "archive_not_run";
+}
+
+export interface R2WeeklyFreshnessReport {
+  state: R2WeeklyHealthState;
+  previous: R2WeeklyHealthState | null;
+  changed: boolean;
+}
+
+/**
+ * Watch `checks.storage.r2Weekly` — the field the public health endpoint already
+ * publishes and which nothing was watching — and emit ONE Sentry event per state
+ * TRANSITION plus the usual storage_warning advisory on degrade.  Cheap by construction:
+ * a single internal-setting read on a tick where nothing changed.  Never throws.
+ */
+export async function reportR2WeeklyFreshness(
+  now: number = Date.now(),
+  deps: Pick<R2ColdSnapshotDeps, "alertImpl"> = {},
+): Promise<R2WeeklyFreshnessReport> {
+  try {
+    const status = getR2WeeklyHealthStatus(now);
+    const state = r2WeeklyHealthState(status);
+    const previous = getInternalSetting<R2WeeklyHealthState>(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY) ?? null;
+    if (previous === state) return { state, previous, changed: false };
+
+    // Emit FIRST, persist LAST.  The stored state is what suppresses the next tick, so
+    // writing it before the event has been emitted would lose the transition forever if
+    // anything in between threw: the next tick would see the new state as `previous` and
+    // conclude nothing changed.  Persisting last means a mid-flight failure at worst
+    // repeats the event next tick, which for an archive-staleness watchdog is strictly
+    // the right way to be wrong.  logWarn/logError are fire-and-forget and cannot throw;
+    // the audit row and the advisory are each guarded so neither can skip the write.
+    const ageDays = status.ageSeconds === null ? null : Number((status.ageSeconds / 86400).toFixed(2));
+    if (state === "ok") {
+      logWarn("r2 cold snapshot archive recovered", {
+        previous,
+        ageSeconds: status.ageSeconds,
+        key: status.key,
+      });
+    } else {
+      logError("r2 cold snapshot archive stale", {
+        state,
+        previous,
+        ageSeconds: status.ageSeconds,
+        ageDays,
+        maxAgeSeconds: R2_ARCHIVE_MAX_AGE_SECONDS,
+        key: status.key,
+      });
+    }
+
+    try {
+      audit("r2_cold_snapshot.health_change", {
+        from: previous,
+        to: state,
+        ageSeconds: status.ageSeconds,
+        key: status.key,
+        maxAgeSeconds: R2_ARCHIVE_MAX_AGE_SECONDS,
+      });
+    } catch {
+      /* observability only — must not cost us the state write below */
+    }
+
+    if (state !== "ok") {
+      const alert = deps.alertImpl ?? defaultAlert;
+      try {
+        await alert(
+          "r2_cold_snapshot_stale",
+          state === "archive_not_run"
+            ? `Weekly R2 cold snapshot has never completed — the independent archive tier is EMPTY. ` +
+                `Litestream/B2 continuous replication is unaffected.`
+            : `Weekly R2 cold snapshot is ${ageDays ?? "?"} days old (limit ` +
+                `${R2_ARCHIVE_MAX_AGE_SECONDS / 86400} days); newest archive object is ${status.key}. ` +
+                `The independent archive tier is not advancing. Litestream/B2 continuous ` +
+                `replication is unaffected.`,
+        );
+      } catch {
+        /* advisory only */
+      }
+    }
+
+    setInternalSetting(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY, state);
+    return { state, previous, changed: true };
+  } catch {
+    // Watchdogs must never throw into the scheduler tick.
+    return { state: "archive_not_run", previous: null, changed: false };
+  }
 }
