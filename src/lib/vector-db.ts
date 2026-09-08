@@ -8,7 +8,7 @@ import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } fro
 import { isProviderDispatchLeaseLostError } from "./db-provider-dispatch";
 import { logApiHealth } from "./db-health";
 import { isLocalDbFaultError, localDbFaultReason, noteLocalDbFault } from "./local-db-fault";
-import { isTransientNetworkError } from "./network-errors";
+import { isTransientNetworkError, isTransientNetworkErrorText } from "./network-errors";
 import {
   auditPineconeWuGateSkip,
   isPineconeWuExhaustedError,
@@ -1672,7 +1672,17 @@ async function alertRagConnectionFailure(
       // (`reason` below) instead of warning, so it cannot hide behind a benign-looking log line.
       // 2026-09 Sentry evidence (SOCRATIC-TRADE-27/-1X): real embed failures were logged at the
       // same warning level as expected quota/budget conditions and were easy to miss.
-      const level: "warning" | "error" = limitStatus === undefined ? "error" : "warning";
+      // ...with one exception, the same one db-health.ts's transport-blip class draws: a bare
+      // socket/DNS failure (`ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN`, `socket hang up`) is NOT a
+      // "genuine broken request" — it is the transport dying, and this lane's own retries own it.
+      // Those shapes fell through to `error` only because `ragLimitStatus`'s transient arm lists
+      // `fetch failed` / `UND_ERR_SOCKET` and nothing else, which is why the byte-identical failure
+      // paged under one code and was silent under another (SOCRATIC-TRADE-1X, -22).  Level only:
+      // the health row, the consecutive-failure streak, and the provider_degraded notification all
+      // still fire, so a sustained RAG outage is still reported — it just is not `error` on the
+      // first dead socket.
+      const level: "warning" | "error" =
+        limitStatus === undefined && !isTransientNetworkErrorText(message) ? "error" : "warning";
       await captureRagSentryMessage(level, title, {
         provider: activeProvider ?? service,
         lane: service,

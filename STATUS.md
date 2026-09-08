@@ -212,6 +212,36 @@ Rollout: `docs/rollouts/2026-09-09-safety-lane-stall-attribution.md`.
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 
 Merged as PR #3196 (`3aa643cacd25688eb6c948f686e4410b834617ff`).  Final hosted run `34338996582` on `9968619e4` passed `npm run lint`, `npx tsc --noEmit`, `npm test` (719 suites / 7,928 tests passed; 1 suite / 51 tests skipped), and `npm run build`; security checks passed and all 14 review threads were resolved.  Desktop/mobile header fixture QA passed.  Production verified at `3aa643cac`: containment check passed with `ok=true`, `db=ok`, and scheduler age 19 seconds.  Local dependencies remain incomplete after registry ETIMEDOUT, so no local full-gate claim.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
+## 2026-09-08 CLAUDE — Transport blips stop paging as provider outages
+
+Twelve Sentry issues titled `"<service> connection failed"` (`SOCRATIC-TRADE-1X`, `-22`, `-28`,
+`-1W`, `-1Z`, `-20`, `-2F`, `-2A`, `-25`, `-24`, `-23`, `-1S`) ran 2026-08-13 → 2026-09-08 across a
+dozen unrelated integrations, and two paged PagerDuty (#108 `roic`, #112 `congress-share`).  The
+common thread was the health path, not any vendor: Node's `fetch()` collapses a dead keep-alive
+socket, a DNS hiccup, or an `ECONNRESET` into a bare `"fetch failed"` that matched none of
+`db-health.ts`'s soft-failure shapes, so a burst lane firing five requests seconds apart during one
+upstream hiccup tripped `HEALTH_REASON_CONSECUTIVE_FAILURES` and captured at Sentry `error`.
+
+`db-health.ts` now carries a third failure class between "expected limit" and "hard".  A transport
+blip is stamped `[transient-network] ` and still counts toward the hard streak — a genuinely
+unreachable provider must still page — but a streak made entirely of blips captures at `warning`
+and withholds the operator push until the same unbroken streak has been failing for
+`HEALTH_TRANSIENT_ESCALATION_MS` (10 min, override `HEALTH_TRANSIENT_ESCALATION_MINUTES`).  Every
+capture is tagged `health.failure_class` (`transient-network` | `hard`).  `fetchWithRetry` now
+replays a transport error only for a read-only method (one existing query-shaped POST opts back in)
+and jitters both its transport and 429 backoffs.
+
+Also widened `ragLimitStatus`'s transient arm in `vector-db.ts` to the same shared classifier — the RAG lanes have their own alerter and that arm listed only `fetch failed` / `UND_ERR_SOCKET`, so an `ECONNRESET`/`ENOTFOUND`/`EAI_AGAIN`/`socket hang up` fell through to Sentry `error` as an unclassified broken request (`SOCRATIC-TRADE-1X`, 56 events, and `-22`).
+
+API-health path only.  No order-placement, brokerage, or money-path code touched; `tradier.ts`,
+`congress-share`'s POST import, and the deliberate `retries: 0` call sites are all unchanged.
+
+Blockers: none.  Next: after deploy, confirm the twelve issues keep receiving `warning` events and
+stop producing `error`-level ones.  `SOCRATIC-TRADE-1W` (`congress.trade`) is expected to stay
+noisy — its remaining events are HTTP 5xx, which stay hard by design.
+
+Rollout: `docs/rollouts/2026-09-08-transient-network-health-classification.md`.
+
 
 ## 2026-09-08 CLAUDE — R2 weekly cold snapshot stalled 9 days, silently
 

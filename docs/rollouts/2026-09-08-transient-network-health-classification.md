@@ -1,0 +1,113 @@
+# 2026-09-08 — Transport blips stop paging as provider outages
+
+## 1. Context & Objective
+
+A dozen Sentry issues in `socratic-trade`, all titled `"<service> connection failed"`, ran from
+2026-08-13 to 2026-09-08 across a dozen unrelated integrations, and two of them paged PagerDuty
+(#108 `roic`, #112 `congress-share`).  The common thread was never a vendor: Node's `fetch()`
+collapses a dead keep-alive socket, a DNS hiccup, or an `ECONNRESET` into a bare `"fetch failed"`
+whose real reason hides on `err.cause`, and that bare string matched none of `db-health.ts`'s
+soft-failure shapes.  A burst lane that issued five requests seconds apart during one upstream
+hiccup therefore produced five consecutive HARD failures, tripped
+`HEALTH_REASON_CONSECUTIVE_FAILURES`, and captured at Sentry `error` — which is what pages.
+
+Objective: stop a socket that died and came back from waking anyone, without making a real
+network outage silent.  This is the API-health path only.  No order-placement, brokerage, or
+money-path code is touched.
+
+## 2. Changes Made
+
+A third failure class between "expected limit" and "hard", plus retry shaping at the one shared
+fetch boundary that already owns provider retries.
+
+- `src/lib/db-health.ts`
+  - `HEALTH_TRANSIENT_FAILURE_PREFIX` (`[transient-network] `) and `isTransientHealthFailure()`
+    — narrow Node/undici transport shapes only (`fetch failed`, `UND_ERR_SOCKET`,
+    `other side closed`, `socket hang up`, `ECONNRESET`, `ECONNREFUSED`, `ECONNABORTED`,
+    `ETIMEDOUT`, `ENOTFOUND`, `EAI_AGAIN`, `EPIPE`, `EHOSTUNREACH`, `ENETUNREACH`).  An expected
+    limit or a caller abort is never reclassified: `isSoftHealthFailure` wins.
+  - `logApiHealth` stamps the prefix on a transport failure.  It stamps, it does not soften — the
+    row still counts toward the hard consecutive-failure streak.
+  - `getLaneHealth` now also returns `transientStreak` (every row of the hard streak is a blip)
+    and `streakStartedTs` (the oldest row of the streak, i.e. how long the lane has been failing).
+  - `HEALTH_TRANSIENT_ESCALATION_MS` (10 min, override
+    `HEALTH_TRANSIENT_ESCALATION_MINUTES`).  A hard streak made entirely of blips that has not yet
+    lasted that long captures at Sentry `warning`, skips the operator push, and arms a cooldown of
+    only the escalation window instead of the standard 6 h.
+  - `alertConnectionFailure` gained `transientBlip`, and every capture now carries a
+    `health.failure_class` tag (`transient-network` | `hard`).
+- `src/lib/network-errors.ts` — the transport text shapes now live here as one exported classifier
+  (`isTransientNetworkErrorText`), which `isTransientNetworkError` also uses, plus
+  `isIdempotentRequest()` (GET/HEAD/OPTIONS; `fetch()` defaults to GET so a method-less `init` is
+  replayable) and `jitteredBackoffMs()` (`TRANSIENT_RETRY_JITTER_RATIO` = 0.3).
+- `src/lib/vector-db.ts` — the RAG lanes have their own alerter and are excluded from the generic
+  path above.  `ragLimitStatus`'s transient arm lists only `fetch failed` / `UND_ERR_SOCKET`, so the
+  byte-identical failure arriving as `ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN` or `socket hang up` fell
+  through to `undefined` and was captured at Sentry `error` as an unclassified broken request —
+  `SOCRATIC-TRADE-1X` (56 events) and `-22`.  `alertRagConnectionFailure` now captures those shapes
+  at `warning`.  **Level only**: the health row, the consecutive-failure streak, and the
+  `provider_degraded` notification are all unchanged.
+- `src/lib/data-providers.ts` — `fetchWithRetry` replays a transport error only for a replayable
+  method or an explicit `retryNonIdempotent`, and both its transport and 429 backoffs are now
+  jittered.  The one existing POST caller (the news `/search` query) opts in, so its behavior is
+  unchanged.
+- `src/lib/alpaca-account-insights.ts` — its own bounded retry uses the shared jittered backoff.
+- `test/health-transient-network-classification.test.ts` — new.
+
+## 3. Decisions & Trade-offs
+
+- **A blip is not "soft".**  Folding transport errors into `HEALTH_SOFT_FAILURE_PREFIX` was the
+  obvious one-line fix and it is wrong: soft rows are excluded from the hard streak entirely, so a
+  provider that became genuinely unreachable would never page again.  A blip is a *candidate*
+  outage — it counts, it just does not get to page on its own within the window.
+- **Escalate on elapsed time, not on a bigger count.**  The two prod shapes differ by cadence, not
+  by volume.  A burst lane produces its whole five-failure streak inside one hiccup; a
+  low-frequency hourly probe spreads five consecutive failures over hours and so clears a 10-minute
+  window on its very first alert — a real outage there still pages exactly as it does today.  A
+  larger count threshold would have silenced the low-frequency lanes instead.
+- **Shorten the cooldown for a non-escalated blip.**  Arming the standard 6 h cooldown on a
+  warning-level blip would silence a real outage that started two minutes later.  The blip arms
+  only the escalation window, so the next failure in an unbroken streak escalates on schedule.
+- **The idempotency gate is a behavior change, deliberately narrow.**  `fetchWithRetry` previously
+  replayed a transport error for any method.  Only one caller sends a POST through it (a read-only
+  news search), and it is opted back in explicitly, so nothing regresses — but the default is now
+  safe, because a transport error is indistinguishable from "the far side processed it and the
+  reply was lost".
+- **The RAG lane gets a level change, not a suppression.**  The tempting one-liner was to widen
+  `ragLimitStatus`'s transient arm instead.  That was rejected: a `"transient"` verdict there makes
+  `alertRagConnectionFailure` return early AND soft-stamps the health row, so a sustained RAG outage
+  arriving as `ECONNRESET` would have gone completely silent.  Dropping only the Sentry level keeps
+  every existing signal and removes only the page.
+- **Not changed:** `retries: 0` at the `massive` and `roic` recommendation call sites (deliberate,
+  left alone), `congress-share`'s POST import (non-idempotent — must not be replayed), and
+  `tradier.ts` (brokerage; out of scope by instruction).
+
+## 4. Verification State
+
+Commands run in `~/apps/trading-claude-sentry-getjson-soft-failures`:
+
+```
+npx tsc --noEmit
+npm run lint
+npm test
+npm run build
+```
+
+Results are recorded in the PR body.
+
+## 5. Next Steps & Blockers
+
+- Watch the twelve `"<service> connection failed"` issues after deploy.  The expected outcome is
+  that they keep receiving events at `warning` and stop producing `error`-level events (and so stop
+  paging), with `health.failure_class` separating the two classes in Sentry search.
+- If a lane still pages at `error` with `health.failure_class:hard`, that one is a genuine
+  provider/auth failure and needs its own fix — this change deliberately leaves those alone.
+- `congress.trade` (`SOCRATIC-TRADE-1W`) already logged its transport errors `soft: true` before
+  this change; its remaining `error`-level events come from HTTP 5xx responses, which stay hard by
+  design.  Do not expect that one to go quiet.
+
+## 6. Zero-Code Findings
+
+`SOCRATIC-TRADE-28` (`alpaca-account-insights`) was already fixed on `main` by the
+`claude/web-401-routes-to-login` lane; this change only moves its retry onto the shared jittered
+backoff.

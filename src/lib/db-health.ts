@@ -4,6 +4,7 @@ import { getDb } from "./db";
 import { isLocalDbFaultMessage, noteLocalDbFault } from "./local-db-fault";
 import { intentionalOffHealthReason, isIntentionalOffHealthService } from "./retired-direct-vendors";
 import { isFilingApiAuthErrorText } from "./filingapi-auth-classify";
+import { isTransientNetworkErrorText } from "./network-errors";
 
 // `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
 // "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
@@ -46,6 +47,62 @@ export function isSoftHealthFailure(errorText: string | null | undefined): boole
     /\bAbortError\b/i.test(errorText) ||
     /\bTimeoutError\b/i.test(errorText)
   );
+}
+
+/**
+ * Prefix written into `error_text` when a failure is a **transport blip** — Node's `fetch()`
+ * collapsing a dead keep-alive socket, a DNS hiccup, or an `ECONNRESET` into a bare
+ * `"fetch failed"` with the real reason hidden on `err.cause`.
+ *
+ * This is a THIRD class, deliberately not folded into `HEALTH_SOFT_FAILURE_PREFIX`:
+ *
+ * - An **expected limit** (429, daily cap) is not a failure of the integration at all, so it is
+ *   excluded from the hard consecutive-failure streak entirely.
+ * - A **transport blip** might be the first second of a real outage.  It therefore still counts
+ *   toward the hard streak — a provider that is genuinely unreachable must still page — but it
+ *   does not get to page on its own the instant five of them land back to back.  Five failures
+ *   twenty seconds apart is a blip; five failures still going ten minutes later is an outage.
+ *
+ * That distinction is the whole point: classifying these as plain soft would make a real network
+ * outage silent, which is strictly worse than the noise this replaces.
+ */
+export const HEALTH_TRANSIENT_FAILURE_PREFIX = "[transient-network] ";
+
+/**
+ * True when an api_health_log failure row is a transport blip (see the prefix above).  An
+ * expected-limit row is never also transient — soft classification wins, so a 429 keeps its
+ * existing "does not count at all" treatment rather than being promoted into the streak.
+ */
+export function isTransientHealthFailure(errorText: string | null | undefined): boolean {
+  if (!errorText) return false;
+  if (errorText.startsWith(HEALTH_TRANSIENT_FAILURE_PREFIX)) return true;
+  if (isSoftHealthFailure(errorText)) return false;
+  return isTransientNetworkErrorText(errorText);
+}
+
+/**
+ * How long a run of consecutive transport blips must keep failing before it is treated as a real
+ * outage and captured at Sentry `error` level (which is what pages).  Below this, the lane is
+ * captured at `warning`: the event is still recorded, Admin Connections still paints the lane,
+ * but nobody is woken for a socket that died and came back.
+ *
+ * Ten minutes is chosen against the two shapes actually seen in prod.  A burst lane (a calendar
+ * fetch that issues several requests seconds apart) produces its whole five-failure streak inside
+ * one blip and stays a warning.  A low-frequency lane (an hourly probe) spreads five consecutive
+ * failures over hours, so a genuine outage there clears this window on the very first alert and
+ * pages exactly as it does today.
+ */
+export const HEALTH_TRANSIENT_ESCALATION_MS = 10 * 60_000;
+
+/** `HEALTH_TRANSIENT_ESCALATION_MINUTES` override, falling back to the constant above. */
+export function transientEscalationWindowMs(env: Record<string, string | undefined> = process.env): number {
+  // `Number("")` is 0, so an empty/unset variable must be rejected BEFORE the numeric check —
+  // otherwise a blank env var silently means "escalate every blip immediately".
+  const text = (env.HEALTH_TRANSIENT_ESCALATION_MINUTES ?? "").trim();
+  if (text === "") return HEALTH_TRANSIENT_ESCALATION_MS;
+  const minutes = Number(text);
+  if (Number.isFinite(minutes) && minutes >= 0) return minutes * 60_000;
+  return HEALTH_TRANSIENT_ESCALATION_MS;
 }
 
 /**
@@ -104,7 +161,15 @@ export function getLaneHealth(
   service: string,
   keySource: string | null,
   userId?: string | null
-): { stoppedWorking: boolean; reason: string | null; lastFailureTs: string | null } {
+): {
+  stoppedWorking: boolean;
+  reason: string | null;
+  lastFailureTs: string | null;
+  /** True only when the HARD streak holds AND every row in it is a transport blip. */
+  transientStreak: boolean;
+  /** ts of the OLDEST row in the hard streak — how long the lane has been failing. Null unless the streak holds. */
+  streakStartedTs: string | null;
+} {
   try {
     const db = getDb();
     const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
@@ -118,9 +183,9 @@ export function getLaneHealth(
     // streak — five 429s or a daily-cap row must not trip the enrichment circuit breaker.
     const last5 = db
       .prepare(
-        `SELECT ok, error_text FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT 5`
+        `SELECT ok, error_text, ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT 5`
       )
-      .all(...withUser([service, keySource])) as Array<{ ok: number; error_text: string | null }>;
+      .all(...withUser([service, keySource])) as Array<{ ok: number; error_text: string | null; ts: string }>;
     const lastSuccess = db
       .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 1 ORDER BY ts DESC, rowid DESC LIMIT 1`)
       .get(...withUser([service, keySource])) as { ts: string } | undefined;
@@ -133,6 +198,11 @@ export function getLaneHealth(
 
     let stoppedWorking = false;
     let reason: string | null = null;
+    // Only meaningful when the HARD streak below holds. `streakStartedTs` is the OLDEST of the five
+    // rows, so `now - streakStartedTs` is how long the lane has been failing without a success —
+    // the quantity that separates a burst of blips from an outage.
+    let transientStreak = false;
+    let streakStartedTs: string | null = null;
     // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
     // limits (429, daily cap) alone never set this reason — they may still surface as the softer
     // "no success this hour" heuristics below (yellow DEGRADED, not red STOPPED for circuit trips
@@ -143,6 +213,9 @@ export function getLaneHealth(
     ) {
       stoppedWorking = true;
       reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
+      // `last5` is newest-first, so the last element is the oldest row of the streak.
+      streakStartedTs = last5[last5.length - 1]?.ts ?? null;
+      transientStreak = last5.every((r) => isTransientHealthFailure(r.error_text));
     } else if (callsLastHour > 0 && !lastSuccess) {
       stoppedWorking = true;
       reason = "Active in past hour but no successful call ever";
@@ -150,9 +223,9 @@ export function getLaneHealth(
       stoppedWorking = true;
       reason = "Active in past hour but no success in 60 min";
     }
-    return { stoppedWorking, reason, lastFailureTs: lastFailure?.ts ?? null };
+    return { stoppedWorking, reason, lastFailureTs: lastFailure?.ts ?? null, transientStreak, streakStartedTs };
   } catch {
-    return { stoppedWorking: false, reason: null, lastFailureTs: null };
+    return { stoppedWorking: false, reason: null, lastFailureTs: null, transientStreak: false, streakStartedTs: null };
   }
 }
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -267,6 +340,15 @@ export function logApiHealth(opts: {
       if (!errorText.startsWith(HEALTH_SOFT_FAILURE_PREFIX)) {
         errorText = `${HEALTH_SOFT_FAILURE_PREFIX}${errorText}`;
       }
+    } else if (!opts.ok && errorText && isTransientHealthFailure(errorText)) {
+      // Transport blip (see HEALTH_TRANSIENT_FAILURE_PREFIX). Stamped, not softened: the row still
+      // counts toward the hard consecutive-failure streak so a genuine outage still pages — the
+      // prefix only lets the alert gate below decide whether this streak has lasted long enough
+      // to be an outage rather than a socket that died and came back. `soft: true` wins above, so
+      // a caller that already knows better (health-lane-reprobe's synthetic probes) is untouched.
+      if (!errorText.startsWith(HEALTH_TRANSIENT_FAILURE_PREFIX)) {
+        errorText = `${HEALTH_TRANSIENT_FAILURE_PREFIX}${errorText}`;
+      }
     }
 
     db.transaction(() => {
@@ -350,10 +432,28 @@ export function logApiHealth(opts: {
         // never does. The soft heuristics are untouched — they still paint the lane in Admin
         // Connections; they just no longer page on their own.
         if (opts.quotaResetAt || lane.reason === HEALTH_REASON_CONSECUTIVE_FAILURES) {
+          // A hard streak made ENTIRELY of transport blips that has not yet lasted the escalation
+          // window is not an outage — it is one upstream hiccup that five rapid calls all caught.
+          // Capture it at `warning` (recorded, greppable, never paged) instead of the `error` a
+          // global lane normally gets, and hold the operator push until it escalates.
+          //
+          // The cooldown is shortened to the same window rather than the standard six hours,
+          // because arming the full cooldown on a blip would then SILENCE a real outage that
+          // started two minutes later. After the window the next failure in an unbroken streak
+          // has, by definition, been failing long enough to be an outage, and pages as usual.
+          const escalationWindowMs = transientEscalationWindowMs();
+          const streakStartedMs = lane.streakStartedTs ? Date.parse(lane.streakStartedTs) : NaN;
+          const transientBlip =
+            !opts.quotaResetAt &&
+            lane.reason === HEALTH_REASON_CONSECUTIVE_FAILURES &&
+            lane.transientStreak &&
+            (!Number.isFinite(streakStartedMs) || Date.now() - streakStartedMs < escalationWindowMs);
           void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, errorText, {
             // Soft/rate-limit-shaped text: skip Sentry (noise); hard outages still capture.
             skipSentry: isSoft || /429|rate limit/i.test(errorText),
-            cooldownUntil: opts.quotaResetAt
+            cooldownUntil:
+              opts.quotaResetAt ?? (transientBlip ? new Date(Date.now() + escalationWindowMs).toISOString() : undefined),
+            transientBlip
           });
         }
       }
@@ -714,6 +814,9 @@ async function captureHealthSentryMessage(
       scope.setTag("component", "api-health");
       if (context.service) scope.setTag("health.service", String(context.service));
       if (context.keySource) scope.setTag("health.key_source", String(context.keySource));
+      // Lets an alert rule route on the CLASS of failure, not the level alone: "hard" is a real
+      // provider/auth outage, "transient-network" is a socket/DNS blip that has not escalated.
+      if (context.failureClass) scope.setTag("health.failure_class", String(context.failureClass));
       // Group by the STABLE lane identifier, not by the rendered message. Sentry's default
       // fingerprint for captureMessage is the message text, and these messages embed a DISPLAY
       // name that drifts ("Voyage" vs "voyage", "OpenRouter" vs "OpenRouter embed") — one lane
@@ -747,7 +850,17 @@ export async function alertConnectionFailure(
   // the generic HEALTH_ALERT_COOLDOWN_MS window. Falls back to the generic window when absent,
   // unparsable, or already in the past, so a bad/stale value never shortens the cooldown to
   // "always re-alert" or silences alerts forever.
-  opts?: { skipSentry?: boolean; cooldownUntil?: string }
+  opts?: {
+    skipSentry?: boolean;
+    cooldownUntil?: string;
+    /**
+     * This streak is made entirely of transport blips and has not yet lasted the escalation
+     * window (see `HEALTH_TRANSIENT_ESCALATION_MS`). Record it — audit row plus a `warning`
+     * Sentry capture — but do NOT page: no `error` level, no operator push. It escalates on its
+     * own if the lane keeps failing past the window.
+     */
+    transientBlip?: boolean;
+  }
 ): Promise<void> {
   try {
     const targetUserId = userId || "local";
@@ -811,15 +924,20 @@ export async function alertConnectionFailure(
     // Log audit event
     audit("connection_health_alert", payload, targetUserId);
 
-    // Send Sentry event
+    // Send Sentry event. A transport blip is warning-level on every lane, global or not — the
+    // level is what PagerDuty routes on, so this is the difference between "recorded" and "paged".
     if (!opts?.skipSentry) {
-      await captureHealthSentryMessage(isGlobal ? "error" : "warning", title, {
+      await captureHealthSentryMessage(opts?.transientBlip || !isGlobal ? "warning" : "error", title, {
         service,
         keySource: actualKeySource,
         userSpecific: !isGlobal,
+        failureClass: opts?.transientBlip ? "transient-network" : "hard",
         reason: errorText
       });
     }
+
+    // Not yet an outage: the audit row and the warning capture above are the whole response.
+    if (opts?.transientBlip) return;
 
     if (isGlobal) {
       await deliverSystemAlertToAdmins({
