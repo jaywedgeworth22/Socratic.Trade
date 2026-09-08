@@ -26,7 +26,8 @@ import {
   applyBrokerOrderPlacementPause,
   checkBrokerHealth,
   persistBrokerHealthSkipRun,
-  shouldPersistBrokerHealthSkip
+  shouldPersistBrokerHealthSkip,
+  type ApplyBrokerPauseResult
 } from "./broker-health";
 import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
@@ -60,6 +61,7 @@ import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
 import { journalLane } from "./task-journal";
 import { pruneTaskJournal } from "./db-task-journal";
 import { withDeadline, SCHEDULER_BROKER_TIMEOUT_MS } from "./safety-maintenance";
+import { isAbortOrTimeoutError, isTransientNetworkError } from "./network-errors";
 import { logError, logWarn, recordSchedulerTick } from "./sentry-metrics";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
@@ -326,6 +328,135 @@ const stopMonitorInFlight: Set<string> =
 const staleExitGuardHost = globalThis as unknown as { __staleExitInFlight?: Set<string> };
 const staleExitInFlight: Set<string> =
   staleExitGuardHost.__staleExitInFlight ?? (staleExitGuardHost.__staleExitInFlight = new Set<string>());
+
+// ── Observability: de-duplicated health-gate skip log + degraded-lane surfacing ──────────────
+//
+// Production evidence (litestream-runtime.log, 2026-08-29..2026-09-07): a single restricted/
+// misbehaving Tradier account generated 1,364 "[scheduler] Tradier order capability probe
+// failed" lines because the health gate below re-logged the SAME cause on every 60s tick for as
+// long as the account stayed unhealthy. None of that volume changed any decision — the pause/
+// resume, the journalLane audit row, and persistBrokerHealthSkipRun all ran unconditionally
+// either way. Throttling the console line to state transitions (plus a low-rate heartbeat so a
+// days-long outage cannot vanish silently) removes the noise without touching what the scheduler
+// DOES. globalThis-pinned to match this file's other guards.
+const healthSkipLogHost = globalThis as unknown as {
+  __schedulerHealthSkipLog?: Map<string, { reason: string; halted: boolean; occurrences: number }>;
+};
+const healthSkipLog: Map<string, { reason: string; halted: boolean; occurrences: number }> =
+  healthSkipLogHost.__schedulerHealthSkipLog ?? (healthSkipLogHost.__schedulerHealthSkipLog = new Map());
+/** Roughly every 30 ticks (~30 min at the 60s cadence) once a cause has gone stale. */
+export const HEALTH_SKIP_HEARTBEAT_EVERY = 30;
+
+/** True when the pause result is an AUTO-halt we own, not a manual owner halt.
+ *  `ApplyBrokerPauseResult["action"]` is a one-tick transition marker — "halted" fires only the
+ *  tick the auto-halt actually happens; a still-auto-halted account reports "still_paused" with
+ *  `autoOwned: true` on every later tick. Using `=== "halted"` alone at the health-gate skip
+ *  call site made the halt flag flip true/false/true/... every tick after the first, which
+ *  logHealthGateSkip reads as a halt-state CHANGE — resetting its dedup counter and re-emitting
+ *  "account_skip_started" every tick (2026-09-07 fix). Treating EVERY "still_paused" as
+ *  auto-halted was the next miss: a manual owner halt also returns "still_paused" but
+ *  deliberately has no auto-pause marker (`autoOwned: false`, broker-health.ts). That path must
+ *  not emit `(auto-halted)` / `halted: true` (Codex PR #3189 P2). Dedup is preserved because
+ *  the flag stays stable for both kinds of pause. */
+export function isHaltedPauseAction(result: ApplyBrokerPauseResult): boolean {
+  return result.action === "halted" || (result.action === "still_paused" && result.autoOwned);
+}
+
+/** Log an unhealthy-account skip once per NEW cause, then only on a low-rate heartbeat. */
+export function logHealthGateSkip(key: string, reason: string, halted: boolean): void {
+  const prev = healthSkipLog.get(key);
+  const changed = !prev || prev.reason !== reason || prev.halted !== halted;
+  const occurrences = changed ? 1 : prev.occurrences + 1;
+  healthSkipLog.set(key, { reason, halted, occurrences });
+  const suffix = halted ? " (auto-halted)" : "";
+  if (changed) {
+    console.warn(`[scheduler] Skipping account ${key}: ${reason}${suffix}`);
+    logWarn("scheduler.health_gate", { event: "account_skip_started", key, reason, halted });
+  } else if (occurrences % HEALTH_SKIP_HEARTBEAT_EVERY === 0) {
+    console.warn(`[scheduler] Skipping account ${key}: still unhealthy after ${occurrences} ticks (cause unchanged): ${reason}${suffix}`);
+  }
+}
+
+/** Clear a prior skip state and announce recovery — a no-op if the account was already healthy. */
+export function clearHealthGateSkip(key: string): void {
+  const prev = healthSkipLog.get(key);
+  if (!prev) return;
+  healthSkipLog.delete(key);
+  logWarn("scheduler.health_gate", {
+    event: "account_skip_recovered",
+    key,
+    priorReason: prev.reason,
+    occurrences: prev.occurrences
+  });
+}
+
+// Consecutive-failure tracking for money-adjacent monitor lanes (synthetic-stop monitor,
+// stale-limit-order handling). Classifies each failure (timeout vs. dead-socket/transient
+// network vs. other) and emits ONE elevated "lane_degraded" event when a sustained streak
+// crosses the threshold, instead of a sustained outage dissolving into per-tick log noise.
+// Purely observability: it never retries or alters the lane's own work.
+export type LaneFailureCategory = "timeout" | "transient_network" | "other";
+const laneFailureHost = globalThis as unknown as {
+  __schedulerLaneFailures?: Map<string, { category: LaneFailureCategory; streak: number; degraded: boolean }>;
+};
+const laneFailureStreaks: Map<string, { category: LaneFailureCategory; streak: number; degraded: boolean }> =
+  laneFailureHost.__schedulerLaneFailures ?? (laneFailureHost.__schedulerLaneFailures = new Map());
+export const LANE_DEGRADED_STREAK_THRESHOLD = 3;
+
+export function classifyLaneFailure(err: unknown): LaneFailureCategory {
+  if (isAbortOrTimeoutError(err)) return "timeout";
+  // `withDeadline` (inflight-deadline.ts) manufactures a plain `new Error(message)` on expiry —
+  // name stays "Error", so it never matches isAbortOrTimeoutError's AbortError/TimeoutError check
+  // — but every call site in this file names that message after the timeout it is
+  // ("runSyntheticStopMonitor timeout", "stale-limit-scan broker timeout", "checkBrokerHealth
+  // timeout", "Tradier/Alpaca broker call timed out"). Recognize that convention directly so the
+  // 79/75-occurrence timeout family from production evidence actually lands in "timeout" instead
+  // of the "other" catch-all.
+  const message = err instanceof Error ? err.message : String(err);
+  if (/\btimeout\b|timed out/i.test(message)) return "timeout";
+  if (isTransientNetworkError(err)) return "transient_network";
+  return "other";
+}
+
+/** Log one lane failure with its classification, escalating to a Sentry "lane_degraded"
+ *  structured event only when the SAME category has now failed LANE_DEGRADED_STREAK_THRESHOLD+
+ *  times in a row for this account. */
+export function recordLaneFailure(lane: string, key: string, err: unknown): void {
+  const mapKey = `${lane}:${key}`;
+  const category = classifyLaneFailure(err);
+  const prev = laneFailureStreaks.get(mapKey);
+  const streak = prev && prev.category === category ? prev.streak + 1 : 1;
+  // Once degraded, STAY degraded across a failure-category change (2026-09-07 fix) — a lane
+  // failing 3x on "timeout" then switching to "transient_network" is still the same ongoing
+  // outage, not a resolved one. Gating on `prev.category === category` here reset `degraded` to
+  // false the moment the category changed (even though nothing had actually recovered), which
+  // both suppressed the eventual lane_recovered event and let the map entry silently lose its
+  // degraded status. Only recordLaneRecovery (an actual success) may clear it.
+  const alreadyDegraded = Boolean(prev?.degraded);
+  const nowDegraded = alreadyDegraded || streak >= LANE_DEGRADED_STREAK_THRESHOLD;
+  laneFailureStreaks.set(mapKey, { category, streak, degraded: nowDegraded });
+  console.error(`[scheduler] ${lane} error (${category}, streak=${streak}):`, err);
+  if (nowDegraded && !alreadyDegraded) {
+    logError("scheduler.lane", { event: "lane_degraded", lane, key, category, streak });
+  }
+}
+
+/** Clear a lane's failure streak on success; announces recovery only if it had gone degraded. */
+export function recordLaneRecovery(lane: string, key: string): void {
+  const mapKey = `${lane}:${key}`;
+  const prev = laneFailureStreaks.get(mapKey);
+  if (!prev) return;
+  laneFailureStreaks.delete(mapKey);
+  if (prev.degraded) {
+    logWarn("scheduler.lane", { event: "lane_recovered", lane, key, category: prev.category, streak: prev.streak });
+  }
+}
+
+/** Test-only: clear the module-pinned health-skip / lane-failure maps between test cases. */
+export function _resetSchedulerObservabilityStateForTest(): void {
+  healthSkipLog.clear();
+  laneFailureStreaks.clear();
+}
 
 // Whole-tick re-entrancy guard: a still-running tick must not let the next 60s interval start an
 // overlapping sweep/health pass.  Overlapping ticks do NOT duplicate trades — `lastRunAt` advances
@@ -1048,8 +1179,18 @@ async function tickInner(): Promise<void> {
           // Guard is released by the REAL work, never by the 15s race loser: a lane still running
           // past the deadline must not get a duplicate launched on the next tick.
           void staleExitWork.catch(() => undefined).finally(() => staleExitInFlight.delete(key));
+          // Recovery/failure must both key off the SAME deadline-raced promise (2026-09-07 fix):
+          // attaching recordLaneRecovery to the raw staleExitWork promise let a run that timed out
+          // (recordLaneFailure fires) but later fulfilled in the background silently clear the
+          // just-recorded failure streak, so a lane that always times out but eventually succeeds
+          // could never reach lane_degraded. withDeadline's promise only fulfills when the real
+          // work finishes BEFORE the deadline; once it rejects (timeout OR a real error), it is
+          // settled and a later background fulfillment of staleExitWork can no longer reach this
+          // .then — recovery reflects success WITHIN the deadline, not late fulfillment of an
+          // invocation already classified as failed.
           void withDeadline(staleExitWork, SCHEDULER_BROKER_TIMEOUT_MS, "stale-limit-scan broker timeout")
-            .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err));
+            .then(() => recordLaneRecovery("stale-limit-order handling", key))
+            .catch((err) => recordLaneFailure("stale-limit-order handling", key, err));
         }
 
         const protectiveState =
@@ -1078,8 +1219,12 @@ async function tickInner(): Promise<void> {
           // Guard is released by the REAL work, never by the 15s race loser: a lane still running
           // past the deadline must not get a duplicate launched on the next tick.
           void stopMonitorWork.catch(() => undefined).finally(() => stopMonitorInFlight.delete(key));
+          // See the matching comment on the stale-limit-order lane above: recovery/failure both
+          // key off the SAME deadline-raced promise so a late background fulfillment (after the
+          // deadline already timed out and recorded a failure) cannot silently clear the streak.
           void withDeadline(stopMonitorWork, SCHEDULER_BROKER_TIMEOUT_MS, "runSyntheticStopMonitor timeout")
-            .catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err));
+            .then(() => recordLaneRecovery("synthetic-stop monitor", key))
+            .catch((err) => recordLaneFailure("synthetic-stop monitor", key, err));
         }
 
         // Reconcile pending broker fills every tick (independent of the strategy cadence) so a broker
@@ -1132,7 +1277,13 @@ async function tickInner(): Promise<void> {
           policy.systemState = refreshed.systemState;
         }
         if (!healthSignals.isHealthy) {
-          console.warn(`[scheduler] Skipping account ${accountId}: ${healthSignals.reason}${pauseResult.action === "halted" ? " (auto-halted)" : ""}`);
+          // De-duplicated: logs on first occurrence and on any reason/halt-state change, then a
+          // low-rate heartbeat — see logHealthGateSkip doc comment for why (1,364 identical
+          // "Tradier order capability probe failed" lines / 9 days, production evidence 2026-09-07).
+          // isHaltedPauseAction (not a raw `=== "halted"` check) tracks the DURABLE auto-halt
+          // we own, not the one-tick transition marker and not a manual owner pause — see its
+          // own doc comment.
+          logHealthGateSkip(key, healthSignals.reason ?? "unhealthy", isHaltedPauseAction(pauseResult));
           // Journal the suppression itself: an unhealthy gate is exactly the event an operator
           // later asks "why didn't this account trade?" about.
           void journalLane("broker-health-gate", { userId, connectedAccountId: accountId }, () => ({
@@ -1162,6 +1313,9 @@ async function tickInner(): Promise<void> {
           schedule.nextRunAt = null; // Re-evaluate on next tick without advancing the cadence
           continue;
         }
+        // Recovered (or was never unhealthy) — clear any pending skip state so the NEXT
+        // unhealthy tick logs fresh instead of inheriting a stale occurrence count.
+        clearHealthGateSkip(key);
 
         if (policy.systemState !== "active") {
           schedule.nextRunAt = null;

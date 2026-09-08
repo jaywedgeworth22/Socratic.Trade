@@ -22,6 +22,7 @@
  */
 
 import crypto from "crypto";
+import { isAbortOrTimeoutError, isTransientNetworkError } from "../network-errors";
 import { recordRagUsage } from "../rag-metering";
 import { serverKnobOverride } from "../server-knobs";
 import {
@@ -194,17 +195,45 @@ export function qdrantPayloadForRecord(
   return payload;
 }
 
+/** Bounded retry for a transient network blip against the self-hosted box (dead keep-alive
+ *  socket, DNS hiccup, a brief 502/503 while Qdrant restarts). Safe to retry the WHOLE request —
+ *  every caller in this module is idempotent by construction: upserts key off a deterministic
+ *  uuid5 point id, deletes are filter/id-scoped, payload sets are id-scoped, scroll/collection-
+ *  info are reads. A caller-side abort/timeout is never retried (isAbortOrTimeoutError takes
+ *  priority) — that budget already elapsed once; spending it again just delays the caller. */
+const QDRANT_MAX_ATTEMPTS = 3;
+const QDRANT_RETRY_BASE_MS = 300;
+
+function isRetryableQdrantServerError(err: unknown): boolean {
+  return err instanceof Error && /failed \(HTTP 5\d\d\)/.test(err.message);
+}
+
 async function qdrantRequest(path: string, init: RequestInit): Promise<Response> {
-  const response = await fetch(`${qdrantBaseUrl()}${path}`, {
-    ...init,
-    headers: { ...qdrantHeaders(), ...(init.headers as Record<string, string> | undefined) },
-    signal: init.signal ?? AbortSignal.timeout(qdrantTimeoutMs())
-  });
-  if (!response.ok) {
-    const text = (await response.text().catch(() => "")).slice(0, 400);
-    throw new Error(`Qdrant ${init.method ?? "GET"} ${path} failed (HTTP ${response.status}): ${text}`);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < QDRANT_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(`${qdrantBaseUrl()}${path}`, {
+        ...init,
+        headers: { ...qdrantHeaders(), ...(init.headers as Record<string, string> | undefined) },
+        signal: init.signal ?? AbortSignal.timeout(qdrantTimeoutMs())
+      });
+      if (!response.ok) {
+        const text = (await response.text().catch(() => "")).slice(0, 400);
+        throw new Error(`Qdrant ${init.method ?? "GET"} ${path} failed (HTTP ${response.status}): ${text}`);
+      }
+      return response;
+    } catch (err) {
+      lastErr = err;
+      const retryable =
+        !isAbortOrTimeoutError(err) && (isTransientNetworkError(err) || isRetryableQdrantServerError(err));
+      if (attempt + 1 < QDRANT_MAX_ATTEMPTS && retryable) {
+        await new Promise((resolve) => setTimeout(resolve, QDRANT_RETRY_BASE_MS * 2 ** attempt));
+        continue;
+      }
+      throw err;
+    }
   }
-  return response;
+  throw lastErr;
 }
 
 function chunkItems<T>(items: T[], size: number): T[][] {

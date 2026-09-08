@@ -1128,6 +1128,27 @@ describe("Tradier adapter — cancelBracketSiblingLegs (bracket sibling-leg tear
     const { getTradierGateway } = await import("../src/lib/tradier");
     await expect(getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "901-transient")).rejects.toThrow();
   });
+
+  // Codex round-1 review (2026-09-07): the rollout note claimed this idempotent GET was opted
+  // into the transient-retry option, but the actual trackHealth call site omitted it — a dead
+  // keep-alive socket would consume one of the pending teardown row's ten attempts and defer to
+  // another scheduler tick instead of retrying once in-process.
+  it("retries once on a dead-socket TypeError instead of consuming a teardown-row attempt", async () => {
+    await seedTradier();
+    let attempt = 0;
+    vi.stubGlobal("fetch", async () => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError("fetch failed");
+      return new Response(
+        JSON.stringify({ order: { id: 900, class: "equity", symbol: "AAPL", status: "filled" } }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "900");
+    expect(attempt).toBe(2);
+    expect(result.cancelledOrderIds).toEqual([]);
+  });
 });
 
 describe("Tradier adapter — option positions", () => {
@@ -1181,6 +1202,239 @@ describe("Tradier adapter — option positions", () => {
       averageCost: 2.5,
       marketValue: 700.0
     });
+  });
+});
+
+// Production evidence (litestream-runtime.log, 2026-08-29..2026-09-07): 1,364 "Tradier order
+// capability probe failed" events over 9 days, all landing in the generic fallback bucket because
+// the old regex never matched Tradier's actual "Unexpected server error" wording (there is a
+// "server" between "unexpected" and "error") nor a timeout. These tests pin the fixed
+// classification and the exponential-backoff cache that stops a sustained failure from re-probing
+// (and re-warning) every 60s tick.
+describe("Tradier adapter — probeOrderCapability classification", () => {
+  it("classifies 'HTTP 400: Unexpected server error' as a transient server error, not the generic fallback", async () => {
+    await seedTradier({ environment: "paper" });
+    installFetchMock([
+      {
+        match: (u, m) => m === "POST" && u.includes(`/accounts/${ACCT}/orders`),
+        status: 400,
+        body: { errors: { error: "Unexpected server error" } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").probeOrderCapability!(ACCT);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/Tradier order path unavailable/);
+  });
+
+  it("still treats a structured OMS validation rejection (buying power) as healthy order capability", async () => {
+    await seedTradier({ environment: "paper" });
+    installFetchMock([
+      {
+        match: (u, m) => m === "POST" && u.includes(`/accounts/${ACCT}/orders`),
+        status: 400,
+        body: { errors: { error: "Not enough buying power" } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").probeOrderCapability!(ACCT);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("classifies a genuinely unrecognized failure as its own category rather than 'connectivity'", async () => {
+    await seedTradier({ environment: "paper" });
+    installFetchMock([
+      {
+        match: (u, m) => m === "POST" && u.includes(`/accounts/${ACCT}/orders`),
+        status: 401,
+        body: { errors: { error: "Invalid access token" } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const result = await getTradierGateway("local").probeOrderCapability!(ACCT);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/Tradier order capability probe failed:/);
+  });
+});
+
+describe("Tradier adapter — probeOrderCapability exponential backoff", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("backs off exponentially on a sustained identical failure instead of re-probing every call", async () => {
+    vi.useFakeTimers();
+    await seedTradier({ environment: "paper" });
+    const { records } = installFetchMock([
+      {
+        match: (u, m) => m === "POST" && u.includes(`/accounts/${ACCT}/orders`),
+        status: 400,
+        body: { errors: { error: "Unexpected server error" } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gateway = getTradierGateway("local");
+    const probeCalls = () =>
+      records.filter((r) => r.method === "POST" && r.url.includes(`/accounts/${ACCT}/orders`)).length;
+
+    const start = Date.now();
+    vi.setSystemTime(start);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(1);
+
+    // Immediately again — served from the cache, no new network call.
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(1);
+
+    // Past the base 2-minute TTL — first backoff step (streak 0 -> 1), re-probes.
+    vi.setSystemTime(start + 2 * 60_000 + 1);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(2);
+
+    // Only 2 more minutes (would have expired the OLD fixed 2-minute TTL) — the streak is now 1,
+    // doubling the effective TTL to 4 minutes, so this must still be served from cache.
+    vi.setSystemTime(start + 2 * 60_000 + 1 + 2 * 60_000);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(2);
+
+    // Past the doubled 4-minute window — re-probes again.
+    vi.setSystemTime(start + 2 * 60_000 + 1 + 4 * 60_000 + 1);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(3);
+  });
+
+  it("resets the backoff streak once the probe recovers, instead of continuing to back off", async () => {
+    vi.useFakeTimers();
+    await seedTradier({ environment: "paper" });
+    let failing = true;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push(`${method} ${u}`);
+      if (method === "POST" && u.includes(`/accounts/${ACCT}/orders`)) {
+        if (failing) {
+          return new Response(JSON.stringify({ errors: { error: "Unexpected server error" } }), {
+            status: 400,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ order: { id: "1", status: "ok" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response("", { status: 404 });
+    });
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gateway = getTradierGateway("local");
+
+    const start = Date.now();
+    vi.setSystemTime(start);
+    let result = await gateway.probeOrderCapability!(ACCT);
+    expect(result.ok).toBe(false);
+
+    failing = false;
+    vi.setSystemTime(start + 2 * 60_000 + 1);
+    result = await gateway.probeOrderCapability!(ACCT);
+    expect(result.ok).toBe(true);
+
+    // Recovery must reset the streak: the very next failure re-probes at the BASE 2-minute TTL,
+    // not a TTL that continued doubling from the earlier failing streak.
+    failing = true;
+    vi.setSystemTime(start + 2 * 60_000 + 1 + 2 * 60_000 + 1);
+    result = await gateway.probeOrderCapability!(ACCT);
+    expect(result.ok).toBe(false);
+  });
+
+  // Codex round-1 review (2026-09-07): the backoff previously applied to a HEALTHY streak too,
+  // so a long run of consecutive successes could ride the cached "ok" result all the way to the
+  // 60-minute ceiling — if the order path then actually went down, checkBrokerHealth could keep
+  // accepting that stale success for up to an hour instead of the intended 2-minute base window.
+  it("keeps successful probes at the base 2-minute TTL — never backs off a healthy streak", async () => {
+    vi.useFakeTimers();
+    await seedTradier({ environment: "paper" });
+    const { records } = installFetchMock([
+      {
+        match: (u, m) => m === "POST" && u.includes(`/accounts/${ACCT}/orders`),
+        status: 200,
+        body: { order: { id: "1", status: "ok" } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gateway = getTradierGateway("local");
+    const probeCalls = () =>
+      records.filter((r) => r.method === "POST" && r.url.includes(`/accounts/${ACCT}/orders`)).length;
+
+    const start = Date.now();
+    vi.setSystemTime(start);
+    // Build up a long consecutive-success streak — if success were backed off like failure, this
+    // would grow the cache TTL well past the base 2 minutes.
+    for (let i = 0; i < 6; i++) {
+      vi.setSystemTime(start + i * 2 * 60_000 + 1);
+      const result = await gateway.probeOrderCapability!(ACCT);
+      expect(result.ok).toBe(true);
+    }
+    expect(probeCalls()).toBe(6); // each call landed exactly on the base 2-minute boundary and re-probed
+
+    const lastSuccessAt = start + 5 * 2 * 60_000 + 1; // the final loop iteration's timestamp
+
+    // A probe requested only ~90s after the last success (under the 2-minute base TTL) must still
+    // be served from cache...
+    vi.setSystemTime(lastSuccessAt + 90_000);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(6);
+
+    // ...but past the base 2-minute TTL, it must re-probe immediately — NOT wait out an
+    // exponentially-grown window the way a failing streak would.
+    vi.setSystemTime(lastSuccessAt + 2 * 60_000 + 1);
+    await gateway.probeOrderCapability!(ACCT);
+    expect(probeCalls()).toBe(7);
+  });
+});
+
+describe("Tradier adapter — read-path retry on a transient network failure", () => {
+  it("getAccounts retries once on a dead-socket TypeError and succeeds on the fresh connection", async () => {
+    await seedTradier({ environment: "paper" });
+    let attempt = 0;
+    vi.stubGlobal("fetch", async () => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError("fetch failed");
+      return new Response(
+        JSON.stringify({ profile: { account: { account_number: ACCT, type: "margin", classification: "individual" } } }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const accounts = await getTradierGateway("local").getAccounts();
+    expect(attempt).toBe(2);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0].accountNumber).toBe(ACCT);
+  });
+
+  it("placeEquityOrder (a real order write) does NOT retry a transient network failure", async () => {
+    await seedTradier({ environment: "paper" });
+    let attempt = 0;
+    vi.stubGlobal("fetch", async () => {
+      attempt += 1;
+      throw new TypeError("fetch failed");
+    });
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await expect(
+      getTradierGateway("local").placeEquityOrder({
+        accountNumber: ACCT,
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 1,
+        type: "market",
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        refId: "r-1"
+      })
+    ).rejects.toThrow();
+    // Exactly one attempt — a retried write after Tradier may have already accepted the POST
+    // risks a genuine duplicate order, so writes never opt into trackHealth's retryTransient.
+    expect(attempt).toBe(1);
   });
 });
 

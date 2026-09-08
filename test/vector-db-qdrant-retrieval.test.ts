@@ -7,6 +7,15 @@ beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-qdrant-retrieval-${randomUUID()}.db`)}`;
 });
 
+const sentryMetricsMock = vi.hoisted(() => ({
+  logError: vi.fn()
+}));
+
+vi.mock("../src/lib/sentry-metrics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/sentry-metrics")>();
+  return { ...actual, logError: sentryMetricsMock.logError };
+});
+
 import {
   retrieveContextDetailed,
   reconcileManagedVectorRecords,
@@ -29,6 +38,7 @@ describe("retrieveContextDetailed with Qdrant read backend", () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
     process.env.VECTOR_EMBED_RETRY_DELAY_MS = "0";
     invalidateServerKnobCache();
+    sentryMetricsMock.logError.mockClear();
   });
 
   afterEach(() => {
@@ -203,5 +213,44 @@ describe("retrieveContextDetailed with Qdrant read backend", () => {
     const authority = await getCurrentVectorProviderAuthority({ userId: "local" });
     expect(typeof authority).toBe("string");
     expect(authority?.length).toBeGreaterThan(20);
+  });
+
+  // Production evidence (litestream-runtime.log, 2026-08-29..2026-09-07): 92 "[vector-db] Error
+  // storing contexts: TypeError: fetch failed" events on the RAG write path since the 2026-09-01
+  // Qdrant write cutover. Before this fix, storeContextsImpl's catch block hardcoded
+  // `provider: "pinecone"` in the Sentry/logError report regardless of which backend actually
+  // wrote — the same mislabel class as the 2026-08-09 "Pinecone connection failed / database is
+  // locked" pushes (docs/rollouts/2026-08-09-pinecone-lock-mislabel.md), just at the provider tag
+  // instead of the failure cause. qdrantUpsertPoints already retries a transient network failure
+  // with backoff (see qdrant-write.test.ts), so by the time this fires the retries are exhausted.
+  it("labels a sustained Qdrant write failure with provider 'qdrant', not the old hardcoded 'pinecone'", async () => {
+    delete process.env.PINECONE_API_KEY;
+    delete process.env.VOYAGE_API_KEY;
+    const mockFetch = vi.fn(async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("embeddings")) {
+        return new Response(JSON.stringify({ data: [{ embedding: new Array(1024).fill(0.01) }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      if (urlStr.includes("/points")) {
+        throw new TypeError("fetch failed");
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await storeContexts([
+      {
+        text: "AAPL 10-K body for a sustained Qdrant write failure",
+        metadata: { symbol: "AAPL", source: "sec-edgar", timestamp: "2026-06-20", accession: "a2" }
+      }
+    ]);
+
+    expect(result.error).toBeDefined();
+    const call = sentryMetricsMock.logError.mock.calls.find((c) => c[0] === "rag.error");
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({ provider: "qdrant" });
   });
 });

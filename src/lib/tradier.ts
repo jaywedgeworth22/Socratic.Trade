@@ -20,6 +20,7 @@ import { isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
 import { fetchDailyOHLC } from "./history";
+import { isAbortOrTimeoutError, isTransientNetworkError } from "./network-errors";
 // Reuse Alpaca's keyless-Yahoo quote floor and the shared pre-trade notional semantics verbatim —
 // they are broker-agnostic helpers exported from ./alpaca (no Alpaca SDK behavior involved).
 import { fillMissingQuotesWithClose, estimateReviewNotional } from "./alpaca";
@@ -47,9 +48,41 @@ export function getTradierGateway(userId: string = "local", connectedAccountId?:
   return new TradierBrokerGateway(userId, connectedAccountId);
 }
 
-/** In-process throttle for order-capability probes (scheduler ticks every few seconds). */
-const tradierProbeCache = new Map<string, { at: number; ok: boolean; reason?: string }>();
-const TRADIER_PROBE_TTL_MS = 2 * 60_000;
+/**
+ * In-process throttle for order-capability probes (scheduler ticks every 60s).
+ *
+ * Classification (production evidence, litestream-runtime.log 2026-08-29..2026-09-07): 1,364
+ * "Tradier order capability probe failed" events over 9 days, all landing in the generic
+ * connectivity/auth fallback below because the structured-rejection and 5xx regexes didn't
+ * match Tradier's actual wording ("HTTP 400: Unexpected server error" has "server" between
+ * "unexpected" and "error", so the old `/unexpected error/i` alternative never matched; a
+ * timeout/AbortError also fell through the same way). `category` now records WHICH bucket a
+ * failure landed in and `streak` counts consecutive same-category results so the TTL can back
+ * off exponentially instead of re-probing (and re-warning) every single 60s tick for a
+ * condition that has not changed. This does not change `ok`/`reason` for any input this
+ * gateway already classified — same isHealthy verdict, just far fewer probes and log lines.
+ */
+type TradierProbeCategory =
+  | "capability_ok" // structured OMS rejection (margin/PDT/etc.) or a clean preview accept
+  | "server_error" // Tradier-side 5xx / backend / "unexpected (server) error"
+  | "timeout" // caller-side abort or Tradier request timeout
+  | "connectivity" // dead socket / DNS / reset — network-layer, not Tradier's application logic
+  | "unclassified"; // none of the above matched — kept distinct so an unrecognized new Tradier
+  // error string is still visible as its own category instead of hiding inside "connectivity"
+const tradierProbeCache = new Map<
+  string,
+  { at: number; ok: boolean; reason?: string; category: TradierProbeCategory; streak: number }
+>();
+const TRADIER_PROBE_BASE_TTL_MS = 2 * 60_000;
+/** Ceiling so a stuck/restricted account is still re-verified roughly hourly, never truly forever —
+ *  the account could get re-enabled and this must eventually notice without a redeploy. */
+const TRADIER_PROBE_MAX_TTL_MS = 60 * 60_000;
+
+/** Exponential backoff on the SAME consecutive (ok, category) pair: 2m, 4m, 8m, ... capped at 1h. */
+function tradierProbeTtlMs(streak: number): number {
+  const doublings = Math.max(0, Math.min(streak, 5)); // 2m * 2^5 = 64m, already above the 60m cap
+  return Math.min(TRADIER_PROBE_BASE_TTL_MS * 2 ** doublings, TRADIER_PROBE_MAX_TTL_MS);
+}
 
 // Tradier envelopes wrap collections as { orders: { order: [...] } }, collapse a lone element to a
 // bare object { orders: { order: {...} } }, and report empty as null or the string "null". Normalize
@@ -368,29 +401,61 @@ class TradierBrokerGateway implements BrokerGateway {
   // Wrap a call for the admin connections-health page ("tradier-broker"), mirroring Alpaca's
   // trackHealth. logApiHealth swallows its own errors; the broker call is never affected by a
   // logging failure.
-  private async trackHealth<T>(fn: () => Promise<T>, opts?: { deadlineMs?: number }): Promise<T> {
+  //
+  // `retryTransient` is opt-IN (default false, unlike Alpaca's opt-out) — the safe default for a
+  // gateway whose call sites are a mix of reads and money-moving writes is to retry nothing unless
+  // a call site explicitly proves itself idempotent. Only GET reads and the side-effect-free
+  // preview probe (probeOrderCapability) opt in. placeEquityOrder / placeOptionOrder / the bracket
+  // POST / cancelEquityOrder never do: a dead keep-alive socket after Tradier already accepted the
+  // write would make a retry a genuine second order attempt, or a cancel-of-already-cancelled 400
+  // that the caller would misread as failure (same class of risk Alpaca's trackHealth documents for
+  // createOrder).
+  private async trackHealth<T>(
+    fn: () => Promise<T>,
+    opts?: { deadlineMs?: number; retryTransient?: boolean }
+  ): Promise<T> {
     const start = Date.now();
+    const attempts = opts?.retryTransient ? 2 : 1;
     const runOnce = () => {
       const call = fn();
       return opts?.deadlineMs != null
         ? withDeadline(call, opts.deadlineMs, "Tradier broker call timed out")
         : call;
     };
-    try {
-      const result = await runOnce();
-      logApiHealth({ service: "tradier-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
-      return result;
-    } catch (err) {
-      logApiHealth({
-        service: "tradier-broker",
-        ok: false,
-        latencyMs: Date.now() - start,
-        errorText: err instanceof Error ? err.message : String(err),
-        keySource: this.keySource,
-        userId: this.userId
-      });
-      throw err;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const result = await runOnce();
+        logApiHealth({ service: "tradier-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
+        return result;
+      } catch (err) {
+        lastErr = err;
+        // Tradier's keep-alive pool can hand back a socket the origin already closed
+        // (UND_ERR_SOCKET / "other side closed" / bare "fetch failed"). One retry on a fresh
+        // connection recovers a read; the first miss is not logged so a recovered blip cannot
+        // feed the connections-health consecutive-failure streak. A caller-side abort/timeout is
+        // never retried here — isAbortOrTimeoutError takes priority so a budget timeout doesn't
+        // also eat a retry slot.
+        if (
+          attempt + 1 < attempts &&
+          !isAbortOrTimeoutError(err) &&
+          isTransientNetworkError(err)
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+          continue;
+        }
+        logApiHealth({
+          service: "tradier-broker",
+          ok: false,
+          latencyMs: Date.now() - start,
+          errorText: err instanceof Error ? err.message : String(err),
+          keySource: this.keySource,
+          userId: this.userId
+        });
+        throw err;
+      }
     }
+    throw lastErr;
   }
 
   async getAccounts(): Promise<BrokerageAccount[]> {
@@ -410,7 +475,7 @@ class TradierBrokerGateway implements BrokerGateway {
           capabilities: capsFromProfile(account)
         } satisfies BrokerageAccount;
       });
-    });
+    }, { retryTransient: true });
   }
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
@@ -496,7 +561,7 @@ class TradierBrokerGateway implements BrokerGateway {
         optionMarketValue,
         cash: totalCash
       };
-    });
+    }, { retryTransient: true });
   }
 
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
@@ -540,7 +605,7 @@ class TradierBrokerGateway implements BrokerGateway {
           industry: undefined
         } satisfies EquityPosition;
       });
-    });
+    }, { retryTransient: true });
   }
 
   async getOptionPositions(accountNumber: string): Promise<OptionPosition[]> {
@@ -576,7 +641,7 @@ class TradierBrokerGateway implements BrokerGateway {
           marketValue: Number(marketValue.toFixed(2))
         } satisfies OptionPosition;
       });
-    });
+    }, { retryTransient: true });
   }
 
   async getEquityOrders(accountNumber: string, options?: GetEquityOrdersOptions): Promise<EquityOrder[]> {
@@ -628,7 +693,7 @@ class TradierBrokerGateway implements BrokerGateway {
             return Number.isFinite(sinceMs) && Number.isFinite(createdMs) && createdMs >= sinceMs;
           });
       return scoped.map((o) => mapTradierOrder(o));
-    });
+    }, { retryTransient: true });
   }
 
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
@@ -650,10 +715,12 @@ class TradierBrokerGateway implements BrokerGateway {
       try {
         // Tradier equity symbols use dots (BRK.B); our canonical is hyphenated, so convert on the wire.
         const wireSymbols = canonicalSymbols.map((s) => toTradierSymbol(s));
-        const body = await this.trackHealth(() =>
-          this.request<{ quotes?: { quote?: unknown } | string }>("GET", "/markets/quotes", {
-            query: { symbols: wireSymbols.join(","), greeks: "false" }
-          })
+        const body = await this.trackHealth(
+          () =>
+            this.request<{ quotes?: { quote?: unknown } | string }>("GET", "/markets/quotes", {
+              query: { symbols: wireSymbols.join(","), greeks: "false" }
+            }),
+          { retryTransient: true }
         );
         const quotesField = typeof body.quotes === "object" && body.quotes ? (body.quotes as Record<string, unknown>).quote : undefined;
         for (const q of arr<Record<string, unknown>>(quotesField)) {
@@ -858,56 +925,85 @@ class TradierBrokerGateway implements BrokerGateway {
 
   /**
    * Side-effect-free order-path probe: submit a 1-share limit PREVIEW. A 200 with a structured
-   * validation/BP error means the OMS is reachable (ok). HTTP 5xx / "backend" / "unexpected error"
-   * means paper/live OMS is down — the case that was burning strategy LLM runs on VA93389646.
-   * Throttled to once per 2 minutes per account so the scheduler tick does not hammer Tradier.
+   * validation/BP error means the OMS is reachable (ok). HTTP 5xx / "backend" / "unexpected
+   * (server) error" means paper/live OMS is down — the case that was burning strategy LLM runs
+   * on VA93389646. Base throttle is once per 2 minutes per account; a failing probe backs off
+   * exponentially (see tradierProbeTtlMs) so a sustained condition does not re-probe (and the
+   * caller does not re-warn) every single 60s scheduler tick — see tradierProbeCache doc comment.
+   * `retryTransient: true` is safe here specifically because `preview: "true"` makes this call
+   * side-effect-free; a retried real order placement elsewhere in this file never opts in.
    */
   async probeOrderCapability(accountNumber: string): Promise<{ ok: boolean; reason?: string }> {
     const key = `${this.baseUrl}|${accountNumber}`;
     const cached = tradierProbeCache.get(key);
-    if (cached && Date.now() - cached.at < TRADIER_PROBE_TTL_MS) {
-      return { ok: cached.ok, reason: cached.reason };
+    if (cached) {
+      // Back off only FAILED probes (2026-09-07 fix). Exponential backoff applied to a healthy
+      // streak too would let a stale "ok" result ride all the way to the 60-minute ceiling; if
+      // the order path then actually went down, checkBrokerHealth could keep accepting that
+      // stale success for up to an hour instead of catching it within the intended 2-minute
+      // base window. Successful results always use the base TTL; only a failing streak backs off.
+      const ttlMs = cached.ok ? TRADIER_PROBE_BASE_TTL_MS : tradierProbeTtlMs(cached.streak);
+      if (Date.now() - cached.at < ttlMs) {
+        return { ok: cached.ok, reason: cached.reason };
+      }
     }
+    const remember = (ok: boolean, category: TradierProbeCategory, reason?: string): { ok: boolean; reason?: string } => {
+      const streak = cached && cached.ok === ok && cached.category === category ? cached.streak + 1 : 0;
+      tradierProbeCache.set(key, { at: Date.now(), ok, reason, category, streak });
+      return { ok, reason };
+    };
     try {
-      await this.trackHealth(() =>
-        this.request<{ order?: Record<string, unknown> }>("POST", `/accounts/${accountNumber}/orders`, {
-          form: {
-            class: "equity",
-            symbol: "AAPL",
-            side: "buy",
-            quantity: "1",
-            type: "limit",
-            duration: "day",
-            price: "1.00",
-            preview: "true"
-          }
-        })
+      await this.trackHealth(
+        () =>
+          this.request<{ order?: Record<string, unknown> }>("POST", `/accounts/${accountNumber}/orders`, {
+            form: {
+              class: "equity",
+              symbol: "AAPL",
+              side: "buy",
+              quantity: "1",
+              type: "limit",
+              duration: "day",
+              price: "1.00",
+              preview: "true"
+            }
+          }),
+        { retryTransient: true }
       );
       // Preview accepted with result — OMS up.
-      tradierProbeCache.set(key, { at: Date.now(), ok: true });
-      return { ok: true };
+      return remember(true, "capability_ok");
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      // 5xx / backend / "unexpected error" OR "unexpected server error" — Tradier has been seen
+      // to answer with BOTH wordings; the old `/unexpected error/i` alternative alone missed the
+      // "server" variant entirely, which is why this bucket previously undercounted and nearly
+      // every real server-side failure fell through to the generic "unclassified" branch below.
+      const isServerError = /HTTP 5\d\d|\bbackend\b|unexpected\s+(?:server\s+)?error|OmsUnavailable|OmsInternalError/i.test(msg);
       // Structured OMS rejections prove the order path is alive (account just can't afford /
       // validate this probe). Treat as healthy order capability.
       if (
         /buying power|InitialMargin|MaintenanceMargin|OrderQuantity|LimitPrice|IncorrectOrder|not enough|day.?trad|margin|AccountDisabled|TradingDenied|AssetTrading|pdt/i.test(
           msg
         ) &&
-        !/HTTP 5\d\d|backend|unexpected error|OmsUnavailable|OmsInternal/i.test(msg)
+        !isServerError
       ) {
-        tradierProbeCache.set(key, { at: Date.now(), ok: true });
-        return { ok: true };
+        return remember(true, "capability_ok");
       }
-      if (/HTTP 5\d\d|backend|unexpected error|OmsUnavailable|OmsInternalError/i.test(msg)) {
+      if (isServerError) {
         const reason = `Tradier order path unavailable: ${msg.slice(0, 220)}`;
-        tradierProbeCache.set(key, { at: Date.now(), ok: false, reason });
-        return { ok: false, reason };
+        return remember(false, "server_error", reason);
       }
-      // Connectivity / auth failures — cannot place.
+      if (isAbortOrTimeoutError(error)) {
+        const reason = `Tradier order capability probe timed out: ${msg.slice(0, 220)}`;
+        return remember(false, "timeout", reason);
+      }
+      if (isTransientNetworkError(error)) {
+        const reason = `Tradier order capability probe failed (network): ${msg.slice(0, 220)}`;
+        return remember(false, "connectivity", reason);
+      }
+      // Unrecognized failure shape — kept as its own category rather than folded into
+      // "connectivity" so a genuinely new Tradier error string stays visible as such.
       const reason = `Tradier order capability probe failed: ${msg.slice(0, 220)}`;
-      tradierProbeCache.set(key, { at: Date.now(), ok: false, reason });
-      return { ok: false, reason };
+      return remember(false, "unclassified", reason);
     }
   }
 
@@ -998,8 +1094,10 @@ class TradierBrokerGateway implements BrokerGateway {
   async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
     let body: { order?: Record<string, unknown> };
     try {
-      body = await this.trackHealth(() =>
-        this.request<{ order?: Record<string, unknown> }>("GET", `/accounts/${accountNumber}/orders/${originalOrderId}`)
+      body = await this.trackHealth(
+        () =>
+          this.request<{ order?: Record<string, unknown> }>("GET", `/accounts/${accountNumber}/orders/${originalOrderId}`),
+        { retryTransient: true }
       );
     } catch (error) {
       // "Order gone" means nothing to tear down, safe to resolve as done — Tradier surfaces this

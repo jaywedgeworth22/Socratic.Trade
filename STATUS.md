@@ -1,5 +1,65 @@
 # Current Status
 
+## 2026-09-08 GROK — PR #3189 fixer tip (manual vs auto halt + full verify)
+
+Codex round-3 on PR #3189 (`claude/scheduler-broker-error-classification`). Two open threads, both addressed on the tip; Deployer squash AM stays armed; this lane does not merge; extra-ship no.
+
+- P2 `PRRT_kwDOS7mOVM6gD05C`: `applyBrokerOrderPlacementPause` already returned `still_paused` for a manual owner halt without writing an auto-resume marker, but `isHaltedPauseAction` treated every `still_paused` as auto-halted. `logHealthGateSkip` therefore emitted `(auto-halted)` and `halted: true` for an owner-controlled pause. `still_paused` now carries `autoOwned`; the helper is true only for `"halted"` or auto-owned `still_paused`. Dedup stays stable for both kinds of pause.
+- P1 `PRRT_kwDOS7mOVM6gD05D`: run the full AGENTS.md sequence (lint then tsc then test then build) and record the actual results in the rollout; do not claim complete if any step is unfinished.
+
+Worktree: `~/apps/trading-claude-scheduler-errors` (only checkout of this PR branch). Rollout: `docs/rollouts/2026-09-07-scheduler-broker-error-classification.md` (round-3 section).
+
+**Blockers:** none for the tip-fix itself. Merge stays with Deployer.
+**Next action:** push the tip, resolve both Codex threads, leave auto-merge armed.
+
+## 2026-09-07 CLAUDE — Scheduler/broker error classification, backoff, and observability
+
+Production evidence from `/app/data/litestream-runtime.log` (2026-08-29..2026-09-07, ~9 days):
+1,364 "Tradier order capability probe failed" lines, 79/78/75 scheduler broker-timeout lines
+(synthetic-stop monitor / stale-limit-scan timeouts + `SocketError: other side closed`), and 92
+"[vector-db] Error storing contexts: TypeError: fetch failed" lines on the post-2026-09-01 Qdrant
+write path. Fixed a regex gap in `tradier.ts` `probeOrderCapability` that mis-sorted Tradier's
+actual "Unexpected server error" wording into a generic unthrottled fallback; added
+category-aware exponential-backoff caching there. Added de-duplicated health-gate skip logging
+and lane-failure classification + degraded-subsystem surfacing in `scheduler.ts` for the
+synthetic-stop-monitor / stale-limit-order lanes. Added a safe opt-in read/preview-only retry to
+Tradier's `trackHealth` (never on a real order-placing write). Added bounded retry-with-backoff
+to the Qdrant write path (`qdrant-write.ts`) and fixed a `storeContexts` catch-block bug that
+hardcoded `provider: "pinecone"` regardless of the actual write backend. Scope is strictly
+classification/backoff/observability — no trading-decision logic changed. Complements (does not
+duplicate) PR #3174's whole-tick watchdog. Rollout:
+`docs/rollouts/2026-09-07-scheduler-broker-error-classification.md`.
+
+## 2026-09-07 CLAUDE — PR #3189 round-2 Codex/Sentry triage (same branch, before merge)
+
+Fixed five real findings from round-1 review, one batch. (1) Race condition (flagged
+independently by both `sentry` and `chatgpt-codex-connector`): `recordLaneRecovery` was attached
+to the raw `staleExitWork`/`stopMonitorWork` promise instead of the `withDeadline`-raced one, so a
+lane that timed out (recording a failure) but later succeeded in the background would silently
+clear that same failure streak — a lane that always times out but always eventually succeeds
+could never reach `lane_degraded`. Both lanes now key recovery/failure off the same deadline-raced
+promise. (2) `recordLaneFailure`'s `alreadyDegraded` check required the failure category to match,
+so a category change while degraded silently reset `degraded` to false with nothing having
+recovered; now preserved across category changes. (3) Tradier's exponential probe backoff applied
+to successes too, so a long healthy streak could ride the TTL to the 60-minute ceiling and mask a
+real regression for up to an hour; success now always uses the base 2-minute TTL. (4) The
+health-gate skip dedup used `pauseResult.action === "halted"`, the ONE-TICK transition marker, not
+the durable halt state (`"still_paused"` on every later tick) — new `isHaltedPauseAction` helper
+fixes the resulting per-tick account_skip_started re-emission. (5) `cancelBracketSiblingLegs`'s
+GET was never actually opted into `retryTransient` despite the rollout note claiming it was — now
+fixed to match. Five new regression tests across `test/scheduler-lane-observability.test.ts` and
+`test/tradier.test.ts` (125 total across the 7 targeted files, all green). `npx tsc --noEmit`
+clean, `npm run lint` 0 errors, `npm run build` clean (after `npm install` resynced this
+worktree's stale `node_modules`, same `ERR_PACKAGE_PATH_NOT_EXPORTED` seen on the sibling
+ingest-errors/congress-401 lanes). Merged `origin/main` after PR #3187 landed
+(STATUS.md/PLAN.md/docs/EFFORT-LOG.md conflicts auto-resolved, `src/lib/vector-db.ts` also
+auto-merged cleanly against #3187's changes); re-confirmed tsc/targeted-vitest/build clean
+post-merge.
+
+**Blockers:** none.
+**Next action:** none — all 7 round-1 review threads resolved, auto-merge armed, this PR merges
+once CI reports green.
+
 ## 2026-09-07 CLAUDE — Restart-sweep adoption grace + R7 index-metric guard on the Qdrant read path
 
 Two P1 money-path regressions from PR #3138 (2026-09-01) and its follow-up #3158.  (1) The immediate restart sweep in `markStaleRunningRuns` selects every run that started before this process booted, however young, and its only liveness grace was the process-local `isStrategyRunExecutionLive` map plus an audit probe a seconds-old run has not populated — so a run another node had legitimately adopted was marked `failed` mid-flight and its request row freed for a duplicate.  Fix:  new `hasLiveStrategyRunLease` reads the durable strategy run lock (owner === run id, renewed every 60s with a 5-minute TTL by `startStrategyLockGuard`) and spares such a run, but only on the pre-boot arm — a time-stale wedged run is still swept.  (2) `assertIndexMetric`, the R7 cosine-metric guard, stopped running once `RAG_VECTOR_READ_QDRANT` defaulted true; it now runs on both read backends whenever a Pinecone client exists, without reintroducing the `indexExists` preflight.  The committed-receipts gate now fails closed explicitly on an unknown provider authority.  Auto-merge deliberately NOT armed:  merging auto-deploys live-money production, and board `bdc2b662` is an open P0 on agent code reaching live trading unreviewed.  Rollout:  `docs/rollouts/2026-09-07-restart-sweep-grace.md`.
