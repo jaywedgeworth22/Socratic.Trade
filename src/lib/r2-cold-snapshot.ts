@@ -1010,48 +1010,62 @@ export async function reportR2WeeklyFreshness(
     const previous = getInternalSetting<R2WeeklyHealthState>(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY) ?? null;
     if (previous === state) return { state, previous, changed: false };
 
-    setInternalSetting(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY, state);
-    audit("r2_cold_snapshot.health_change", {
-      from: previous,
-      to: state,
-      ageSeconds: status.ageSeconds,
-      key: status.key,
-      maxAgeSeconds: R2_ARCHIVE_MAX_AGE_SECONDS,
-    });
-
+    // Emit FIRST, persist LAST.  The stored state is what suppresses the next tick, so
+    // writing it before the event has been emitted would lose the transition forever if
+    // anything in between threw: the next tick would see the new state as `previous` and
+    // conclude nothing changed.  Persisting last means a mid-flight failure at worst
+    // repeats the event next tick, which for an archive-staleness watchdog is strictly
+    // the right way to be wrong.  logWarn/logError are fire-and-forget and cannot throw;
+    // the audit row and the advisory are each guarded so neither can skip the write.
+    const ageDays = status.ageSeconds === null ? null : Number((status.ageSeconds / 86400).toFixed(2));
     if (state === "ok") {
       logWarn("r2 cold snapshot archive recovered", {
         previous,
         ageSeconds: status.ageSeconds,
         key: status.key,
       });
-      return { state, previous, changed: true };
+    } else {
+      logError("r2 cold snapshot archive stale", {
+        state,
+        previous,
+        ageSeconds: status.ageSeconds,
+        ageDays,
+        maxAgeSeconds: R2_ARCHIVE_MAX_AGE_SECONDS,
+        key: status.key,
+      });
     }
 
-    const ageDays = status.ageSeconds === null ? null : Number((status.ageSeconds / 86400).toFixed(2));
-    logError("r2 cold snapshot archive stale", {
-      state,
-      previous,
-      ageSeconds: status.ageSeconds,
-      ageDays,
-      maxAgeSeconds: R2_ARCHIVE_MAX_AGE_SECONDS,
-      key: status.key,
-    });
-    const alert = deps.alertImpl ?? defaultAlert;
     try {
-      await alert(
-        "r2_cold_snapshot_stale",
-        state === "archive_not_run"
-          ? `Weekly R2 cold snapshot has never completed — the independent archive tier is EMPTY. ` +
-              `Litestream/B2 continuous replication is unaffected.`
-          : `Weekly R2 cold snapshot is ${ageDays ?? "?"} days old (limit ` +
-              `${R2_ARCHIVE_MAX_AGE_SECONDS / 86400} days); newest archive object is ${status.key}. ` +
-              `The independent archive tier is not advancing. Litestream/B2 continuous ` +
-              `replication is unaffected.`,
-      );
+      audit("r2_cold_snapshot.health_change", {
+        from: previous,
+        to: state,
+        ageSeconds: status.ageSeconds,
+        key: status.key,
+        maxAgeSeconds: R2_ARCHIVE_MAX_AGE_SECONDS,
+      });
     } catch {
-      /* advisory only */
+      /* observability only — must not cost us the state write below */
     }
+
+    if (state !== "ok") {
+      const alert = deps.alertImpl ?? defaultAlert;
+      try {
+        await alert(
+          "r2_cold_snapshot_stale",
+          state === "archive_not_run"
+            ? `Weekly R2 cold snapshot has never completed — the independent archive tier is EMPTY. ` +
+                `Litestream/B2 continuous replication is unaffected.`
+            : `Weekly R2 cold snapshot is ${ageDays ?? "?"} days old (limit ` +
+                `${R2_ARCHIVE_MAX_AGE_SECONDS / 86400} days); newest archive object is ${status.key}. ` +
+                `The independent archive tier is not advancing. Litestream/B2 continuous ` +
+                `replication is unaffected.`,
+        );
+      } catch {
+        /* advisory only */
+      }
+    }
+
+    setInternalSetting(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY, state);
     return { state, previous, changed: true };
   } catch {
     // Watchdogs must never throw into the scheduler tick.

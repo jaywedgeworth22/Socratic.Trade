@@ -800,6 +800,26 @@ describe("reportR2WeeklyFreshness", () => {
     expect(getInternalSetting<string>(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY)).toBe("ok");
   });
 
+  it("does not lose the transition when the advisory throws — event first, state last", async () => {
+    const now = Date.UTC(2026, 8, 8, 9, 0, 0);
+    setLastSuccess(new Date(now - (R2_ARCHIVE_MAX_AGE_SECONDS + 86_400) * 1000).toISOString());
+
+    const first = await reportR2WeeklyFreshness(now, {
+      alertImpl: async () => {
+        throw new Error("notification path down");
+      },
+    });
+
+    // The advisory failing is not allowed to abort the transition or the state write.
+    expect(first).toEqual({ state: "archive_stale", previous: null, changed: true });
+    expect(auditCount("r2_cold_snapshot.health_change")).toBe(1);
+    expect(getInternalSetting<string>(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY)).toBe("archive_stale");
+
+    // And it is not re-emitted on the next tick.
+    const second = await reportR2WeeklyFreshness(now, { alertImpl: async () => {} });
+    expect(second.changed).toBe(false);
+  });
+
   it("treats a never-run archive as an alertable state", async () => {
     const alerts: string[] = [];
     const report = await reportR2WeeklyFreshness(Date.UTC(2026, 8, 8, 9, 0, 0), {
