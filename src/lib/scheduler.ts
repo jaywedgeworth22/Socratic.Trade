@@ -1020,21 +1020,37 @@ async function tickInner(): Promise<void> {
     .catch((err) => console.error("[scheduler] due-jobs intraday sample drain error:", err));
 
   // Weekly R2 cold snapshot (owner directive 2026-08-08): second-provider disaster
-  // recovery — better-sqlite3 backup() of the live DB, gzip-streamed + multipart-uploaded
-  // to the idle historic R2 bucket (cold-snapshots/app-<date>.db.gz since 2026-08-31;
-  // newest 1 kept across .db/.db.gz — the raw DB hit ~9.7 GB).  First gzip land must
-  // set R2_COLD_SNAPSHOT_SKIP_PRUNE=1 until Jay approves deleting the legacy
+  // recovery — a `VACUUM INTO` snapshot of the live DB taken in a child process (NOT
+  // better-sqlite3 backup(), which never converges against a concurrently written DB —
+  // that is what stalled the archive for 9 days from 2026-08-30), gzip-streamed +
+  // multipart-uploaded to the idle historic R2 bucket (cold-snapshots/app-<date>.db.gz
+  // since 2026-08-31; newest 1 kept across .db/.db.gz).  First gzip land must set
+  // R2_COLD_SNAPSHOT_SKIP_PRUNE=1 until Jay approves deleting the legacy
   // cold-snapshots/app-2026-08-30.db.  Durable weekly due-job (Sunday ~03:17 UTC;
   // survives downtime), silent no-op without the AWS_R2_HISTORIC_* credentials,
-  // budget-guarded against the R2 free tier.
+  // budget-guarded against the R2 free tier, and every attempt bounded by
+  // R2_COLD_SNAPSHOT_DEADLINE_MIN so a stuck snapshot fails loudly inside its own lease.
+  //
+  // reportR2WeeklyFreshness watches the SAME checks.storage.r2Weekly field the public
+  // health endpoint publishes and emits ONE Sentry event per state transition — nothing
+  // watched it before, which is why 9 days of staleness went unnoticed.  It runs on every
+  // tick regardless of whether a job drained, and is a single settings read when nothing
+  // changed.
   void import("./r2-cold-snapshot")
-    .then(({ ensureR2ColdSnapshotJobScheduled, drainR2ColdSnapshotJobs }) =>
+    .then(({ ensureR2ColdSnapshotJobScheduled, drainR2ColdSnapshotJobs, reportR2WeeklyFreshness }) =>
       journalLane("r2-cold-snapshot", {}, async () => {
         ensureR2ColdSnapshotJobScheduled();
         const result = await drainR2ColdSnapshotJobs();
+        const freshness = await reportR2WeeklyFreshness();
+        const summary = [
+          result.drained > 0 ? `drained=${result.drained} last=${result.lastRun?.status ?? "?"}` : undefined,
+          freshness.changed ? `health=${freshness.previous ?? "unknown"}->${freshness.state}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(" ");
         return {
           status: result.drained > 0 ? ("ok" as const) : ("skipped" as const),
-          summary: result.drained > 0 ? `drained=${result.drained} last=${result.lastRun?.status ?? "?"}` : undefined,
+          summary: summary || undefined,
         };
       })
     )

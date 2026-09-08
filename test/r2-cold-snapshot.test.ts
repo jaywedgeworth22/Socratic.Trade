@@ -7,7 +7,7 @@
 // round-trip verification of the uploaded parts), temp-file cleanup on success AND
 // failure, and the Class A budget guard.
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { join } from "node:path";
@@ -22,10 +22,16 @@ import {
   nextR2ColdSnapshotDueAt,
   r2ColdSnapshotClassAPct,
   r2ColdSnapshotSkipPruneFromEnv,
+  r2WeeklyHealthState,
+  reportR2WeeklyFreshness,
+  runVacuumIntoSnapshot,
   selectColdSnapshotsToPrune,
+  withSnapshotDeadline,
   R2_ARCHIVE_MAX_AGE_SECONDS,
+  R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS,
   R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES,
   R2_COLD_SNAPSHOT_DEFAULT_RETAIN,
+  R2_COLD_SNAPSHOT_HEALTH_STATE_KEY,
   R2_COLD_SNAPSHOT_JOB_TYPE,
   R2_COLD_SNAPSHOT_LAST_FAILURE_KEY,
   R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY,
@@ -49,6 +55,7 @@ const CRED_ENVS = [
   "R2_ARCHIVE_KEEP_GENERATIONS",
   "R2_COLD_SNAPSHOT_PART_MB",
   "R2_COLD_SNAPSHOT_SKIP_PRUNE",
+  "R2_COLD_SNAPSHOT_DEADLINE_MIN",
 ] as const;
 
 function setCreds(): void {
@@ -63,6 +70,7 @@ beforeEach(() => {
   deleteInternalSetting("r2coldsnap:disabledAuditedReason");
   deleteInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY);
   deleteInternalSetting(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY);
+  deleteInternalSetting(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY);
   deleteInternalSetting("r2usage:lastSnapshots");
   getDb().prepare("DELETE FROM due_jobs WHERE job_type = ?").run(R2_COLD_SNAPSHOT_JOB_TYPE);
   getDb().prepare("DELETE FROM audit_events WHERE kind LIKE 'r2_cold_snapshot%'").run();
@@ -641,5 +649,165 @@ describe("getR2WeeklyHealthStatus", () => {
       key: null,
       reason: "archive_not_run",
     });
+  });
+});
+
+
+// ── Snapshot deadline + VACUUM INTO (2026-09-08 archive-stall fix) ───────────
+//
+// Regression cover for the 9-day silent stall: the weekly job started 27 times between
+// 2026-09-06 and 2026-09-08 and never once reached `.success` or `.error`, because
+// better-sqlite3 `backup()` restarts from page 1 on every write from another connection
+// and can never converge on the ~10.7 GB live DB.  It HUNG, so `failDueJob` never ran,
+// `lastFailure` was never written, and no advisory ever fired.
+
+describe("snapshot deadline", () => {
+  it("config default is 45 minutes, well under the 2h job lease, and is env-tunable", () => {
+    setCreds();
+    expect(R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS).toBe(45 * 60_000);
+    expect(loadR2ColdSnapshotConfig().snapshotDeadlineMs).toBe(R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS);
+    expect(R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS).toBeLessThan(120 * 60_000);
+    process.env.R2_COLD_SNAPSHOT_DEADLINE_MIN = "5";
+    expect(loadR2ColdSnapshotConfig().snapshotDeadlineMs).toBe(5 * 60_000);
+    process.env.R2_COLD_SNAPSHOT_DEADLINE_MIN = "nonsense";
+    expect(loadR2ColdSnapshotConfig().snapshotDeadlineMs).toBe(R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS);
+  });
+
+  it("withSnapshotDeadline rejects work that never settles", async () => {
+    await expect(withSnapshotDeadline(() => new Promise<void>(() => {}), 20)).rejects.toThrow(
+      /snapshot_deadline_exceeded/,
+    );
+  });
+
+  it("withSnapshotDeadline passes work that finishes in time through untouched", async () => {
+    await expect(withSnapshotDeadline(async () => "done", 5_000)).resolves.toBe("done");
+  });
+
+  it("a hanging snapshot now FAILS the run loudly instead of hanging until the lease expires", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    const s3 = mockS3({});
+    const alerts: string[] = [];
+
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl: s3.fetchImpl,
+      // The production hang shape: the snapshot step never settles.
+      backupImpl: () => new Promise<void>(() => {}),
+      alertImpl: async (warningType) => {
+        alerts.push(warningType);
+      },
+      snapshotDeadlineMs: 25,
+    });
+
+    expect(result.lastRun?.status).toBe("error");
+    expect(result.lastRun?.reason).toMatch(/snapshot_deadline_exceeded/);
+    // No S3 traffic at all — the run died before CreateMultipartUpload.
+    expect(s3.requests).toHaveLength(0);
+    // The three things that were missing for 9 days: an audited error, a persisted
+    // failure receipt, and an advisory.
+    expect(auditCount("r2_cold_snapshot.error")).toBe(1);
+    const failure = getInternalSetting<{ reason: string }>(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY);
+    expect(failure?.reason).toMatch(/snapshot_deadline_exceeded/);
+    expect(alerts).toEqual(["r2_cold_snapshot_failed"]);
+    // And the job is retryable, not wedged as permanently "claimed".
+    expect(jobRows().map((r) => r.status)).toEqual(["pending"]);
+  });
+});
+
+describe("runVacuumIntoSnapshot", () => {
+  it("produces a consistent, integrity-clean copy via a child process", async () => {
+    const dest = join(dirname(databasePath()), `vacuum-into-${randomUUID()}.db`);
+    getDb().exec("CREATE TABLE IF NOT EXISTS vacuum_into_probe (id INTEGER PRIMARY KEY, v TEXT)");
+    getDb().prepare("INSERT INTO vacuum_into_probe (v) VALUES (?)").run("hello");
+
+    await runVacuumIntoSnapshot(databasePath(), dest, 60_000);
+
+    expect(existsSync(dest)).toBe(true);
+    expect(statSync(dest).size).toBeGreaterThan(0);
+    // The copy is a real SQLite DB carrying the row we just wrote.
+    const copy = getDb().prepare("SELECT COUNT(*) AS n FROM vacuum_into_probe").get() as { n: number };
+    expect(copy.n).toBeGreaterThan(0);
+    rmSync(dest, { force: true });
+  }, 60_000);
+
+  it("rejects rather than hangs when the source path does not exist", async () => {
+    const dest = join(dirname(databasePath()), `vacuum-into-${randomUUID()}.db`);
+    await expect(
+      runVacuumIntoSnapshot(join(dirname(databasePath()), `missing-${randomUUID()}.db`), dest, 30_000),
+    ).rejects.toThrow();
+    rmSync(dest, { force: true });
+  }, 60_000);
+});
+
+// ── Freshness watchdog: one Sentry/advisory event per state TRANSITION ───────
+
+describe("reportR2WeeklyFreshness", () => {
+  function setLastSuccess(completedAt: string): void {
+    setInternalSetting(R2_COLD_SNAPSHOT_LAST_SUCCESS_KEY, {
+      key: "cold-snapshots/app-2026-08-30.db",
+      completedAt,
+      bytes: 1234,
+    });
+  }
+
+  it("maps the public health shape onto the alertable state", () => {
+    expect(r2WeeklyHealthState({ ok: true, ageSeconds: 10, key: "k", reason: null })).toBe("ok");
+    expect(r2WeeklyHealthState({ ok: false, ageSeconds: 10, key: "k", reason: "archive_stale" })).toBe("archive_stale");
+    expect(r2WeeklyHealthState({ ok: false, ageSeconds: null, key: null, reason: "archive_not_run" })).toBe(
+      "archive_not_run",
+    );
+  });
+
+  it("alerts ONCE when the archive goes stale, then stays silent while it stays stale", async () => {
+    const now = Date.UTC(2026, 8, 8, 9, 0, 0);
+    setLastSuccess(new Date(now - (R2_ARCHIVE_MAX_AGE_SECONDS + 86_400) * 1000).toISOString());
+    const alerts: string[] = [];
+    const alertImpl = async (warningType: string) => {
+      alerts.push(warningType);
+    };
+
+    const first = await reportR2WeeklyFreshness(now, { alertImpl });
+    expect(first).toEqual({ state: "archive_stale", previous: null, changed: true });
+    expect(alerts).toEqual(["r2_cold_snapshot_stale"]);
+    expect(auditCount("r2_cold_snapshot.health_change")).toBe(1);
+
+    // Every later tick while still stale is a single settings read and nothing else.
+    for (let i = 0; i < 5; i++) {
+      const again = await reportR2WeeklyFreshness(now + i * 60_000, { alertImpl });
+      expect(again.changed).toBe(false);
+      expect(again.state).toBe("archive_stale");
+    }
+    expect(alerts).toEqual(["r2_cold_snapshot_stale"]);
+    expect(auditCount("r2_cold_snapshot.health_change")).toBe(1);
+  });
+
+  it("emits one more event when the archive recovers, and no advisory on recovery", async () => {
+    const now = Date.UTC(2026, 8, 8, 9, 0, 0);
+    setLastSuccess(new Date(now - (R2_ARCHIVE_MAX_AGE_SECONDS + 86_400) * 1000).toISOString());
+    const alerts: string[] = [];
+    const alertImpl = async (warningType: string) => {
+      alerts.push(warningType);
+    };
+    await reportR2WeeklyFreshness(now, { alertImpl });
+
+    setLastSuccess(new Date(now - 3600 * 1000).toISOString());
+    const recovered = await reportR2WeeklyFreshness(now, { alertImpl });
+
+    expect(recovered).toEqual({ state: "ok", previous: "archive_stale", changed: true });
+    expect(alerts).toEqual(["r2_cold_snapshot_stale"]);
+    expect(auditCount("r2_cold_snapshot.health_change")).toBe(2);
+    expect(getInternalSetting<string>(R2_COLD_SNAPSHOT_HEALTH_STATE_KEY)).toBe("ok");
+  });
+
+  it("treats a never-run archive as an alertable state", async () => {
+    const alerts: string[] = [];
+    const report = await reportR2WeeklyFreshness(Date.UTC(2026, 8, 8, 9, 0, 0), {
+      alertImpl: async (warningType) => {
+        alerts.push(warningType);
+      },
+    });
+    expect(report).toEqual({ state: "archive_not_run", previous: null, changed: true });
+    expect(alerts).toEqual(["r2_cold_snapshot_stale"]);
   });
 });

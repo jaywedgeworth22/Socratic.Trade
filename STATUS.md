@@ -1,5 +1,38 @@
 # Current Status
 
+## 2026-09-08 CLAUDE — R2 weekly cold snapshot stalled 9 days, silently
+
+`checks.storage.r2Weekly` was the only red check on `/api/health`: `archive_stale`,
+`ageSeconds` ~797627, newest archive `cold-snapshots/app-2026-08-30.db`.  Litestream/B2
+continuous replication was healthy throughout — what stopped was the independent archive
+tier.
+
+Root cause: the snapshot step **hung, it never failed**.  better-sqlite3 `backup()` wraps
+SQLite's online-backup API, which restarts from page 1 on every write from a different
+connection; `app.db` is written continuously and has reached ~10.7 GB, so the copy can
+never converge.  Production proof: `week-2026-09-06` sat at `attempts=27`,
+`last_error=NULL`, with 55 lifetime `r2_cold_snapshot.start` rows, 5 `.success` (newest
+2026-08-30T03:30Z) and **zero `.error` ever**; the in-flight temp file measured exactly
+5666406400 bytes at 09:06:00Z, 09:09:46Z and 09:14:00Z while its mtime advanced every few
+seconds.  Reproduced locally on better-sqlite3 13.0.3: 2698 restarts in 15s, never
+converged; `VACUUM INTO` on the same source under the same writer finished in 117 ms with
+`integrity_check` = ok.  Because it hung, `failDueJob` never ran, `lastFailure` was never
+written and no advisory fired — and nothing watched `checks.storage.r2Weekly`.
+
+Fix: snapshot via `VACUUM INTO` in a child process (read-only source, minimal env, no
+secrets), every attempt bounded by `R2_COLD_SNAPSHOT_DEADLINE_MIN` (default 45 min, under
+the 2h lease) with a real kill, `logError` on failure, and `reportR2WeeklyFreshness()` in
+the scheduler lane emitting ONE Sentry event per `r2Weekly` state transition.  PR #3168 and
+#3135 are ruled out — no run since 2026-08-30 ever reached the prune or the upload.
+
+Bucket capacity, read live 2026-09-08T07:10Z: `objectCount=1`, `payloadSize=9679310848`
+(~96.8% of the 10 GB free tier), sole key `cold-snapshots/app-2026-08-30.db`.  Not the
+cause; it does gate how the first successful run should land — owner decision recorded in
+`docs/rollouts/2026-09-08-r2-cold-snapshot-hang.md`.  No object was deleted.
+
+Branch `claude/r2-cold-snapshot-freshness`.  Rollout:
+`docs/rollouts/2026-09-08-r2-cold-snapshot-hang.md`.
+
 ## 2026-09-08 GROK — PR #3189 fixer tip (manual vs auto halt + full verify)
 
 Codex round-3 on PR #3189 (`claude/scheduler-broker-error-classification`). Two open threads, both addressed on the tip; Deployer squash AM stays armed; this lane does not merge; extra-ship no.

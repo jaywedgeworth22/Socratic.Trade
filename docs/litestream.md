@@ -33,8 +33,20 @@ days old.  No provider holds a recovery point older than ~15 days.
 
 ## Weekly R2 cold snapshot is gzipped (2026-08-31)
 
+**2026-09-08 — the snapshot step is `VACUUM INTO`, never `backup()`.**  SQLite's
+online-backup API restarts the copy from page 1 whenever the source is modified through a
+different connection.  `app.db` is written continuously and has passed 10.7 GB, so
+`backup()` can never converge: the weekly job started 27 times between 2026-09-06 and
+2026-09-08 without ever reaching success OR failure, and the archive silently went 9 days
+stale.  The snapshot now runs `VACUUM INTO` in a child process (one read transaction, so
+concurrent writers cannot restart it; compacted output; read-only source; minimal env with
+no secrets), bounded by `R2_COLD_SNAPSHOT_DEADLINE_MIN` (default 45 min, under the 2h job
+lease) so a stuck attempt fails loudly instead of hanging.  `reportR2WeeklyFreshness()`
+watches `checks.storage.r2Weekly` and emits one Sentry event per state transition — before
+it, nothing watched that field.  Detail: `docs/rollouts/2026-09-08-r2-cold-snapshot-hang.md`.
+
 The weekly cold snapshot (`src/lib/r2-cold-snapshot.ts`, Sunday ~03:17 UTC due-job)
-uploads `cold-snapshots/app-YYYY-MM-DD.db.gz` — the better-sqlite3 `backup()` file
+uploads `cold-snapshots/app-YYYY-MM-DD.db.gz` — a `VACUUM INTO` copy of the live DB
 gzip-streamed during the multipart upload (the raw DB reached ~9.7 GB, ~90% of the
 R2 free tier; compressed is expected at ~2.5-4 GB).  Gzip landed on main in PR
 #3135.  Retention is retain=1 across BOTH extensions (`.db` and `.db.gz`).
