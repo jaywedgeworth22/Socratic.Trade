@@ -56,6 +56,7 @@ const nextConfig = {
         "node:dns": false,
         "node:net": false,
         "node:os": false,
+        "node:child_process": false,
       };
       config.resolve.fallback = {
         ...(config.resolve.fallback ?? {}),
@@ -71,7 +72,11 @@ const nextConfig = {
         http: false,
         // node:http2 is the APNs provider transport (src/lib/apns.ts, reachable from the
         // src/lib/db.ts barrel). Server-only — stubbed out for client/edge bundles.
-        http2: false
+        http2: false,
+        // child_process is used by r2-cold-snapshot.ts (VACUUM INTO in a child process),
+        // reachable via instrumentation -> background-worker-startup -> scheduler. Server-only
+        // — stubbed out for client/edge bundles (same trap as http2 / fs / path).
+        child_process: false
       };
     }
     if (isServer && nextRuntime === "nodejs") {
