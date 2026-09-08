@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-09-08 GROK — PR #3189 fixer tip (manual vs auto halt + full verify)
+
+Codex round-3 on PR #3189 (`claude/scheduler-broker-error-classification`). Two open threads, both addressed on the tip; Deployer squash AM stays armed; this lane does not merge; extra-ship no.
+
+- P2 `PRRT_kwDOS7mOVM6gD05C`: `applyBrokerOrderPlacementPause` already returned `still_paused` for a manual owner halt without writing an auto-resume marker, but `isHaltedPauseAction` treated every `still_paused` as auto-halted. `logHealthGateSkip` therefore emitted `(auto-halted)` and `halted: true` for an owner-controlled pause. `still_paused` now carries `autoOwned`; the helper is true only for `"halted"` or auto-owned `still_paused`. Dedup stays stable for both kinds of pause.
+- P1 `PRRT_kwDOS7mOVM6gD05D`: run the full AGENTS.md sequence (lint then tsc then test then build) and record the actual results in the rollout; do not claim complete if any step is unfinished.
+
+Worktree: `~/apps/trading-claude-scheduler-errors` (only checkout of this PR branch). Rollout: `docs/rollouts/2026-09-07-scheduler-broker-error-classification.md` (round-3 section).
+
+**Blockers:** none for the tip-fix itself. Merge stays with Deployer.
+**Next action:** push the tip, resolve both Codex threads, leave auto-merge armed.
+
 ## 2026-09-07 CLAUDE — Scheduler/broker error classification, backoff, and observability
 
 Production evidence from `/app/data/litestream-runtime.log` (2026-08-29..2026-09-07, ~9 days):

@@ -72,6 +72,9 @@ describe("broker-health auto-pause when orders cannot be placed", () => {
       policy
     });
     expect(still.action).toBe("still_paused");
+    if (still.action === "still_paused") {
+      expect(still.autoOwned).toBe(true);
+    }
 
     // Healthy again → auto-resume
     const resume = await applyBrokerOrderPlacementPause({
@@ -130,6 +133,9 @@ describe("broker-health auto-pause when orders cannot be placed", () => {
     });
     // already halted by owner — we report still_paused but do NOT write our auto-resume marker
     expect(result.action).toBe("still_paused");
+    if (result.action === "still_paused") {
+      expect(result.autoOwned).toBe(false);
+    }
     expect(getBrokerPlacementPauseMarker(userId, accountScope)).toBeUndefined();
   });
 

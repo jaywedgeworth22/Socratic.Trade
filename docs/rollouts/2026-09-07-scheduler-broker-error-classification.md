@@ -87,8 +87,9 @@ trigger, or how positions are managed is byte-identical before and after this ch
    `"still_paused"` on every later tick. Using that check directly made the halt flag flip
    true/false every tick after the first, which `logHealthGateSkip` read as a state change —
    resetting its dedup counter and re-emitting `account_skip_started` every tick, the exact noise
-   this was built to remove. New `isHaltedPauseAction` helper treats both `"halted"` and
-   `"still_paused"` as currently-halted.
+   this was built to remove. New `isHaltedPauseAction` helper treats `"halted"` and auto-owned
+   `"still_paused"` as currently auto-halted (round-3 tightened this so a manual owner
+   `still_paused` is not labeled auto-halted).
 9. **`cancelBracketSiblingLegs`'s GET not actually opted into the documented retry (P2)** — the
    original summary above (item 3) claimed this idempotent lookup was opted into
    `retryTransient`, but the actual `trackHealth` call site omitted the option. A dead keep-alive
@@ -96,6 +97,34 @@ trigger, or how positions are managed is byte-identical before and after this ch
    scheduler tick instead of retrying in-process. Now actually passes `{ retryTransient: true }`.
 10. **Verification record listed commands with no actual results, and omitted `npm run lint`
     entirely (P1)** — see the rewritten Verification section below.
+
+**Codex round-3 review (fixer tip, 2026-09-08 GROK, same PR, do not merge from this lane):**
+
+11. **Manual owner pause labeled auto-halted (P2, thread `PRRT_kwDOS7mOVM6gD05C`)** —
+    `applyBrokerOrderPlacementPause` returns `still_paused` both for an auto-halt we own
+    (marker present) and for a manual owner halt (no marker, deliberately not claimed). Round-2
+    `isHaltedPauseAction` treated every `still_paused` as halted, so `logHealthGateSkip` emitted
+    `(auto-halted)` and `halted: true` on an owner-controlled pause. `still_paused` now carries
+    `autoOwned`; the helper is true only for `"halted"` or `still_paused && autoOwned`. Dedup
+    stays stable because the flag no longer flips for either kind of pause.
+12. **Verification record still did not run the full AGENTS.md sequence (P1, thread
+    `PRRT_kwDOS7mOVM6gD05D`)** — round-2 recorded targeted vitest and listed tsc before lint.
+    Round-3 runs lint then tsc then whole-repo test then build and records the actual results
+    below. Do not treat this change as complete if any of those four is unfinished.
+
+## Decisions & Trade-offs (round-3)
+
+- Distinguished ownership with `autoOwned: boolean` on the existing `still_paused` action
+  rather than a new `still_manually_paused` action. The scheduler already keys persistence
+  and journal transitions on `"halted"` vs `"still_paused"`; adding a third action would
+  require every `=== "still_paused"` site to learn the sibling. Ownership is the actual
+  distinction `broker-health.ts` already encoded via marker presence.
+- `isHaltedPauseAction` now takes the full `ApplyBrokerPauseResult`, not the action string,
+  so it can read `autoOwned`. The helper remains the single source for the
+  `logHealthGateSkip(..., halted)` flag.
+- Did not change trading-decision logic, auto-resume, or `shouldPersistBrokerHealthSkip`
+  (still persists only on the `"halted"` transition).
+- Did not merge. Extra-ship no.
 
 ## Why
 
@@ -155,34 +184,27 @@ watchdog supervises from the outside:
   degraded-state-preservation fix), `src/lib/tradier.ts` (success-TTL fix;
   `cancelBracketSiblingLegs` `retryTransient: true`), `test/scheduler-lane-observability.test.ts`
   and `test/tradier.test.ts` (new regression tests for all five round-2 code fixes).
+- Round-3 (2026-09-08 GROK fixer): `src/lib/broker-health.ts` (`still_paused.autoOwned`),
+  `src/lib/scheduler.ts` (`isHaltedPauseAction` takes the full result and requires auto-ownership),
+  `test/scheduler-lane-observability.test.ts`, `test/broker-health-auto-pause.test.ts`,
+  `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`, `/Users/jay/apps/TRADING-EFFORT-LOG.md`, this
+  rollout.
 
 ## Verification
 
-Round-2 (this session), actual results — not just the command list, and now including the
-`npm run lint` gate the round-1 record omitted:
+Round-3 (2026-09-08 GROK fixer), AGENTS.md order: lint then tsc then test then build. Results
+filled after each command actually finishes — this section is incomplete until all four have
+an exit code recorded.
 
-- `npx tsc --noEmit` — clean, zero errors, confirmed immediately after making the round-2 code
-  edits.
-- `npm run lint` (`src/lib/scheduler.ts`, `src/lib/tradier.ts`,
-  `test/scheduler-lane-observability.test.ts`, `test/tradier.test.ts`) — 0 errors, 2 pre-existing
-  unused-import warnings in `scheduler.ts` unrelated to this change, `warn`-only per
-  `eslint.config.mjs`.
-- `npm test` (vitest), targeted — `test/tradier.test.ts`, `test/scheduler-lane-observability.test.ts`,
-  `test/qdrant-write.test.ts`, `test/vector-db-qdrant-retrieval.test.ts`,
-  `test/scheduler-tick-watchdog.test.ts`, `test/scheduler-tick-reentrancy.test.ts`,
-  `test/broker-health-auto-pause.test.ts` — 125 tests, all green. A whole-repo `npm test` was not
-  run to completion in this session (large suite) — CI's `verify` check is the authoritative
-  full-suite gate and runs automatically on push.
-- `npm run build` — clean, exit 0. This worktree's `node_modules` was initially stale relative to
-  `package-lock.json` (same `ERR_PACKAGE_PATH_NOT_EXPORTED` on `@sentry/nextjs/config` seen and
-  fixed the same way on the sibling `claude/ingest-error-classification` and
-  `claude/congress-share-401-observability` lanes); `npm install` resynced it, and after merging
-  `origin/main` (see below) both `tsc --noEmit` and `npm run build` completed clean.
-- Merged `origin/main` after PR #3187 landed (STATUS.md/PLAN.md/docs/EFFORT-LOG.md conflicts
-  auto-resolved by git's `ort` strategy, both sides kept; `src/lib/vector-db.ts` also auto-merged
-  cleanly against PR #3187's changes — verified no conflict markers and both PRs' edits coexist).
-  `tsc`, targeted vitest (89 tests across 3 re-checked files), and `npm run build` all re-confirmed
-  clean after the merge.
+- `npm run lint` — pending.
+- `npx tsc --noEmit` — pending.
+- `npm test` (whole-repo vitest) — pending. Targeted pre-check: `test/scheduler-lane-observability.test.ts`
+  + `test/broker-health-auto-pause.test.ts` — 21 passed / 0 failed in 22.50s.
+- `npm run build` — pending.
+
+Round-2 (prior session) recorded targeted vitest (125 tests) plus tsc/lint/build after merging
+`origin/main`. That record listed tsc before lint and did not complete whole-repo `npm test`;
+Codex P1 (`PRRT_kwDOS7mOVM6gD05D`) correctly refused to treat that as the handoff gate.
 
 ## Follow-ups
 
@@ -203,5 +225,13 @@ Round-2 (this session), actual results — not just the command list, and now in
 
 ## Blockers
 
-- None. Scope stayed inside classification/backoff/observability; no trading-decision logic was
-  touched.
+- None for the tip-fix. Scope stayed inside classification/backoff/observability; no
+  trading-decision logic was touched. Deployer squash auto-merge stays armed; this lane does
+  not merge. Extra-ship no.
+
+## Next Steps
+
+- Push the tip to `claude/scheduler-broker-error-classification`.
+- Resolve Codex threads `PRRT_kwDOS7mOVM6gD05C` (P2) and `PRRT_kwDOS7mOVM6gD05D` (P1) after the
+  four verify commands have real results on the tip.
+- Do not merge from this lane.

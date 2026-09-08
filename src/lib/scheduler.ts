@@ -347,16 +347,19 @@ const healthSkipLog: Map<string, { reason: string; halted: boolean; occurrences:
 /** Roughly every 30 ticks (~30 min at the 60s cadence) once a cause has gone stale. */
 export const HEALTH_SKIP_HEARTBEAT_EVERY = 30;
 
-/** True while an account's DURABLE state is halted, not just on the one tick it transitioned.
+/** True when the pause result is an AUTO-halt we own, not a manual owner halt.
  *  `ApplyBrokerPauseResult["action"]` is a one-tick transition marker — "halted" fires only the
- *  tick the halt actually happens; a still-halted account reports "still_paused" on every later
- *  tick (see broker-health.ts: both branches originate from `policy.systemState === "halted"`).
- *  Using `=== "halted"` alone at the health-gate skip call site made the halt flag flip
- *  true/false/true/... every tick after the first, which logHealthGateSkip reads as a
- *  halt-state CHANGE — resetting its dedup counter and re-emitting "account_skip_started" every
- *  tick, the exact per-tick noise this observability was built to remove (2026-09-07 fix). */
-export function isHaltedPauseAction(action: ApplyBrokerPauseResult["action"]): boolean {
-  return action === "halted" || action === "still_paused";
+ *  tick the auto-halt actually happens; a still-auto-halted account reports "still_paused" with
+ *  `autoOwned: true` on every later tick. Using `=== "halted"` alone at the health-gate skip
+ *  call site made the halt flag flip true/false/true/... every tick after the first, which
+ *  logHealthGateSkip reads as a halt-state CHANGE — resetting its dedup counter and re-emitting
+ *  "account_skip_started" every tick (2026-09-07 fix). Treating EVERY "still_paused" as
+ *  auto-halted was the next miss: a manual owner halt also returns "still_paused" but
+ *  deliberately has no auto-pause marker (`autoOwned: false`, broker-health.ts). That path must
+ *  not emit `(auto-halted)` / `halted: true` (Codex PR #3189 P2). Dedup is preserved because
+ *  the flag stays stable for both kinds of pause. */
+export function isHaltedPauseAction(result: ApplyBrokerPauseResult): boolean {
+  return result.action === "halted" || (result.action === "still_paused" && result.autoOwned);
 }
 
 /** Log an unhealthy-account skip once per NEW cause, then only on a low-rate heartbeat. */
@@ -1277,9 +1280,10 @@ async function tickInner(): Promise<void> {
           // De-duplicated: logs on first occurrence and on any reason/halt-state change, then a
           // low-rate heartbeat — see logHealthGateSkip doc comment for why (1,364 identical
           // "Tradier order capability probe failed" lines / 9 days, production evidence 2026-09-07).
-          // isHaltedPauseAction (not a raw `=== "halted"` check) tracks the DURABLE halt state,
-          // not the one-tick transition marker — see its own doc comment.
-          logHealthGateSkip(key, healthSignals.reason ?? "unhealthy", isHaltedPauseAction(pauseResult.action));
+          // isHaltedPauseAction (not a raw `=== "halted"` check) tracks the DURABLE auto-halt
+          // we own, not the one-tick transition marker and not a manual owner pause — see its
+          // own doc comment.
+          logHealthGateSkip(key, healthSignals.reason ?? "unhealthy", isHaltedPauseAction(pauseResult));
           // Journal the suppression itself: an unhealthy gate is exactly the event an operator
           // later asks "why didn't this account trade?" about.
           void journalLane("broker-health-gate", { userId, connectedAccountId: accountId }, () => ({

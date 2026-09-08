@@ -66,9 +66,29 @@ describe("logHealthGateSkip / clearHealthGateSkip", () => {
     logHealthGateSkip("local:acct-1", "Tradier order capability probe failed: boom", false);
     logHealthGateSkip("local:acct-1", "Tradier order capability probe failed: boom", false);
     logHealthGateSkip("local:acct-1", "Account equity too low", false); // new cause
-    logHealthGateSkip("local:acct-1", "Account equity too low", true); // same reason, now halted
+    logHealthGateSkip("local:acct-1", "Account equity too low", true); // same reason, now auto-halted
 
     expect(warnSpy).toHaveBeenCalledTimes(3);
+    expect(warnSpy.mock.calls[2]?.[0]).toContain("(auto-halted)");
+    expect(sentryMetricsMock.logWarn).toHaveBeenLastCalledWith(
+      "scheduler.health_gate",
+      expect.objectContaining({ event: "account_skip_started", halted: true })
+    );
+  });
+
+  it("does not emit (auto-halted) or halted:true for a manual owner pause", async () => {
+    const { logHealthGateSkip, _resetSchedulerObservabilityStateForTest } = await import("../src/lib/scheduler");
+    _resetSchedulerObservabilityStateForTest();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    logHealthGateSkip("local:acct-1", "OMS down", false);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).not.toContain("auto-halted");
+    expect(sentryMetricsMock.logWarn).toHaveBeenCalledWith(
+      "scheduler.health_gate",
+      expect.objectContaining({ event: "account_skip_started", key: "local:acct-1", halted: false })
+    );
   });
 
   it("emits a low-rate heartbeat instead of staying silent forever on a sustained cause", async () => {
@@ -270,11 +290,16 @@ describe("recordLaneRecovery / recordLaneFailure wiring against withDeadline (ra
 });
 
 describe("isHaltedPauseAction", () => {
-  it("treats both the transition tick (halted) and every later tick (still_paused) as halted", async () => {
+  it("treats the auto-halt transition and later auto-owned still_paused ticks as halted", async () => {
     const { isHaltedPauseAction } = await import("../src/lib/scheduler");
-    expect(isHaltedPauseAction("halted")).toBe(true);
-    expect(isHaltedPauseAction("still_paused")).toBe(true);
-    expect(isHaltedPauseAction("resumed")).toBe(false);
-    expect(isHaltedPauseAction("none")).toBe(false);
+    expect(isHaltedPauseAction({ action: "halted", reason: "oms down" })).toBe(true);
+    expect(isHaltedPauseAction({ action: "still_paused", reason: "oms down", autoOwned: true })).toBe(true);
+    expect(isHaltedPauseAction({ action: "resumed" })).toBe(false);
+    expect(isHaltedPauseAction({ action: "none" })).toBe(false);
+  });
+
+  it("does not treat a manual owner still_paused as auto-halted", async () => {
+    const { isHaltedPauseAction } = await import("../src/lib/scheduler");
+    expect(isHaltedPauseAction({ action: "still_paused", reason: "oms down", autoOwned: false })).toBe(false);
   });
 });

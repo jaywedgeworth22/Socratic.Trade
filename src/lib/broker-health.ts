@@ -147,7 +147,7 @@ export type ApplyBrokerPauseResult =
   | { action: "none" }
   | { action: "halted"; reason: string }
   | { action: "resumed"; priorReason?: string }
-  | { action: "still_paused"; reason: string };
+  | { action: "still_paused"; reason: string; autoOwned: boolean };
 
 /**
  * Persist a skipped strategy_runs row when the scheduler health gate auto-halts
@@ -253,9 +253,11 @@ export async function applyBrokerOrderPlacementPause(input: {
     // Already halted — ensure marker exists if this was (or becomes) our pause, so auto-resume works.
     if (!marker) {
       // Do NOT claim ownership of a pre-existing owner halt. Without a marker we won't auto-resume.
-      return { action: "still_paused", reason };
+      // autoOwned: false so logHealthGateSkip does not emit (auto-halted) / halted:true for a
+      // manual owner pause (Codex PR #3189 P2).
+      return { action: "still_paused", reason, autoOwned: false };
     }
-    return { action: "still_paused", reason: marker.reason };
+    return { action: "still_paused", reason: marker.reason, autoOwned: true };
   }
 
   if (policy.systemState !== "active") {
