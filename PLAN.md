@@ -2449,3 +2449,9 @@ scope, timeline, or approach changed.
 
 ## 2026-07-21 PR #1845
 LLM cooldown + draining purge safety — see rollout note.
+
+## 2026-09-09 — [CLAUDE] Healthcheck tolerance for event-loop stalls (PR #3201)
+
+Production served a public 503 while healthy: `/api/live` intermittently took 8.60s against a 5s container healthcheck timeout, so Docker marked the container unhealthy and Traefik stopped routing.  Widened to timeout=15s / retries=5 (detection bound ~225s).
+
+This is MITIGATION.  The root cause is the non-convergent FTS mirror loop fixed in PR #3202; stalls up to 36,511ms were measured, which a 15s timeout still cannot absorb.  Next action: land PR #3202.

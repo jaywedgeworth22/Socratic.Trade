@@ -107,7 +107,16 @@ EXPOSE 4000
 # scheduler ticking, Alpaca streams live).  Same class as the 2026-08-17 #2810
 # incident noted above.  Widened to tolerate an ~8s stall; 5 x 30s still
 # detects a genuine hang within ~2.5 min.  This is MITIGATION -- the event-loop
-# block is the real defect and is tracked separately.
+# block is the real defect and is tracked separately (PR #3202).
+#
+# Detection bound, corrected: Docker schedules the next check `interval`
+# seconds after the PREVIOUS CHECK COMPLETES, so a failing cycle costs
+# timeout+interval = 45s and 5 retries is ~225s, not 150s.
+#
+# Honest limit of this mitigation: stalls up to 36,511 ms were measured on
+# 2026-09-08, so a 15s timeout still fails against the worst of them.  This
+# reduces flapping; PR #3202 (non-convergent FTS mirror loop) is what actually
+# stops it.
 HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=5 \
   CMD curl -fsS http://127.0.0.1:4000/api/live >/dev/null || exit 1
 
