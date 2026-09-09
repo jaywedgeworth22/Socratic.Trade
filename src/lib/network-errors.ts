@@ -62,14 +62,15 @@ const TRANSIENT_NETWORK_TEXT =
  * (`HTTP <status> <body>`), and a 4xx/5xx body that happens to contain `fetch failed` /
  * `ECONNRESET` still means the request reached the provider — not a client transport blip.
  * RAG embed/rerank formats omit the "HTTP" prefix (`Embedding API failed …: ${status} ${body}`);
- * those status-without-HTTP shapes are rejected the same way.
+ * those are matched by name so a Node `fetch failed` / `ECONNREFUSED …:443` stays transient.
  */
 export function isTransientNetworkErrorText(text: string | null | undefined): boolean {
   if (!text) return false;
   const s = String(text);
   if (/\bHTTP\s+[1-5]\d\d\b/i.test(s)) return false;
-  // RAG: `Embedding/Rerank API failed …: ${status} ${body}` (no "HTTP" prefix).
-  if (/(?:failed|error|API)[^:\n]{0,80}:\s*[1-5]\d\d\b/i.test(s)) return false;
+  // RAG embed/rerank only: `Embedding API failed …: ${status} ${body}` (no "HTTP" prefix).
+  // Deliberately narrow — a bare `fetch failed` / `ECONNREFUSED …:443` must stay transient.
+  if (/\b(?:Embedding|Rerank)\s+API\s+failed\b[^:\n]{0,120}:\s*[1-5]\d\d\b/i.test(s)) return false;
   return TRANSIENT_NETWORK_TEXT.test(s);
 }
 

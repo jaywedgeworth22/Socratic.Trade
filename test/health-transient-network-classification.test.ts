@@ -378,9 +378,18 @@ describe("blip vs outage at the alert gate", () => {
     ]) {
       expect(isTransientNetworkErrorText(text), text).toBe(false);
     }
-    // Real transport strings with no status present stay transient.
+    // Real transport strings with no status present stay transient —
+    // including Node/undici shapes that mention a destination port after a colon
+    // (`ECONNREFUSED 127.0.0.1:443`); the RAG guard must not mistake that port for HTTP status.
     expect(isTransientNetworkErrorText("embed documents: fetch failed")).toBe(true);
     expect(isTransientNetworkErrorText("read ECONNRESET")).toBe(true);
+    expect(isTransientNetworkErrorText("TypeError: fetch failed")).toBe(true);
+    expect(isTransientNetworkErrorText("connect ECONNREFUSED 127.0.0.1:443")).toBe(true);
+    expect(
+      isTransientNetworkErrorText("TypeError: fetch failed (cause: Error: connect ECONNREFUSED 127.0.0.1:443)")
+    ).toBe(true);
+    // Non-RAG "API error: 401" is not a transport blip either (no TRANSIENT_NETWORK_TEXT match).
+    expect(isTransientNetworkErrorText("some provider API error: 401 Unauthorized")).toBe(false);
   });
 
   it("sets streakStartedTs for a short hard-failure run (<5) without consecutive-failures STOPPED", async () => {
