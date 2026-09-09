@@ -2,7 +2,6 @@ import { resolveRequestUserId } from "@/lib/request-user";
 import { buildProductionDeps, makeOrchestrator } from "@/lib/chat/orchestrator";
 import {
   AnthropicLLM,
-  chatProviderForModel,
   getLLM,
   llmForModel,
   MockLLM,
@@ -11,6 +10,7 @@ import {
   type LlmUsageOpts
 } from "@/lib/chat/llm";
 import { resolveLlmCredential } from "@/lib/db";
+import { modelCredentialService } from "@/lib/llm-provider";
 import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { isOverLlmBudget } from "@/lib/llm-budget";
 import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
@@ -28,17 +28,17 @@ function isOfflineMockRequest(modelHint: string | undefined, providerHint: strin
 }
 
 /**
- * Resolve the chat provider this request will ACTUALLY call, mirroring the LLM-selection precedence
- * below: an explicit model routes to its provider (chatProviderForModel), else a legacy provider hint
- * (openai/anthropic) is used directly, else the provider for the explicit CHAT_LLM_MODEL
- * (CHAT_LLM selects Anthropic; otherwise the compatibility transport is OpenAI).
- * The 412 gate checks THIS provider's credential — not "any provider" — so an Anthropic-only user who
- * requests an OpenAI model is blocked instead of silently degrading to MockLLM.
+ * Resolve the credential service this request will ACTUALLY use.  Explicit models follow
+ * llmForModel's OpenRouter-first/native-fallback precedence; legacy provider hints and CHAT_LLM keep
+ * their direct-provider behavior.  The 412 gate therefore checks the same tenant-scoped key that
+ * execution will use instead of disabling a model that OpenRouter can serve.
  */
-function resolveChatProvider(modelHint: string | undefined, providerHint: string | undefined): ChatProvider {
-  if (modelHint) return chatProviderForModel(modelHint);
+function resolveChatCredentialService(modelHint: string | undefined, providerHint: string | undefined, userId: string): ChatProvider {
+  if (modelHint) return modelCredentialService(modelHint, userId);
   if (providerHint === "openai" || providerHint === "anthropic") return providerHint;
-  return process.env.CHAT_LLM === "anthropic" ? "anthropic" : "openai";
+  return process.env.CHAT_LLM === "anthropic" || process.env.CHAT_LLM === "openrouter"
+    ? process.env.CHAT_LLM
+    : "openai";
 }
 
 export const dynamic = "force-dynamic";
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
   // the fail-loud hole where an Anthropic-only user requesting an OpenAI model passed and llmForModel
   // silently returned MockLLM. Without the key we 412 with a clear "connect a provider" message.
   if (!isOfflineMockRequest(modelHint, providerHint)) {
-    const provider = resolveChatProvider(modelHint, providerHint);
+    const provider = resolveChatCredentialService(modelHint, providerHint, userId);
     if (!resolveLlmCredential(provider, userId).key) {
       return NextResponse.json({ error: "llm_credential_required", message: LLM_REQUIRED_CHAT_MESSAGE }, { status: 412 });
     }

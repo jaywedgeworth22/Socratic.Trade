@@ -22,6 +22,7 @@ import { AlertTriangle, Loader2, RotateCcw, Send, Sparkles, Trash2 } from "lucid
 import type { ChatDraft } from "@/lib/chat/types";
 import type { LlmReasoningEffort } from "@/lib/types";
 import { humanizeLlmError } from "@/lib/llm-errors";
+import { catalogEntryFor } from "@/lib/llm-model-catalog";
 import { ALL_LLM_REASONING_EFFORTS, normalizeReasoningEffortForModel, reasoningCapabilityForModel } from "@/lib/llm-request";
 import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/lib/model-reasoning-recommendations";
 import { deriveReality } from "../lib/derive";
@@ -81,6 +82,24 @@ interface LiveReply {
   model?: string;
 }
 
+type ChatProviderStatus = Partial<Record<string, boolean>>;
+
+/** Credential service the selected model will actually use: OpenRouter first when connected,
+ *  otherwise the native provider.  Meta and catalog entries without a native transport always
+ *  require OpenRouter, matching modelCredentialService / llmForModel on the server. */
+export function chatCredentialServiceForModel(model: string, providerStatus: ChatProviderStatus): string {
+  const nativeProvider = providerForModel(model);
+  if (nativeProvider === "meta" || catalogEntryFor(model)?.openRouterOnly === true) return "openrouter";
+  return providerStatus.openrouter === true ? "openrouter" : nativeProvider;
+}
+
+/** Fail open while status is absent or partial; the API remains the authoritative credential gate. */
+export function chatModelHasCredential(model: string, providerStatus: ChatProviderStatus): boolean {
+  if (Object.keys(providerStatus).length === 0) return true;
+  if (providerStatus.openrouter === undefined) return true;
+  return providerStatus[chatCredentialServiceForModel(model, providerStatus)] !== false;
+}
+
 /** Router-matched suggested prompts (co-versioned with the chat orchestrator's
  *  intent classifier so a chip never dead-ends). */
 const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
@@ -120,7 +139,7 @@ export function AssistantChat() {
   const [reasoningEffort, setReasoningEffort] = useState<LlmReasoningEffort>("medium");
   /** Per-provider key availability ({} until loaded — treated as available so
    *  the gate never flashes before the check resolves). */
-  const [providerStatus, setProviderStatus] = useState<Partial<Record<string, boolean>>>({});
+  const [providerStatus, setProviderStatus] = useState<ChatProviderStatus>({});
   /** True when the availability check itself failed, so "no 'no key' badges" means
    *  "we couldn't check" rather than "every provider has a key". */
   const [statusUnknown, setStatusUnknown] = useState(false);
@@ -254,8 +273,9 @@ export function AssistantChat() {
   // ── Gate: does the SELECTED model's provider have a usable key? ────────────
   const modelUnselected = !model;
   const provider = providerForModel(model || "");
+  const credentialService = chatCredentialServiceForModel(model || "", providerStatus);
   const statusLoaded = Object.keys(providerStatus).length > 0;
-  const keyMissing = modelUnselected || (statusLoaded && providerStatus[provider] === false);
+  const keyMissing = modelUnselected || !chatModelHasCredential(model, providerStatus);
   const customPending = model === CUSTOM_MODEL_VALUE;
 
   const send = useCallback(
@@ -435,16 +455,19 @@ export function AssistantChat() {
             >
               <option value="" disabled>Choose a model…</option>
               {MODEL_GROUPS.map((g) => {
-                const noKey = statusLoaded && providerStatus[g.provider] === false;
+                const noKey = statusLoaded && g.options.every((o) => !chatModelHasCredential(o.value, providerStatus));
                 return (
                   <optgroup key={g.provider} label={`${g.label}${noKey ? " — no key" : ""}`}>
-                    {g.options.map((o) => (
-                      <option key={o.value} value={o.value} disabled={noKey}>
-                        {o.label}
-                        {o.tier ? ` (${o.tier})` : ""}
-                        {noKey ? " — no key" : ""}
-                      </option>
-                    ))}
+                    {g.options.map((o) => {
+                      const optionNoKey = statusLoaded && !chatModelHasCredential(o.value, providerStatus);
+                      return (
+                        <option key={o.value} value={o.value} disabled={optionNoKey}>
+                          {o.label}
+                          {o.tier ? ` (${o.tier})` : ""}
+                          {optionNoKey ? " — no key" : ""}
+                        </option>
+                      );
+                    })}
                   </optgroup>
                 );
               })}
@@ -583,7 +606,7 @@ export function AssistantChat() {
         {keyMissing && (
           <p className="mb-2 flex flex-wrap items-center gap-1.5 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
             <AlertTriangle size={13} aria-hidden />
-            No {providerDisplayName(provider)} key is connected — this model can&apos;t answer.
+            No {credentialService === "openrouter" ? "OpenRouter" : providerDisplayName(provider)} key is connected — this model can&apos;t answer.
             <Link
               href="/console/connections#api-keys"
               className="font-semibold underline decoration-dotted"

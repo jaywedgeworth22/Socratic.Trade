@@ -101,8 +101,21 @@ GitHub review correctly identified native `claude-opus-5` missing from the adapt
 
 ## Next Steps & Blockers
 
-PR #3196 is draft pending the full gate.  `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh --draft` passed worktree/hook/stale-overlap checks (main already current) and failed local typechecking because the copied dependency tree lacks `@sentry/profiling-node` and has an empty `@types/node/url.d.ts`.  Hosted lint/typechecking passed.  Reinstalling the exact lockfile using `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm ci --ignore-scripts --prefer-offline`; do not alter source to accommodate damaged dependencies.  Hosted run `34327205131` validates commit `2a9519912`.  No merge or deployment claim.
+PR #3196 is in review pending the final gate.  `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh --draft` passed worktree/hook/stale-overlap checks (main already current) and failed local typechecking because the copied dependency tree lacks `@sentry/profiling-node` and has an empty `@types/node/url.d.ts`.  Hosted lint/typechecking passed.  Reinstalling the exact lockfile using `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm ci --ignore-scripts --prefer-offline`; do not alter source to accommodate damaged dependencies.  Hosted run `34327205131` validates commit `2a9519912`.  No merge or deployment claim.
 
 ## Zero-Code Findings
 
 Documentation search results lagged the live OpenRouter catalog for several September releases.  Exact API identifiers and provider-native spellings were cross-checked before changing the catalog.
+
+## Review follow-up
+
+Hosted lint, typecheck, and tests passed on `aec6c040a`; build is pending.  Auto-merge is disabled until follow-up fixes are validated.
+
+- Chat availability and API preflight follow tenant-scoped OpenRouter-first/native-fallback execution, including OpenRouter-only models.
+- Budget enforcement and preview use the credential service actually selected for the user, ignoring unrelated provider spend.
+- MiniMax structured requests include their schema in the system prompt on native and OpenRouter routes.  OpenRouter retains its advertised structured-output format; native-only `reasoning_split` is not sent through OpenRouter.
+- `scripts/infisical-secrets-safe.sh` rejects `MINIMAX_API_KEY` writes.  Verified with `bash scripts/infisical-secrets-safe.sh set MINIMAX_API_KEY=placeholder` (expected refusal).
+- Updated the on-demand helper row in `/Users/jay/apps/MAC-LOCAL-PROCESSES.md` and refreshed/pinned the existing Coding note `⭐️ Background Jobs Master List`.  No daemon was created.
+- Learning-review selections and audit metadata use current catalog identities while retaining saved aliases; request resolution and provider-reported serving identity remain distinct.
+
+Additional touched files: `app/api/chat/route.ts`, `app/console/assistant/chat.tsx`, `app/console/settings/learning-review.tsx`, `src/lib/learning-review.ts`, `src/lib/usage-budget.ts`, `src/lib/llm-call.ts`, `scripts/infisical-secrets-safe.sh`, and focused regression tests.  Final hosted gate pending.

@@ -248,6 +248,16 @@ describe("buildLlmRequestBody", () => {
     expect(an.tool_choice).toEqual({ type: "tool", name: "trade_proposals" });
   });
 
+  it("includes the MiniMax schema in the prompt even when OpenRouter handles structured output", () => {
+    const body = buildLlmRequestBody(
+      { provider: "openrouter", transport: "chat-completions" },
+      { model: "minimax/minimax-m3", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
+    ) as Record<string, any>;
+    expect(body.messages[0].content).toContain(JSON.stringify(SCHEMA.schema));
+    expect(body.response_format?.type).toBe("json_schema");
+    expect(body.reasoning_split).toBeUndefined();
+  });
+
   it("no schema → free-text output (no response_format / tools)", () => {
     const oa = buildLlmRequestBody(
       { provider: "openai", transport: "chat-completions" },

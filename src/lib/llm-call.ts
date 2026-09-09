@@ -359,7 +359,7 @@ export function buildLlmRequestBody(
   const messages = [
     {
       role: "system",
-      content: endpoint.provider === "minimax" && schema
+      content: (endpoint.provider === "minimax" || /^(?:minimax\/)?minimax-/i.test(spec.model)) && schema
         ? `${systemPrompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema.schema)}`
         : systemPrompt
     },

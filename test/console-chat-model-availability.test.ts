@@ -1,0 +1,31 @@
+import { describe, expect, it } from "vitest";
+import { chatCredentialServiceForModel, chatModelHasCredential } from "../app/console/assistant/chat";
+
+describe("Coach model credential availability", () => {
+  it("requires OpenRouter for OpenRouter-only OpenAI and Meta models", () => {
+    const status = { openai: true, meta: true, openrouter: false };
+
+    expect(chatCredentialServiceForModel("gpt-6-astra-pro", status)).toBe("openrouter");
+    expect(chatModelHasCredential("gpt-6-astra-pro", status)).toBe(false);
+    expect(chatCredentialServiceForModel("muse-spark-1.3", status)).toBe("openrouter");
+    expect(chatModelHasCredential("muse-spark-1.3", status)).toBe(false);
+  });
+
+  it("allows MiniMax through OpenRouter before its native fallback", () => {
+    const openRouterOnly = { minimax: false, openrouter: true };
+    expect(chatCredentialServiceForModel("minimax-m3", openRouterOnly)).toBe("openrouter");
+    expect(chatModelHasCredential("minimax-m3", openRouterOnly)).toBe(true);
+
+    const nativeOnly = { minimax: true, openrouter: false };
+    expect(chatCredentialServiceForModel("minimax-m3", nativeOnly)).toBe("minimax");
+    expect(chatModelHasCredential("minimax-m3", nativeOnly)).toBe(true);
+
+    expect(chatModelHasCredential("minimax-m3", { minimax: false, openrouter: false })).toBe(false);
+  });
+
+  it("fails open while provider status is unavailable", () => {
+    expect(chatModelHasCredential("gpt-6-astra-pro", {})).toBe(true);
+    expect(chatModelHasCredential("minimax-m3", {})).toBe(true);
+    expect(chatModelHasCredential("minimax-m3", { minimax: false })).toBe(true);
+  });
+});

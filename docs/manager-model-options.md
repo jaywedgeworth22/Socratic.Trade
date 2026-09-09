@@ -1,6 +1,6 @@
 ## 2026-09-09 Meta refresh
 
-GPT-6 Astra Pro is available via OpenRouter; its native API route is not assumed.  Muse Spark 1.3 and Muse Glimmer 30B join Llama 4 in the Meta group.  Meta models require an OpenRouter key; standalone Meta credentials are never forwarded to OpenAI.  MiniMax supports its native pay-as-you-go API key or OpenRouter.
+GPT-6 Astra Pro is available via OpenRouter; its native API route is not assumed.  Muse Spark 1.3 and Muse Glimmer 30B join Llama 4 in the Meta group.  Meta models require an OpenRouter key; standalone Meta credentials are never forwarded to OpenAI.  MiniMax supports its native pay-as-you-go API key or OpenRouter.  Chat availability and budget enforcement follow the tenant credential route actually used.  Learning-review labels resolve historical aliases through the current catalog, and audit metadata distinguishes the resolved request model from the model reported by the provider.
 
 # Manager / Strategist model options — cross-provider evaluation
 
