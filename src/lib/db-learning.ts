@@ -1846,6 +1846,17 @@ export function countDocumentChunkFts(input: {
  * Resuming on CONTENT instead of a count fixes it and makes progress provably monotonic: the
  * offset is the first row whose hash is not yet indexed, and mirroring that row indexes its
  * hash, so the next resume is strictly greater.  The loop therefore always terminates.
+ *
+ * A side-index key alone is NOT proof the content is mirrored.  `document_chunks_fts_index` can
+ * hold a STALE key — an explicitly supported state, which is the whole reason
+ * `ftsRowidStillOwnsOccurrence` exists: FTS5 reuses the current max rowid after a DELETE, so a
+ * bulk wipe of `document_chunks_fts` that leaves the side index behind can point at a later
+ * filing's chunk.  Trusting a stale key here would skip a chunk whose text is genuinely absent
+ * from FTS and still report `complete`, letting the caller ledger the accession with missing
+ * content — the SAME failure class this function was written to remove.  So the resume set is
+ * built by JOINING each side-index row to its live FTS row and keeping only the hashes whose
+ * `fts_rowid` still owns all four identity columns.  A stale key contributes nothing, the
+ * affected chunk is re-mirrored, and `replaceDocumentChunkFtsOccurrence` repairs the key.
  */
 export function ftsMirrorResumeOffset(
   rows: ReadonlyArray<{ contentHash: string }>,
@@ -1854,8 +1865,14 @@ export function ftsMirrorResumeOffset(
   if (rows.length === 0) return 0;
   const indexedRows = getDb()
     .prepare(
-      `SELECT content_hash FROM document_chunks_fts_index
-       WHERE symbol = ? AND source = ? AND accession = ?`
+      `SELECT idx.content_hash AS content_hash
+         FROM document_chunks_fts_index AS idx
+         JOIN document_chunks_fts AS fts ON fts.rowid = idx.fts_rowid
+        WHERE idx.symbol = ? AND idx.source = ? AND idx.accession = ?
+          AND fts.content_hash = idx.content_hash
+          AND fts.symbol = idx.symbol
+          AND fts.source = idx.source
+          AND fts.accession = idx.accession`
     )
     .all(key.symbol, key.source, key.accession) as Array<{ content_hash: string }>;
   if (indexedRows.length === 0) return 0;

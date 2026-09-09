@@ -32,8 +32,13 @@ production's 689,047 rows, once per document per tick.
 
 Fix: `ftsMirrorResumeOffset()` resumes on CONTENT (first row whose hash is not yet indexed),
 which makes progress provably monotonic and the loop terminating; plus migration 88 adding
-`idx_document_chunks_fts_index_occurrence`.  Measured at production scale: **61.82 ms →
-0.74 ms median, 83.8x**, with the plan going `SCAN` → `SEARCH`.  Ruled out with evidence:
+`idx_document_chunks_fts_index_occurrence`.  A side-index key alone is not accepted as proof
+of mirroring — each key is JOINed to its live FTS row and kept only when `fts_rowid` still
+owns all four identity columns, so a stale key (an explicitly supported state, since FTS5
+reuses the max rowid after a DELETE) cannot mask absent content and silently ledger a filing
+with text that was never indexed.  That was a P2 from `chatgpt-codex-connector` on PR #3202,
+evaluated as real and fixed rather than waved through; the regression test fails without it.
+Measured at production scale: **105.26 ms → 3.04 ms median, 34.6x**, plan `SCAN` → `SEARCH`.  Ruled out with evidence:
 the `storeContexts` 870/870 dedup (indexed, 2–4 ms), PR #3192 (lane averages 13 ms), a heavy
 `/api/health` (re-measured at 45 ms), and SQLite lock contention (zero `database is locked`
 events during the measured stall burst; 09-07 had *more* lock events than 09-08 yet 5.5x
