@@ -62,7 +62,7 @@ function resolveRoleModel(
 
 /** Current OpenRouter Flash class — catalog column 2. Bare slug 404s. */
 export const OPENROUTER_GEMINI_FLASH = "~google/gemini-flash-latest";
-/** Pinned 3.7 batch/offline slug (the latest alias has no :batch sibling). */
+/** Pinned 3.8 batch/offline slug (the latest alias has no :batch sibling). */
 export const OPENROUTER_GEMINI_FLASH_BATCH = "google/gemini-3.8-flash:batch";
 /** Google AI Studio native Flash class — catalog column 3. */
 export const NATIVE_GEMINI_FLASH = "gemini-flash-latest";

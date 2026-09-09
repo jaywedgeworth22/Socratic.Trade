@@ -45,6 +45,7 @@ Exact touched files:
 - `test/llm-provider.test.ts`
 - `test/llm-request.test.ts`
 - `test/model-rotation.test.ts`
+- `test/openai-model-catalog.test.ts`
 - `test/sentry-gen-ai.test.ts`
 - `docs/rollouts/2026-09-09-model-catalog-account-labels.md`
 
@@ -82,9 +83,17 @@ Hosted CI run `34326303260`: lint passed; typecheck found a MiniMax-only option 
 
 Actual header component browser fixture: `node /tmp/st-ui-qa-20260909/check.cjs` passed desktop paper/live and mobile paper checks, exact banner text/spacing, one-row trigger, PAPER chips, Escape dismissal, no horizontal overflow, and no page errors.  Fixture uses test accounts and does not establish production connectivity.
 
+Focused verification: `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx --no-install vitest run test/llm-model-catalog.test.ts test/llm-provider.test.ts test/llm-request.test.ts test/llm-call.test.ts test/chat-openrouter-routing.test.ts test/console-models.test.ts test/llm-errors.test.ts test/model-rotation.test.ts test/sentry-gen-ai.test.ts`: 7 suites / 126 tests passed; catalog/provider suites failed their 60-second setup hooks (16 tests skipped) under shared-Mac load.  This is not a passing targeted gate.
+
+Reran the two timed-out suites with `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx --no-install vitest run test/llm-model-catalog.test.ts test/llm-provider.test.ts --maxWorkers=1 --hookTimeout=120000`: 2 suites / 16 tests passed.  Corrected the native Grok expectation from 4.5 to 4.6 to match the refreshed alias.  Across focused runs all 142 tests passed.
+
+Apple Notes living note updated successfully in Coding; pin shortcut unavailable.
+
+Hosted run `34327205131`: lint/typecheck passed; full suite reported 7,884 passed, 51 skipped, and two stale expectations (native Grok 4.5 and the pre-Astra OpenAI list).  Both fixtures are corrected; rerun pending.  No runtime test failure remained in the report.  Separate read-only provider review found no concrete remaining P1/P2 issue.
+
 ## Next Steps & Blockers
 
-Finish provider compatibility checks, run lint/typecheck/tests/build, inspect rendered UI, and land through the repository PR flow.
+PR #3196 is draft pending the full gate.  `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh --draft` passed worktree/hook/stale-overlap checks (main already current) and failed local typechecking because the copied dependency tree lacks `@sentry/profiling-node` and has an empty `@types/node/url.d.ts`.  Hosted lint/typechecking passed.  Reinstalling the exact lockfile using `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm ci --ignore-scripts --prefer-offline`; do not alter source to accommodate damaged dependencies.  Hosted run `34327205131` validates commit `2a9519912`.  No merge or deployment claim.
 
 ## Zero-Code Findings
 

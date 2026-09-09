@@ -10,8 +10,9 @@ import {
 describe("curated OpenAI model choices across LLM surfaces", () => {
   const openAi = CURATED_LLM_MODEL_GROUPS.find((group) => group.provider === "openai")!;
 
-  it("offers the three GPT-5.6 API tiers plus the genuinely cheaper Mini/Nano choices and GPT-4o", () => {
+  it("offers Astra, the GPT-5.6 tiers, Mini/Nano choices, and GPT-4o", () => {
     expect(openAi.options.map((option) => option.value)).toEqual([
+      "gpt-6-astra",
       "gpt-5.4-nano",
       "gpt-mini-latest",
       "gpt-5.6-luna",
