@@ -34,7 +34,7 @@ market hours.  A refused build must not swap the named container.
 Keep consistent container names and **stop-old-first**; do **not** enable
 rolling / zero-downtime (two Litestream writers).  Docker HEALTHCHECK is
 `GET /api/live` (process + SQLite).  Do not point Coolify HTTP health at
-`/api/health` — that probe can 503 or exceed 5s while Next is up, which
+`/api/health` — that probe can 503 or exceed 15s while Next is up, which
 is `running:unhealthy` and Cloudflare `no available server` (7:22–7:43pm
 CT after #2810 on 2026-08-17).  Do not add the latch to
 `scripts/coolify-prod-start.sh`.  Do not `FORCE_RESTORE`.  Do not bounce

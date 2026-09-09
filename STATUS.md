@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-09-09 GROK — PR #3201 fixer tip (verification receipts + 15s HEALTHCHECK refs)
+
+Codex P1+P2 on `claude/healthcheck-tolerate-eventloop-stall`.  Remaining 5s HEALTHCHECK timeout
+references in `Dockerfile`, `app/api/live/route.ts`, and `docs/deployment.md` now match the live
+15s directive (historical 5s incident numbers stay).  Full AGENTS.md gate recorded in
+`docs/rollouts/2026-09-09-healthcheck-eventloop-tolerance.md`.  Deployer squash AM stays armed;
+this lane does not merge.  Extra-ship no.
+
 ## 2026-09-09 CLAUDE — FTS mirror never converged, pinning the event loop into a public 503
 
 `/api/live` measured from inside the Docker network at **8.60s, then 0.09s, then 0.03s** —

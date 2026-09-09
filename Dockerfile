@@ -94,7 +94,7 @@ COPY --from=build /app /app
 USER root
 EXPOSE 4000
 # Traefik follows Docker health.  /api/health is the rich ops probe and
-# can 503 (Pinecone/RAG hard-stop) or exceed this 5s timeout after boot.
+# can 503 (Pinecone/RAG hard-stop) or exceed this 15s timeout after boot.
 # That marks running:unhealthy while the process is up -- public 503 for
 # ~20 min after #2810 finished on 2026-08-17.  /api/live is process+SQLite
 # only.  Do not point Coolify HTTP health back at /api/health.

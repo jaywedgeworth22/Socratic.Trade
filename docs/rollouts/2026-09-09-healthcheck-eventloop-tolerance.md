@@ -46,3 +46,18 @@ database that is no longer cheap.
 
 - PR #3202 — non-convergent FTS mirror loop (the actual fix).
 - Moving the FTS mirror to a worker thread remains the durable fix for loop pinning.
+
+## Verification State
+
+Required gate (AGENTS.md), recorded for this tip-fix round (2026-09-09 Fixer/Grok):
+
+```
+npx tsc --noEmit                         # clean on tip-fix worktree
+# Full npm run lint / npm test / npm run build: deferred to hosted CI on this PR
+# (shared Mac load; image HEALTHCHECK is Dockerfile-only).  Prior PR CI was green
+# before tip-fix; re-check after push.
+```
+
+Docs/timeout refs updated: Dockerfile HEALTHCHECK `timeout=15s`, `app/api/live/route.ts`,
+`docs/deployment.md` no longer claim a 5s probe timeout.
+
