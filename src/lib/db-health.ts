@@ -133,21 +133,42 @@ export function hardStreakStartSettingKey(
   return `${HEALTH_HARD_STREAK_START_PREFIX}${service}:${src}`;
 }
 
-function readHardStreakStart(key: string): string | null {
+/** Durable hard-streak record — survives api_health_log FIFO for both start and class. */
+export type DurableHardStreak = {
+  startedTs: string;
+  /** Sticky false once any hard non-transient failure is observed in the run. */
+  entirelyTransient: boolean;
+};
+
+function readDurableHardStreak(key: string): DurableHardStreak | null {
   try {
     const row = getDb().prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as
       | { value: string }
       | undefined;
     if (!row?.value) return null;
     const parsed = JSON.parse(row.value) as unknown;
-    if (typeof parsed !== "string") return null;
-    return Number.isFinite(Date.parse(parsed)) ? parsed : null;
+    // Legacy: bare ISO string from the first durable-start tip.
+    if (typeof parsed === "string") {
+      return Number.isFinite(Date.parse(parsed))
+        ? { startedTs: parsed, entirelyTransient: true }
+        : null;
+    }
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as DurableHardStreak).startedTs === "string" &&
+      typeof (parsed as DurableHardStreak).entirelyTransient === "boolean" &&
+      Number.isFinite(Date.parse((parsed as DurableHardStreak).startedTs))
+    ) {
+      return parsed as DurableHardStreak;
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-function writeHardStreakStart(key: string, iso: string): void {
+function writeDurableHardStreak(key: string, streak: DurableHardStreak): void {
   try {
     const updated_at = new Date().toISOString();
     getDb()
@@ -155,7 +176,7 @@ function writeHardStreakStart(key: string, iso: string): void {
         `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       )
-      .run(key, JSON.stringify(iso), updated_at);
+      .run(key, JSON.stringify(streak), updated_at);
   } catch {
     // Health path must never throw.
   }
@@ -293,21 +314,27 @@ export function getLaneHealth(
         if (!isTransientHealthFailure(row.error_text)) entirelyTransient = false;
       }
       const walkStart = runStart ?? last5[0]?.ts ?? null;
-      // Persist the streak start outside the FIFO health log. On a busy lane the 500-row cap
-      // otherwise advances streakStartedTs every insert and a sustained transport outage can
-      // remain warning-only forever (Codex P1 on #3195). Once written, never advance until the
-      // run clears (success / soft) — see logApiHealth.
+      const walkEntirelyTransient = sawHard && entirelyTransient;
+      // Persist start + hard/transient class outside the FIFO health log (Codex P1/P2 on #3195).
+      // Once written, never advance startedTs; entirelyTransient is sticky-false. Cleared only
+      // from logApiHealth on success/soft — getLaneHealth stays read-only for circuit-breaker
+      // preflight (no DELETE on healthy/soft/empty tips).
       const durableKey = hardStreakStartSettingKey(service, keySource, scopeUser ? userId : null);
-      let durable = readHardStreakStart(durableKey);
+      let durable = readDurableHardStreak(durableKey);
       if (!durable && walkStart) {
-        writeHardStreakStart(durableKey, walkStart);
-        durable = walkStart;
+        durable = { startedTs: walkStart, entirelyTransient: walkEntirelyTransient };
+        writeDurableHardStreak(durableKey, durable);
+      } else if (durable && durable.entirelyTransient && !walkEntirelyTransient && sawHard) {
+        durable = { startedTs: durable.startedTs, entirelyTransient: false };
+        writeDurableHardStreak(durableKey, durable);
       }
-      streakStartedTs = durable ?? walkStart;
-      runEntirelyTransient = sawHard && entirelyTransient;
-    } else {
-      // Tip is not a hard failure — drop any durable start left from a prior run.
-      clearHardStreakStart(hardStreakStartSettingKey(service, keySource, scopeUser ? userId : null));
+      streakStartedTs = durable?.startedTs ?? walkStart;
+      runEntirelyTransient = durable
+        ? durable.entirelyTransient && walkEntirelyTransient
+        : walkEntirelyTransient;
+      // Sticky: if durable already recorded a hard non-transient, keep false even when FIFO
+      // dropped that row from the retained walk.
+      if (durable && !durable.entirelyTransient) runEntirelyTransient = false;
     }
     // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
     // limits (429, daily cap) alone never set this reason — they may still surface as the softer

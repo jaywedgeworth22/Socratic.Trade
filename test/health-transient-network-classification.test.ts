@@ -328,7 +328,38 @@ describe("blip vs outage at the alert gate", () => {
     expect(capturedLevels()).toContain("error");
   });
 
-  it("keeps streakStartedTs from a durable setting when FIFO would advance it", async () => {
+  it("keeps a durable hard classification when FIFO drops the hard row", async () => {
+    const { logApiHealth, getLaneHealth, hardStreakStartSettingKey, HEALTH_REASON_CONSECUTIVE_FAILURES } =
+      await import("../src/lib/db-health");
+    const { getDb } = await db();
+    const service = `fifo-hard-${randomUUID().slice(0, 8)}`;
+    const ancient = new Date(Date.now() - 45 * 60_000).toISOString();
+    const key = hardStreakStartSettingKey(service, "env", null);
+    getDb()
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      )
+      .run(
+        key,
+        JSON.stringify({ startedTs: ancient, entirelyTransient: false }),
+        new Date().toISOString()
+      );
+    // Retained log is all transport blips — without durable class this would look entirely-transient.
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service, ok: false, errorText: "TypeError: fetch failed", keySource: "env" });
+    }
+    const lane = getLaneHealth(service, "env");
+    expect(lane.reason).toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
+    expect(lane.transientStreak).toBe(false);
+    expect(lane.streakStartedTs).toBe(ancient);
+    await vi.waitFor(() => expect(sentry.captureMessage).toHaveBeenCalled(), { timeout: 5000 });
+    await settleAlerts();
+    expect(capturedLevels()).toContain("error");
+    expect(capturedTag("health.failure_class")).toBe("hard");
+  });
+
+    it("keeps streakStartedTs from a durable setting when FIFO would advance it", async () => {
     // Codex P1: HEALTH_LOG_LANE_CAP FIFO can drop the true start; durable settings must win.
     const {
       logApiHealth,

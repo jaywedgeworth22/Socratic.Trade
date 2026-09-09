@@ -1515,9 +1515,14 @@ export type RagLimitStatus = "rate_limited" | "billing" | "quota" | "transient";
 /**
  * Classify a provider error for alerting.
  * Engine-overloaded 429s are transient capacity, not our usage cap — check that before generic 429.
+ *
+ * Deliberately does NOT classify `fetch failed` / `UND_ERR_SOCKET` as "transient" here: those are
+ * transport blips owned by `isTransientNetworkErrorText` + alertRagConnectionFailure's escalation
+ * window. Mapping them here soft-stamped the health row and returned before escalation (Codex P1
+ * on #3195), so a persistent outage in the primary Node/undici shapes never reached error.
  */
 export function ragLimitStatus(message: string): RagLimitStatus | undefined {
-  if (/overloaded|engine is currently|terminated|fetch failed|UND_ERR_SOCKET/i.test(message)) return "transient";
+  if (/overloaded|engine is currently|terminated/i.test(message)) return "transient";
   if (/\b429\b|rate limit|too many requests|RPM|TPM/i.test(message)) return "rate_limited";
   if (/billing|payment|invoice|past due|upgrade|plan/i.test(message)) return "billing";
   if (/quota|write units?|read units?|usage limit|capacity|exceeded|paused/i.test(message)) return "quota";
