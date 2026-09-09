@@ -528,6 +528,7 @@ interface S3Response {
   status: number;
   ok: boolean;
   etag: string | null;
+  contentLength: number | null;
   body: string;
 }
 
@@ -582,7 +583,9 @@ async function s3Request(
       body: body ? new Uint8Array(body) : undefined,
     });
     const text = await res.text();
-    return { status: res.status, ok: res.ok, etag: res.headers.get("etag"), body: text };
+    const cl = res.headers.get("content-length");
+    const contentLength = cl != null && cl !== "" && Number.isFinite(Number(cl)) ? Number(cl) : null;
+    return { status: res.status, ok: res.ok, etag: res.headers.get("etag"), contentLength, body: text };
   } finally {
     clearTimeout(timeout);
   }
@@ -629,19 +632,77 @@ async function uploadPart(
   return etag;
 }
 
-async function coldSnapshotObjectExists(
+function normalizeS3Etag(etag: string | null | undefined): string | null {
+  if (!etag) return null;
+  return etag.trim().replaceAll('"', "").toLowerCase();
+}
+
+/** S3/R2 multipart ETag: MD5 of the concatenated part MD5s, then `"{hex}-{partCount}"`. */
+function expectedMultipartEtag(parts: Array<{ etag: string }>): string | null {
+  const digests: Buffer[] = [];
+  for (const p of parts) {
+    const hex = normalizeS3Etag(p.etag);
+    if (!hex || !/^[0-9a-f]{32}$/.test(hex)) return null;
+    digests.push(Buffer.from(hex, "hex"));
+  }
+  if (digests.length === 0) return null;
+  const md5 = crypto.createHash("md5").update(Buffer.concat(digests)).digest("hex");
+  return `"${md5}-${digests.length}"`;
+}
+
+type ColdSnapshotHead = {
+  exists: boolean;
+  etag: string | null;
+  contentLength: number | null;
+};
+
+async function headColdSnapshotObject(
   cfg: R2ColdSnapshotConfig,
   key: string,
   deps: R2ColdSnapshotDeps,
-): Promise<boolean> {
-  // HEAD the destination: after an ambiguous CompleteMultipartUpload transport
-  // failure the object may already exist even though the client saw an error.
+): Promise<ColdSnapshotHead> {
   try {
     const res = await s3Request(cfg, "HEAD", key, {}, null, deps, CONTROL_TIMEOUT_MS);
-    return res.ok || res.status === 200;
+    if (!(res.ok || res.status === 200)) {
+      return { exists: false, etag: null, contentLength: null };
+    }
+    return { exists: true, etag: res.etag, contentLength: res.contentLength };
   } catch {
-    return false;
+    return { exists: false, etag: null, contentLength: null };
   }
+}
+
+/**
+ * After an ambiguous CompleteMultipartUpload, prove THIS attempt's object landed.
+ * Key existence alone is not enough: a prior attempt may already own the weekly
+ * key (e.g. upload ok, prune failed) while this retry's multipart is still open.
+ */
+function coldSnapshotHeadProvesComplete(
+  head: ColdSnapshotHead,
+  opts: {
+    preEtag: string | null;
+    expectedBytes: number;
+    expectedEtag: string | null;
+    noSuchUpload: boolean;
+  },
+): boolean {
+  if (!head.exists) return false;
+  if (head.contentLength != null && head.contentLength !== opts.expectedBytes) return false;
+  if (opts.expectedEtag) {
+    const got = normalizeS3Etag(head.etag);
+    const want = normalizeS3Etag(opts.expectedEtag);
+    if (!got || !want || got !== want) return false;
+  }
+  const pre = normalizeS3Etag(opts.preEtag);
+  const now = normalizeS3Etag(head.etag);
+  const unchangedFromPre = pre != null && now != null && pre === now;
+  if (unchangedFromPre) {
+    // Same object we saw before this Complete: only trust NoSuchUpload (upload id
+    // consumed → complete likely committed). A bare transport error with an
+    // unchanged key is the prune-retry false-success Codex flagged.
+    return opts.noSuchUpload;
+  }
+  return true;
 }
 
 async function completeMultipartUpload(
@@ -650,11 +711,22 @@ async function completeMultipartUpload(
   uploadId: string,
   parts: Array<{ partNumber: number; etag: string }>,
   deps: R2ColdSnapshotDeps,
+  opts: { expectedBytes: number; preEtag: string | null },
 ): Promise<void> {
   const xml =
     `<CompleteMultipartUpload>` +
     parts.map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join("") +
     `</CompleteMultipartUpload>`;
+  const expectedEtag = expectedMultipartEtag(parts);
+  const proves = async (noSuchUpload: boolean): Promise<boolean> => {
+    const head = await headColdSnapshotObject(cfg, key, deps);
+    return coldSnapshotHeadProvesComplete(head, {
+      preEtag: opts.preEtag,
+      expectedBytes: opts.expectedBytes,
+      expectedEtag,
+      noSuchUpload,
+    });
+  };
   try {
     const res = await withS3Retry("CompleteMultipartUpload", deps, async () => {
       const r = await s3Request(cfg, "POST", key, { uploadId }, Buffer.from(xml, "utf8"), deps, CONTROL_TIMEOUT_MS);
@@ -663,10 +735,10 @@ async function completeMultipartUpload(
       // instead of discarding the whole multi-gigabyte attempt.
       if (r.body.includes("<Error>")) {
         // NoSuchUpload after a lost successful complete means the upload id is
-        // already consumed — succeed if the object is already at `key`.
+        // already consumed — succeed only if HEAD proves THIS attempt's object.
         if (/NoSuchUpload/i.test(r.body)) {
-          if (await coldSnapshotObjectExists(cfg, key, deps)) {
-            return { status: 200, ok: true, etag: null, body: "" };
+          if (await proves(true)) {
+            return { status: 200, ok: true, etag: null, contentLength: null, body: "" };
           }
           throw new Error(`CompleteMultipartUpload NoSuchUpload HTTP ${r.status}`);
         }
@@ -678,9 +750,11 @@ async function completeMultipartUpload(
       throw new Error(`CompleteMultipartUpload HTTP ${res.status}: ${res.body.slice(0, 200)}`);
     }
   } catch (err) {
-    // Ambiguous transport / NoSuchUpload: if the object is already at the key,
-    // the complete succeeded server-side and a blind retry would redo multi-GB work.
-    if (await coldSnapshotObjectExists(cfg, key, deps)) {
+    // Ambiguous transport: accept only when HEAD proves this complete landed
+    // (new/changed object matching size/etag) — not a stale prior weekly key.
+    const msg = err instanceof Error ? err.message : String(err);
+    const noSuchUpload = /NoSuchUpload/i.test(msg);
+    if (await proves(noSuchUpload)) {
       return;
     }
     throw err;
@@ -1271,6 +1345,7 @@ export async function performR2ColdSnapshot(
       snapshotMs,
     });
 
+    const preHead = await headColdSnapshotObject(cfg, key, runDeps);
     createPromise = createMultipartUpload(cfg, key, runDeps);
     uploadId = await createPromise;
     const { completedParts, compressedBytes } = await uploadGzippedParts(
@@ -1281,7 +1356,10 @@ export async function performR2ColdSnapshot(
       partSizeBytes,
       runDeps,
     );
-    await completeMultipartUpload(cfg, key, uploadId, completedParts, runDeps);
+    await completeMultipartUpload(cfg, key, uploadId, completedParts, runDeps, {
+      expectedBytes: compressedBytes,
+      preEtag: preHead.etag,
+    });
     uploadId = undefined; // completed — nothing to abort from here on
 
     // Retention: keep the newest `retain` snapshots, delete the rest — unless

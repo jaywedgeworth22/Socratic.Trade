@@ -152,10 +152,15 @@ for table in "${TABLES[@]}"; do
     PASS=false
     continue
   fi
+  # Fail empty restored tables only when live is populated — a legitimately
+  # empty table on both sides (e.g. all connected accounts removed) must pass.
   if [[ "${RESTORED_COUNT}" -le 0 ]]; then
-    echo "  ${table}: EMPTY in the restored copy (live=${LIVE_COUNT})"
-    PASS=false
-    continue
+    if [[ "${LIVE_COUNT}" != "N/A" && "${LIVE_COUNT}" -gt 0 ]]; then
+      echo "  ${table}: EMPTY in the restored copy (live=${LIVE_COUNT})"
+      PASS=false
+      continue
+    fi
+    echo "  ${table}: empty restored and live=${LIVE_COUNT} — OK (live also empty/unreadable)"
   fi
   # The delta is INFORMATIONAL only, in either direction.  The pass/fail assertion is
   # non-emptiness (above), exactly as docs/backup-policy.md states — not row equality.

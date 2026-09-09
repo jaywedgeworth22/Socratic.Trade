@@ -227,7 +227,17 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   const listOnly = argv.includes("--list");
   const keyArgIndex = argv.indexOf("--key");
-  const requestedKey = keyArgIndex >= 0 ? argv[keyArgIndex + 1] : null;
+  let requestedKey = null;
+  if (keyArgIndex >= 0) {
+    const raw = argv[keyArgIndex + 1];
+    // A bare `--key` (final arg) or `--key --receipt` must not fall through to
+    // "newest snapshot" — that silently verifies the wrong object.
+    if (raw == null || raw === "" || raw.startsWith("-")) {
+      console.error("Usage: verify-cold-snapshot-restore.mjs --key <cold-snapshots/...> [--receipt path]");
+      return 2;
+    }
+    requestedKey = raw;
+  }
   const receiptIndex = argv.indexOf("--receipt");
   const receiptPath = receiptIndex >= 0 ? argv[receiptIndex + 1] : null;
   const tables = (env.RESTORE_DRILL_TABLES ?? "").split(",").map((t) => t.trim()).filter(Boolean);

@@ -138,6 +138,11 @@ function mockS3(options: {
       const keys = (options.listKeys ?? []).map((k) => `<Key>${k}</Key>`).join("");
       return respond(200, `<ListBucketResult>${keys}<IsTruncated>false</IsTruncated></ListBucketResult>`);
     }
+    if (method === "HEAD") {
+      // No object at the weekly key yet (fresh upload).  Ambiguous-complete
+      // tests that need a prior object override fetchImpl.
+      return respond(404, "", {});
+    }
     if (method === "DELETE") {
       return respond(204, "");
     }
