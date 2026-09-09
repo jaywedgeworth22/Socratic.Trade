@@ -76,7 +76,7 @@ RUN rm -rf scripts/eval test \
 FROM node:24.14.1-bookworm-slim AS runtime
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates curl tar gzip \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl tar gzip tini \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -117,7 +117,13 @@ EXPOSE 4000
 # 2026-09-08, so a 15s timeout still fails against the worst of them.  This
 # reduces flapping; PR #3202 (non-convergent FTS mirror loop) is what actually
 # stops it.
+#
+# tini is PID1 so Docker HEALTHCHECK children are reaped.  infisical-run
+# (Node) does not wait() those curls; hung probes SIGKILL'd at the old 5s
+# timeout piled up as zombies (CPU 105%, Traefik 503) on 2026-09-09.
+# curl --max-time 14 exits itself before Docker's 15s kill.
 HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=5 \
-  CMD curl -fsS http://127.0.0.1:4000/api/live >/dev/null || exit 1
+  CMD curl -fsS --max-time 14 --connect-timeout 2 http://127.0.0.1:4000/api/live >/dev/null || exit 1
 
+ENTRYPOINT ["tini", "--"]
 CMD ["bash", "scripts/coolify-prod-start.sh"]
