@@ -119,3 +119,5 @@ Hosted lint, typecheck, and tests passed on `aec6c040a`; build is pending.  Auto
 - Learning-review selections and audit metadata use current catalog identities while retaining saved aliases; request resolution and provider-reported serving identity remain distinct.
 
 Additional touched files: `app/api/chat/route.ts`, `app/console/assistant/chat.tsx`, `app/console/settings/learning-review.tsx`, `src/lib/learning-review.ts`, `src/lib/usage-budget.ts`, `src/lib/llm-call.ts`, `scripts/infisical-secrets-safe.sh`, and focused regression tests.  Final hosted gate pending.
+
+Hosted run `34332320089` on `5f0d07ba6`: lint/types passed; 7,902 tests passed, 51 skipped, and four failures in `test/usage-budget-strategy-integration.test.ts`.  Those fixtures stored an OpenRouter key while reporting OpenAI budget spend; correcting the payload provider to OpenRouter preserves their intended enforcement/advisory tests under the actual-route budget fix.  Updated the advisory assertion accordingly.  No runtime change was needed.  Full gate rerun pending; auto-merge disabled until validation.
