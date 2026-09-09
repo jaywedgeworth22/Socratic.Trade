@@ -335,7 +335,7 @@ describe("blip vs outage at the alert gate", () => {
     await settleAlerts();
     expect(sentry.captureMessage).not.toHaveBeenCalled();
   });
-}
+
   it("rejects explicit HTTP-status errors even when the body contains transport phrases", async () => {
     const { isTransientNetworkErrorText, isTransientNetworkError } = await import("../src/lib/network-errors");
     expect(isTransientNetworkErrorText("HTTP 500 internal: fetch failed")).toBe(false);
@@ -365,6 +365,67 @@ describe("blip vs outage at the alert gate", () => {
     const ageMs = Date.now() - Date.parse(lane.streakStartedTs!);
     // Must reflect the ~45-minute-old start of the run, not the oldest of the last five (~seconds).
     expect(ageMs).toBeGreaterThan(30 * 60_000);
+  });
+
+  it("rejects RAG status-without-HTTP formats as non-transient", async () => {
+    const { isTransientNetworkErrorText } = await import("../src/lib/network-errors");
+    // vector-db throws `Embedding/Rerank API failed …: ${status} ${body}` — no "HTTP" prefix.
+    for (const text of [
+      "Embedding API failed (isOpenRouter=false): 400 {\"error\":\"bad request\"}",
+      "Rerank API failed (isOpenRouter=true): 502 Bad Gateway",
+      "Embedding API failed (isOpenRouter=false): 500 fetch failed while upstream said ECONNRESET",
+      "some provider API error: 401 Unauthorized"
+    ]) {
+      expect(isTransientNetworkErrorText(text), text).toBe(false);
+    }
+    // Real transport strings with no status present stay transient.
+    expect(isTransientNetworkErrorText("embed documents: fetch failed")).toBe(true);
+    expect(isTransientNetworkErrorText("read ECONNRESET")).toBe(true);
+  });
+
+  it("sets streakStartedTs for a short hard-failure run (<5) without consecutive-failures STOPPED", async () => {
+    // Sparse RAG lanes may never fill last-5; streakStartedTs must still land so
+    // alertRagConnectionFailure can escalate by wall-clock before five rows accumulate.
+    const { logApiHealth, getLaneHealth, HEALTH_REASON_CONSECUTIVE_FAILURES } = await import("../src/lib/db-health");
+    const service = `sparse-lane-${randomUUID().slice(0, 8)}`;
+    await insertAgedSuccess(service, 30);
+    await insertAgedFailure(service, "TypeError: fetch failed", 20);
+    await insertAgedFailure(service, "TypeError: fetch failed", 10);
+    logApiHealth({ service, ok: false, errorText: "TypeError: fetch failed", keySource: "env" });
+    const lane = getLaneHealth(service, "env");
+    expect(lane.reason).not.toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
+    expect(lane.streakStartedTs).toBeTruthy();
+    const ageMs = Date.now() - Date.parse(lane.streakStartedTs!);
+    // Anchored at the ~20-minute-old start of the hard run, not null / not "now".
+    expect(ageMs).toBeGreaterThan(15 * 60_000);
+    expect(ageMs).toBeLessThan(25 * 60_000);
+  });
+
+  it("arms transient cooldown until streakStart+window, not now+window", async () => {
+    const { logApiHealth, HEALTH_TRANSIENT_FAILURE_PREFIX, transientEscalationWindowMs } =
+      await import("../src/lib/db-health");
+    const { getInternalSetting } = await import("../src/lib/db");
+    const service = `cooldown-anchor-${randomUUID().slice(0, 8)}`;
+    const windowMs = transientEscalationWindowMs();
+    // Four aged blips starting ~4 minutes ago + one fresh → streak tip holds, streakStarted ~4m ago.
+    // cooldownUntil must be streakStart+window (≈ now+(window-4m)), not now+window.
+    await insertAgedFailure(service, `${HEALTH_TRANSIENT_FAILURE_PREFIX}TypeError: fetch failed`, 4);
+    for (let i = 0; i < 3; i++) {
+      await insertAgedFailure(service, `${HEALTH_TRANSIENT_FAILURE_PREFIX}TypeError: fetch failed`, 3 - i * 0.5);
+    }
+    const beforeAlert = Date.now();
+    logApiHealth({ service, ok: false, errorText: "TypeError: fetch failed", keySource: "env" });
+    await vi.waitFor(() => expect(sentry.captureMessage).toHaveBeenCalled(), { timeout: 5000 });
+    await settleAlerts();
+    expect(capturedLevels()).toContain("warning");
+
+    const until = getInternalSetting<string>(`healthAlertSent:${service}:env:transient`);
+    expect(until).toBeTruthy();
+    const untilMs = Date.parse(until!);
+    // Old bug: Date.now()+window. Fixed: streakStart(~4m ago)+window ≈ now+(window-4m).
+    // Allow a few seconds of test slack either side of the 4-minute offset.
+    expect(untilMs).toBeLessThan(beforeAlert + windowMs - 3 * 60_000);
+    expect(untilMs).toBeGreaterThan(beforeAlert + windowMs - 5 * 60_000);
   });
 
   it("lets a hard failure page after a transient-blip warning (separate cooldown keys)", async () => {

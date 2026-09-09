@@ -61,11 +61,15 @@ const TRANSIENT_NETWORK_TEXT =
  * Explicit HTTP-status errors are rejected first: health callers include provider response bodies
  * (`HTTP <status> <body>`), and a 4xx/5xx body that happens to contain `fetch failed` /
  * `ECONNRESET` still means the request reached the provider — not a client transport blip.
+ * RAG embed/rerank formats omit the "HTTP" prefix (`Embedding API failed …: ${status} ${body}`);
+ * those status-without-HTTP shapes are rejected the same way.
  */
 export function isTransientNetworkErrorText(text: string | null | undefined): boolean {
   if (!text) return false;
   const s = String(text);
   if (/\bHTTP\s+[1-5]\d\d\b/i.test(s)) return false;
+  // RAG: `Embedding/Rerank API failed …: ${status} ${body}` (no "HTTP" prefix).
+  if (/(?:failed|error|API)[^:\n]{0,80}:\s*[1-5]\d\d\b/i.test(s)) return false;
   return TRANSIENT_NETWORK_TEXT.test(s);
 }
 

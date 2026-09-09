@@ -167,7 +167,12 @@ export function getLaneHealth(
   lastFailureTs: string | null;
   /** True only when the HARD streak holds AND every row in it is a transport blip. */
   transientStreak: boolean;
-  /** ts of the first failure in the ENTIRE consecutive hard-failure run (not merely the oldest of the last-5 sample). Null unless the streak holds. */
+  /**
+   * ts of the first failure in the ENTIRE consecutive hard-failure run (not merely the oldest of
+   * the last-5 sample). Set whenever the tip row is a hard failure — including short runs (<5) —
+   * so sparse RAG lanes can escalate via wall-clock before five rows accumulate. Null only when
+   * the tip is not a hard failure.
+   */
   streakStartedTs: string | null;
 } {
   try {
@@ -198,25 +203,20 @@ export function getLaneHealth(
 
     let stoppedWorking = false;
     let reason: string | null = null;
-    // Only meaningful when the HARD streak below holds. `streakStartedTs` is the start of the
-    // ENTIRE consecutive hard-failure run (walk newest→oldest past the last-5 sample until a
-    // success or soft row), so `now - streakStartedTs` is how long the lane has been failing —
-    // the quantity that separates a burst of blips from an outage. Anchoring only to last-5 would
-    // keep a busy lane forever inside the escalation window.
+    // `streakStartedTs` is the start of the ENTIRE consecutive hard-failure run (walk newest→oldest
+    // past the last-5 sample until a success or soft row), so `now - streakStartedTs` is how long
+    // the lane has been failing — the quantity that separates a burst of blips from an outage.
+    // Anchoring only to last-5 would keep a busy lane forever inside the escalation window.
+    // Importantly: set this whenever the tip is a hard failure, EVEN when the run is shorter than
+    // five rows — sparse RAG lanes otherwise stay warning forever because they never fill last-5.
     let transientStreak = false;
     let streakStartedTs: string | null = null;
-    // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
-    // limits (429, daily cap) alone never set this reason — they may still surface as the softer
-    // "no success this hour" heuristics below (yellow DEGRADED, not red STOPPED for circuit trips
-    // that only key off HEALTH_REASON_CONSECUTIVE_FAILURES in the enrichment breaker).
-    if (
-      last5.length >= 5 &&
-      last5.every((r) => r.ok === 0 && !isSoftHealthFailure(r.error_text))
-    ) {
-      stoppedWorking = true;
-      reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
+    const tipIsHardFailure =
+      last5.length > 0 && last5[0].ok === 0 && !isSoftHealthFailure(last5[0].error_text);
+    if (tipIsHardFailure) {
       // Walk the capped lane history newest-first; the last hard row before a success/soft break
-      // is the start of this consecutive run (may be far older than last5 on a busy lane).
+      // is the start of this consecutive run (may be far older than last5 on a busy lane, or
+      // shorter than 5 on a sparse one).
       const history = db
         .prepare(
           `SELECT ok, error_text, ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT ?`
@@ -231,7 +231,19 @@ export function getLaneHealth(
         if (row.ok === 1 || isSoftHealthFailure(row.error_text)) break;
         runStart = row.ts;
       }
-      streakStartedTs = runStart ?? last5[last5.length - 1]?.ts ?? null;
+      streakStartedTs = runStart ?? last5[0]?.ts ?? null;
+    }
+    // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
+    // limits (429, daily cap) alone never set this reason — they may still surface as the softer
+    // "no success this hour" heuristics below (yellow DEGRADED, not red STOPPED for circuit trips
+    // that only key off HEALTH_REASON_CONSECUTIVE_FAILURES in the enrichment breaker).
+    // Still requires length >= 5 even though streakStartedTs is set for shorter hard runs above.
+    if (
+      last5.length >= 5 &&
+      last5.every((r) => r.ok === 0 && !isSoftHealthFailure(r.error_text))
+    ) {
+      stoppedWorking = true;
+      reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
       transientStreak = last5.every((r) => isTransientHealthFailure(r.error_text));
     } else if (callsLastHour > 0 && !lastSuccess) {
       stoppedWorking = true;
@@ -470,7 +482,12 @@ export function logApiHealth(opts: {
             // Soft/rate-limit-shaped text: skip Sentry (noise); hard outages still capture.
             skipSentry: isSoft || /429|rate limit/i.test(errorText),
             cooldownUntil:
-              opts.quotaResetAt ?? (transientBlip ? new Date(Date.now() + escalationWindowMs).toISOString() : undefined),
+              opts.quotaResetAt ??
+              (transientBlip
+                ? new Date(
+                    (Number.isFinite(streakStartedMs) ? streakStartedMs : Date.now()) + escalationWindowMs
+                  ).toISOString()
+                : undefined),
             transientBlip
           });
         }
