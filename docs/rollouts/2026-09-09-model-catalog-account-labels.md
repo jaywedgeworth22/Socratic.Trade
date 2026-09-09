@@ -99,7 +99,7 @@ Exact-lockfile local reinstall also failed with `ETIMEDOUT`.  Hosted verificatio
 
 GitHub review correctly identified native `claude-opus-5` missing from the adaptive-thinking matcher.  Added Opus 5 matching and a native chat transport regression; all native Anthropic chat calls now use the shared 4,096-token minimum.  Grok 4.5/4.6 match current reasoning controls (no off switch, xhigh on 4.6); Gemini 3.8 matches mandatory low/medium/high thinking.  Sources: https://docs.x.ai/developers/model-capabilities/text/reasoning and https://ai.google.dev/gemini-api/docs/thinking.
 
-## Next Steps & Blockers
+## Initial blockers (historical)
 
 PR #3196 is in review pending the final gate.  `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh --draft` passed worktree/hook/stale-overlap checks (main already current) and failed local typechecking because the copied dependency tree lacks `@sentry/profiling-node` and has an empty `@types/node/url.d.ts`.  Hosted lint/typechecking passed.  Reinstalling the exact lockfile using `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm ci --ignore-scripts --prefer-offline`; do not alter source to accommodate damaged dependencies.  Hosted run `34327205131` validates commit `2a9519912`.  No merge or deployment claim.
 
@@ -145,3 +145,24 @@ Review on `13c2b4cab` identified three remaining integration gaps.  Native MiniM
 Touched files in this batch: `src/lib/strategy.ts`, `test/strategy-hardening.test.ts`, `src/lib/llm-provider-cooldown.ts`, `test/llm-provider-cooldown.test.ts`, `src/lib/llm-request.ts`, `test/llm-request.test.ts`, `docs/manager-model-options.md`, `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`, and this rollout.  Full hosted gate rerun required after the batch; local dependency repair remains blocked by registry timeouts.  Auto-merge is disabled until fixes are pushed and review replies resolved.
 
 `/opt/homebrew/opt/node@24/bin/node /tmp/st-pure-proposal-gate-20260909.mjs`: 5 actual-source checks passed, including incomplete native proposals rejected and complete proposals retained.  Worker actual-source classifier check: 5 cases passed.  `git diff --check` passed.  Hosted full lint/typecheck/test/build gate remains required.
+
+## Final verification and merge
+
+PR #3196 merged to `main` as `3aa643cacd25688eb6c948f686e4410b834617ff`.  Final hosted run `34338996582` / job `102425902504` on `9968619e46b6c6ddd1004cc4410b871b3570fa0a` passed, in order:
+
+- `npm run lint`
+- `npx tsc --noEmit`
+- `npm test`: 719 suites passed, 1 skipped; 7,928 tests passed, 51 skipped.
+- `npm run build`
+
+Gitleaks and the aggregate `verify` gate passed.  All 14 review threads were answered after their fixes were pushed and resolved before merge.  No merge bypass, local gate skip flag, or manual production deploy was used.  Local `node_modules` remains incomplete; hosted verification is the full-gate evidence.
+
+`DEPLOY_VERIFY_TIMEOUT_SECONDS=1200 bash scripts/verify-deploy-sha.sh 3aa643cacd25688eb6c948f686e4410b834617ff` is checking automatic production rollout by merge-commit containment.  The initial live SHA was `044a74f26eb8736c59bfb96a097b2d98afdc4659` (behind).  Final result: PASS, live `3aa643cacd25688eb6c948f686e4410b834617ff` contains the merged change; `ok=true`, `db=ok`, scheduler age 19 seconds, process uptime 7 seconds.
+
+The board is Deployed with the merge and production containment receipts.  A docs-only closeout updates this rollout, `STATUS.md`, `PLAN.md`, and `docs/EFFORT-LOG.md` from an owned branch based on the merged `origin/main`; runtime files are unchanged.
+
+Closeout validation: `git diff --check` passed; only the four documentation files above changed.  The existing CI documentation-only path validates the closeout PR; runtime verification remains the full passing run documented above.  No product work remains.
+
+## Next Steps & Blockers
+
+No remaining product or release work.  This owned lane still needs a successful exact-lockfile dependency installation before future local full-suite work; registry timeouts prevented it during this task.  Hosted CI provided the required passing gate.

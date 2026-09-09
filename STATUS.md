@@ -2,7 +2,7 @@
 
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 
-In progress on `codex/model-catalog-account-labels` (board `0d775009`, PR #3196).  Hosted lint/types passed on 13c2b4cab; tests running.  Final asynchronous review identified native MiniMax proposal completeness, billing cooldown, and always-reasoning timeout gaps.  Fixing all three as one batch before a fresh full gate; auto-merge disabled.  Earlier full gate passed on 84e77c064 (7,906 tests passed / 51 skipped), and browser fixture QA passed.  Local dependencies remain incomplete after registry ETIMEDOUT.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
+Merged as PR #3196 (`3aa643cacd25688eb6c948f686e4410b834617ff`).  Final hosted run `34338996582` on `9968619e4` passed `npm run lint`, `npx tsc --noEmit`, `npm test` (719 suites / 7,928 tests passed; 1 suite / 51 tests skipped), and `npm run build`; security checks passed and all 14 review threads were resolved.  Desktop/mobile header fixture QA passed.  Production verified at `3aa643cac`: containment check passed with `ok=true`, `db=ok`, and scheduler age 19 seconds.  Local dependencies remain incomplete after registry ETIMEDOUT, so no local full-gate claim.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
 
 ## 2026-09-08 CLAUDE — R2 weekly cold snapshot stalled 9 days, silently
 
