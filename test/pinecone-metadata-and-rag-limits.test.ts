@@ -54,6 +54,13 @@ describe("ragLimitStatus", () => {
   it("still classifies a plain 429 as rate_limited", () => {
     expect(ragLimitStatus("PineconeError: HTTP 429 Too Many Requests")).toBe("rate_limited");
   });
+
+  it("does not soft-classify fetch failed / UND_ERR_SOCKET as ragLimitStatus transient", () => {
+    // Those shapes escalate via isTransientNetworkErrorText — not this soft arm (Codex P1 #3195).
+    expect(ragLimitStatus("TypeError: fetch failed")).toBeUndefined();
+    expect(ragLimitStatus("UND_ERR_SOCKET: other side closed")).toBeUndefined();
+    expect(ragLimitStatus("embed documents: fetch failed")).toBeUndefined();
+  });
 });
 
 // P0 fix (2026-08-23): the SEC ingest worker used to collapse EVERY non-complete storeDocument

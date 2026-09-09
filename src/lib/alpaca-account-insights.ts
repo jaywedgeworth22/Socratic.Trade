@@ -13,7 +13,7 @@
 
 import { getConnectedAccount, listConnectedAccounts, resolveAlpacaMarketData, type ApiKeySource } from "./db";
 import { logApiHealth } from "./db-health";
-import { isAbortOrTimeoutError, isTransientNetworkError } from "./network-errors";
+import { isAbortOrTimeoutError, isTransientNetworkError, jitteredBackoffMs } from "./network-errors";
 import { appendErrorCause, scrubProviderErrorText } from "./provider-rate-limit";
 import type { ConnectedAccount } from "./types";
 
@@ -128,7 +128,7 @@ async function getJson<T>(
       return (await response.json()) as T;
     } catch (err) {
       if (attempt === 0 && !isAbortOrTimeoutError(err) && isTransientNetworkError(err)) {
-        await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_BACKOFF_MS));
+        await new Promise((resolve) => setTimeout(resolve, jitteredBackoffMs(TRANSIENT_RETRY_BACKOFF_MS, attempt)));
         continue;
       }
       const rawMessage = err instanceof Error ? err.message : String(err);
