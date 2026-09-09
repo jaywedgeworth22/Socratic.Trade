@@ -118,6 +118,58 @@ export function transientEscalationWindowMs(env: Record<string, string | undefin
  */
 export const HEALTH_LOG_LANE_CAP = 500;
 
+/** Durable ISO start of the current unbroken hard-failure run — survives api_health_log FIFO. */
+export const HEALTH_HARD_STREAK_START_PREFIX = "health:hard-streak-start:";
+
+export function hardStreakStartSettingKey(
+  service: string,
+  keySource: string | null,
+  userId?: string | null
+): string {
+  const src = keySource ?? "none";
+  if (src === "user" && userId != null) {
+    return `${HEALTH_HARD_STREAK_START_PREFIX}${service}:user:${userId}`;
+  }
+  return `${HEALTH_HARD_STREAK_START_PREFIX}${service}:${src}`;
+}
+
+function readHardStreakStart(key: string): string | null {
+  try {
+    const row = getDb().prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as
+      | { value: string }
+      | undefined;
+    if (!row?.value) return null;
+    const parsed = JSON.parse(row.value) as unknown;
+    if (typeof parsed !== "string") return null;
+    return Number.isFinite(Date.parse(parsed)) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeHardStreakStart(key: string, iso: string): void {
+  try {
+    const updated_at = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      )
+      .run(key, JSON.stringify(iso), updated_at);
+  } catch {
+    // Health path must never throw.
+  }
+}
+
+function clearHardStreakStart(key: string): void {
+  try {
+    getDb().prepare(`DELETE FROM settings WHERE key = ?`).run(key);
+  } catch {
+    // Health path must never throw.
+  }
+}
+
+
 /**
  * Which condition set `stoppedWorking` (see getServiceHealthSummaries). "consecutive-failures" is
  * the HARD one — the only one strong enough to act on automatically (`app/api/health` fails
@@ -169,9 +221,10 @@ export function getLaneHealth(
   transientStreak: boolean;
   /**
    * ts of the first failure in the ENTIRE consecutive hard-failure run (not merely the oldest of
-   * the last-5 sample). Set whenever the tip row is a hard failure — including short runs (<5) —
-   * so sparse RAG lanes can escalate via wall-clock before five rows accumulate. Null only when
-   * the tip is not a hard failure.
+   * the last-5 sample, and not truncated by HEALTH_LOG_LANE_CAP FIFO). Backed by a durable
+   * settings key so a high-volume outage cannot reset the escalation clock. Set whenever the tip
+   * row is a hard failure — including short runs (<5) — so sparse RAG lanes can escalate via
+   * wall-clock before five rows accumulate. Null only when the tip is not a hard failure.
    */
   streakStartedTs: string | null;
 } {
@@ -239,8 +292,22 @@ export function getLaneHealth(
         runStart = row.ts;
         if (!isTransientHealthFailure(row.error_text)) entirelyTransient = false;
       }
-      streakStartedTs = runStart ?? last5[0]?.ts ?? null;
+      const walkStart = runStart ?? last5[0]?.ts ?? null;
+      // Persist the streak start outside the FIFO health log. On a busy lane the 500-row cap
+      // otherwise advances streakStartedTs every insert and a sustained transport outage can
+      // remain warning-only forever (Codex P1 on #3195). Once written, never advance until the
+      // run clears (success / soft) — see logApiHealth.
+      const durableKey = hardStreakStartSettingKey(service, keySource, scopeUser ? userId : null);
+      let durable = readHardStreakStart(durableKey);
+      if (!durable && walkStart) {
+        writeHardStreakStart(durableKey, walkStart);
+        durable = walkStart;
+      }
+      streakStartedTs = durable ?? walkStart;
       runEntirelyTransient = sawHard && entirelyTransient;
+    } else {
+      // Tip is not a hard failure — drop any durable start left from a prior run.
+      clearHardStreakStart(hardStreakStartSettingKey(service, keySource, scopeUser ? userId : null));
     }
     // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
     // limits (429, daily cap) alone never set this reason — they may still surface as the softer
@@ -432,6 +499,16 @@ export function logApiHealth(opts: {
         ).run(patternId, opts.service, fingerprint, errorText, now, now, patternKeySource);
       }
     })();
+
+    // Durable hard-streak start (Codex P1): clear on success/soft only. Establishment happens in
+    // getLaneHealth from the history walk (so aged rows / FIFO-truncated runs keep the true start
+    // instead of stamping `now` on the tip insert).
+    {
+      const streakKey = hardStreakStartSettingKey(opts.service, keySource, userId);
+      if (opts.ok || (errorText != null && isSoftHealthFailure(errorText))) {
+        clearHardStreakStart(streakKey);
+      }
+    }
 
     // `isIntentionalOffHealthService`: FMP / Quiver / Unusual Whales are PRODUCT-RETIRED direct
     // lanes (see retired-direct-vendors.ts). Admin Connections already renders them as muted OFF

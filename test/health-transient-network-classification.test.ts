@@ -328,7 +328,39 @@ describe("blip vs outage at the alert gate", () => {
     expect(capturedLevels()).toContain("error");
   });
 
-  it("does not treat a run as entirely-transient when a hard failure sits outside last-5", async () => {
+  it("keeps streakStartedTs from a durable setting when FIFO would advance it", async () => {
+    // Codex P1: HEALTH_LOG_LANE_CAP FIFO can drop the true start; durable settings must win.
+    const {
+      logApiHealth,
+      getLaneHealth,
+      hardStreakStartSettingKey,
+      HEALTH_HARD_STREAK_START_PREFIX
+    } = await import("../src/lib/db-health");
+    const { getDb } = await db();
+    const service = `fifo-streak-${randomUUID().slice(0, 8)}`;
+    const ancient = new Date(Date.now() - 45 * 60_000).toISOString();
+    const key = hardStreakStartSettingKey(service, "env", null);
+    expect(key.startsWith(HEALTH_HARD_STREAK_START_PREFIX)).toBe(true);
+    getDb()
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      )
+      .run(key, JSON.stringify(ancient), new Date().toISOString());
+    // Retained log only has recent failures — walk would claim a ~2-minute start.
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service, ok: false, errorText: "TypeError: fetch failed", keySource: "env" });
+    }
+    const lane = getLaneHealth(service, "env");
+    expect(lane.streakStartedTs).toBe(ancient);
+    // Past the default 10-minute window → escalates to error (not stuck in warning forever).
+    await vi.waitFor(() => expect(sentry.captureMessage).toHaveBeenCalled(), { timeout: 5000 });
+    await settleAlerts();
+    expect(capturedLevels()).toContain("error");
+    expect(capturedTag("health.failure_class")).toBe("hard");
+  });
+
+    it("does not treat a run as entirely-transient when a hard failure sits outside last-5", async () => {
     // Codex P2: transientStreak used to look at last-5 only. An HTTP 401 that aged past the
     // sample, followed by five socket errors, must still page as hard — not warning.
     const { logApiHealth, getLaneHealth, HEALTH_REASON_CONSECUTIVE_FAILURES } = await import("../src/lib/db-health");
