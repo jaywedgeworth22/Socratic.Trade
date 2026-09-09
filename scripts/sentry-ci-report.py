@@ -73,21 +73,21 @@ CRON_SCHEDULES = {
 }
 
 # Per-workflow override of the Sentry Crons "checkin_margin" (minutes late a
-# check-in may arrive before Sentry calls it missed). Every workflow not
+# check-in may arrive before Sentry calls it missed).  Every workflow not
 # listed here gets the 15-minute default below.
 #
-# "Deploy freshness" needs its own, much wider value: GitHub Actions'
+# "Deploy freshness" needs its own, much wider value:  GitHub Actions'
 # `schedule` trigger is best-effort and, in practice, delivers this
-# every-20-minutes cron far less often than declared. Sentry issue
+# every-20-minutes cron far less often than declared.  Sentry issue
 # FLEET-INFRA-C1 / PagerDuty #87 (2026-09-08) regressed on a genuine gap, but
 # `gh run list --workflow deploy-freshness.yml` showed the workflow itself
-# has never failed — every run that *does* fire succeeds. Measured over the
-# 211 hours before the fix (2026-08-30 22:43Z .. 2026-09-08 18:03Z): only 60
+# has never failed — every run that *does* fire succeeds.  Measured over the
+# 211 hours before the fix (2026-08-30 22:43Z .. 2026-09-08 18:03Z):  only 60
 # of the ~634 scheduled fires GitHub should have created actually ran (~9.5%
 # delivery), every gap between consecutive runs exceeded 60 minutes, median
-# gap 210.5 min, p99/max 483.6 min (~8h03m). A 15-minute margin against a
+# gap 210.5 min, p99/max 483.6 min (~8h03m).  A 15-minute margin against a
 # cron GitHub cannot deliver that reliably pages every few hours for a
-# watchdog that has not actually failed. 600 minutes (10h) sits above the
+# watchdog that has not actually failed.  600 minutes (10h) sits above the
 # worst gap observed so far with headroom, while still alerting well before
 # the 14-hour silent-deploy-freeze (2026-08-06) this workflow exists to catch.
 # Keep the crontab schedule itself at the *intended* cadence above — it is

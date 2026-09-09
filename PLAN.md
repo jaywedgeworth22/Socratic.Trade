@@ -1,3 +1,5 @@
+> **2026-09-09 GROK — PR #3194 Deploy-freshness Crons margin: per-workflow 10h tolerance (`claude/fix-deploy-freshness-monitor-margin`).**  Monitoring approach change:  Sentry Crons `checkin_margin` for `Deploy freshness` alone is now 600 min via `CRON_CHECKIN_MARGIN_MINUTES` in `scripts/sentry-ci-report.py` (default 15 min unchanged elsewhere).  GitHub `schedule` delivery for this every-20-minute cron measured ~9.5% over 211h (median gap 210.5 min, max ~8h03m), so the old 15-minute margin false-paged a healthy workflow; 10h sits above observed gaps while still alerting inside the 14h silent-deploy-freeze this watchdog exists to catch.  Workflow crontab unchanged.  Do not resolve FLEET-INFRA-C1 purely on merge — wait for an OK check-in under the new margin.  Extra-ship no.  Do not merge from this tip lane.  Rollout: `docs/rollouts/2026-09-08-ci-deploy-freshness-monitor-margin.md`.
+
 ## 2026-09-09 CLAUDE — Safety-lane deadline attribution: the "broker timeout" is event-loop starvation
 
 Branch `claude/broker-timeout-safety-monitors`, worktree `~/apps/trading-claude-brokertimeout`.
