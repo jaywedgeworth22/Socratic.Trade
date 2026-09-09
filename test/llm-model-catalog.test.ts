@@ -5,9 +5,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 process.env.DATABASE_URL = `file:${path.join(os.tmpdir(), `llm-catalog-test-${Date.now()}.db`)}`;
 
 const OWNER_ROWS: Array<[string, string, string]> = [
+  ["gpt-6-astra-pro", "openai/gpt-6-astra-pro", "gpt-6-astra-pro"],
   ["gpt-6-astra", "openai/gpt-6-astra", "gpt-6-astra"],
   ["minimax-m3", "minimax/minimax-m3", "MiniMax-M3"],
   ["minimax-m2.7", "minimax/minimax-m2.7", "MiniMax-M2.7"],
+  ["muse-spark-1.3", "meta/muse-spark-1.3", "muse-spark-1.3"],
+  ["muse-glimmer-30b", "meta/muse-glimmer-30b", "muse-glimmer-30b"],
   ["llama-4-maverick", "meta-llama/llama-4-maverick", "llama-4-maverick"],
   ["llama-4-scout", "meta-llama/llama-4-scout", "llama-4-scout"],
   ["gpt-5.6-sol", "openai/gpt-5.6-sol", "gpt-5.6-sol"],

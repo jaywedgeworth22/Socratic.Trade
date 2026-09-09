@@ -31,7 +31,7 @@ export function providerForModel(modelId: string | null | undefined): ConsolePro
   if (/^gemini/.test(m)) return "gemini";
   if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
   if (/^deepseek/.test(m)) return "deepseek";
-  if (/^llama/.test(m)) return "meta";
+  if (/^(llama|muse-)/.test(m)) return "meta";
   if (/(kimi|moonshot)/.test(m)) return "moonshot";
   if (/minimax/.test(m)) return "minimax";
   return "openai";
@@ -53,7 +53,7 @@ const PROVIDER_LABEL: Record<ConsoleProviderId, string> = {
   gemini: "Google (Gemini)",
   mistral: "Mistral",
   deepseek: "DeepSeek",
-  meta: "Meta (Llama)",
+  meta: "Meta",
   moonshot: "Moonshot AI (Kimi)",
   minimax: "MiniMax"
 };
@@ -86,6 +86,7 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "gpt-5.6-luna": "GPT-5.6 Luna",
   "gpt-5.6-terra": "GPT-5.6 Terra",
   "gpt-5.6-sol": "GPT-5.6 Sol",
+  "gpt-6-astra-pro": "GPT-6 Astra Pro",
   "gpt-6-astra": "GPT-6 Astra",
   "gpt-4o": "GPT-4o",
   "gpt-5.4": "GPT-5.4",
@@ -147,6 +148,8 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "minimax-m2.7": "MiniMax M2.7",
   "MiniMax-M2.7": "MiniMax M2.7",
   // Meta
+  "muse-spark-1.3": "Muse Spark 1.3",
+  "muse-glimmer-30b": "Muse Glimmer 30B",
   "llama-4-scout": "Llama 4 Scout",
   "llama-4-maverick": "Llama 4 Maverick",
   "llama-70b-latest": "Llama 70B",

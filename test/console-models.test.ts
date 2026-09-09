@@ -6,6 +6,11 @@ import { isOpenRouterRouted, modelDisplayName, providerForModel } from "../app/c
 // raw model id is read back — decisions, usage, approval cards. Before this fix, providerForModel
 // and modelDisplayName only handled bare ids, so an OpenRouter-routed Grok or Gemini call branded
 // as OpenAI and every routed id showed its raw vendor-qualified string instead of a display name.
+it("attributes Muse models to Meta", () => {
+  expect(providerForModel("meta/muse-spark-1.3")).toBe("meta");
+  expect(modelDisplayName("muse-spark-1.3")).toBe("Muse Spark 1.3");
+});
+
 describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
   it("brands bare (pre-routing) ids correctly, unaffected by the fix", () => {
     expect(providerForModel("claude-sonnet-5")).toBe("anthropic");

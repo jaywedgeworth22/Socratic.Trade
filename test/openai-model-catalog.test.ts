@@ -12,6 +12,7 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
 
   it("offers Astra, the GPT-5.6 tiers, Mini/Nano choices, and GPT-4o", () => {
     expect(openAi.options.map((option) => option.value)).toEqual([
+      "gpt-6-astra-pro",
       "gpt-6-astra",
       "gpt-5.4-nano",
       "gpt-mini-latest",

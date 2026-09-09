@@ -111,6 +111,21 @@ describe("llmForModel — OpenRouter-first routing (review finding llm-12)", () 
     }
   });
 
+  it("keeps Meta credentials away from the OpenAI fallback", () => {
+    const userId = `u_meta_${randomUUID()}`;
+    upsertUserApiKey(userId, "meta", "meta-placeholder");
+    try {
+      expect(llmForModel("muse-spark-1.3", userId)).toBeInstanceOf(MockLLM);
+      upsertUserApiKey(userId, "openrouter", "openrouter-placeholder");
+      const llm = llmForModel("muse-spark-1.3", userId);
+      expect(llm).toBeInstanceOf(OpenAILLM);
+      expect(llm.modelName).toBe("meta/muse-spark-1.3");
+    } finally {
+      deleteUserApiKey(userId, "meta");
+      deleteUserApiKey(userId, "openrouter");
+    }
+  });
+
   it("uses native MiniMax IDs and preserves reasoning across tool turns", async () => {
     const userId = `u_minimax_${randomUUID()}`;
     upsertUserApiKey(userId, "minimax", "minimax-test-placeholder");
@@ -166,16 +181,15 @@ describe("llmForModel — OpenRouter-first routing (review finding llm-12)", () 
     expect(chatProviderForModel("llama-3.3-70b-instruct")).not.toBe("openai");
   });
 
-  it("routes a llama model through a meta key (not an openai key) and records provider=meta", async () => {
+  it("does not invoke an OpenAI transport with a standalone Meta key", async () => {
     const userId = `u_meta_${randomUUID()}`;
     upsertUserApiKey(userId, "meta", "meta-test-key");
     try {
       const fakeTransport = vi.fn().mockResolvedValue(fakeChatResponse());
       const llm = llmForModel("llama-3.3-70b-instruct", userId, { openAITransport: fakeTransport });
-      expect(llm).toBeInstanceOf(OpenAILLM);
+      expect(llm).toBeInstanceOf(MockLLM);
       await llm.run(baseArgs);
-      const rows = getLlmUsageSummary({ userId });
-      expect(rows.some((r) => r.provider === "meta")).toBe(true);
+      expect(fakeTransport).not.toHaveBeenCalled();
     } finally {
       deleteUserApiKey(userId, "meta");
     }

@@ -1,5 +1,5 @@
 import { resolveLlmCredential } from "./db";
-import { nativeSlugFor, openRouterSlugFor } from "./llm-model-catalog";
+import { catalogEntryFor, nativeSlugFor, openRouterSlugFor } from "./llm-model-catalog";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
@@ -29,15 +29,21 @@ export function llmModelFamily(model: string | undefined): LlmModelFamily {
   if (/gemini/i.test(normalized)) return "gemini";
   if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
   if (/deepseek/i.test(normalized)) return "deepseek";
-  if (/llama/i.test(normalized)) return "meta";
+  if (/(llama|muse-)/i.test(normalized)) return "meta";
   if (/(kimi|moonshot)/i.test(normalized)) return "moonshot";
   if (/minimax/i.test(normalized)) return "minimax";
   return "openai";
 }
 
+/** Meta and explicitly restricted catalog entries use the verified OpenRouter transport. */
+export function modelRequiresOpenRouter(model: string | undefined): boolean {
+  return llmModelFamily(model) === "meta" || catalogEntryFor(model)?.openRouterOnly === true;
+}
+
 /** Credential gate follows the same OpenRouter-first, native-fallback routing as execution. */
 export function modelCredentialService(model: string | undefined, userId: string = "local"): LlmModelFamily {
-  return resolveLlmCredential("openrouter", userId).key ? "openrouter" : llmModelFamily(model);
+  return modelRequiresOpenRouter(model) || resolveLlmCredential("openrouter", userId).key
+    ? "openrouter" : llmModelFamily(model);
 }
 
 // Cross-family Red Team DEFAULT removed 2026-07-07 (owner directive: no model is a default for
@@ -134,7 +140,8 @@ export function resolveLlmEndpoint(
 
   // 1. Primary path: OpenRouter key (user or operator failover when enabled)
   const openRouterCred = resolveLlmCredential("openrouter", userId);
-  if (openRouterCred.key) {
+  // Meta models are served through OpenRouter; never send a Meta credential to OpenAI.
+  if (openRouterCred.key || modelRequiresOpenRouter(rawModel)) {
     const model = normalizeOpenRouterModelId(rawModel);
     const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
 

@@ -649,7 +649,7 @@ const ANTHROPIC_MIN_MAX_TOKENS = 4096;
  */
 export function resolveLlmWireOutputCap(transport: LlmTransport, bounds: RequestBounds): number {
   if (transport === "anthropic-messages") return Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS);
-  if (transport === "chat-completions" && /^minimax-/i.test(lowerModel(bounds.model))) {
+  if (transport === "chat-completions" && /^(minimax|muse)-/i.test(lowerModel(bounds.model))) {
     return bounds.maxOutputTokens + REASONING_TOKEN_BUDGET.medium;
   }
   const capability = reasoningCapabilityForModel(bounds.model);
@@ -668,9 +668,9 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
   bounds: RequestBounds
 ): T & Record<string, unknown> {
   const result = ((): any => {
-    // MiniMax thinks by default; reserve room for reasoning as well as the visible answer.
-    // Its effort ladder differs from OpenAI's, so do not send reasoning_effort.
-    if (transport === "chat-completions" && /^minimax-/i.test(lowerModel(bounds.model))) {
+    // MiniMax and Muse reason by default; reserve room for the visible answer too.
+    // Do not impose an unverified OpenAI effort ladder on these families.
+    if (transport === "chat-completions" && /^(minimax|muse)-/i.test(lowerModel(bounds.model))) {
       return {
         ...body,
         max_completion_tokens: resolveLlmWireOutputCap(transport, bounds),

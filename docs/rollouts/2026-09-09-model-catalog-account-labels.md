@@ -6,7 +6,7 @@ Refresh the web app's provider choices against current offerings and remove repe
 
 ## Changes Made
 
-- Add GPT-6 Astra, MiniMax M3/M2.7, and Llama 4 Maverick/Scout.
+- Add GPT-6 Astra/Astra Pro, MiniMax M3/M2.7, Meta Muse Spark 1.3/Glimmer 30B, and Llama 4 Maverick/Scout.
 - Update Fable to 5.1, Grok to 4.6, Gemini Flash batch to 3.8, and DeepSeek V4 OpenRouter routes to the latest stable snapshots; correct Mistral wire IDs and Anthropic native IDs.
 - Add MiniMax credential, endpoint, picker, and attribution support with ordinary pay-as-you-go API credentials.
 - Render only `PAPER TRADING  •  broker-provided practice account` in the paper banner.  Use `PAPER` pills, omit dropdown practice-account explanations, and show a single collapsed account-name row with three spaces before an em dash and the final four account characters.
@@ -90,6 +90,12 @@ Reran the two timed-out suites with `PATH=/opt/homebrew/opt/node@24/bin:$PATH np
 Apple Notes living note updated successfully in Coding; pin shortcut unavailable.
 
 Hosted run `34327205131`: lint/typecheck passed; full suite reported 7,884 passed, 51 skipped, and two stale expectations (native Grok 4.5 and the pre-Astra OpenAI list).  Both fixtures are corrected; rerun pending.  No runtime test failure remained in the report.  Separate read-only provider review found no concrete remaining P1/P2 issue.
+
+Astra Pro is also included through its verified OpenRouter route (`openai/gpt-6-astra-pro`); native routing is disabled because its native API model page returned 404.  Catalog entries can explicitly require OpenRouter.
+
+Final provider cross-check identified Muse Spark 1.3 (Meta announcement 2026-09-02) and Glimmer 30B in the live OpenRouter feed; added both.  Meta is explicitly OpenRouter-only in this app: the prior native fallback had no Meta endpoint and would send a stored Meta key to OpenAI.  Eligibility, strategy, chat, and provider availability now fail closed without OpenRouter.  Added request-headroom and credential-boundary regression coverage.  Sources: https://ai.meta.com/llama and https://openrouter.ai/api/v1/models.
+
+Exact-lockfile local reinstall also failed with `ETIMEDOUT`.  Hosted verification remains required.
 
 ## Next Steps & Blockers
 

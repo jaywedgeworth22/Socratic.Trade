@@ -368,6 +368,7 @@ function providerForModel(model: string | null | undefined): string {
   if (/^gemini/.test(m)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
   if (/^openrouter\//.test(m)) return "openrouter";
+  if (/^(llama|muse-)/.test(m)) return "meta";
   if (/^deepseek/.test(m)) return "deepseek";
   if (/^minimax/.test(m)) return "minimax";
   return "openai";
@@ -375,6 +376,7 @@ function providerForModel(model: string | null | undefined): string {
 
 const CHEAPER_MODEL: Record<string, string> = {
   // OpenAI
+  "gpt-6-astra-pro": "gpt-5.6-sol",
   "gpt-6-astra": "gpt-5.6-sol",
   "gpt-5.6": "gpt-5.6-terra",
   "gpt-5.6-sol": "gpt-5.6-terra",

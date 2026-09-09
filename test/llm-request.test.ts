@@ -166,6 +166,14 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect("reasoning" in resp).toBe(false);
   });
 
+  it("reserves reasoning headroom for MiniMax and Muse through OpenRouter", () => {
+    for (const model of ["minimax/minimax-m3", "meta/muse-spark-1.3", "meta/muse-glimmer-30b"]) {
+      const request = withLlmRequestBounds({ model }, "chat-completions", { model, maxOutputTokens: 1500 });
+      expect(request.max_completion_tokens).toBe(5500);
+      expect(request).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
   it("bounds Astra reasoning for direct and OpenRouter requests without custom temperature", () => {
     for (const model of ["gpt-6-astra", "openai/gpt-6-astra"]) {
       const chat = withLlmRequestBounds({ model }, "chat-completions", {

@@ -49,7 +49,7 @@ const PROVIDER_LABEL: Record<CatalogProviderId, string> = {
   moonshot: "Moonshot AI (Kimi)",
   minimax: "MiniMax",
   deepseek: "DeepSeek",
-  meta: "Meta"
+  meta: "Meta (via OpenRouter)"
 };
 
 const PROVIDER_ORDER: CatalogProviderId[] = [

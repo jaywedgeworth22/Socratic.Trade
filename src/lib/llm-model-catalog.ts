@@ -26,6 +26,8 @@ export interface LlmCatalogEntry {
   displaySlug: string;
   openRouterSlug: string;
   nativeSlug: string;
+  /** No supported direct-provider transport in this app. */
+  openRouterOnly?: boolean;
   provider: CatalogProviderId;
   label: string;
   tier: CatalogTier;
@@ -36,6 +38,16 @@ export interface LlmCatalogEntry {
 }
 
 export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
+  {
+    displaySlug: "gpt-6-astra-pro",
+    openRouterSlug: "openai/gpt-6-astra-pro",
+    nativeSlug: "gpt-6-astra-pro",
+    openRouterOnly: true,
+    provider: "openai",
+    label: "GPT-6 Astra Pro — via OpenRouter",
+    tier: "$$$",
+    aliases: ["openai/gpt-6-astra-pro"]
+  },
   {
     displaySlug: "gpt-6-astra",
     openRouterSlug: "openai/gpt-6-astra",
@@ -329,6 +341,24 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
     label: "MiniMax M2.7 — efficient reasoning",
     tier: "$",
     aliases: ["minimax/minimax-m2.7"]
+  },
+  {
+    displaySlug: "muse-spark-1.3",
+    openRouterSlug: "meta/muse-spark-1.3",
+    nativeSlug: "muse-spark-1.3",
+    provider: "meta",
+    label: "Muse Spark 1.3 — multimodal reasoning and agents",
+    tier: "$$",
+    aliases: ["meta/muse-spark-1.3"]
+  },
+  {
+    displaySlug: "muse-glimmer-30b",
+    openRouterSlug: "meta/muse-glimmer-30b",
+    nativeSlug: "muse-glimmer-30b",
+    provider: "meta",
+    label: "Muse Glimmer 30B — efficient agent model",
+    tier: "$",
+    aliases: ["meta/muse-glimmer-30b"]
   },
   {
     displaySlug: "llama-4-maverick",

@@ -52,6 +52,7 @@ const MISTRAL_MEDIUM_ADVICE =
   "per call, and one of two benchmarked calls exceeded even the widened reasoning timeout.";
 
 export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecommendation> = {
+  "gpt-6-astra-pro": { effort: "medium" },
   "gpt-6-astra": { effort: "medium" },
   // GPT-5.6
   "gpt-5.6": {

@@ -14,7 +14,7 @@ import { llmFetch, LLM_TIMEOUT_MS, reasoningCapabilityForModel, withLlmRequestBo
 // Reuse the SAME model-family + OpenRouter-wire-id helpers the strategy engine's
 // resolveLlmEndpoint uses (llm-provider.ts), so the Coach's provider precedence and model-id
 // normalization can never drift from the engine's.  See llmForModel / chatProviderForModel below.
-import { llmModelFamily, normalizeOpenRouterModelId, nativeSlugFor } from "../llm-provider";
+import { llmModelFamily, normalizeOpenRouterModelId, nativeSlugFor, modelRequiresOpenRouter } from "../llm-provider";
 import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
@@ -594,7 +594,7 @@ export class OpenAILLM implements ChatLLM {
         }
       }
       if (this.provider === "minimax") baseBody.reasoning_split = true;
-      const requestBody = reasoningCapabilityForModel(this.model) || llmModelFamily(this.model) === "minimax"
+      const requestBody = reasoningCapabilityForModel(this.model) || /^(minimax|meta)$/.test(llmModelFamily(this.model))
         ? withLlmRequestBounds(baseBody, "chat-completions", {
             model: this.model,
             maxOutputTokens: 1024,
@@ -623,7 +623,7 @@ export class OpenAILLM implements ChatLLM {
         role: "assistant",
         content: assistantMsg.content ?? null,
         ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } : {}),
-        ...(llmModelFamily(this.model) === "minimax" && assistantMsg.reasoning_details
+        ...(/^(minimax|meta)$/.test(llmModelFamily(this.model)) && assistantMsg.reasoning_details
           ? { reasoning_details: assistantMsg.reasoning_details }
           : {})
       });
@@ -768,6 +768,7 @@ export function llmForModel(
   // 2. Native-provider fallback (unchanged): no OpenRouter key resolved, so try the model's own
   //    family key directly.
   const provider = chatProviderForModel(trimmed);
+  if (modelRequiresOpenRouter(trimmed)) return new MockLLM();
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };

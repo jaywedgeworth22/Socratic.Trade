@@ -2,7 +2,7 @@
 
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 
-In progress on `codex/model-catalog-account-labels` (board `0d775009`).  Latest provider catalog and MiniMax API support; single-line account selector and concise paper banner.  PR #3196 remains draft.  Browser component QA and all 142 focused tests passed.  Hosted lint/typecheck passed; full suite passed 7,884 tests with two outdated catalog expectations (Grok/Astra), now corrected.  Rerunning hosted verification; local dependencies are being reinstalled from the lockfile.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
+In progress on `codex/model-catalog-account-labels` (board `0d775009`).  Latest provider catalog and MiniMax API support; single-line account selector and concise paper banner.  PR #3196 is in review.  Browser component QA and all 142 focused tests passed.  Hosted lint/typecheck passed; full suite passed 7,884 tests with two outdated catalog expectations (Grok/Astra), now corrected.  Added Astra Pro and current Meta Muse Spark 1.3/Glimmer via OpenRouter and fail-closed Meta routing; rerunning hosted verification.  Local lockfile reinstall failed with ETIMEDOUT.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
 
 ## 2026-09-08 CLAUDE — R2 weekly cold snapshot stalled 9 days, silently
 

@@ -87,6 +87,29 @@ describe("resolveLlmEndpoint", () => {
     expect(resolveLlmEndpoint({ llmModel: "minimax-m3" }, "minimax-eligibility").provider).toBe("openrouter");
   });
 
+  it("requires OpenRouter for Astra Pro even with a native OpenAI key", () => {
+    setApiKey("astra-pro-native", "openai", "openai-placeholder");
+    const endpoint = resolveLlmEndpoint({ llmModel: "gpt-6-astra-pro" }, "astra-pro-native");
+    expect(endpoint.provider).toBe("openrouter");
+    expect(endpoint.key).toBeUndefined();
+    expect(endpoint.model).toBe("openai/gpt-6-astra-pro");
+  });
+
+  it("requires OpenRouter for Meta and never sends a Meta key to OpenAI", async () => {
+    const { modelCredentialService } = await import("../src/lib/llm-provider");
+    setApiKey("meta-native-only", "meta", "meta-placeholder");
+    for (const model of ["muse-spark-1.3", "muse-glimmer-30b", "llama-4-maverick"]) {
+      const endpoint = resolveLlmEndpoint({ llmModel: model }, "meta-native-only");
+      expect(endpoint.provider).toBe("openrouter");
+      expect(endpoint.key).toBeUndefined();
+      expect(modelCredentialService(model, "meta-native-only")).toBe("openrouter");
+    }
+    setApiKey("meta-native-only", "openrouter", "openrouter-placeholder");
+    const endpoint = resolveLlmEndpoint({ llmModel: "muse-spark-1.3" }, "meta-native-only");
+    expect(endpoint.model).toBe("meta/muse-spark-1.3");
+    expect(endpoint.key).toBe("openrouter-placeholder");
+  });
+
   it("fails closed (key undefined) when user has no keys at all", () => {
     const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-5" }, "user-with-no-keys");
     expect(endpoint.key).toBeUndefined();
