@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-09-09 GROK — PR #3201 fixer tip (verification receipts + 15s HEALTHCHECK refs)
+
+Codex P1+P2 on `claude/healthcheck-tolerate-eventloop-stall`.  Remaining 5s HEALTHCHECK timeout
+references in `Dockerfile`, `app/api/live/route.ts`, and `docs/deployment.md` now match the live
+15s directive (historical 5s incident numbers stay).  Full AGENTS.md gate recorded in
+`docs/rollouts/2026-09-09-healthcheck-eventloop-tolerance.md`.  Deployer squash AM stays armed;
+this lane does not merge.  Extra-ship no.
+
 ## 2026-09-09 CLAUDE — FTS mirror never converged, pinning the event loop into a public 503
 
 `/api/live` measured from inside the Docker network at **8.60s, then 0.09s, then 0.03s** —
@@ -3851,3 +3859,9 @@ Fixed `test/chat-draft-policy.test.ts` test regression. A previous commit accide
 - **Qdrant self-host audit landed (board 601d581c):** collection green/801,239 pts, now fully payload-indexed (16 fields), mem 10g, snapshots persist on volume; runbook keyword monitors 803872370-72 now page on schedulerStale/tradingLivenessDegraded/litestreamTiersDegraded.  Pinecone read units exhausted — Qdrant cutover (golden set -> adapter -> shadow-read -> delta copy) is the critical path.  Details: `docs/rollouts/2026-08-31-qdrant-rag-error-ux-audit.md`.
 
 - **Qdrant read cutover stage 1 in flight (2026-08-31 CLAUDE):** reads switchable to self-hosted Qdrant via RAG_VECTOR_READ_QDRANT knob/env; prod flips at deploy (Pinecone read units exhausted — RAG was silently dead).  Writes stay Pinecone until stage 2.  Sep 1: delta copy + sentinel backfill + golden eval per scripts/qdrant/DELTA-RUNBOOK.md.
+
+## 2026-09-09 — [CLAUDE] Healthcheck tolerance for event-loop stalls (PR #3201)
+
+Production served a public 503 while healthy: `/api/live` intermittently took 8.60s against a 5s container healthcheck timeout, so Docker marked the container unhealthy and Traefik stopped routing.  Widened to timeout=15s / retries=5 (detection bound ~225s).
+
+This is MITIGATION.  The root cause is the non-convergent FTS mirror loop fixed in PR #3202; stalls up to 36,511ms were measured, which a 15s timeout still cannot absorb.  Next action: land PR #3202.

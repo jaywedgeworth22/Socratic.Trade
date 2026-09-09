@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
  *
  * `/api/health` is the rich public/ops probe and may return 503 when a
  * critical dependency hard-stops, or take longer than the Dockerfile
- * HEALTHCHECK timeout (5s).  Pointing Traefik at that probe marks a
+ * HEALTHCHECK timeout (15s).  Pointing Traefik at that probe marks a
  * serving container `running:unhealthy` and Cloudflare returns
  * `no available server` even though Next and Litestream are up — the
  * 2026-08-17 ~7:22–7:43pm CT window after docs-only #2810 finished.
