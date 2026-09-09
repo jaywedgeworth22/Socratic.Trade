@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-09-09 GROK — PR #3194 fixer tip (deploy-freshness monitor margin handoff)
+
+Codex P1 on `claude/fix-deploy-freshness-monitor-margin`.  STATUS/PLAN/rollout
+handoff + mandated rollout sections + honest Python-only verification
+(`python3 -m py_compile scripts/sentry-ci-report.py` clean; full lint/tsc/test/build
+N/A for pure monitor-config/docs; hosted `verify-hosted` remains the JS gate) +
+two-space prose in new comments/rollout.  Tip commit uses Jay for author and
+committer.  Deployer squash AM stays armed; this lane does not merge.  Extra-ship no.
+Rollout: `docs/rollouts/2026-09-08-ci-deploy-freshness-monitor-margin.md`.
+
 ## 2026-09-09 GROK — PR #3201 fixer tip (verification receipts + 15s HEALTHCHECK refs)
 ## 2026-09-09 GROK — PR #3203 fixer tip (75% stall bar + skipped late logging + full verify)
 

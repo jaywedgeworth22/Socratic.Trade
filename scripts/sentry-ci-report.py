@@ -72,6 +72,31 @@ CRON_SCHEDULES = {
     "RTH Deploy Latch": "20 21 * * 1-5",
 }
 
+# Per-workflow override of the Sentry Crons "checkin_margin" (minutes late a
+# check-in may arrive before Sentry calls it missed).  Every workflow not
+# listed here gets the 15-minute default below.
+#
+# "Deploy freshness" needs its own, much wider value:  GitHub Actions'
+# `schedule` trigger is best-effort and, in practice, delivers this
+# every-20-minutes cron far less often than declared.  Sentry issue
+# FLEET-INFRA-C1 / PagerDuty #87 (2026-09-08) regressed on a genuine gap, but
+# `gh run list --workflow deploy-freshness.yml` showed the workflow itself
+# has never failed — every run that *does* fire succeeds.  Measured over the
+# 211 hours before the fix (2026-08-30 22:43Z .. 2026-09-08 18:03Z):  only 60
+# of the ~634 scheduled fires GitHub should have created actually ran (~9.5%
+# delivery), every gap between consecutive runs exceeded 60 minutes, median
+# gap 210.5 min, p99/max 483.6 min (~8h03m).  A 15-minute margin against a
+# cron GitHub cannot deliver that reliably pages every few hours for a
+# watchdog that has not actually failed.  600 minutes (10h) sits above the
+# worst gap observed so far with headroom, while still alerting well before
+# the 14-hour silent-deploy-freeze (2026-08-06) this workflow exists to catch.
+# Keep the crontab schedule itself at the *intended* cadence above — it is
+# what the job should run on, and it is what a healthy GitHub scheduler would
+# honor — only the tolerance for GitHub's own delivery jitter changes here.
+CRON_CHECKIN_MARGIN_MINUTES = {
+    "Deploy freshness": 600,
+}
+
 
 def slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -189,7 +214,7 @@ def main() -> int:
                 "status": checkin_status,
                 "monitor_config": {
                     "schedule": {"type": "crontab", "value": cron_expr},
-                    "checkin_margin": 15,
+                    "checkin_margin": CRON_CHECKIN_MARGIN_MINUTES.get(workflow_name, 15),
                     "max_runtime": 60,
                     "timezone": "UTC",
                 },
