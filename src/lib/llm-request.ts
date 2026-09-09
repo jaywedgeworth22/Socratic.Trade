@@ -445,13 +445,14 @@ export async function llmFetch(url: string, init: RequestInit = {}): Promise<Res
  * making progress (this is the DeepSeek "timed out after 60s" failure). Both bounds are env-tunable —
  * STRATEGY_LLM_TIMEOUT_MS for the base, STRATEGY_LLM_REASONING_TIMEOUT_MS for the thinking bound.
  * Trade-off: a longer bound holds the per-user run lock longer (see LLM_TIMEOUT_MS), so the widening
- * applies ONLY when the model is in a thinking mode the user explicitly opted into (never at the fast
- * default). A non-reasoning or thinking-off model keeps the base 60s bound unchanged.
+ * applies when the model is in a thinking mode, including MiniMax/Muse families whose reasoning is
+ * always enabled by the provider.  A non-reasoning or thinking-off model keeps the base 60s bound.
  */
 export function strategyLlmTimeoutMs(model: string | undefined, effort: LlmReasoningEffort | undefined): number {
   const base = Number(process.env.STRATEGY_LLM_TIMEOUT_MS) || LLM_TIMEOUT_MS;
   const normalized = normalizeReasoningEffortForModel(model, effort);
-  const thinking = !!normalized && normalized !== "none";
+  const alwaysReasons = /^(minimax|muse)-/i.test(lowerModel(model));
+  const thinking = alwaysReasons || (!!normalized && normalized !== "none");
   if (!thinking) return base;
   return Math.max(base, Number(process.env.STRATEGY_LLM_REASONING_TIMEOUT_MS) || 150_000);
 }

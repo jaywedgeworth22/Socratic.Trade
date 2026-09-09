@@ -149,11 +149,18 @@ describe("llm-request — model resolution", () => {
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBeGreaterThan(LLM_TIMEOUT_MS);
     // OpenAI reasoning model actually thinking at medium: widened.
     expect(strategyLlmTimeoutMs("openai/gpt-5.5", "medium")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    // MiniMax and Muse always reason on the wire and reserve medium reasoning headroom even though
+    // they expose no configurable reasoning capability, so their timeout must widen at every effort.
+    for (const model of ["minimax-m3", "minimax/minimax-m3", "MiniMax-M3", "muse-spark-1.3", "meta/muse-spark-1.3"]) {
+      expect(strategyLlmTimeoutMs(model, undefined)).toBeGreaterThan(LLM_TIMEOUT_MS);
+      expect(strategyLlmTimeoutMs(model, "none")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    }
     // Both bounds are env-tunable.
     vi.stubEnv("STRATEGY_LLM_TIMEOUT_MS", "30000");
     vi.stubEnv("STRATEGY_LLM_REASONING_TIMEOUT_MS", "200000");
     expect(strategyLlmTimeoutMs("openai/gpt-4o-mini", "high")).toBe(30000);
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBe(200000);
+    expect(strategyLlmTimeoutMs("minimax/minimax-m3", undefined)).toBe(200000);
   });
 });
 

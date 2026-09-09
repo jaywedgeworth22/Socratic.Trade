@@ -137,3 +137,11 @@ Hosted run `34334232951` on `84e77c064` passed `npm run lint`, `npx tsc --noEmit
 - One worker briefly targeted `src/lib/usage-budget.ts` in the integration tree by mistake, then removed exactly its own hunks with `apply_patch`.  No reset/checkout/clean was used; parent verified the integration tree has no tracked changes and retains its pre-existing untracked iOS directory.
 
 Additional exact files in this batch: `app/api/chat/route.ts`, `app/console/assistant/chat.tsx`, `src/lib/chat/llm.ts`, `src/lib/llm-provider.ts`, `src/lib/llm-request.ts`, `src/lib/llm-errors.ts`, `src/lib/datadog-llmobs.ts`, `src/lib/usage-budget.ts`, `test/chat-openrouter-routing.test.ts`, `test/chat-route-model-availability.test.ts`, `test/console-chat-model-availability.test.ts`, `test/llm-provider.test.ts`, `test/llm-request.test.ts`, `test/llm-errors.test.ts`, `test/datadog-llmobs.test.ts`, `test/usage-budget.test.ts`, `docs/manager-model-options.md`, and required status/plan/effort/rollout documents.
+
+## Proposal, cooldown, and timeout review follow-up
+
+Review on `13c2b4cab` identified three remaining integration gaps.  Native MiniMax omits provider schema enforcement, so its syntactically valid proposals now pass the existing completeness gate before sanitization/sizing.  OpenRouter MiniMax retains its advertised structured-output enforcement.  MiniMax insufficient balance enters the billing cooldown path, and MiniMax/Muse default reasoning participates in the wider strategy timeout.
+
+Touched files in this batch: `src/lib/strategy.ts`, `test/strategy-hardening.test.ts`, `src/lib/llm-provider-cooldown.ts`, `test/llm-provider-cooldown.test.ts`, `src/lib/llm-request.ts`, `test/llm-request.test.ts`, `docs/manager-model-options.md`, `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`, and this rollout.  Full hosted gate rerun required after the batch; local dependency repair remains blocked by registry timeouts.  Auto-merge is disabled until fixes are pushed and review replies resolved.
+
+`/opt/homebrew/opt/node@24/bin/node /tmp/st-pure-proposal-gate-20260909.mjs`: 5 actual-source checks passed, including incomplete native proposals rejected and complete proposals retained.  Worker actual-source classifier check: 5 cases passed.  `git diff --check` passed.  Hosted full lint/typecheck/test/build gate remains required.
