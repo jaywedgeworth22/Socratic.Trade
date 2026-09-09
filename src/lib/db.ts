@@ -3248,6 +3248,24 @@ const MIGRATIONS: Migration[] = [
         database.exec("CREATE INDEX IF NOT EXISTS idx_historical_fundamentals_symbol_field_effective ON historical_fundamentals (symbol, field, effective_at DESC)");
       }
     }
+  },
+  {
+    // The FTS mirror resumes per OCCURRENCE — `WHERE symbol = ? AND source = ? AND accession = ?`
+    // — but the only index on `document_chunks_fts_index` is its PK, which leads with
+    // `content_hash`.  An occurrence lookup therefore cannot seek and SCANS the whole covering
+    // index.  Measured on production 2026-09-09 (689,047 rows / 10.98 GB DB): `SCAN
+    // document_chunks_fts_index USING COVERING INDEX`, 78-105 ms per call, and better-sqlite3 is
+    // synchronous so every one of those milliseconds is the serving event loop.  The worker calls
+    // it once per document per tick.  This index turns that SCAN into a SEARCH.
+    version: 88,
+    name: "document_chunks_fts_index_occurrence",
+    up: (database) => {
+      if (!tableExists(database, "document_chunks_fts_index")) return;
+      database.exec(
+        `CREATE INDEX IF NOT EXISTS idx_document_chunks_fts_index_occurrence
+           ON document_chunks_fts_index (symbol, source, accession)`
+      );
+    }
   }
 ];
 
