@@ -98,7 +98,17 @@ EXPOSE 4000
 # That marks running:unhealthy while the process is up -- public 503 for
 # ~20 min after #2810 finished on 2026-08-17.  /api/live is process+SQLite
 # only.  Do not point Coolify HTTP health back at /api/health.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+# 2026-09-09: /api/live itself intermittently takes ~8s.  better-sqlite3 is
+# SYNCHRONOUS, so a heavy query against the now-11GB app.db blocks the event
+# loop and every request behind it, including this probe.  Measured on prod:
+# 8.60s then 0.09s then 0.03s back-to-back, CPU 107%, disk %util 0.10 -- CPU
+# bound in-process, not IO.  At timeout=5s/retries=3 that flapped the container
+# to unhealthy and Traefik served a public 503 while the app was fine (DB ok,
+# scheduler ticking, Alpaca streams live).  Same class as the 2026-08-17 #2810
+# incident noted above.  Widened to tolerate an ~8s stall; 5 x 30s still
+# detects a genuine hang within ~2.5 min.  This is MITIGATION -- the event-loop
+# block is the real defect and is tracked separately.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=5 \
   CMD curl -fsS http://127.0.0.1:4000/api/live >/dev/null || exit 1
 
 CMD ["bash", "scripts/coolify-prod-start.sh"]
