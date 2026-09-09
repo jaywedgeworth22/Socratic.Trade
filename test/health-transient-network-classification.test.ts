@@ -452,7 +452,20 @@ describe("blip vs outage at the alert gate", () => {
     expect(ageMs).toBeGreaterThan(30 * 60_000);
   });
 
-  it("rejects RAG status-without-HTTP formats as non-transient", async () => {
+  it("classifies PineconeConnectionError when nested cause is fetch failed", async () => {
+    const { isTransientNetworkError, describeNetworkError } = await import("../src/lib/network-errors");
+    const inner = new TypeError("fetch failed");
+    (inner as NodeJS.ErrnoException).code = "UND_ERR_SOCKET";
+    const outer = new Error("Request failed to reach Pinecone: Unable to complete REST request");
+    outer.name = "PineconeConnectionError";
+    (outer as Error & { cause?: unknown }).cause = inner;
+    expect(describeNetworkError(outer)).toMatch(/fetch failed/i);
+    expect(isTransientNetworkError(outer)).toBe(true);
+    // Display-only outer message alone must not be required — classifier walks causes.
+    expect(isTransientNetworkError(outer)).toBe(true);
+  });
+
+    it("rejects RAG status-without-HTTP formats as non-transient", async () => {
     const { isTransientNetworkErrorText } = await import("../src/lib/network-errors");
     // vector-db throws `Embedding/Rerank API failed …: ${status} ${body}` — no "HTTP" prefix.
     for (const text of [

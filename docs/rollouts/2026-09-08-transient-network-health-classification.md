@@ -45,19 +45,22 @@ fetch boundary that already owns provider retries.
   GET so a method-less `init` is replayable) and `jitteredBackoffMs()`
   (`TRANSIENT_RETRY_JITTER_RATIO` = 0.3).
 - `src/lib/vector-db.ts` — the RAG lanes have their own alerter and are excluded from the generic
-  path above.  `ragLimitStatus`'s transient arm lists only `fetch failed` / `UND_ERR_SOCKET`, so the
-  byte-identical failure arriving as `ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN` or `socket hang up` fell
-  through to `undefined` and was captured at Sentry `error` as an unclassified broken request —
-  `SOCRATIC-TRADE-1X` (56 events) and `-22`.  `alertRagConnectionFailure` now captures those shapes
-  at `warning` for a short blip and escalates to `error` after the shared escalation window
-  (same knob as db-health).  **Level only**: the health row, the consecutive-failure streak, and the
-  `provider_degraded` notification are all unchanged; `ragLimitStatus` itself was not widened.
+  path above.  `ragLimitStatus`'s soft `"transient"` arm was **narrowed**: it no longer matches
+  `fetch failed` / `UND_ERR_SOCKET` (those soft-stamped the health row and returned before
+  escalation).  Transport shapes are classified by `isTransientNetworkErrorText` /
+  `describeNetworkError` (cause-chain aware for PineconeConnectionError wrappers) so a short blip
+  stays `warning` and a sustained outage escalates to `error` after the shared window —
+  `SOCRATIC-TRADE-1X` (56 events) and `-22`.  Health row stays hard (not soft); streak +
+  `provider_degraded` notification unchanged.
 - `src/lib/data-providers.ts` — `fetchWithRetry` replays a transport error only for a replayable
   method or an explicit `retryNonIdempotent`, and both its transport and 429 backoffs are now
   jittered.  The one existing POST caller (the news `/search` query) opts in, so its behavior is
   unchanged.
 - `src/lib/alpaca-account-insights.ts` — its own bounded retry uses the shared jittered backoff.
-- `test/health-transient-network-classification.test.ts` — new.
+- `test/health-transient-network-classification.test.ts` — new (transport class, durable streak, RAG tags).
+- `test/pinecone-metadata-and-rag-limits.test.ts` — `ragLimitStatus` no longer soft-classifies fetch failed.
+- `PLAN.md`, `STATUS.md`, `docs/EFFORT-LOG.md` — coordination mirrors for this effort.
+- `docs/rollouts/2026-09-08-transient-network-health-classification.md` — this handoff.
 
 ## 3. Decisions & Trade-offs
 
@@ -80,11 +83,10 @@ fetch boundary that already owns provider retries.
   news search), and it is opted back in explicitly, so nothing regresses — but the default is now
   safe, because a transport error is indistinguishable from "the far side processed it and the
   reply was lost".
-- **The RAG lane gets a level change, not a suppression.**  The tempting one-liner was to widen
-  `ragLimitStatus`'s transient arm instead.  That was rejected: a `"transient"` verdict there makes
-  `alertRagConnectionFailure` return early AND soft-stamps the health row, so a sustained RAG outage
-  arriving as `ECONNRESET` would have gone completely silent.  Dropping only the Sentry level keeps
-  every existing signal and removes only the page.
+- **The RAG lane gets a level change, not a suppression.**  Widening `ragLimitStatus`'s transient
+  arm was rejected (soft-stamp + early return would silence a sustained outage).  Instead that arm
+  was **narrowed** to drop `fetch failed` / `UND_ERR_SOCKET`, and `alertRagConnectionFailure` uses
+  `isTransientNetworkErrorText` (plus nested-cause flattening) for warning→error escalation.
 - **Not changed:** `retries: 0` at the `massive` and `roic` recommendation call sites (deliberate,
   left alone), `congress-share`'s POST import (non-idempotent — must not be replayed), and
   `tradier.ts` (brokerage; out of scope by instruction).

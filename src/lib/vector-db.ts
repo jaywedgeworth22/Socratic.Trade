@@ -8,7 +8,7 @@ import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } fro
 import { isProviderDispatchLeaseLostError } from "./db-provider-dispatch";
 import { getLaneHealth, logApiHealth, transientEscalationWindowMs } from "./db-health";
 import { isLocalDbFaultError, localDbFaultReason, noteLocalDbFault } from "./local-db-fault";
-import { isTransientNetworkError, isTransientNetworkErrorText } from "./network-errors";
+import { describeNetworkError, isTransientNetworkError, isTransientNetworkErrorText } from "./network-errors";
 import {
   auditPineconeWuGateSkip,
   isPineconeWuExhaustedError,
@@ -1507,6 +1507,10 @@ function ragHealthUserId(source: ApiKeySource, userId: string): string {
 }
 
 function ragErrorMessage(error: unknown): string {
+  // Walk nested causes so PineconeConnectionError("Request failed to reach Pinecone…")
+  // still classifies when the inner TypeError is `fetch failed` (Codex P1 on #3195).
+  const walked = describeNetworkError(error).trim();
+  if (walked) return walked;
   return error instanceof Error ? error.message : String(error);
 }
 

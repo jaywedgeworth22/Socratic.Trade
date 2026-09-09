@@ -13,25 +13,33 @@
  *   after the consecutive-failure streak.
  */
 
-function errorText(error: unknown): string {
-  const parts: unknown[] = [error];
-  if (error && typeof error === "object" && "cause" in error) {
-    parts.push((error as { cause: unknown }).cause);
+/**
+ * Flatten an error and its nested `cause` chain (Pinecone 8.x wraps `TypeError: fetch failed`
+ * inside `PineconeConnectionError` with a display-only outer message). Depth-capped.
+ */
+export function describeNetworkError(error: unknown, depth = 0): string {
+  if (error == null || depth > 8) return "";
+  let self = "";
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "";
+    self = `${error.name} ${error.message} ${code}`.trim();
+  } else if (typeof error === "object") {
+    const rec = error as { code?: unknown; message?: unknown; name?: unknown; cause?: unknown };
+    self = `${rec.name ?? ""} ${rec.message ?? ""} ${rec.code ?? ""}`.trim();
+    if (!self) self = String(error);
+  } else {
+    self = String(error);
   }
-  return parts
-    .map((part) => {
-      if (!part) return "";
-      if (part instanceof Error) {
-        const code = (part as NodeJS.ErrnoException).code ?? "";
-        return `${part.name} ${part.message} ${code}`;
-      }
-      if (typeof part === "object") {
-        const rec = part as { code?: unknown; message?: unknown; name?: unknown };
-        return `${rec.name ?? ""} ${rec.message ?? ""} ${rec.code ?? ""} ${String(part)}`;
-      }
-      return String(part);
-    })
-    .join(" ");
+  const cause =
+    error && typeof error === "object" && "cause" in error
+      ? (error as { cause: unknown }).cause
+      : undefined;
+  const nested = cause != null ? describeNetworkError(cause, depth + 1) : "";
+  return nested ? `${self} ${nested}` : self;
+}
+
+function errorText(error: unknown): string {
+  return describeNetworkError(error);
 }
 
 /** Caller cancelled the request (budget, teardown).  Do not retry. */
