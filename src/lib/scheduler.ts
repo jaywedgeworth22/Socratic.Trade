@@ -60,7 +60,7 @@ import { safeErrorMessage } from "./telemetry-sanitize";
 import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
 import { journalLane } from "./task-journal";
 import { pruneTaskJournal } from "./db-task-journal";
-import { withDeadline, SCHEDULER_BROKER_TIMEOUT_MS } from "./safety-maintenance";
+import { withDeadline, withLaneDeadline, isLaneDeadlineExpiry, LANE_STALL_ATTRIBUTION_RATIO, SCHEDULER_BROKER_TIMEOUT_MS } from "./safety-maintenance";
 import { isAbortOrTimeoutError, isTransientNetworkError } from "./network-errors";
 import { logError, logWarn, recordSchedulerTick } from "./sentry-metrics";
 
@@ -395,7 +395,7 @@ export function clearHealthGateSkip(key: string): void {
 // network vs. other) and emits ONE elevated "lane_degraded" event when a sustained streak
 // crosses the threshold, instead of a sustained outage dissolving into per-tick log noise.
 // Purely observability: it never retries or alters the lane's own work.
-export type LaneFailureCategory = "timeout" | "transient_network" | "other";
+export type LaneFailureCategory = "timeout" | "event_loop_stall" | "transient_network" | "other";
 const laneFailureHost = globalThis as unknown as {
   __schedulerLaneFailures?: Map<string, { category: LaneFailureCategory; streak: number; degraded: boolean }>;
 };
@@ -404,6 +404,12 @@ const laneFailureStreaks: Map<string, { category: LaneFailureCategory; streak: n
 export const LANE_DEGRADED_STREAK_THRESHOLD = 3;
 
 export function classifyLaneFailure(err: unknown): LaneFailureCategory {
+  // Checked FIRST and deliberately so: an attributed lane expiry still carries the word
+  // "timeout" in its message, so either matcher below would swallow it back into "timeout" and
+  // we would keep blaming the broker for a stalled event loop — the exact misdiagnosis that
+  // sent PR #3189 after Tradier GET retries that could not possibly help (57 of 71 synthetic-stop
+  // occurrences landed AFTER that fix merged, and the daily rate went UP).
+  if (isLaneDeadlineExpiry(err) && err.stallRatio >= LANE_STALL_ATTRIBUTION_RATIO) return "event_loop_stall";
   if (isAbortOrTimeoutError(err)) return "timeout";
   // `withDeadline` (inflight-deadline.ts) manufactures a plain `new Error(message)` on expiry —
   // name stays "Error", so it never matches isAbortOrTimeoutError's AbortError/TimeoutError check
@@ -1204,7 +1210,7 @@ async function tickInner(): Promise<void> {
           // settled and a later background fulfillment of staleExitWork can no longer reach this
           // .then — recovery reflects success WITHIN the deadline, not late fulfillment of an
           // invocation already classified as failed.
-          void withDeadline(staleExitWork, SCHEDULER_BROKER_TIMEOUT_MS, "stale-limit-scan broker timeout")
+          void withLaneDeadline(staleExitWork, SCHEDULER_BROKER_TIMEOUT_MS, "stale-limit-scan broker timeout", "stale-limit-scan")
             .then(() => recordLaneRecovery("stale-limit-order handling", key))
             .catch((err) => recordLaneFailure("stale-limit-order handling", key, err));
         }
@@ -1238,7 +1244,7 @@ async function tickInner(): Promise<void> {
           // See the matching comment on the stale-limit-order lane above: recovery/failure both
           // key off the SAME deadline-raced promise so a late background fulfillment (after the
           // deadline already timed out and recorded a failure) cannot silently clear the streak.
-          void withDeadline(stopMonitorWork, SCHEDULER_BROKER_TIMEOUT_MS, "runSyntheticStopMonitor timeout")
+          void withLaneDeadline(stopMonitorWork, SCHEDULER_BROKER_TIMEOUT_MS, "runSyntheticStopMonitor timeout", "synthetic-stop-monitor")
             .then(() => recordLaneRecovery("synthetic-stop monitor", key))
             .catch((err) => recordLaneFailure("synthetic-stop monitor", key, err));
         }

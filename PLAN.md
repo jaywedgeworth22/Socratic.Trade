@@ -1,3 +1,21 @@
+## 2026-09-09 CLAUDE — Safety-lane deadline attribution: the "broker timeout" is event-loop starvation
+
+Branch `claude/broker-timeout-safety-monitors`, worktree `~/apps/trading-claude-brokertimeout`.
+
+The root cause of the `runSyntheticStopMonitor timeout` / `stale-limit-scan broker timeout` family belongs to
+**PR #3202**'s non-convergent FTS mirror loop, not to this lane.  This lane therefore ships **attribution only**
+and no competing fix.
+
+Evidence: 161,633 ms of a 185,633 ms `stale-limit-scan` elapsed outside all broker I/O (its Alpaca call had
+already self-terminated at 24,000 ms); a 196,840 ms `synthetic-stop-monitor` pass finished `ok evaluated=6`;
+ms-over-deadline rose 28.6x on 09-08 in step with the event-loop pinning curve while ingest volume did not.
+SQLite lock contention was tested and refuted.
+
+Shipped: `src/lib/event-loop-lag.ts` sampler, `withLaneDeadline` attribution in `safety-maintenance.ts`, and an
+`event_loop_stall` category in `classifyLaneFailure`.  **No safety monitor weakened** — the deadline is unchanged
+at 15,000 ms, no interval was lengthened, protective work is still never cancelled, and failures still escalate
+to `lane_degraded`.  Rollout: `docs/rollouts/2026-09-09-safety-lane-stall-attribution.md`.
+
 
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 
