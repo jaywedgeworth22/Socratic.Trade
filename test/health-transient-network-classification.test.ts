@@ -328,6 +328,28 @@ describe("blip vs outage at the alert gate", () => {
     expect(capturedLevels()).toContain("error");
   });
 
+  it("does not treat a run as entirely-transient when a hard failure sits outside last-5", async () => {
+    // Codex P2: transientStreak used to look at last-5 only. An HTTP 401 that aged past the
+    // sample, followed by five socket errors, must still page as hard — not warning.
+    const { logApiHealth, getLaneHealth, HEALTH_REASON_CONSECUTIVE_FAILURES } = await import("../src/lib/db-health");
+    const service = `mixed-run-${randomUUID().slice(0, 8)}`;
+    await insertAgedSuccess(service, 90);
+    await insertAgedFailure(service, "HTTP 401 Unauthorized", 80);
+    for (let i = 0; i < 4; i++) {
+      await insertAgedFailure(service, "TypeError: fetch failed", 10 - i);
+    }
+    logApiHealth({ service, ok: false, errorText: "TypeError: fetch failed", keySource: "env" });
+    await vi.waitFor(() => expect(sentry.captureMessage).toHaveBeenCalled(), { timeout: 5000 });
+    await settleAlerts();
+
+    const lane = getLaneHealth(service, "env");
+    expect(lane.reason).toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
+    expect(lane.transientStreak).toBe(false);
+    expect(capturedLevels()).toContain("error");
+    expect(capturedLevels()).not.toContain("warning");
+    expect(capturedTag("health.failure_class")).toBe("hard");
+  });
+
   it("does not alert at all before the streak — one blip is silent", async () => {
     const { logApiHealth } = await import("../src/lib/db-health");
     const service = `single-blip-${randomUUID().slice(0, 8)}`;

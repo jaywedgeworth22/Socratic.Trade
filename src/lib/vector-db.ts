@@ -1708,13 +1708,17 @@ async function alertRagConnectionFailure(
       } else {
         level = "warning";
       }
+      // Same health.failure_class tag the non-RAG alert path stamps — operators filter the twelve
+      // connection-failed issues by this tag across lanes (Codex P2 on #3195).
+      const failureClass = transportBlip ? "transient-network" : "hard";
       await captureRagSentryMessage(level, title, {
         provider: activeProvider ?? service,
         lane: service,
         source,
         operation,
         userSpecific: source === "user",
-        reason: message
+        reason: message,
+        failureClass
       }, leaseGuard);
     }
     assertVectorStoreLease(leaseGuard);
@@ -1785,6 +1789,7 @@ async function captureRagSentryMessage(
       if (context.provider) scope.setTag("rag.provider", String(context.provider));
       if (context.operation) scope.setTag("rag.operation", String(context.operation));
       if (context.source) scope.setTag("rag.key_source", String(context.source));
+      if (context.failureClass) scope.setTag("health.failure_class", String(context.failureClass));
       // Group by the STABLE lane identifier, not by the rendered title. Sentry fingerprints
       // captureMessage by message text, and these titles are built from DISPLAY names that drift
       // ("Voyage" vs "voyage", "OpenRouter" vs "OpenRouter embed" vs "OpenRouter rerank") — the

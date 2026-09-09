@@ -211,6 +211,10 @@ export function getLaneHealth(
     // five rows — sparse RAG lanes otherwise stay warning forever because they never fill last-5.
     let transientStreak = false;
     let streakStartedTs: string | null = null;
+    // Whether EVERY hard row in the unbroken run (not just last-5) is a transport blip.
+    // Computed on the same walk as streakStartedTs so a hard HTTP 401 that aged out of the
+    // last-5 sample cannot be erased by later socket errors (Codex P2 on #3195).
+    let runEntirelyTransient = false;
     const tipIsHardFailure =
       last5.length > 0 && last5[0].ok === 0 && !isSoftHealthFailure(last5[0].error_text);
     if (tipIsHardFailure) {
@@ -227,11 +231,16 @@ export function getLaneHealth(
           ts: string;
         }>;
       let runStart: string | null = null;
+      let entirelyTransient = true;
+      let sawHard = false;
       for (const row of history) {
         if (row.ok === 1 || isSoftHealthFailure(row.error_text)) break;
+        sawHard = true;
         runStart = row.ts;
+        if (!isTransientHealthFailure(row.error_text)) entirelyTransient = false;
       }
       streakStartedTs = runStart ?? last5[0]?.ts ?? null;
+      runEntirelyTransient = sawHard && entirelyTransient;
     }
     // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
     // limits (429, daily cap) alone never set this reason — they may still surface as the softer
@@ -244,7 +253,7 @@ export function getLaneHealth(
     ) {
       stoppedWorking = true;
       reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
-      transientStreak = last5.every((r) => isTransientHealthFailure(r.error_text));
+      transientStreak = runEntirelyTransient;
     } else if (callsLastHour > 0 && !lastSuccess) {
       stoppedWorking = true;
       reason = "Active in past hour but no successful call ever";
