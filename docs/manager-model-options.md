@@ -1,4 +1,15 @@
+## 2026-09-09 Meta refresh
+
+GPT-6 Astra Pro is available via OpenRouter; its native API route is not assumed.  Muse Spark 1.3 and Muse Glimmer 30B join Llama 4 in the Meta group.  Meta models require an OpenRouter key; standalone Meta credentials are never forwarded to OpenAI.  MiniMax supports its native pay-as-you-go API key or OpenRouter, including explicit `CHAT_LLM=minimax` operator configuration.  Native MiniMax provider-envelope errors enter the same failure handling as HTTP errors, including billing cooldowns.  Its schema-prompt proposal responses pass the existing completeness gate before sizing; MiniMax and Muse use the wider default-reasoning timeout.  Chat availability and budget enforcement follow the tenant credential route actually used.  Learning-review labels resolve historical aliases through the current catalog, and audit metadata distinguishes the resolved request model from the model reported by the provider.
+
 # Manager / Strategist model options — cross-provider evaluation
+
+## Catalog refresh — 2026-09-09
+
+The web picker now includes GPT-6 Astra, MiniMax M3/M2.7, and Meta Llama 4 Maverick/Scout.  Fable's current native version is 5.1; Grok is 4.6; Gemini Flash is 3.8.  Existing selections and family aliases remain valid.  OpenRouter's live catalog supplies verified routing IDs; the latest stable DeepSeek V4 snapshots and Mistral Medium/Large routes are pinned in `src/lib/llm-model-catalog.ts`.
+
+MiniMax accepts standard server-side pay-as-you-go API credentials through its OpenAI-compatible endpoint.  Its Token Plan supports developer tools but is described as individual interactive development, with pay-as-you-go recommended for production; the app does not promise subscription-funded automated trading.  Sources and verification are recorded in `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
+
 
 Decision aid for the sovereign-design question **"which model tier + budget runs the
 strategist ('Manager') loop?"** The owner asked for a cross-provider options list (not

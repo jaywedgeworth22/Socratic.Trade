@@ -14,7 +14,7 @@ import { llmFetch, LLM_TIMEOUT_MS, reasoningCapabilityForModel, withLlmRequestBo
 // Reuse the SAME model-family + OpenRouter-wire-id helpers the strategy engine's
 // resolveLlmEndpoint uses (llm-provider.ts), so the Coach's provider precedence and model-id
 // normalization can never drift from the engine's.  See llmForModel / chatProviderForModel below.
-import { llmModelFamily, normalizeOpenRouterModelId } from "../llm-provider";
+import { llmModelFamily, normalizeOpenRouterModelId, nativeSlugFor, modelRequiresOpenRouter } from "../llm-provider";
 import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
@@ -30,7 +30,7 @@ export interface LlmUsageOpts {
 }
 
 /** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
-export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter";
+export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "minimax" | "openrouter";
 
 /** Sum usage across the (possibly multi-step) tool loop and record one ledger row.
  *  `providerRequestId` is only meaningful when the loop made exactly ONE provider request
@@ -431,13 +431,11 @@ export class AnthropicLLM implements ChatLLM {
       }
       args.onStage?.({ stage: "thinking" });
       const baseBody = { model: this.model, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) };
-      const requestBody = reasoningCapabilityForModel(this.model)
-        ? withLlmRequestBounds(baseBody, "anthropic-messages", {
-            model: this.model,
-            maxOutputTokens: 1024,
-            reasoningEffort: this.reasoningEffort
-          })
-        : { ...baseBody, max_tokens: 1024 };
+      const requestBody = withLlmRequestBounds(baseBody, "anthropic-messages", {
+        model: this.model,
+        maxOutputTokens: 1024,
+        reasoningEffort: this.reasoningEffort
+      });
       const resp = await this.transport(requestBody, this.apiKey, args.abortSignal);
       const u = extractLlmUsage(resp);
       if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
@@ -593,7 +591,8 @@ export class OpenAILLM implements ChatLLM {
           baseBody.user = this.usage.userId;
         }
       }
-      const requestBody = reasoningCapabilityForModel(this.model)
+      if (this.provider === "minimax") baseBody.reasoning_split = true;
+      const requestBody = reasoningCapabilityForModel(this.model) || /^(minimax|meta)$/.test(llmModelFamily(this.model))
         ? withLlmRequestBounds(baseBody, "chat-completions", {
             model: this.model,
             maxOutputTokens: 1024,
@@ -618,7 +617,14 @@ export class OpenAILLM implements ChatLLM {
       const choice = resp.choices?.[0];
       if (!choice) break;
       const assistantMsg = choice.message ?? {};
-      messages.push({ role: "assistant", content: assistantMsg.content ?? null, ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } : {}) });
+      messages.push({
+        role: "assistant",
+        content: assistantMsg.content ?? null,
+        ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } : {}),
+        ...(/^(minimax|meta)$/.test(llmModelFamily(this.model)) && assistantMsg.reasoning_details
+          ? { reasoning_details: assistantMsg.reasoning_details }
+          : {})
+      });
       text = typeof assistantMsg.content === "string" ? assistantMsg.content : "";
 
       const calls: any[] = assistantMsg.tool_calls ?? [];
@@ -695,6 +701,7 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (prov
   if (provider === "openrouter") return process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
   if (provider === "deepseek") return process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions";
   if (provider === "moonshot") return process.env.MOONSHOT_API_URL?.trim() || "https://api.moonshot.cn/v1/chat/completions";
+  if (provider === "minimax") return process.env.MINIMAX_API_URL?.trim() || "https://api.minimax.io/v1/chat/completions";
   return process.env.OPENAI_CHAT_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 }
 
@@ -759,6 +766,7 @@ export function llmForModel(
   // 2. Native-provider fallback (unchanged): no OpenRouter key resolved, so try the model's own
   //    family key directly.
   const provider = chatProviderForModel(trimmed);
+  if (modelRequiresOpenRouter(trimmed)) return new MockLLM();
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
@@ -767,9 +775,9 @@ export function llmForModel(
   // already found no OpenRouter key, so `key` here is always falsy for provider === "openrouter"
   // and this ternary's true branch is unreachable in practice — kept so a future caller that
   // supplies its own resolved key for this provider still gets the right model id.)
-  const modelForApi = provider === "openrouter" ? trimmed.replace(/^openrouter\//i, "") : trimmed;
+  const modelForApi = provider === "openrouter" ? trimmed.replace(/^openrouter\//i, "") : nativeSlugFor(trimmed);
   if (provider === "anthropic") {
-    return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
+    return new AnthropicLLM(key, modelForApi, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
   }
   const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
   return new OpenAILLM(key, modelForApi, transport, usage, provider, opts.reasoningEffort);
@@ -799,12 +807,20 @@ export function getLLM(userId?: string, opts: { transport?: Transport; openAITra
       return new OpenAILLM(key, chatModel, opts.openAITransport ?? defaultOpenAITransport, usage, "openai", opts.reasoningEffort);
     }
   }
+  if (chatLlm === "minimax" && chatModel) {
+    const { key, source, keyRef } = resolveLlmCredential("minimax", userId);
+    if (key) {
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+      const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl("minimax"), "minimax");
+      return new OpenAILLM(key, nativeSlugFor(chatModel), transport, usage, "minimax", opts.reasoningEffort);
+    }
+  }
   if (chatLlm === "openrouter" && chatModel) {
     const { key, source, keyRef } = resolveLlmCredential("openrouter", userId);
     if (key) {
       const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
       const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl("openrouter"), "openrouter");
-      const modelForApi = chatModel.replace(/^openrouter\//i, "");
+      const modelForApi = normalizeOpenRouterModelId(chatModel);
       return new OpenAILLM(key, modelForApi, transport, usage, "openrouter", opts.reasoningEffort);
     }
   }

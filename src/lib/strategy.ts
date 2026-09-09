@@ -6256,7 +6256,7 @@ async function proposeTrades(input: {
                     venue.orderTypes
                   );
                   if (dropped > 0) {
-                    console.warn(`[Bull] json_object response carried ${dropped} incomplete proposal(s); keeping ${kept.length}.`);
+                    console.warn(`[Bull] Schema-unenforced response carried ${dropped} incomplete proposal(s); keeping ${kept.length}.`);
                     audit("strategy_bull_json_object_incomplete_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
                   }
                   proposals = kept;
@@ -6785,7 +6785,7 @@ export const BULL_PROPOSAL_REQUIRED_KEYS = [
 ] as const;
 
 /**
- * True when the Bull LLM attempt uses bare `json_object` (no provider-side schema enforcement).
+ * True when the Bull LLM attempt has no provider-side schema enforcement.
  * Mirrors llm-call's openAiChatResponseFormat / openAiResponsesTextFormat routing so the happy-path
  * parse can run the same completeness gate as the jsonrepair fallback.
  */
@@ -6796,6 +6796,8 @@ export function bullAttemptUsesJsonObjectTransport(
   proposalSchema: Record<string, unknown>
 ): boolean {
   if (transport === "anthropic-messages") return false;
+  // Native MiniMax receives a schema prompt but no enforced response_format.
+  if (provider === "minimax") return true;
   const isDeepSeek = provider === "deepseek" || /^deepseek\//i.test(model);
   if (isDeepSeek) return true;
   const isGemini = provider === "gemini" || /^google\//i.test(model);

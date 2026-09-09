@@ -25,7 +25,7 @@ command -v infisical >/dev/null 2>&1 || die "infisical CLI not found"
 # Runtime LLM keys for this app live on Connections, not Infisical. Agents have
 # re-created GEMINI_API_KEY / DEEPSEEK_API_KEY in Infisical and then "fixed" the
 # app to copy them onto the primary user. Refuse the write.
-LLM_RUNTIME_KEYS="OPENAI_API_KEY ANTHROPIC_API_KEY XAI_API_KEY GEMINI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY MOONSHOT_API_KEY KIMI_API_KEY MOONSHOTAI_API_KEY OPENROUTER_API_KEY META_API_KEY"
+LLM_RUNTIME_KEYS="OPENAI_API_KEY ANTHROPIC_API_KEY XAI_API_KEY GEMINI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY MOONSHOT_API_KEY KIMI_API_KEY MOONSHOTAI_API_KEY OPENROUTER_API_KEY META_API_KEY MINIMAX_API_KEY"
 
 is_llm_runtime_key() {
   local key="$1"

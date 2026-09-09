@@ -53,14 +53,14 @@ export function isModelRotationSentinel(model?: string | null): boolean {
 }
 
 /**
- * OpenAI "reasoning" models (gpt-5 family, o-series). They REJECT the `temperature` param
+ * OpenAI "reasoning" models (gpt-5/6 families, o-series). They REJECT the `temperature` param
  * (400 "Only the default (1) value is supported") and instead take `reasoning_effort`. They also
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
  */
 export function isReasoningModel(model: string | undefined): boolean {
   const leaf = lowerModel(model);
   const native = nativeSlugFor(model).toLowerCase();
-  return /^(gpt-5|o\d)/i.test(leaf) || /^(gpt-5|o\d)/i.test(native);
+  return /^(gpt-[56]|o\d)/i.test(leaf) || /^(gpt-[56]|o\d)/i.test(native);
 }
 
 /**
@@ -115,14 +115,14 @@ function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {
   return (
     /^claude-fable-5(?:$|[-.:_])/.test(normalized) ||
     /^claude-mythos-5(?:$|[-.:_])/.test(normalized) ||
-    /^claude-opus-4-(?:6|7|8)(?:$|[-.:_])/.test(normalized) ||
+    /^claude-opus-(?:5|4-(?:6|7|8))(?:$|[-.:_])/.test(normalized) ||
     /^claude-sonnet-(?:5|4-6)(?:$|[-.:_])/.test(normalized) ||
     /^claude-(?:sonnet|haiku|opus|fable)-latest(?:$|[-.:_])/.test(normalized)
   );
 }
 
 function isXaiReasoningModel(model: string | undefined): boolean {
-  return /^(grok-4(?:\.3)?|grok-(?:build-)?latest)(?:$|[-.:_])/i.test(lowerModel(model));
+  return /^(grok-4(?:\.(?:3|5|6))?|grok-(?:build-)?latest)(?:$|[-.:_])/i.test(lowerModel(model));
 }
 
 function isGeminiModel(model: string | undefined): boolean {
@@ -130,15 +130,15 @@ function isGeminiModel(model: string | undefined): boolean {
 }
 
 function geminiAllowsThinkingOff(model: string | undefined): boolean {
-  // 3.7 Flash (current default / flash-latest) has mandatory thinking.  Only the
+  // 3.8 Flash (current default / flash-latest) has mandatory thinking.  Only the
   // 2.5 Flash class still accepts a full off switch.
   return /^(gemini-2\.5-(?:flash|flash-lite))(?:$|[-.:_])/.test(lowerModel(model));
 }
 
 function geminiSupportsMinimalThinking(model: string | undefined): boolean {
   const lower = lowerModel(model);
-  // 3.7 Flash + the catalog alias that now resolves to it: high/medium/low only.
-  if (/gemini-3\.7-flash/.test(lower) || /gemini-flash-latest/.test(lower)) return false;
+  // 3.7/3.8 Flash + the catalog alias that now resolves to it: high/medium/low only.
+  if (/gemini-3\.(?:7|8)-flash/.test(lower) || /gemini-flash-latest/.test(lower)) return false;
   return isGeminiModel(model);
 }
 
@@ -170,7 +170,7 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
       provider: "openai",
       label: "OpenAI Reasoning",
       settingLabel: "Reasoning Effort",
-      description: "OpenAI gpt-5/o-series models use reasoning effort and reject custom temperature.",
+      description: "OpenAI gpt-5/6 and o-series models use reasoning effort and reject custom temperature.",
       options: options(["low", "medium", "high"])
     };
   }
@@ -184,12 +184,14 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
     };
   }
   if (isXaiReasoningModel(model)) {
+    const modern = /^(grok-4\.[56]|grok-latest)(?:$|[-.:_])/.test(lowerModel(model));
+    const supportsXhigh = /^(grok-4\.6|grok-latest)(?:$|[-.:_])/.test(lowerModel(model));
     return {
       provider: "xai",
       label: "Grok Reasoning",
       settingLabel: "Reasoning Effort",
-      description: "Grok reasoning models accept none/low/medium/high effort.",
-      options: options(["none", "low", "medium", "high"])
+      description: modern ? "Grok 4.5/4.6 reasoning cannot be disabled; Grok 4.6 adds xhigh effort." : "Grok reasoning models accept none/low/medium/high effort.",
+      options: options(supportsXhigh ? ["low", "medium", "high", "xhigh"] : modern ? ["low", "medium", "high"] : ["none", "low", "medium", "high"])
     };
   }
   if (isGeminiModel(model)) {
@@ -201,7 +203,7 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
         ? "Gemini thinking can be disabled or scaled on selected 2.5 Flash models."
         : geminiSupportsMinimalThinking(model)
           ? "Gemini thinking can be scaled, but this model family does not support turning it fully off."
-          : "Gemini 3.7 Flash thinking is mandatory (low/medium/high).",
+          : "Gemini 3.8 Flash thinking is mandatory (low/medium/high).",
       options: options(
         geminiAllowsThinkingOff(model)
           ? ["none", "minimal", "low", "medium", "high"]
@@ -395,6 +397,30 @@ class RateLimiter {
 
 const geminiRateLimiter = new RateLimiter();
 
+/** Normalize MiniMax's documented HTTP-200 error envelope before tracing, retries, or usage. */
+async function fetchLlmProviderResponse(url: string, init: RequestInit): Promise<Response> {
+  const response = await fetch(url, init);
+  let nativeMiniMax = url === process.env.MINIMAX_API_URL?.trim();
+  try { nativeMiniMax ||= new URL(url).hostname.toLowerCase() === "api.minimax.io"; } catch { /* fetch handles invalid URLs */ }
+  if (!nativeMiniMax || !response.ok || response.headers.get("content-type")?.includes("text/event-stream")) return response;
+
+  // Read a clone so successful replies and original provider error details remain consumable.
+  const payload = await response.clone().json().catch(() => null);
+  const code: unknown = payload?.base_resp?.status_code;
+  if (typeof code !== "number" || !Number.isInteger(code) || code === 0) return response;
+  const statusByCode: Record<number, number> = {
+    1001: 504,
+    1002: 429, 1039: 429, 1041: 429, 2045: 429, 2056: 429,
+    1004: 401, 2049: 401,
+    1008: 402,
+    1026: 400, 1027: 400, 1042: 400, 2013: 400, 20132: 400
+  };
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  return new Response(response.body, { status: statusByCode[code] ?? 502, statusText: "MiniMax API error", headers });
+}
+
 /**
  * fetch() for LLM endpoints with a bounded timeout. On expiry the request is aborted and the
  * promise rejects (AbortError), which every call site already treats as an LLM failure (falls
@@ -406,7 +432,7 @@ export async function llmFetch(url: string, init: RequestInit = {}): Promise<Res
   }
   return withDatadogLlmObs(url, init, () =>
     withGenAiSpan(url, init, () =>
-      fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) })
+      fetchLlmProviderResponse(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) })
     )
   );
 }
@@ -419,13 +445,14 @@ export async function llmFetch(url: string, init: RequestInit = {}): Promise<Res
  * making progress (this is the DeepSeek "timed out after 60s" failure). Both bounds are env-tunable —
  * STRATEGY_LLM_TIMEOUT_MS for the base, STRATEGY_LLM_REASONING_TIMEOUT_MS for the thinking bound.
  * Trade-off: a longer bound holds the per-user run lock longer (see LLM_TIMEOUT_MS), so the widening
- * applies ONLY when the model is in a thinking mode the user explicitly opted into (never at the fast
- * default). A non-reasoning or thinking-off model keeps the base 60s bound unchanged.
+ * applies when the model is in a thinking mode, including MiniMax/Muse families whose reasoning is
+ * always enabled by the provider.  A non-reasoning or thinking-off model keeps the base 60s bound.
  */
 export function strategyLlmTimeoutMs(model: string | undefined, effort: LlmReasoningEffort | undefined): number {
   const base = Number(process.env.STRATEGY_LLM_TIMEOUT_MS) || LLM_TIMEOUT_MS;
   const normalized = normalizeReasoningEffortForModel(model, effort);
-  const thinking = !!normalized && normalized !== "none";
+  const alwaysReasons = /^(minimax|muse)-/i.test(lowerModel(model));
+  const thinking = alwaysReasons || (!!normalized && normalized !== "none");
   if (!thinking) return base;
   return Math.max(base, Number(process.env.STRATEGY_LLM_REASONING_TIMEOUT_MS) || 150_000);
 }
@@ -467,7 +494,7 @@ export async function llmFetchCapturing(
   const hardCap = Math.max(softMs, opts.hardCapMs ?? Math.max(softMs * 2, 300_000));
   const fetchPromise = withDatadogLlmObs(url, init, () =>
     withGenAiSpan(url, init, () =>
-      fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) })
+      fetchLlmProviderResponse(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) })
     )
   );
 
@@ -503,7 +530,7 @@ export function isRetryableLlmStatus(status: number): boolean {
 
 /**
  * Statuses that should try the NEXT model in a Green/Red failover chain.
- * 404/403/400 are not transient (`llmFetch` must not retry the same model) but
+ * 404/403/402/400 are not transient (`llmFetch` must not retry the same model) but
  * they are worth leaving this model for another in the chain — otherwise
  * implicit rotation fallbacks never run and the run dies on the first miss.
  * Live 2026-08-18 after #2829: openai/gpt-5.6-terra HTTP 400 "Provider returned
@@ -512,7 +539,7 @@ export function isRetryableLlmStatus(status: number): boolean {
  * retry-the-same-body class and not an account-allowlist miss.
  */
 export function isFailoverLlmStatus(status: number): boolean {
-  return isRetryableLlmStatus(status) || status === 404 || status === 403 || status === 400;
+  return isRetryableLlmStatus(status) || status === 404 || status === 403 || status === 402 || status === 400;
 }
 
 /**
@@ -649,6 +676,9 @@ const ANTHROPIC_MIN_MAX_TOKENS = 4096;
  */
 export function resolveLlmWireOutputCap(transport: LlmTransport, bounds: RequestBounds): number {
   if (transport === "anthropic-messages") return Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS);
+  if (transport === "chat-completions" && /^(minimax|muse)-/i.test(lowerModel(bounds.model))) {
+    return bounds.maxOutputTokens + REASONING_TOKEN_BUDGET.medium;
+  }
   const capability = reasoningCapabilityForModel(bounds.model);
   const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
   if (capability?.provider === "openai" && normalizedEffort) {
@@ -665,6 +695,15 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
   bounds: RequestBounds
 ): T & Record<string, unknown> {
   const result = ((): any => {
+    // MiniMax and Muse reason by default; reserve room for the visible answer too.
+    // Do not impose an unverified OpenAI effort ladder on these families.
+    if (transport === "chat-completions" && /^(minimax|muse)-/i.test(lowerModel(bounds.model))) {
+      return {
+        ...body,
+        max_completion_tokens: resolveLlmWireOutputCap(transport, bounds),
+        temperature: bounds.temperature ?? 1
+      };
+    }
     const capability = reasoningCapabilityForModel(bounds.model);
 
     const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);

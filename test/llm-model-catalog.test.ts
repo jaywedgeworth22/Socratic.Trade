@@ -5,6 +5,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 process.env.DATABASE_URL = `file:${path.join(os.tmpdir(), `llm-catalog-test-${Date.now()}.db`)}`;
 
 const OWNER_ROWS: Array<[string, string, string]> = [
+  ["gpt-6-astra-pro", "openai/gpt-6-astra-pro", "gpt-6-astra-pro"],
+  ["gpt-6-astra", "openai/gpt-6-astra", "gpt-6-astra"],
+  ["minimax-m3", "minimax/minimax-m3", "MiniMax-M3"],
+  ["minimax-m2.7", "minimax/minimax-m2.7", "MiniMax-M2.7"],
+  ["muse-spark-1.3", "meta/muse-spark-1.3", "muse-spark-1.3"],
+  ["muse-glimmer-30b", "meta/muse-glimmer-30b", "muse-glimmer-30b"],
+  ["llama-4-maverick", "meta-llama/llama-4-maverick", "llama-4-maverick"],
+  ["llama-4-scout", "meta-llama/llama-4-scout", "llama-4-scout"],
   ["gpt-5.6-sol", "openai/gpt-5.6-sol", "gpt-5.6-sol"],
   ["gpt-5.6-terra", "openai/gpt-5.6-terra", "gpt-5.6-terra"],
   ["gpt-5.6-luna", "openai/gpt-5.6-luna", "gpt-5.6-luna"],
@@ -13,20 +21,20 @@ const OWNER_ROWS: Array<[string, string, string]> = [
   ["gpt-4o", "openai/gpt-4o", "gpt-4o"],
   ["gpt-4o-mini", "openai/gpt-4o-mini", "gpt-4o-mini"],
   ["claude-sonnet-latest", "~anthropic/claude-sonnet-latest", "claude-sonnet-5"],
-  ["claude-haiku-latest", "~anthropic/claude-haiku-latest", "claude-haiku-4.5"],
+  ["claude-haiku-latest", "~anthropic/claude-haiku-latest", "claude-haiku-4-5-20251001"],
   ["claude-opus-latest", "~anthropic/claude-opus-latest", "claude-opus-5"],
-  ["claude-fable-latest", "~anthropic/claude-fable-latest", "claude-fable-5"],
+  ["claude-fable-latest", "~anthropic/claude-fable-latest", "claude-fable-5-1"],
   ["grok-build-0.1", "x-ai/grok-build-0.1", "grok-build-0.1"],
-  ["grok-latest", "~x-ai/grok-latest", "grok-4.5"],
+  ["grok-latest", "~x-ai/grok-latest", "grok-4.6"],
   ["gemini-flash-lite-latest", "google/gemini-3.5-flash-lite", "gemini-flash-lite-latest"],
   ["gemini-flash-latest", "~google/gemini-flash-latest", "gemini-flash-latest"],
   ["gemini-pro-latest", "~google/gemini-pro-latest", "gemini-pro-latest"],
-  ["mistral-large-latest", "mistralai/mistral-large", "mistral-large-latest"],
-  ["mistral-medium-latest", "mistralai/mistral-medium-3.5", "mistral-medium-latest"],
+  ["mistral-large-latest", "mistralai/mistral-large-2512", "mistral-large-latest"],
+  ["mistral-medium-latest", "mistralai/mistral-medium-3-5", "mistral-medium-latest"],
   ["mistral-small-latest", "mistralai/mistral-small-2603", "mistral-small-latest"],
   ["kimi-latest", "~moonshotai/kimi-latest", "kimi-latest"],
-  ["deepseek-flash-latest", "deepseek/deepseek-v4-flash", "deepseek-v4-flash"],
-  ["deepseek-pro-latest", "deepseek/deepseek-v4-pro", "deepseek-v4-pro"],
+  ["deepseek-flash-latest", "deepseek/deepseek-v4-flash-0731", "deepseek-v4-flash"],
+  ["deepseek-pro-latest", "deepseek/deepseek-v4-pro-0813", "deepseek-v4-pro"],
   ["deepseek-r1", "deepseek/deepseek-r1", "deepseek-reasoner"],
   ["llama-3.3-70b-instruct", "meta-llama/llama-3.3-70b-instruct", "llama-3.3-70b-instruct"]
 ];
@@ -107,10 +115,10 @@ describe("three-column LLM catalog", () => {
   it("never sends a display slug to OpenRouter when the wire slug differs", () => {
     expect(normalizeOpenRouterModelId("gpt-mini-latest")).toBe("~openai/gpt-mini-latest");
     expect(normalizeOpenRouterModelId("gemini-flash-lite-latest")).toBe("google/gemini-3.5-flash-lite");
-    expect(normalizeOpenRouterModelId("deepseek-flash-latest")).toBe("deepseek/deepseek-v4-flash");
+    expect(normalizeOpenRouterModelId("deepseek-flash-latest")).toBe("deepseek/deepseek-v4-flash-0731");
     expect(normalizeOpenRouterModelId("deepseek-r1")).toBe("deepseek/deepseek-r1");
     expect(normalizeOpenRouterModelId("mistral-small-latest")).toBe("mistralai/mistral-small-2603");
-    expect(normalizeOpenRouterModelId("mistral-medium-latest")).toBe("mistralai/mistral-medium-3.5");
+    expect(normalizeOpenRouterModelId("mistral-medium-latest")).toBe("mistralai/mistral-medium-3-5");
     expect(nativeSlugFor("openai/gpt-mini-latest")).toBe("gpt-5.4-mini");
     expect(nativeSlugFor("anthropic/claude-sonnet-latest")).toBe("claude-sonnet-5");
   });
@@ -132,7 +140,7 @@ describe("three-column LLM catalog", () => {
     for (const slug of latestWire) {
       expect(slug.startsWith("~"), slug).toBe(true);
     }
-    expect(openRouterSlugFor("gemini-flash-latest:batch")).toBe("google/gemini-3.7-flash:batch");
-    expect(normalizeOpenRouterModelId("google/gemini-3.6-flash:batch")).toBe("google/gemini-3.7-flash:batch");
+    expect(openRouterSlugFor("gemini-flash-latest:batch")).toBe("google/gemini-3.8-flash:batch");
+    expect(normalizeOpenRouterModelId("google/gemini-3.6-flash:batch")).toBe("google/gemini-3.8-flash:batch");
   });
 });

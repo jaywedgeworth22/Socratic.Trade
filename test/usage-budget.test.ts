@@ -18,6 +18,8 @@ const budget = await import("../src/lib/usage-budget");
 const { DEFAULT_POLICY } = await import("../src/lib/defaults");
 const { listNotificationEvents } = await import("../src/lib/db-notifications");
 
+const { upsertUserApiKey, deleteUserApiKey } = await import("../src/lib/db-api-keys");
+
 const BASE = "https://usage.example.test";
 const TOKEN = "test-token";
 
@@ -63,17 +65,30 @@ describe("usage-budget: cheaperModel", () => {
     expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-latest");
     expect(budget.cheaperModel("claude-haiku-4-5-20251001")).toBeUndefined(); // already cheapest (prefix)
     expect(budget.cheaperModel("openai/gpt-5.4-nano")).toBeUndefined();
+    expect(budget.cheaperModel("gpt-5.5")).toBe("gpt-mini-latest");
+    expect(budget.cheaperModel("grok-4.6")).toBe("grok-build-0.1");
+    expect(budget.cheaperModel("x-ai/grok-4.6")).toBe("x-ai/grok-build-0.1");
+    expect(budget.cheaperModel("muse-spark-1.3")).toBe("muse-glimmer-30b");
+    expect(budget.cheaperModel("meta/muse-spark-1.3")).toBe("meta/muse-glimmer-30b");
+    expect(budget.cheaperModel("minimax-m3")).toBeUndefined(); // same catalog price as M2.7
     expect(budget.cheaperModel(undefined)).toBeUndefined();
   });
 });
 
 describe("usage-budget: evaluateBudgetForRun", () => {
+  const savedFallback = process.env.LLM_OPERATOR_FALLBACK;
   beforeEach(() => {
+    process.env.LLM_OPERATOR_FALLBACK = "off";
+    upsertUserApiKey("local", "openai", "native-openai-placeholder");
     process.env.USAGE_MONITOR_BASE_URL = BASE;
     process.env.USAGE_INGEST_TOKEN = TOKEN;
     process.env.USAGE_BUDGET_ENFORCE = "on";
   });
   afterEach(() => {
+    deleteUserApiKey("local", "openai");
+    deleteUserApiKey("local", "openrouter");
+    if (savedFallback === undefined) delete process.env.LLM_OPERATOR_FALLBACK;
+    else process.env.LLM_OPERATOR_FALLBACK = savedFallback;
     delete process.env.USAGE_MONITOR_BASE_URL;
     delete process.env.USAGE_INGEST_TOKEN;
     delete process.env.USAGE_BUDGET_ENFORCE;
@@ -155,8 +170,29 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     expect(decision.downgraded).toBe(false);
   });
 
+  it("budgets native MiniMax independently from unrelated OpenRouter spend", async () => {
+    const userId = "minimax-budget-user";
+    upsertUserApiKey(userId, "minimax", "minimax-placeholder");
+    const policy = { llmModel: "minimax-m3" };
+    const overRouter = status([{ name: "openrouter", status: "exceeded" }, { name: "minimax", status: "ok" }]);
+    try {
+      expect(await budget.evaluateBudgetForRun(userId, policy, { status: overRouter })).toEqual({ skip: false, downgraded: false });
+      expect(await budget.previewBudgetDecision(userId, policy, { status: overRouter })).toEqual({ skip: false, downgraded: false });
+      const nativeExceeded = await budget.evaluateBudgetForRun(userId, policy, { status: status([{ name: "openrouter", status: "ok" }, { name: "minimax", status: "exceeded" }]) });
+      expect(nativeExceeded.skip).toBe(true);
+      expect(nativeExceeded.reason).toMatch(/minimax/);
+      upsertUserApiKey(userId, "openrouter", "openrouter-placeholder");
+      const routed = await budget.evaluateBudgetForRun(userId, policy, { status: overRouter });
+      expect(routed.skip).toBe(true);
+      expect(routed.reason).toMatch(/openrouter/);
+    } finally {
+      deleteUserApiKey(userId, "minimax");
+      deleteUserApiKey(userId, "openrouter");
+    }
+  });
+
   it("enforces on openrouter when spend is booked there (universal routing)", async () => {
-    // After #1703 all strategy LLM spend is provider openrouter even for gpt-* model ids.
+    upsertUserApiKey("local", "openrouter", "openrouter-placeholder");
     const decision = await budget.evaluateBudgetForRun(
       "local",
       { llmModel: "openai/gpt-5.4-nano" },
@@ -167,7 +203,8 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     expect(decision.reason).toMatch(/openrouter/i);
   });
 
-  it("downgrades using openrouter status when present even if family lane is ok", async () => {
+  it("downgrades using OpenRouter status when its credential serves the run", async () => {
+    upsertUserApiKey("local", "openrouter", "openrouter-placeholder");
     const decision = await budget.evaluateBudgetForRun(
       "local",
       { llmModel: "openai/gpt-4o", redTeamLlmModel: "openai/gpt-4o" },
@@ -176,6 +213,20 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
     expect(decision.llmModel).toBe("openai/gpt-mini-latest");
+  });
+
+  it("downgrades OpenRouter Muse Spark to Muse Glimmer when over budget", async () => {
+    upsertUserApiKey("local", "openrouter", "openrouter-placeholder");
+    const decision = await budget.evaluateBudgetForRun(
+      "local",
+      { llmModel: "muse-spark-1.3" },
+      { status: status([{ name: "openrouter", status: "exceeded" }]) }
+    );
+    expect(decision).toMatchObject({
+      skip: false,
+      downgraded: true,
+      llmModel: "muse-glimmer-30b"
+    });
   });
 });
 

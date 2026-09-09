@@ -14,7 +14,7 @@
 
 import { canonicalModelId as bareModelId } from "@/lib/model-identity";
 
-export type ConsoleProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot";
+export type ConsoleProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "minimax";
 
 // DEFAULT_GREEN_MODEL_ID was removed 2026-07-07 (owner directive: no model default for anything,
 // ever). There is no server default when policy.llmModel is unset — the run fails closed until a
@@ -31,8 +31,9 @@ export function providerForModel(modelId: string | null | undefined): ConsolePro
   if (/^gemini/.test(m)) return "gemini";
   if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
   if (/^deepseek/.test(m)) return "deepseek";
-  if (/^llama/.test(m)) return "meta";
+  if (/^(llama|muse-)/.test(m)) return "meta";
   if (/(kimi|moonshot)/.test(m)) return "moonshot";
+  if (/minimax/.test(m)) return "minimax";
   return "openai";
 }
 
@@ -52,8 +53,9 @@ const PROVIDER_LABEL: Record<ConsoleProviderId, string> = {
   gemini: "Google (Gemini)",
   mistral: "Mistral",
   deepseek: "DeepSeek",
-  meta: "Meta (Llama)",
-  moonshot: "Moonshot AI (Kimi)"
+  meta: "Meta",
+  moonshot: "Moonshot AI (Kimi)",
+  minimax: "MiniMax"
 };
 
 export function providerLabel(provider: ConsoleProviderId): string {
@@ -69,7 +71,8 @@ export const PROVIDER_META: Record<ConsoleProviderId, { initial: string; color: 
   mistral: { initial: "M", color: "#fa520f" },
   deepseek: { initial: "D", color: "#4d6bfe" },
   meta: { initial: "L", color: "#0467df" },
-  moonshot: { initial: "K", color: "#6b21a8" }
+  moonshot: { initial: "K", color: "#6b21a8" },
+  minimax: { initial: "M", color: "#e11d48" }
 };
 
 /** Curated model ids the picker offers (mirrors CURATED_LLM_MODEL_GROUPS in
@@ -83,6 +86,8 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "gpt-5.6-luna": "GPT-5.6 Luna",
   "gpt-5.6-terra": "GPT-5.6 Terra",
   "gpt-5.6-sol": "GPT-5.6 Sol",
+  "gpt-6-astra-pro": "GPT-6 Astra Pro",
+  "gpt-6-astra": "GPT-6 Astra",
   "gpt-4o": "GPT-4o",
   "gpt-5.4": "GPT-5.4",
   "gpt-5.5": "GPT-5.5",
@@ -137,6 +142,16 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   // Moonshot AI
   "kimi-latest": "Kimi k3",
   "kimi-k3": "Kimi k3",
+  // MiniMax
+  "minimax-m3": "MiniMax M3",
+  "MiniMax-M3": "MiniMax M3",
+  "minimax-m2.7": "MiniMax M2.7",
+  "MiniMax-M2.7": "MiniMax M2.7",
+  // Meta
+  "muse-spark-1.3": "Muse Spark 1.3",
+  "muse-glimmer-30b": "Muse Glimmer 30B",
+  "llama-4-scout": "Llama 4 Scout",
+  "llama-4-maverick": "Llama 4 Maverick",
   "llama-70b-latest": "Llama 70B",
   "llama-3.3-70b-instruct": "Llama 3.3 70B"
 };

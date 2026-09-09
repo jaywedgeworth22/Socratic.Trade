@@ -323,6 +323,29 @@ describe("defaults and model requirement", () => {
     expect(summary.skipped).toBe(true);
     expect(summary.reason).toBe("no-model");
   });
+
+  it("canonicalizes a legacy catalog alias in review results and audits", async () => {
+    const userId = `lr-model-alias-${randomUUID().slice(0, 8)}`;
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "claude-fable-5" }, userId);
+    seedLearnedRow(userId);
+    const summary = await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() });
+    expect(summary.model).toBe("claude-fable-latest");
+    const auditRow = listAuditByKind("learning_review_summary", 1, userId)[0];
+    expect((auditRow.payload as { model?: string; modelLabel?: string; servedModel?: string }).model).toBe("claude-fable-latest");
+    expect((auditRow.payload as { modelLabel?: string }).modelLabel).toContain("5.1");
+    expect((auditRow.payload as { servedModel?: string }).servedModel).toBeUndefined();
+  });
+
+  it("records an unlisted catalog model by its canonical identity", async () => {
+    const userId = `lr-model-astra-${randomUUID().slice(0, 8)}`;
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "openai/gpt-6-astra-pro" }, userId);
+    seedLearnedRow(userId);
+    const summary = await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() });
+    expect(summary.model).toBe("gpt-6-astra-pro");
+    const auditRow = listAuditByKind("learning_review_summary", 1, userId)[0];
+    expect((auditRow.payload as { model?: string; modelLabel?: string }).model).toBe("gpt-6-astra-pro");
+    expect((auditRow.payload as { modelLabel?: string }).modelLabel).toContain("Astra Pro");
+  });
 });
 
 // ── Skip re-review when nothing changed (no wasted LLM call) ────────────────────

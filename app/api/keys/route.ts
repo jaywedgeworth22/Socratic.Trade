@@ -95,6 +95,14 @@ const API_KEY_CATALOG = [
     docsUrl: "https://platform.moonshot.cn/console/api-keys"
   },
   {
+    service: "minimax",
+    label: "MiniMax",
+    category: "LLM",
+    required: false,
+    unlocks: "MiniMax models for the Assistant and strategy using a pay-as-you-go API key.",
+    docsUrl: "https://platform.minimax.io/user-center/basic-information/interface-key"
+  },
+  {
     service: "openrouter",
     label: "OpenRouter",
     category: "LLM",

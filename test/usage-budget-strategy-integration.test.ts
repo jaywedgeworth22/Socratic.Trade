@@ -102,7 +102,7 @@ function makeFetchStub(opts: {
     const href = String(url);
     if (href.includes(`${BASE}/api/budget-status`)) {
       if (opts.budgetStatusUnavailable) return new Response("error", { status: 500 });
-      return new Response(JSON.stringify(budgetStatusPayload(opts.budgetProviders ?? [{ name: "openai", status: "ok" }])), {
+      return new Response(JSON.stringify(budgetStatusPayload(opts.budgetProviders ?? [{ name: "openrouter", status: "ok" }])), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -151,7 +151,8 @@ function makeFetchStub(opts: {
 
 async function seedTestAccountAndPolicy(overrides: Record<string, unknown> = {}) {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
+  // The wire route and budget-status fixture both refer to OpenRouter.
+  upsertUserApiKey("local", "openrouter", "test-openrouter-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -185,7 +186,7 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
       "fetch",
       makeFetchStub({
         redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." },
-        budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
+        budgetProviders: [{ name: "openrouter", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: (body) => {
           const content = JSON.stringify(body);
           if (!content.includes("Red Team Risk Agent") && !bullBody) bullBody = body;
@@ -206,7 +207,7 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
     expect(statusAudits.length).toBeGreaterThanOrEqual(1);
     const statusPayload = statusAudits[0].payload as { enforceOn?: boolean; wouldDowngrade?: boolean; wouldSkip?: boolean };
     expect(statusPayload.enforceOn).toBe(false);
-    // Over-budget openai WOULD be downgraded/skipped if enforcement were on — recorded as advisory data.
+    // Over-budget OpenRouter WOULD be downgraded/skipped if enforcement were on — recorded as advisory data.
     expect(statusPayload.wouldDowngrade || statusPayload.wouldSkip).toBe(true);
 
     // No enforcement receipt should exist since USAGE_BUDGET_ENFORCE is off.
@@ -222,7 +223,7 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
     const bullUserMessage = bullBody.messages?.find((m: any) => m.role === "user") ?? bullBody.input?.find((m: any) => m.role === "user");
     const bullUserContent = typeof bullUserMessage?.content === "string" ? bullUserMessage.content : JSON.stringify(bullUserMessage?.content ?? bullBody);
     expect(bullUserContent).toContain("budgetAdvisory");
-    expect(bullUserContent).toContain("openai");
+    expect(bullUserContent).toContain("openrouter");
   }, 90_000);
 });
 
@@ -236,7 +237,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
       "fetch",
       makeFetchStub({
         redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." },
-        budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
+        budgetProviders: [{ name: "openrouter", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: (body) => {
           const content = JSON.stringify(body);
           if (content.includes("Red Team Risk Agent")) {
@@ -285,7 +286,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
   }, 90_000);
 
   it("FINDING 1 regression: a cap-breach demotion in the SAME run persists strategyAuthority only — never the in-run model downgrade", async () => {
-    // This run BOTH downgrades (over-budget openai) AND trips a cap-breach demotion
+    // This run BOTH downgrades (over-budget OpenRouter) AND trips a cap-breach demotion
     // (maxDailyOrders: 0 under strategyAuthority "decide" escalates and demotes to "propose").
     // Before the fix, autoRevertOnCapBreach's `setPolicy({ ...policy, strategyAuthority: "propose" })`
     // would persist the mutated policy.llmModel/redTeamLlmModel too, since strategy.ts mutated the
@@ -298,7 +299,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
       "fetch",
       makeFetchStub({
         redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." },
-        budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }]
+        budgetProviders: [{ name: "openrouter", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }]
       })
     );
 
@@ -345,7 +346,7 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
       makeFetchStub({
         redTeamVerdict: { verdict: "approve", reason: "n/a" },
         // gpt-5.4-nano already the cheapest OpenAI tier in CHEAPER_MODEL -> skip, not downgrade.
-        budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
+        budgetProviders: [{ name: "openrouter", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: () => {
           openAiCalled = true;
         }

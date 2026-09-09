@@ -11,6 +11,7 @@ describe("providerLabel / providerFromText", () => {
     expect(providerLabel("gemini")).toBe("Google (Gemini)");
     expect(providerLabel("mistral")).toBe("Mistral");
     expect(providerLabel("anthropic")).toBe("Anthropic (Claude)");
+    expect(providerLabel("minimax")).toBe("MiniMax");
     expect(providerLabel("openai")).toBe("OpenAI");
     expect(providerLabel(undefined)).toBe("the LLM");
   });
@@ -21,6 +22,7 @@ describe("providerLabel / providerFromText", () => {
     expect(providerFromText("mistral 401: unauthorized")).toBe("Mistral");
     expect(providerFromText("xai 403: x.ai forbidden")).toBe("xAI (Grok)");
     expect(providerFromText("anthropic 401")).toBe("Anthropic (Claude)");
+    expect(providerFromText("minimax 401: unauthorized")).toBe("MiniMax");
   });
 });
 
@@ -42,6 +44,12 @@ describe("humanizeLlmError", () => {
     const msg = humanizeLlmError("openai 429: You exceeded your current quota", { provider: "openai" });
     expect(msg.toLowerCase()).toMatch(/rate limit|quota|credit/);
     expect(msg).toContain("OpenAI");
+  });
+
+  it("explains MiniMax insufficient balance after envelope normalization", () => {
+    const msg = humanizeLlmError('minimax 402: {"base_resp":{"status_code":1008,"status_msg":"insufficient balance"}}');
+    expect(msg).toContain("MiniMax");
+    expect(msg.toLowerCase()).toMatch(/billing|credits/);
   });
 
   it("maps 5xx to a temporary server-error message", () => {

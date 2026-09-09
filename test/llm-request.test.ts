@@ -12,6 +12,7 @@ import {
   greenFailoverExhaustedSuffix,
   isFailoverLlmStatus,
   isRetryableLlmStatus,
+  llmFetch,
   llmFetchCapturing,
   ALL_LLM_REASONING_EFFORTS,
   LLM_MODEL_ROTATION_SENTINEL,
@@ -56,6 +57,15 @@ describe("llm-request — model resolution", () => {
     expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "xhigh")).toBe("medium");
     expect(interactiveStrategyReasoningEffort("openai/gpt-5.5", "low")).toBe("low");
     expect(interactiveStrategyReasoningEffort("openai/gpt-4o-mini", "high")).toBeUndefined();
+  });
+
+  it("keeps current native model reasoning controls aligned with their aliases", () => {
+    expect(reasoningCapabilityForModel("claude-opus-5")?.provider).toBe("anthropic");
+    for (const model of ["grok-4.6", "grok-latest", "x-ai/grok-4.6"]) {
+      expect(reasoningCapabilityForModel(model)?.options.map((option) => option.value)).toEqual(["low", "medium", "high", "xhigh"]);
+      expect(normalizeReasoningEffortForModel(model, "none")).toBe("low");
+    }
+    expect(reasoningCapabilityForModel("google/gemini-3.8-flash")?.options.map((option) => option.value)).toEqual(["low", "medium", "high"]);
   });
 
   it("maps provider-specific reasoning controls by model family", () => {
@@ -139,11 +149,18 @@ describe("llm-request — model resolution", () => {
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBeGreaterThan(LLM_TIMEOUT_MS);
     // OpenAI reasoning model actually thinking at medium: widened.
     expect(strategyLlmTimeoutMs("openai/gpt-5.5", "medium")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    // MiniMax and Muse always reason on the wire and reserve medium reasoning headroom even though
+    // they expose no configurable reasoning capability, so their timeout must widen at every effort.
+    for (const model of ["minimax-m3", "minimax/minimax-m3", "MiniMax-M3", "muse-spark-1.3", "meta/muse-spark-1.3"]) {
+      expect(strategyLlmTimeoutMs(model, undefined)).toBeGreaterThan(LLM_TIMEOUT_MS);
+      expect(strategyLlmTimeoutMs(model, "none")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    }
     // Both bounds are env-tunable.
     vi.stubEnv("STRATEGY_LLM_TIMEOUT_MS", "30000");
     vi.stubEnv("STRATEGY_LLM_REASONING_TIMEOUT_MS", "200000");
     expect(strategyLlmTimeoutMs("openai/gpt-4o-mini", "high")).toBe(30000);
     expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBe(200000);
+    expect(strategyLlmTimeoutMs("minimax/minimax-m3", undefined)).toBe(200000);
   });
 });
 
@@ -164,6 +181,27 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(resp.temperature).toBe(0);
     expect(resp.max_output_tokens).toBe(1500);
     expect("reasoning" in resp).toBe(false);
+  });
+
+  it("reserves reasoning headroom for MiniMax and Muse through OpenRouter", () => {
+    for (const model of ["minimax/minimax-m3", "meta/muse-spark-1.3", "meta/muse-glimmer-30b"]) {
+      const request = withLlmRequestBounds({ model }, "chat-completions", { model, maxOutputTokens: 1500 });
+      expect(request.max_completion_tokens).toBe(5500);
+      expect(request).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
+  it("bounds Astra reasoning for direct and OpenRouter requests without custom temperature", () => {
+    for (const model of ["gpt-6-astra", "openai/gpt-6-astra"]) {
+      const chat = withLlmRequestBounds({ model }, "chat-completions", {
+        maxOutputTokens: 1500,
+        model,
+        reasoningEffort: "medium"
+      });
+      expect(chat).not.toHaveProperty("temperature");
+      expect(chat.reasoning_effort).toBe("medium");
+      expect(chat.max_completion_tokens).toBe(5500);
+    }
   });
 
   it("reasoning models drop temperature, add reasoning_effort, and raise the token cap", () => {
@@ -406,12 +444,14 @@ describe("llm-request — llmFetchCapturing (latency capture, never sever a slow
 });
 
 describe("isFailoverLlmStatus", () => {
-  it("fails over 404/403/400 to the next model without treating them as transient retries", () => {
+  it("fails over 404/403/402/400 to the next model without treating them as transient retries", () => {
     expect(isRetryableLlmStatus(404)).toBe(false);
     expect(isRetryableLlmStatus(403)).toBe(false);
+    expect(isRetryableLlmStatus(402)).toBe(false);
     expect(isRetryableLlmStatus(400)).toBe(false);
     expect(isFailoverLlmStatus(404)).toBe(true);
     expect(isFailoverLlmStatus(403)).toBe(true);
+    expect(isFailoverLlmStatus(402)).toBe(true);
     expect(isFailoverLlmStatus(400)).toBe(true);
     expect(isFailoverLlmStatus(429)).toBe(true);
     expect(isFailoverLlmStatus(401)).toBe(false);
@@ -423,5 +463,50 @@ describe("greenFailoverExhaustedSuffix", () => {
     expect(greenFailoverExhaustedSuffix(0)).toBe("");
     expect(greenFailoverExhaustedSuffix(1)).toBe("");
     expect(greenFailoverExhaustedSuffix(3)).toBe("  Failover chain exhausted (3 Green Team endpoints).");
+  });
+});
+
+
+describe("MiniMax provider error envelopes", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it.each([[1002, 429], [1004, 401], [1008, 402], [2013, 400], [1001, 504], [9999, 502]])(
+    "normalizes provider code %i to HTTP %i before callers consume the body",
+    async (code, status) => {
+      const payload = { base_resp: { status_code: code, status_msg: "provider error" } };
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json(payload, { headers: { "x-request-id": "minimax-request" } })));
+      const response = await llmFetch("https://api.minimax.io/v1/chat/completions");
+      expect(response.ok).toBe(false);
+      expect(response.status).toBe(status);
+      expect(response.headers.get("x-request-id")).toBe("minimax-request");
+      expect(await response.json()).toEqual(payload);
+    }
+  );
+
+  it("captures envelope failures as failed outcomes for the strategy path", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ base_resp: { status_code: 1002, status_msg: "rate limit" } })));
+    const outcomes: LlmCallOutcome[] = [];
+    await llmFetchCapturing("https://api.minimax.io/v1/chat/completions", {}, { softTimeoutMs: 1000, onOutcome: (outcome) => outcomes.push(outcome) });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ ok: false, status: 429 });
+  });
+
+  it("preserves successful MiniMax replies and unrelated provider responses", async () => {
+    const success = Response.json({ base_resp: { status_code: 0 }, choices: [{ message: { content: "ok" } }] });
+    vi.stubGlobal("fetch", vi.fn(async () => success));
+    expect(await llmFetch("https://api.minimax.io/v1/chat/completions")).toBe(success);
+    expect((await success.json()).choices[0].message.content).toBe("ok");
+    const unrelated = Response.json({ base_resp: { status_code: 1002 } });
+    vi.stubGlobal("fetch", vi.fn(async () => unrelated));
+    expect(await llmFetch("https://api.openai.com/v1/chat/completions")).toBe(unrelated);
+    expect(unrelated.bodyUsed).toBe(false);
+  });
+
+  it("preserves HTTP failures and streaming responses without reading their bodies", async () => {
+    for (const response of [Response.json({ error: "bad key" }, { status: 401 }), new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } })]) {
+      vi.stubGlobal("fetch", vi.fn(async () => response));
+      expect(await llmFetch("https://api.minimax.io/v1/chat/completions")).toBe(response);
+      expect(response.bodyUsed).toBe(false);
+    }
   });
 });

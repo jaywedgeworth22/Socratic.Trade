@@ -24,6 +24,7 @@ const LLM_HOST_HINTS = [
   "googleapis.com",
   "mistral.ai",
   "deepseek.com",
+  "api.minimax.io",
 ];
 
 type LlmObsApi = {

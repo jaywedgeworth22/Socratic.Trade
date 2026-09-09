@@ -53,7 +53,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("xai");
     expect(endpoint.url).toBe("https://api.x.ai/v1/chat/completions");
     expect(endpoint.key).toBe("xai-test-key");
-    expect(endpoint.model).toBe("grok-4.5");
+    expect(endpoint.model).toBe("grok-4.6");
     expect(endpoint.transport).toBe("chat-completions");
   });
 
@@ -67,6 +67,63 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.transport).toBe("chat-completions");
   });
 
+  it("falls back to the native MiniMax endpoint with the MiniMax credential", () => {
+    setApiKey("test-user-minimax", "minimax", "sk-minimax-test-key");
+    const endpoint = resolveLlmEndpoint({ llmModel: "minimax-m2.7" }, "test-user-minimax");
+    expect(endpoint.provider).toBe("minimax");
+    expect(endpoint.url).toBe("https://api.minimax.io/v1/chat/completions");
+    expect(endpoint.key).toBe("sk-minimax-test-key");
+    expect(endpoint.model).toBe("MiniMax-M2.7");
+    expect(endpoint.transport).toBe("chat-completions");
+  });
+
+  it("uses the same credential service for eligibility and actual MiniMax execution", async () => {
+    const { modelCredentialService } = await import("../src/lib/llm-provider");
+    setApiKey("minimax-eligibility", "minimax", "minimax-placeholder");
+    expect(modelCredentialService("minimax-m3", "minimax-eligibility")).toBe("minimax");
+    expect(resolveLlmEndpoint({ llmModel: "minimax-m3" }, "minimax-eligibility").provider).toBe("minimax");
+    setApiKey("minimax-eligibility", "openrouter", "openrouter-placeholder");
+    expect(modelCredentialService("minimax-m3", "minimax-eligibility")).toBe("openrouter");
+    expect(resolveLlmEndpoint({ llmModel: "minimax-m3" }, "minimax-eligibility").provider).toBe("openrouter");
+  });
+
+  it("keeps an explicit OpenRouter model on OpenRouter even when its native key exists", async () => {
+    const { modelCredentialService, modelRequiresOpenRouter } = await import("../src/lib/llm-provider");
+    setApiKey("explicit-openrouter-minimax", "minimax", "minimax-placeholder");
+    const model = "openrouter/minimax/minimax-m3";
+
+    expect(modelRequiresOpenRouter(model)).toBe(true);
+    expect(modelRequiresOpenRouter(" OpenRouter/~anthropic/claude-sonnet-latest ")).toBe(true);
+    expect(modelCredentialService(model, "explicit-openrouter-minimax")).toBe("openrouter");
+    const endpoint = resolveLlmEndpoint({ llmModel: model }, "explicit-openrouter-minimax");
+    expect(endpoint.provider).toBe("openrouter");
+    expect(endpoint.key).toBeUndefined();
+    expect(endpoint.model).toBe("minimax/minimax-m3");
+  });
+
+  it("requires OpenRouter for Astra Pro even with a native OpenAI key", () => {
+    setApiKey("astra-pro-native", "openai", "openai-placeholder");
+    const endpoint = resolveLlmEndpoint({ llmModel: "gpt-6-astra-pro" }, "astra-pro-native");
+    expect(endpoint.provider).toBe("openrouter");
+    expect(endpoint.key).toBeUndefined();
+    expect(endpoint.model).toBe("openai/gpt-6-astra-pro");
+  });
+
+  it("requires OpenRouter for Meta and never sends a Meta key to OpenAI", async () => {
+    const { modelCredentialService } = await import("../src/lib/llm-provider");
+    setApiKey("meta-native-only", "meta", "meta-placeholder");
+    for (const model of ["muse-spark-1.3", "muse-glimmer-30b", "llama-4-maverick"]) {
+      const endpoint = resolveLlmEndpoint({ llmModel: model }, "meta-native-only");
+      expect(endpoint.provider).toBe("openrouter");
+      expect(endpoint.key).toBeUndefined();
+      expect(modelCredentialService(model, "meta-native-only")).toBe("openrouter");
+    }
+    setApiKey("meta-native-only", "openrouter", "openrouter-placeholder");
+    const endpoint = resolveLlmEndpoint({ llmModel: "muse-spark-1.3" }, "meta-native-only");
+    expect(endpoint.model).toBe("meta/muse-spark-1.3");
+    expect(endpoint.key).toBe("openrouter-placeholder");
+  });
+
   it("fails closed (key undefined) when user has no keys at all", () => {
     const endpoint = resolveLlmEndpoint({ llmModel: "claude-sonnet-5" }, "user-with-no-keys");
     expect(endpoint.key).toBeUndefined();
@@ -78,18 +135,18 @@ describe("resolveLlmEndpoint", () => {
     expect(normalizeOpenRouterModelId("gemini-flash-latest")).toBe(OPENROUTER_GEMINI_FLASH);
     expect(normalizeOpenRouterModelId("google/gemini-flash-latest")).toBe(OPENROUTER_GEMINI_FLASH);
     expect(normalizeOpenRouterModelId("google/gemini-3.6-flash")).toBe(OPENROUTER_GEMINI_FLASH);
-    expect(normalizeOpenRouterModelId("google/gemini-3.6-flash:batch")).toBe(OPENROUTER_GEMINI_FLASH_BATCH);
+    expect(normalizeOpenRouterModelId("google/gemini-3.8-flash:batch")).toBe(OPENROUTER_GEMINI_FLASH_BATCH);
     expect(normalizeOpenRouterModelId("gemini-3.5-flash")).toBe(OPENROUTER_GEMINI_FLASH);
     expect(normalizeOpenRouterModelId("google/gemini-3.7-flash")).toBe(OPENROUTER_GEMINI_FLASH);
   });
 
-  it("maps Mistral Medium to the owner OpenRouter period slug", async () => {
+  it("maps Mistral Medium to the owner OpenRouter wire slug", async () => {
     const { normalizeOpenRouterModelId } = await import("../src/lib/llm-provider");
-    expect(normalizeOpenRouterModelId("mistral-medium-latest")).toBe("mistralai/mistral-medium-3.5");
-    expect(normalizeOpenRouterModelId("mistral-medium-3-5")).toBe("mistralai/mistral-medium-3.5");
-    expect(normalizeOpenRouterModelId("mistral-medium-3.5")).toBe("mistralai/mistral-medium-3.5");
-    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3.5")).toBe("mistralai/mistral-medium-3.5");
-    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3-5")).toBe("mistralai/mistral-medium-3.5");
+    expect(normalizeOpenRouterModelId("mistral-medium-latest")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistral-medium-3-5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistral-medium-3.5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3.5")).toBe("mistralai/mistral-medium-3-5");
+    expect(normalizeOpenRouterModelId("mistralai/mistral-medium-3-5")).toBe("mistralai/mistral-medium-3-5");
     expect(normalizeOpenRouterModelId("gpt-5.4-nano")).toBe("openai/gpt-5.4-nano");
   });
 
@@ -124,6 +181,8 @@ describe("resolveLlmEndpoint", () => {
       ["kimi-latest", "~moonshotai/kimi-latest"],
       ["moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
       ["~moonshotai/kimi-latest", "~moonshotai/kimi-latest"],
+      ["minimax-m2.7", "minimax/minimax-m2.7"],
+      ["minimax/minimax-m2.7", "minimax/minimax-m2.7"],
       ["deepseek-reasoner", "deepseek/deepseek-r1"],
       ["deepseek/deepseek-reasoner", "deepseek/deepseek-r1"],
       ["deepseek-r1", "deepseek/deepseek-r1"]
