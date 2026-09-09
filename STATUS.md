@@ -1,6 +1,15 @@
 # Current Status
 
 ## 2026-09-09 GROK — PR #3201 fixer tip (verification receipts + 15s HEALTHCHECK refs)
+## 2026-09-09 GROK — PR #3203 fixer tip (75% stall bar + skipped late logging + full verify)
+
+Codex P1+P2 on `claude/broker-timeout-safety-monitors`.  STATUS.md and `docs/EFFORT-LOG.md` now
+match `LANE_STALL_ATTRIBUTION_RATIO=0.75` (were still saying 25%).  `journalLane` preserves a
+skipped envelope with no value, and `withLaneDeadline` late-logs `SKIPPED LATE` instead of
+claiming the protective pass completed.  Full AGENTS.md gate recorded in the rollout.
+Deployer squash AM stays armed; this lane does not merge.  Extra-ship no.
+
+## 2026-09-09 CLAUDE — Safety-lane "broker timeout" is event-loop starvation, not the broker
 
 Codex P1+P2 on `claude/healthcheck-tolerate-eventloop-stall`.  Remaining 5s HEALTHCHECK timeout
 references in `Dockerfile`, `app/api/live/route.ts`, and `docs/deployment.md` now match the live
@@ -8,6 +17,20 @@ references in `Dockerfile`, `app/api/live/route.ts`, and `docs/deployment.md` no
 `docs/rollouts/2026-09-09-healthcheck-eventloop-tolerance.md`.  Deployer squash AM stays armed;
 this lane does not merge.  Extra-ship no.
 
+Root cause is the non-convergent FTS mirror loop in **PR #3202**, not this lane: total ms over deadline rose
+**28.6x** (120,110 → 3,430,064) and the tail **7.4x** (25,088 → 185,633 ms) from 09-07 to 09-08, the exact day
+event-loop pinning jumped to 1,317,546 ms/day, while ingest run counts did not rise and slow ingest runs fell.
+The SQLite lock-contention hypothesis was tested and refuted here: only 14.2 % of timeouts had a
+`database is locked` event within 15 s, and at 300 s the co-occurrence was *below* chance.
+
+This branch ships **no competing fix** — only the observability gap that remains regardless: `withDeadline`
+could not distinguish "the broker did not answer" from "we could not process the answer", which is what sent
+PR #3189 after Tradier retries that could not help (57 of 71 and 53 of 66 occurrences landed *after* it merged).
+New `src/lib/event-loop-lag.ts` sampler, `withLaneDeadline` attribution, and an `event_loop_stall` failure
+category.  **No safety monitor was weakened:** deadline unchanged at 15,000 ms, no interval lengthened, work
+still never cancelled, failures still recorded and still escalating to `lane_degraded`; re-attribution needs
+≥75 % measured stall (`LANE_STALL_ATTRIBUTION_RATIO=0.75`).  tsc clean, eslint 0 errors, 11/11 new tests, 50/50 related regression tests.
+Rollout: `docs/rollouts/2026-09-09-safety-lane-stall-attribution.md`.
 ## 2026-09-09 CLAUDE — FTS mirror never converged, pinning the event loop into a public 503
 
 `/api/live` measured from inside the Docker network at **8.60s, then 0.09s, then 0.03s** —
@@ -53,6 +76,33 @@ events during the measured stall burst; 09-07 had *more* lock events than 09-08 
 less pinning; and a busy-wait sleeps rather than burning the 107% CPU observed).  No timeout
 widened — that shipped separately in PR #3201.  Rollout:
 `docs/rollouts/2026-09-09-fts-mirror-nonconvergence.md`.
+## 2026-09-09 CLAUDE — Safety-lane "broker timeout" is event-loop starvation, not the broker
+
+The two protective scheduler lanes (`synthetic-stop-monitor`, `stale-limit-scan`) time out against a 15s
+`withDeadline` and report `runSyntheticStopMonitor timeout` / `stale-limit-scan broker timeout` (71 / 66
+occurrences, still firing at `2026-09-09T14:41:56.548Z`).  Production `task_journal` shows the message is
+wrong about its own cause.  `stale-limit-scan` @ `2026-09-08T19:51:57.566Z` ran **185,633 ms** carrying the
+inner error `Timed out waiting for alpaca.getOrders after 16000+8000ms.` — the broker call self-terminated at
+24,000 ms, leaving **161,633 ms outside all broker I/O**.  `synthetic-stop-monitor` @ `2026-09-09T13:45:41.103Z`
+ran **196,840 ms** and finished `ok evaluated=6` — the pass succeeded 182 s after the deadline blamed the
+broker.  Passes with `evaluated=0` still took 30–134 s against a 30 s transport ceiling.  The two independent
+lanes start within 2–3 ms and match durations to ~100 ms across 130 s runs — one shared process-wide stall.
+p50 is ~800 ms and p95 ~1.4 s, so the deadline is generous; only a bimodal tail is broken.
+
+Root cause is the non-convergent FTS mirror loop in **PR #3202**, not this lane: total ms over deadline rose
+**28.6x** (120,110 → 3,430,064) and the tail **7.4x** (25,088 → 185,633 ms) from 09-07 to 09-08, the exact day
+event-loop pinning jumped to 1,317,546 ms/day, while ingest run counts did not rise and slow ingest runs fell.
+The SQLite lock-contention hypothesis was tested and refuted here: only 14.2 % of timeouts had a
+`database is locked` event within 15 s, and at 300 s the co-occurrence was *below* chance.
+
+This branch ships **no competing fix** — only the observability gap that remains regardless: `withDeadline`
+could not distinguish "the broker did not answer" from "we could not process the answer", which is what sent
+PR #3189 after Tradier retries that could not help (57 of 71 and 53 of 66 occurrences landed *after* it merged).
+New `src/lib/event-loop-lag.ts` sampler, `withLaneDeadline` attribution, and an `event_loop_stall` failure
+category.  **No safety monitor was weakened:** deadline unchanged at 15,000 ms, no interval lengthened, work
+still never cancelled, failures still recorded and still escalating to `lane_degraded`; re-attribution needs
+≥25 % measured stall.  tsc clean, eslint 0 errors, 11/11 new tests, 50/50 related regression tests.
+Rollout: `docs/rollouts/2026-09-09-safety-lane-stall-attribution.md`.
 
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 
