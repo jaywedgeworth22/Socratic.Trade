@@ -1823,3 +1823,44 @@ export function countDocumentChunkFts(input: {
     .get(input.symbol, input.source, input.accession) as { n: number };
   return Number(row?.n ?? 0);
 }
+
+/**
+ * Content-derived resume offset for the bounded FTS mirror.
+ *
+ * 2026-09-09 stall incident.  The mirror used to resume from `countDocumentChunkFts()` — a
+ * COUNT of `document_chunks_fts_index` rows — and used that count as a POSITIONAL offset into
+ * the chunk array.  Those two numbers are only equal when every chunk of a document has a
+ * DISTINCT `content_hash`.  The index PK is `(content_hash, symbol, source, accession)`, so two
+ * byte-identical chunks inside one filing (repeated table headers, boilerplate, empty sections)
+ * collapse onto ONE index row.  From the first duplicate onward the count is permanently less
+ * than the position, the offset can never advance past it, and the same slice is re-mirrored on
+ * every ingest tick FOREVER — each pass pinning the synchronous event loop.
+ *
+ * Measured in production 2026-09-09: `hsy-20260329.htm` restarted at offset 400/508 on all 29
+ * logged slices across six days (one pinned the loop 36,511ms), `hsy-20251231.htm` at 732/1291,
+ * `abnb-20260630.htm` at 355/448, `dash-20250630.htm` at 358 across 58 slices.  Because
+ * `mirror.complete` never became true, `insertIngestedAccession` never ran, so the worker kept
+ * re-queuing the same filings.  09-08 alone spent 1,317,546ms — 22 minutes — pinned in 198
+ * slices, which is what starved `/api/live` past the 5s Docker healthcheck timeout.
+ *
+ * Resuming on CONTENT instead of a count fixes it and makes progress provably monotonic: the
+ * offset is the first row whose hash is not yet indexed, and mirroring that row indexes its
+ * hash, so the next resume is strictly greater.  The loop therefore always terminates.
+ */
+export function ftsMirrorResumeOffset(
+  rows: ReadonlyArray<{ contentHash: string }>,
+  key: { symbol: string; source: string; accession: string }
+): number {
+  if (rows.length === 0) return 0;
+  const indexedRows = getDb()
+    .prepare(
+      `SELECT content_hash FROM document_chunks_fts_index
+       WHERE symbol = ? AND source = ? AND accession = ?`
+    )
+    .all(key.symbol, key.source, key.accession) as Array<{ content_hash: string }>;
+  if (indexedRows.length === 0) return 0;
+  const indexed = new Set(indexedRows.map((r) => r.content_hash));
+  let offset = 0;
+  while (offset < rows.length && indexed.has(rows[offset]!.contentHash)) offset++;
+  return offset;
+}
