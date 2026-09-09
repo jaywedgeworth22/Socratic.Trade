@@ -161,9 +161,25 @@ export const R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS = 45 * 60_000;
  * abandoning them.  Still under the 2 h lease.
  */
 export const R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS = 90 * 60_000;
+/**
+ * The due-job lease `drainR2ColdSnapshotJobs` claims with.  Exported so the attempt deadline
+ * can be clamped against it rather than relying on a comment saying it "must stay" below.
+ */
+export const R2_COLD_SNAPSHOT_LEASE_MS = 120 * 60_000;
+/**
+ * Hard ceiling on the attempt deadline: the lease minus a margin.  An attempt allowed to run
+ * to or past its own lease is the exact overlap the deadline exists to prevent — the next
+ * drain reclaims the job, starts a second multi-GB snapshot, sweeps the first attempt's temp
+ * file out from under its open fd, and races an upload to the same weekly key.  A config
+ * value above this is clamped, not honoured (flagged in review of PR #3204).
+ */
+export const R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS = R2_COLD_SNAPSHOT_LEASE_MS - 15 * 60_000;
 /** Bounded retries for a single S3 request before the attempt gives up.  One transient
  *  `fetch failed` on one 100 MB part used to discard the entire ~11-minute run. */
 export const R2_COLD_SNAPSHOT_REQUEST_ATTEMPTS = 3;
+/** How long the failure path waits for an in-flight CreateMultipartUpload to settle so it can
+ *  abort the upload it minted.  Short on purpose — see the call site. */
+export const R2_COLD_SNAPSHOT_CLEANUP_SETTLE_MS = 10_000;
 
 /**
  * Tables the snapshot self-check asserts are non-empty before the artifact is uploaded.
@@ -331,21 +347,27 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
       : R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES;
 
   const deadlineMinRaw = Number(process.env.R2_COLD_SNAPSHOT_DEADLINE_MIN ?? "");
-  const snapshotDeadlineMs =
+  const snapshotDeadlineMsRaw =
     Number.isFinite(deadlineMinRaw) && deadlineMinRaw > 0
       ? Math.floor(deadlineMinRaw * 60_000)
       : R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS;
 
   const attemptMinRaw = Number(process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN ?? "");
-  const attemptDeadlineMs =
+  const attemptDeadlineMs = Math.min(
     Number.isFinite(attemptMinRaw) && attemptMinRaw > 0
       ? Math.floor(attemptMinRaw * 60_000)
-      : R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS;
+      : R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS,
+    R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS,
+  );
 
   const killRaw = process.env.R2_COLD_SNAPSHOT_ENABLED?.trim().toLowerCase();
   const killed = killRaw === "0" || killRaw === "off" || killRaw === "false" || killRaw === "no";
   const hasCreds = Boolean(bucket && endpoint && accessKeyId && secretAccessKey);
   const skipPrune = r2ColdSnapshotSkipPruneFromEnv();
+
+  // A snapshot step allowed to outlive the whole attempt is a child that keeps running after
+  // the parent has already given up on it.
+  const snapshotDeadlineMs = Math.min(snapshotDeadlineMsRaw, attemptDeadlineMs);
 
   return {
     enabled: hasCreds && !killed,
@@ -1138,6 +1160,12 @@ export async function performR2ColdSnapshot(
     abortSignal: deps.abortSignal ?? attemptController.signal,
   };
   let uploadId: string | undefined;
+  // Held so the failure path can still recover an upload id that was created but not yet
+  // ASSIGNED when the attempt deadline fired.  Without it, a deadline landing while
+  // CreateMultipartUpload is in flight leaves `uploadId` undefined, the cleanup skips the
+  // abort, and the create can still land server-side — an orphaned multipart upload nobody
+  // will ever complete (flagged in review of PR #3204).
+  let createPromise: Promise<string> | undefined;
 
   try {
     return await withSnapshotDeadline(async (): Promise<R2ColdSnapshotRunResult> => {
@@ -1149,9 +1177,16 @@ export async function performR2ColdSnapshot(
     // never converges (see the header note; production hung 27 attempts this way).
     // `VACUUM INTO` in a child process takes ONE read snapshot and cannot be restarted.
     const snapshotDeadlineMs = deps.snapshotDeadlineMs ?? cfg.snapshotDeadlineMs;
+    // Child deadlines draw down the SHARED attempt budget rather than each starting a fresh
+    // full-size timer.  A child handed 45 minutes when only 3 remain outlives the parent that
+    // is already reporting failure, and keeps a multi-GB VACUUM running against a job whose
+    // lease has moved on (flagged in review of PR #3204).
+    const remainingAttemptMs = (): number =>
+      Math.max(1_000, attemptDeadlineMs - (Date.now() - startedAt));
+    const childDeadlineMs = (): number => Math.min(snapshotDeadlineMs, remainingAttemptMs());
     const snapshotStartedAt = Date.now();
     const backupImpl =
-      deps.backupImpl ?? ((dest: string) => runVacuumIntoSnapshot(databasePath(), dest, snapshotDeadlineMs));
+      deps.backupImpl ?? ((dest: string) => runVacuumIntoSnapshot(databasePath(), dest, childDeadlineMs()));
     const backupOutput = await withSnapshotDeadline(
       () => Promise.resolve(backupImpl(tempPath)),
       snapshotDeadlineMs,
@@ -1168,7 +1203,7 @@ export async function performR2ColdSnapshot(
       reported ??
       (await (deps.verifyImpl ??
         ((dest: string) =>
-          runSnapshotVerification(dest, databasePath(), snapshotDeadlineMs)))(tempPath));
+          runSnapshotVerification(dest, databasePath(), childDeadlineMs())))(tempPath));
     const verdict = assessSnapshotVerification(verification);
     if (!verdict.ok) {
       throw new Error(`snapshot_verification_failed: ${verdict.reason ?? "unknown"}`);
@@ -1182,7 +1217,8 @@ export async function performR2ColdSnapshot(
       snapshotMs,
     });
 
-    uploadId = await createMultipartUpload(cfg, key, runDeps);
+    createPromise = createMultipartUpload(cfg, key, runDeps);
+    uploadId = await createPromise;
     const { completedParts, compressedBytes } = await uploadGzippedParts(
       cfg,
       key,
@@ -1266,7 +1302,22 @@ export async function performR2ColdSnapshot(
     const message = describeRequestError(err);
     // Cleanup must NOT inherit the attempt's abort signal — if the deadline is what fired,
     // an aborted signal would cancel the very request that releases the orphaned parts.
-    if (uploadId) await abortMultipartUpload(cfg, key, uploadId, { ...deps, abortSignal: undefined });
+    const cleanupDeps: R2ColdSnapshotDeps = { ...deps, abortSignal: undefined };
+    // Settle the create first: the deadline can fire between R2 minting an upload id and this
+    // scope assigning it, and an id we never learned is an id we can never abort.  BOUNDED,
+    // because the reason we are in this catch may be that the create never settles at all —
+    // an unbounded wait here would hang the cleanup for exactly as long as the hang we just
+    // escaped, inside the scheduler tick.  If it does not settle in time we lose the id and
+    // R2 reaps the orphan on its own; that is the acceptable end of this trade.
+    if (!uploadId && createPromise) {
+      uploadId = await Promise.race([
+        createPromise.catch(() => undefined),
+        new Promise<undefined>((resolve) =>
+          setTimeout(() => resolve(undefined), R2_COLD_SNAPSHOT_CLEANUP_SETTLE_MS),
+        ),
+      ]);
+    }
+    if (uploadId) await abortMultipartUpload(cfg, key, uploadId, cleanupDeps);
     try {
       setInternalSetting(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY, {
         key,
@@ -1356,7 +1407,7 @@ export async function drainR2ColdSnapshotJobs(
   // concurrent ~10 GB backup + racing upload of the same key.
   const jobs = claimDueJobs(R2_COLD_SNAPSHOT_JOB_TYPE, {
     limit: 1,
-    leaseMs: 120 * 60_000,
+    leaseMs: R2_COLD_SNAPSHOT_LEASE_MS,
     claimant,
     now: new Date(now),
   });

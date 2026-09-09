@@ -16,9 +16,23 @@
 # therefore unrunnable as written, which is part of why the continuous tier has exactly one
 # recorded restore proof (2026-08-18) and none since.
 #
-# WHERE TO RUN IT: on the Coolify box (fleet-hetzner-nbg1).  The credentials are injected
-# into the running Litestream process from Infisical; they are not in any file.  Export them
-# into this shell from a trusted source, or run the drill from inside the app container.
+# WHERE TO RUN IT: on the HOST (fleet-hetzner-nbg1), NOT inside the app container.  Verified
+# 2026-09-09: the host has `litestream` 0.5.16 at /usr/local/bin and `sqlite3` 3.46.1 at
+# /usr/bin, both of which this script needs.  The runtime image has NEITHER — it ships no
+# `sqlite3` CLI at all, and `coolify-prod-start.sh` downloads Litestream into
+# /app/data/.bin and exports that PATH only for PID 1's process tree, which a later
+# `docker exec` does not inherit.  A container invocation therefore dies at the
+# `command -v litestream` guard, or at the first `sqlite3` call if PATH is patched by hand.
+#
+# CREDENTIALS: injected into the running Litestream process from Infisical; they are in no
+# file and are NOT inherited by a fresh shell.  Export AWS_S3_BUCKET_NAME / AWS_S3_ENDPOINT /
+# AWS_REGION / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY into this shell from a trusted
+# source before running.  Do not echo them, and do not write them to a file that outlives
+# the drill.
+#
+# For the R2 cold-archive tier the equivalent drill is
+# scripts/ops/verify-cold-snapshot-restore.mjs, which uses the bundled better-sqlite3 and so
+# needs no `sqlite3` CLI — that one DOES run inside the container.
 #
 # Usage:
 #   bash scripts/litestream-restore-drill.sh
@@ -117,7 +131,9 @@ PASS=true
 
 for table in "${TABLES[@]}"; do
   RESTORED_COUNT=$(sqlite3 "${SCRATCH_DB}" "SELECT count(*) FROM ${table};" 2>/dev/null || echo "N/A")
-  LIVE_COUNT=$(sqlite3 "file:${LIVE_DB}?mode=ro" "SELECT count(*) FROM ${table};" 2>/dev/null || echo "N/A")
+  # `-readonly` plus a mode=ro URI: the live DB is real trading state and this drill must not
+  # be able to write to it even by accident.
+  LIVE_COUNT=$(sqlite3 -readonly "file:${LIVE_DB}?mode=ro" "SELECT count(*) FROM ${table};" 2>/dev/null || echo "N/A")
   if [[ "${RESTORED_COUNT}" == "N/A" ]]; then
     echo "  ${table}: MISSING from the restored copy"
     PASS=false
@@ -128,14 +144,18 @@ for table in "${TABLES[@]}"; do
     PASS=false
     continue
   fi
-  # Exact equality is deliberately NOT required: the live DB is written continuously, so the
-  # replica legitimately trails it.  A NEGATIVE delta is the interesting case.
+  # The delta is INFORMATIONAL only, in either direction.  The pass/fail assertion is
+  # non-emptiness (above), exactly as docs/backup-policy.md states — not row equality.
+  # A positive delta is the live DB having moved on since the replica point.  A NEGATIVE
+  # delta is also legitimate: rows are deleted between the two reads in normal operation
+  # (`deleteInternalSetting()` prunes `settings`, retention sweeps prune others), so a
+  # correct restore can hold more rows than live.  Failing on that would reject good
+  # backups (flagged in review of PR #3204).
   if [[ "${LIVE_COUNT}" != "N/A" ]]; then
     DELTA=$((LIVE_COUNT - RESTORED_COUNT))
-    echo "  ${table}: restored=${RESTORED_COUNT} live=${LIVE_COUNT} delta=${DELTA}"
+    echo "  ${table}: restored=${RESTORED_COUNT} live=${LIVE_COUNT} delta=${DELTA} (informational)"
     if [[ ${DELTA} -lt 0 ]]; then
-      echo "    WARNING: restored has MORE rows than live — investigate before trusting this."
-      PASS=false
+      echo "    NOTE: restored holds more rows than live — expected where rows are deleted."
     fi
   else
     echo "  ${table}: restored=${RESTORED_COUNT} live=N/A"

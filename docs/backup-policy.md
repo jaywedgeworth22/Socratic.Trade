@@ -209,6 +209,25 @@ the 2 h job lease expired.  As of 2026-09-09 the whole attempt is bounded
 (`R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN`, default 90 min) and the deadline **aborts in-flight
 S3 requests** rather than abandoning them.
 
+Three properties that make that bound actually hold, each of which was wrong in the first
+draft of the change and was caught in review:
+
+- **The deadline is clamped below the job lease** (`R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS`
+  = lease − 15 min), not merely documented as "must stay under it".  An env of 120 min would
+  otherwise be honoured, and an attempt still running when the next drain reclaims the job
+  starts a second multi-GB snapshot, sweeps the first attempt's temp file out from under its
+  open fd, and races an upload to the same weekly key.
+- **Child deadlines draw down the shared attempt budget** rather than each starting a fresh
+  full-size timer.  A child handed 45 minutes when 3 remain outlives the parent that is
+  already reporting failure.
+- **The failure path can still abort an upload it never learned the id of.**  The deadline
+  can fire between R2 minting an upload id and the calling scope assigning it; cleanup waits
+  (briefly, and bounded — the hang may be the create itself) for that to settle.
+
+**A timeout that deletes its output and reports success is worse than no timeout.**  See
+§8.1: the host tier now does exactly this.  Bounding without alerting converts a loud hang
+into a quiet nothing, which is strictly harder to notice.
+
 ---
 
 ## 8.  Known gaps and owner decisions — as of 2026-09-09
@@ -299,8 +318,17 @@ litestream restore -config /app/litestream.coolify.yml \
 sqlite3 <scratch> 'PRAGMA integrity_check;'
 ```
 
-Add `-timestamp <ISO8601>` for point-in-time recovery inside the 7-day window.  Credentials
-come from Infisical via the running Litestream process; do not write them to a file.
+Add `-timestamp <ISO8601>` for point-in-time recovery inside the 7-day window.
+
+**Run it on the HOST, not inside the app container.**  Verified 2026-09-09: the host has
+`litestream` 0.5.16 and `sqlite3` 3.46.1; the runtime image has **neither** — it ships no
+`sqlite3` CLI, and `coolify-prod-start.sh` puts Litestream on PID 1's `PATH` only, which a
+later `docker exec` does not inherit.  Credentials come from Infisical via the running
+Litestream process and are **not** inherited by a fresh shell: export them into the drill
+shell from a trusted source, never into a file that outlives the drill.
+
+The R2 cold-archive drill is the opposite — `verify-cold-snapshot-restore.mjs` uses the
+bundled `better-sqlite3`, needs no `sqlite3` CLI, and does run inside the container.
 
 ### From tier 3 (R2, weekly cold archive)
 

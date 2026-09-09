@@ -180,7 +180,7 @@ current machine and described the replica as R2, which it has not been since #25
 
 ```
 npx tsc --noEmit                              # clean
-npx vitest run test/r2-cold-snapshot.test.ts  # 59 passed (19 new)
+npx vitest run test/r2-cold-snapshot.test.ts  # 64 passed (24 new)
 npx eslint src/lib/r2-cold-snapshot.ts test/r2-cold-snapshot.test.ts   # clean
 ```
 
@@ -234,6 +234,39 @@ The drill also earned its keep immediately by finding a bug in the brand-new scr
 restored file read-only still leaves `-shm` and `-wal` sidecars behind, which the cleanup missed.
 A stray sidecar next to a future scratch file is a corruption hazard, not litter.  Fixed in the
 same lane.
+
+## Review round 1 — five findings, all real, all fixed
+
+`sentry` and `chatgpt-codex-connector` between them found five defects in the first push.
+None was a false positive; three were in code this lane had just written, which is a useful
+reminder that "bound the thing" is easy to write and easy to get subtly wrong.
+
+1. **Orphaned multipart upload race** (`sentry`, MEDIUM).  If the attempt deadline fired while
+   `CreateMultipartUpload` was in flight, `uploadId` was still `undefined` when the catch ran,
+   so the abort was skipped — while the create could still land server-side.  The failure path
+   now holds the create promise and waits for it to settle before aborting.  That wait is
+   **bounded** (10 s): the reason we are in the catch may be that the create never settles,
+   and an unbounded wait there would reproduce, inside the cleanup, exactly the hang it was
+   escaping.  The first version of this fix did hang — the new upload-deadline test caught it.
+2. **Child deadline did not draw down the attempt budget** (`sentry`, LOW).  The verification
+   child was handed a fresh 45 minutes regardless of how much of the 90-minute attempt was
+   left, so it could outlive the parent that had already reported failure.  Both children now
+   get `min(snapshotDeadline, remaining attempt budget)`.
+3. **Attempt deadline was not enforced below the job lease** (`codex`, P2).  An env of 120 min
+   or more was accepted even though the drain claims a 120-minute lease — the precise overlap
+   the deadline exists to prevent.  Now clamped to lease − 15 min, and the snapshot-step
+   deadline is additionally clamped to the attempt deadline.  A comment saying a value "must
+   stay under" a limit is not an enforcement mechanism.
+4. **The documented container invocation of the Litestream drill was not runnable**
+   (`codex`, P2).  Correct: the runtime image ships no `sqlite3` CLI, and Litestream is on
+   PID 1's `PATH` only.  Verified on the host and corrected in both the script header and
+   `docs/backup-policy.md` §9 — that drill runs on the **host**; the R2 drill, which uses the
+   bundled `better-sqlite3`, is the one that runs in the container.
+5. **A negative row delta failed the drill** (`codex`, P2).  The sharpest of the five: it
+   contradicted this lane's own stated policy.  Rows are legitimately deleted between the
+   replica point and the live read (`deleteInternalSetting()` prunes `settings`), so a correct
+   restore can hold *more* rows than live.  The delta is now informational in both directions;
+   pass/fail is non-emptiness plus integrity, exactly as the policy says.
 
 ## Follow-ups (owner)
 

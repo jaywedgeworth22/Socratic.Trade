@@ -33,6 +33,9 @@ import {
   selectColdSnapshotsToPrune,
   withSnapshotDeadline,
   R2_ARCHIVE_MAX_AGE_SECONDS,
+  R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS,
+  R2_COLD_SNAPSHOT_LEASE_MS,
+  R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS,
   R2_COLD_SNAPSHOT_MAX_RETAIN,
   R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS,
   R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES,
@@ -58,6 +61,7 @@ const CRED_ENVS = [
   "AWS_R2_HISTORIC_SECRET_ACCESS_KEY",
   "R2_COLD_SNAPSHOT_ENABLED",
   "R2_COLD_SNAPSHOT_RETAIN",
+  "R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN",
   "R2_ARCHIVE_KEEP_GENERATIONS",
   "R2_COLD_SNAPSHOT_PART_MB",
   "R2_COLD_SNAPSHOT_SKIP_PRUNE",
@@ -1124,5 +1128,85 @@ describe("drainR2ColdSnapshotJobs — verification gate and upload resilience", 
     expect(result.lastRun?.status).toBe("error");
     expect(result.lastRun?.reason).toContain("attempt_deadline_exceeded");
     expect(existsSync(captured.path!)).toBe(false);
+  }, 20_000);
+});
+
+// ── Deadline clamps: an attempt must never be allowed to outlive its own lease ───────
+
+describe("attempt deadline clamping", () => {
+  it("clamps R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN below the 2h job lease", () => {
+    setCreds();
+    // The lease `drainR2ColdSnapshotJobs` claims with is 120 min.  An attempt allowed to run
+    // to or past it is the exact overlap the deadline exists to prevent: the next drain
+    // reclaims the job, starts a second multi-GB snapshot, sweeps the first attempt's temp
+    // file out from under its open fd, and races an upload to the same weekly key.
+    process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN = "180";
+    expect(loadR2ColdSnapshotConfig().attemptDeadlineMs).toBe(R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS);
+    expect(R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS).toBeLessThan(R2_COLD_SNAPSHOT_LEASE_MS);
+  });
+
+  it("honours an attempt deadline that is already under the ceiling", () => {
+    setCreds();
+    process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN = "30";
+    expect(loadR2ColdSnapshotConfig().attemptDeadlineMs).toBe(30 * 60_000);
+  });
+
+  it("never lets the snapshot-step deadline exceed the whole-attempt deadline", () => {
+    setCreds();
+    // A child handed a longer budget than its parent keeps running after the parent has
+    // already reported failure.
+    process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN = "20";
+    process.env.R2_COLD_SNAPSHOT_DEADLINE_MIN = "45";
+    const cfg = loadR2ColdSnapshotConfig();
+    expect(cfg.attemptDeadlineMs).toBe(20 * 60_000);
+    expect(cfg.snapshotDeadlineMs).toBe(20 * 60_000);
+  });
+
+  it("defaults stay inside the ceiling", () => {
+    setCreds();
+    const cfg = loadR2ColdSnapshotConfig();
+    expect(cfg.attemptDeadlineMs).toBe(R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS);
+    expect(cfg.attemptDeadlineMs).toBeLessThanOrEqual(R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS);
+    expect(cfg.snapshotDeadlineMs).toBeLessThanOrEqual(cfg.attemptDeadlineMs);
+  });
+});
+
+describe("multipart cleanup race", () => {
+  it("aborts an upload whose id was minted but not yet assigned when the deadline fired", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    // CreateMultipartUpload resolves AFTER the attempt deadline has already fired, so the
+    // catch block sees `uploadId === undefined` — the exact shape that used to orphan a
+    // multipart upload in R2 forever.
+    const aborted: string[] = [];
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("uploads=")) {
+        await new Promise((r) => setTimeout(r, 400));
+        return new Response(
+          "<InitiateMultipartUploadResult><UploadId>LATE123</UploadId></InitiateMultipartUploadResult>",
+          { status: 200 },
+        );
+      }
+      if ((init?.method ?? "GET") === "DELETE" && url.includes("uploadId=")) {
+        aborted.push(/uploadId=([^&]+)/.exec(url)?.[1] ?? "");
+        return new Response(null, { status: 204 });
+      }
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+
+    const captured: { path?: string; content?: Buffer } = {};
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+      attemptDeadlineMs: 150,
+    });
+
+    expect(result.lastRun?.status).toBe("error");
+    expect(aborted).toEqual(["LATE123"]);
   }, 20_000);
 });

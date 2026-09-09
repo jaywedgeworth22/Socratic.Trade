@@ -118,8 +118,27 @@ better-sqlite3, `PRAGMA integrity_check` = **`ok`**, and every key table populat
 broken.**  The drill also surfaced a real bug in the new script — opening the restored file
 read-only leaves `-shm`/`-wal` sidecars behind — now fixed in the same lane.
 
-Verification: `npx tsc --noEmit` clean, `npx vitest run test/r2-cold-snapshot.test.ts` 59 passed
-(19 new), `npx eslint` clean on both touched files.  Production stayed read-only: no restart, no
+Verification: `npx tsc --noEmit` clean, `npx vitest run test/r2-cold-snapshot.test.ts` 64 passed
+(24 new), `npx eslint` clean on both touched files.
+
+**Review round 1 — five findings from `sentry` and `chatgpt-codex-connector`, all real, all
+fixed in one batch.**  Three were in code this lane had just written.  (1) Orphaned multipart
+upload: a deadline firing while `CreateMultipartUpload` was in flight left `uploadId`
+undefined, so cleanup skipped the abort while the create could still land — the failure path
+now settles the create promise first, **bounded** at 10 s because the hang may be the create
+itself (the first version of this fix hung, and the new upload-deadline test caught it).
+(2) Child deadlines started a fresh 45-minute timer regardless of remaining attempt budget, so
+a child could outlive the parent already reporting failure — both children now get
+`min(snapshotDeadline, remaining)`.  (3) `R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN` was not
+enforced below the 120-minute job lease, the exact overlap the deadline exists to prevent —
+now clamped to lease − 15 min, with the snapshot-step deadline clamped to the attempt
+deadline.  (4) The documented container invocation of the Litestream drill was not runnable:
+the runtime image ships no `sqlite3` CLI and Litestream sits on PID 1's `PATH` only —
+corrected to run on the host (the R2 drill, using bundled `better-sqlite3`, is the one that
+runs in the container).  (5) Sharpest of the five: a negative row delta failed the drill,
+contradicting this lane's own policy — rows are legitimately deleted between the replica point
+and the live read, so the delta is now informational in both directions and pass/fail is
+non-emptiness plus integrity.  64 tests passing (24 new); `tsc` and `eslint` clean.  Production stayed read-only: no restart, no
 deploy, no env change, no host script edit, no object deleted anywhere.
 
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
