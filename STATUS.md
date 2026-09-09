@@ -53,6 +53,14 @@ events during the measured stall burst; 09-07 had *more* lock events than 09-08 
 less pinning; and a busy-wait sleeps rather than burning the 107% CPU observed).  No timeout
 widened — that shipped separately in PR #3201.  Rollout:
 `docs/rollouts/2026-09-09-fts-mirror-nonconvergence.md`.
+## 2026-09-09 GROK — PR #3204 fixer tip (multipart retry, drill cleanup, fail-closed counts)
+
+Codex P1+P2 on `claude/backup-methodology`.  CompleteMultipartUpload 200+`<Error>` bodies now
+retry inside `withS3Retry`.  The Litestream restore drill installs an EXIT cleanup trap and
+no longer pipes `integrity_check` through `head`.  Unreadable live `COUNT(*)` (null) fails
+closed as `snapshot_live_count_unreadable`.  Full AGENTS.md gate recorded in the rollout.
+Deployer squash AM stays armed; this lane does not merge.  Extra-ship no.
+
 ## 2026-09-09 CLAUDE — Backup methodology: policy, archive depth, whole-attempt bounds, proven restore
 
 Branch `claude/backup-methodology`, worktree `~/apps/trading-claude-backup`.  Rollout:

@@ -53,6 +53,17 @@ SCRATCH_DIR="${SCRATCH_DIR:-/data/scratch}"
 SCRATCH_DB="${SCRATCH_DIR}/app.db.restore-drill-$(date -u +%Y%m%dT%H%M%SZ)"
 TIMESTAMP_FLAG=""
 
+# Always drop the scratch copy, including when `set -e` fires mid-script.
+# `PRAGMA integrity_check` can emit many rows; piping it to `head -1` under
+# `pipefail` used to SIGPIPE sqlite3 and skip the explicit cleanup below.
+cleanup_scratch() {
+  if [[ -n "${SCRATCH_DB:-}" && -e "${SCRATCH_DB}" ]]; then
+    rm -f "${SCRATCH_DB}"
+    echo "  Removed: ${SCRATCH_DB}"
+  fi
+}
+trap cleanup_scratch EXIT
+
 if [[ -n "${RESTORE_PITR_TIMESTAMP:-}" ]]; then
   TIMESTAMP_FLAG="-timestamp ${RESTORE_PITR_TIMESTAMP}"
   echo "PITR mode: restoring to ${RESTORE_PITR_TIMESTAMP}"
@@ -113,11 +124,13 @@ echo "Restore complete: ${SCRATCH_DB} ($(stat -c %s "${SCRATCH_DB}") bytes)"
 
 echo ""
 echo "--- Step 4: integrity check ---"
-INTEGRITY=$(sqlite3 "${SCRATCH_DB}" 'PRAGMA integrity_check;' | head -1)
+# Do not pipe through `head`: a multi-row integrity_check + pipefail SIGPIPEs
+# sqlite3 and, without the EXIT trap, would skip cleanup.
+INTEGRITY=$(sqlite3 "${SCRATCH_DB}" 'PRAGMA integrity_check;')
+INTEGRITY="${INTEGRITY%%$'\n'*}"
 echo "  Result: ${INTEGRITY}"
 if [[ "${INTEGRITY}" != "ok" ]]; then
   echo "  FAILED: restored database is not structurally sound." >&2
-  rm -f "${SCRATCH_DB}"
   exit 1
 fi
 
@@ -164,8 +177,8 @@ done
 
 echo ""
 echo "--- Step 6: cleanup ---"
-rm -f "${SCRATCH_DB}"
-echo "  Removed: ${SCRATCH_DB}"
+cleanup_scratch
+trap - EXIT
 
 echo ""
 echo "=== Drill complete ==="

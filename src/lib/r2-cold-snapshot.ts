@@ -651,11 +651,17 @@ async function completeMultipartUpload(
     `<CompleteMultipartUpload>` +
     parts.map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join("") +
     `</CompleteMultipartUpload>`;
-  const res = await withS3Retry("CompleteMultipartUpload", deps, () =>
-    s3Request(cfg, "POST", key, { uploadId }, Buffer.from(xml, "utf8"), deps, CONTROL_TIMEOUT_MS),
-  );
-  // S3 can return 200 with an <Error> body on complete — treat that as failure too.
-  if (!res.ok || res.body.includes("<Error>")) {
+  const res = await withS3Retry("CompleteMultipartUpload", deps, async () => {
+    const r = await s3Request(cfg, "POST", key, { uploadId }, Buffer.from(xml, "utf8"), deps, CONTROL_TIMEOUT_MS);
+    // S3 can return 200 OK with an <Error> body on complete.  Classify that
+    // INSIDE the retry callback so a transient embedded error is retried
+    // instead of discarding the whole multi-gigabyte attempt.
+    if (r.body.includes("<Error>")) {
+      throw new Error(`CompleteMultipartUpload embedded error HTTP ${r.status}: ${r.body.slice(0, 200)}`);
+    }
+    return r;
+  });
+  if (!res.ok) {
     throw new Error(`CompleteMultipartUpload HTTP ${res.status}: ${res.body.slice(0, 200)}`);
   }
 }
@@ -998,7 +1004,8 @@ export function parseSnapshotVerification(raw: string): R2ColdSnapshotVerificati
  *
  * Two independent assertions, both required:
  *  1. SQLite's own `PRAGMA integrity_check` on the copy says `ok`.
- *  2. Every key table that had rows in the LIVE database still has rows in the copy.
+ *  2. Every key table whose live COUNT(*) was readable and > 0 still has rows in
+ *     the copy.  An unreadable live count (null) fails closed -- it is not a skip.
  *
  * (2) matters because integrity_check answers "is this a well-formed SQLite file", not
  * "does it still contain the trading state".  A structurally perfect empty database
@@ -1014,11 +1021,21 @@ export function assessSnapshotVerification(
   if (verification.integrity !== "ok") {
     return { ok: false, reason: `snapshot_integrity_check=${verification.integrity ?? "unknown"}` };
   }
+  const unreadable: string[] = [];
   const empty: string[] = [];
   for (const [table, liveCount] of Object.entries(verification.live ?? {})) {
-    if (typeof liveCount !== "number" || liveCount <= 0) continue; // absent live => nothing to assert
+    // null means the child's COUNT(*) threw (lock, missing table, schema error).
+    // That is not "absent/empty live => nothing to assert" — fail closed.
+    if (typeof liveCount !== "number") {
+      unreadable.push(table);
+      continue;
+    }
+    if (liveCount <= 0) continue; // empty live => nothing to assert
     const copied = verification.tables?.[table];
     if (typeof copied !== "number" || copied <= 0) empty.push(table);
+  }
+  if (unreadable.length > 0) {
+    return { ok: false, reason: `snapshot_live_count_unreadable=${unreadable.join(",")}` };
   }
   if (empty.length > 0) {
     return { ok: false, reason: `snapshot_key_tables_empty=${empty.join(",")}` };

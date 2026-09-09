@@ -928,9 +928,16 @@ describe("assessSnapshotVerification", () => {
     ).toEqual({ ok: true });
   });
 
-  it("asserts nothing about a table that is absent or empty in the LIVE database", () => {
+  it("fails closed when a live COUNT(*) could not be read", () => {
+    // null is the child's catch-all for lock/schema/"no such table" -- not "absent".
     expect(
       assessSnapshotVerification(pass({ tables: { llm_usage: null }, live: { llm_usage: null } })),
+    ).toEqual({ ok: false, reason: "snapshot_live_count_unreadable=llm_usage" });
+  });
+
+  it("asserts nothing about a table that is empty in the LIVE database", () => {
+    expect(
+      assessSnapshotVerification(pass({ tables: { llm_usage: 0 }, live: { llm_usage: 0 } })),
     ).toEqual({ ok: true });
   });
 });
@@ -1071,6 +1078,38 @@ describe("drainR2ColdSnapshotJobs — verification gate and upload resilience", 
     });
 
     expect(part1Calls).toBeGreaterThan(1);
+    expect(result.lastRun?.status).toBe("ok");
+  });
+
+  it("retries a 200 OK CompleteMultipartUpload that embeds an <Error> body", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    let completeCalls = 0;
+    const inner = mockS3({});
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "POST" && url.includes("uploadId=") && !url.includes("uploads=")) {
+        completeCalls += 1;
+        if (completeCalls === 1) {
+          return new Response("<Error><Code>InternalError</Code></Error>", { status: 200 });
+        }
+      }
+      return inner.fetchImpl(input as RequestInfo, init);
+    }) as typeof fetch;
+
+    const captured: { path?: string; content?: Buffer } = {};
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+      retryDelayMs: 0,
+    });
+
+    expect(completeCalls).toBeGreaterThan(1);
     expect(result.lastRun?.status).toBe("ok");
   });
 

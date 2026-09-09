@@ -186,7 +186,8 @@ npx eslint src/lib/r2-cold-snapshot.ts test/r2-cold-snapshot.test.ts   # clean
 
 New tests cover: retention raising as well as lowering and the `MAX_RETAIN` ceiling; the
 verification verdict in all four shapes (pass, missing report, bad integrity, structurally sound
-but empty table); no-assertion-on-absent-live-table; unparseable child output; the real
+but empty table); fail-closed on unreadable live COUNT(*) (null); skip only empty live
+(0); unparseable child output; the real
 child-process `VACUUM INTO` reporting integrity plus live-and-copy row counts; the standalone
 verifier rejecting a non-database; `describeRequestError` unwrapping a cause chain; and, on the
 drain path, that a failed verification uploads **zero bytes**, that a transient part failure is
