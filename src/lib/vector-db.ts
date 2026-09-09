@@ -1628,14 +1628,19 @@ async function alertRagConnectionFailure(
   operation: string,
   message: string,
   leaseGuard?: VectorStoreLeaseGuard,
-  activeProvider?: "voyage" | "openrouter" | "siliconflow"
+  activeProvider?: "voyage" | "openrouter" | "siliconflow",
+  /** Raw thrown value — used to classify Pinecone HTTP errors by class before message text. */
+  rawError?: unknown
 ): Promise<void> {
   try {
     const assertActive = leaseGuard ? () => assertVectorStoreLease(leaseGuard) : undefined;
     assertVectorStoreLease(leaseGuard);
     // Transport-blip warnings arm a short cooldown on a `:transient` key so they cannot suppress a
     // later error-level / hard capture on the same lane (parity with alertConnectionFailure).
-    const transportBlipForCooldown = isTransientNetworkErrorText(message);
+    const transportBlipForCooldown =
+      rawError !== undefined
+        ? isTransientNetworkError(rawError)
+        : isTransientNetworkErrorText(message);
     let transientWarningCooldown = false;
     // Hoisted out of the `if` so the cooldown write below can anchor the suppression at the streak
     // deadline rather than at `now` (Codex P2 on #3195): when the first warning fires mid-streak —
@@ -1719,7 +1724,10 @@ async function alertRagConnectionFailure(
       // soft-stamp the health row and silence a sustained outage).  Short blips stay `warning`;
       // once the lane's consecutive hard-failure run has lasted `transientEscalationWindowMs`,
       // escalate to `error` so a persistent RAG transport outage still reaches PagerDuty.
-      const transportBlip = isTransientNetworkErrorText(message);
+      const transportBlip =
+        rawError !== undefined
+          ? isTransientNetworkError(rawError)
+          : isTransientNetworkErrorText(message);
       // A transport blip that has outlasted the escalation window is an OUTAGE — level `error`
       // AND tagged `hard`, matching db-health where an escalated blip streak stops being
       // "transient-network" (Codex P2 on #3195). One blip-window computation drives both so the
@@ -2045,7 +2053,7 @@ async function withRagApiHealth<T>(
     markRagSentryCaptured(error);
     const alert = wuExhausted
       ? tripPineconeWuBreaker({ message: rawMessage, operation, userId: targetUserId }).then(() => undefined)
-      : alertRagConnectionFailure(loggedService, source, targetUserId, operation, rawMessage, leaseGuard, healthLane?.provider);
+      : alertRagConnectionFailure(loggedService, source, targetUserId, operation, rawMessage, leaseGuard, healthLane?.provider, error);
     if (leaseGuard) {
       await alert;
       assertVectorStoreLease(leaseGuard);

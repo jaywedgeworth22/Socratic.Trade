@@ -64,6 +64,28 @@ const TRANSIENT_NETWORK_TEXT =
   /fetch failed|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT|other side closed|socket hang up|network socket disconnected|\bECONNRESET\b|\bECONNREFUSED\b|\bECONNABORTED\b|\bETIMEDOUT\b|\bENOTFOUND\b|\bEAI_AGAIN\b|\bEPIPE\b|\bEHOSTUNREACH\b|\bENETUNREACH\b/i;
 
 /**
+ * Pinecone SDK 8.x HTTP response errors drop `HTTP ###` from `.message` (only the response body
+ * text remains). Their class name is the durable status signal — treat them as hard before any
+ * body-token scan (Codex P2 on #3195). `PineconeConnectionError` is intentionally absent: that
+ * is the transport wrapper whose nested `fetch failed` must stay transient.
+ */
+const PINECONE_HTTP_RESPONSE_ERROR_NAME =
+  /^Pinecone(?:BadRequest|Authorization|NotFound|Conflict|UnprocessableEntity|InternalServer|Unavailable|NotImplemented|MethodNotAllowed|UnmappedHttp|Request)Error$/;
+
+export function isPineconeHttpResponseError(error: unknown): boolean {
+  let cur: unknown = error;
+  for (let depth = 0; depth < 8 && cur != null; depth++) {
+    const name = (cur as { name?: string } | null)?.name;
+    if (name && PINECONE_HTTP_RESPONSE_ERROR_NAME.test(name)) return true;
+    cur =
+      cur && typeof cur === "object" && "cause" in cur
+        ? (cur as { cause: unknown }).cause
+        : undefined;
+  }
+  return false;
+}
+
+/**
  * Same classification as `isTransientNetworkError`, for a message that is already a string.
  *
  * Explicit HTTP-status errors are rejected first: health callers include provider response bodies
@@ -71,6 +93,7 @@ const TRANSIENT_NETWORK_TEXT =
  * `ECONNRESET` still means the request reached the provider — not a client transport blip.
  * RAG embed/rerank formats omit the "HTTP" prefix (`Embedding API failed …: ${status} ${body}`);
  * those are matched by name so a Node `fetch failed` / `ECONNREFUSED …:443` stays transient.
+ * Flattened Pinecone HTTP error class names (from `describeNetworkError`) are rejected the same way.
  */
 export function isTransientNetworkErrorText(text: string | null | undefined): boolean {
   if (!text) return false;
@@ -79,12 +102,22 @@ export function isTransientNetworkErrorText(text: string | null | undefined): bo
   // RAG embed/rerank only: `Embedding API failed …: ${status} ${body}` (no "HTTP" prefix).
   // Deliberately narrow — a bare `fetch failed` / `ECONNREFUSED …:443` must stay transient.
   if (/\b(?:Embedding|Rerank)\s+API\s+failed\b[^:\n]{0,120}:\s*[1-5]\d\d\b/i.test(s)) return false;
+  // PineconeBadRequestError / … — status stripped from .message; class name is the signal.
+  if (
+    /\bPinecone(?:BadRequest|Authorization|NotFound|Conflict|UnprocessableEntity|InternalServer|Unavailable|NotImplemented|MethodNotAllowed|UnmappedHttp|Request)Error\b/.test(
+      s
+    )
+  ) {
+    return false;
+  }
   return TRANSIENT_NETWORK_TEXT.test(s);
 }
 
 /** Dead socket / DNS / reset — retry once, then count as a hard transport failure. */
 export function isTransientNetworkError(error: unknown): boolean {
   if (isAbortOrTimeoutError(error)) return false;
+  // Classify raw Pinecone HTTP errors by class before flattening (status not on .message).
+  if (isPineconeHttpResponseError(error)) return false;
   return isTransientNetworkErrorText(errorText(error));
 }
 

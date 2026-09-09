@@ -452,7 +452,20 @@ describe("blip vs outage at the alert gate", () => {
     expect(ageMs).toBeGreaterThan(30 * 60_000);
   });
 
-  it("classifies PineconeConnectionError when nested cause is fetch failed", async () => {
+  it("keeps PineconeBadRequestError hard even when body mentions ECONNRESET", async () => {
+    const { isTransientNetworkError, isTransientNetworkErrorText, isPineconeHttpResponseError } =
+      await import("../src/lib/network-errors");
+    const err = new Error("Index dimension mismatch; prior attempt saw ECONNRESET in logs");
+    err.name = "PineconeBadRequestError";
+    expect(isPineconeHttpResponseError(err)).toBe(true);
+    expect(isTransientNetworkError(err)).toBe(false);
+    // Flattened describeNetworkError form used by ragErrorMessage / health rows.
+    expect(
+      isTransientNetworkErrorText(`PineconeBadRequestError Index dimension mismatch; prior attempt saw ECONNRESET in logs`)
+    ).toBe(false);
+  });
+
+    it("classifies PineconeConnectionError when nested cause is fetch failed", async () => {
     const { isTransientNetworkError, describeNetworkError } = await import("../src/lib/network-errors");
     const inner = new TypeError("fetch failed");
     (inner as NodeJS.ErrnoException).code = "UND_ERR_SOCKET";
