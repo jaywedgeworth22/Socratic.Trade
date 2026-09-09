@@ -320,9 +320,7 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
   const isTest = process.env.NODE_ENV === "test";
   const credentialPool: string[] = [];
   for (const model of MODEL_ROTATION_POOL) {
-    // Gate on the SAME credential resolveLlmEndpoint uses to serve each model — the OpenRouter key
-    // in production (an OpenRouter-only account must get the full curated pool, not an empty one),
-    // the native family under NODE_ENV=test (keeps native-key fixtures working). #1703 follow-up.
+    // Match execution: prefer this user's OpenRouter key, then the native family credential.
     if (resolveLlmCredential(modelCredentialService(model, userId), userId).key) credentialPool.push(model);
     else skipped.push(model);
   }

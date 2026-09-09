@@ -71,12 +71,16 @@ In progress; no passing full gate or deployment claim.
 
 - `npm ci --ignore-scripts`: registry connection resets/timeouts; stopped.
 - Independent copy of integration `node_modules` completed; one truncated Zod file was recopied from the intact source after ESLint detected its syntax error.
-- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint`: running under severe shared-Mac load; no result yet.
-- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx --no-install tsc --noEmit`: running under severe shared-Mac load; no result yet.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint`: stopped after 13 minutes under severe shared-Mac load; incomplete.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx --no-install tsc --noEmit`: stopped after 13 minutes under severe shared-Mac load; incomplete.
 - `git diff --check`: passed.
 - Live OpenRouter feed: all added catalog wire IDs verified present.
 
 Observed Mac load reached 603.  The draft branch is being published to run `.github/workflows/ci.yml` on GitHub-hosted infrastructure (lint, typecheck, tests, build in order); this is validation of unfinished work, not a completed landing or a bypass of required merge checks.
+
+Hosted CI run `34326303260`: lint passed; typecheck found a MiniMax-only option accidentally copied into the Anthropic path.  Removed that option and the unrelated family predicate from Anthropic before rerunning.  Tests/build were skipped by the failed typecheck.
+
+Actual header component browser fixture: `node /tmp/st-ui-qa-20260909/check.cjs` passed desktop paper/live and mobile paper checks, exact banner text/spacing, one-row trigger, PAPER chips, Escape dismissal, no horizontal overflow, and no page errors.  Fixture uses test accounts and does not establish production connectivity.
 
 ## Next Steps & Blockers
 

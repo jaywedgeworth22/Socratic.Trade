@@ -431,8 +431,7 @@ export class AnthropicLLM implements ChatLLM {
       }
       args.onStage?.({ stage: "thinking" });
       const baseBody = { model: this.model, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) };
-      if (this.provider === "minimax") baseBody.reasoning_split = true;
-      const requestBody = reasoningCapabilityForModel(this.model) || llmModelFamily(this.model) === "minimax"
+      const requestBody = reasoningCapabilityForModel(this.model)
         ? withLlmRequestBounds(baseBody, "anthropic-messages", {
             model: this.model,
             maxOutputTokens: 1024,

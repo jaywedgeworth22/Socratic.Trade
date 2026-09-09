@@ -285,7 +285,6 @@ export function remapOpenRouterTelemetry(provider: string, model: string | undef
       if (p === "x-ai") p = "xai";
       if (p === "meta-llama") p = "meta";
       if (p === "moonshotai") p = "moonshot";
-      if (p === "minimax") p = "minimax";
       return { provider: p, model: family ?? model.slice(slashIdx + 1) };
     }
     return { provider, model: family ?? model };
