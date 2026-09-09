@@ -166,3 +166,5 @@ Closeout validation: `git diff --check` passed; only the four documentation file
 ## Next Steps & Blockers
 
 No remaining product or release work.  This owned lane still needs a successful exact-lockfile dependency installation before future local full-suite work; registry timeouts prevented it during this task.  Hosted CI provided the required passing gate.
+
+Docs closeout landing attempt: `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh --draft` passed lane/stale-overlap checks but stopped at typechecking: the missing local TypeScript binary caused npx to resolve the unrelated `tsc@2.0.4` package, which exits with “This is not the tsc command you are looking for.”  No skip flag was used.  The docs-only PR uses the existing hosted path-classified gate; the runtime gate already passed in full before deployment.
