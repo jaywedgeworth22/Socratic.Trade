@@ -90,9 +90,23 @@ export async function withLaneDeadline<T>(
   // rejected wrapper — that remediation was already skipped for the tick, so announcing a
   // completed pass there would be actively misleading on a safety path.
   void work.then(
-    () => {
+    (result) => {
       if (!expired) return;
       const late = Date.now() - startedAt;
+      const skipped =
+        result !== null &&
+        typeof result === "object" &&
+        "status" in result &&
+        (result as { status: unknown }).status === "skipped";
+      if (skipped) {
+        console.warn(
+          `[maintenance] ${lane} SKIPPED LATE after ${late}ms (deadline was ${ms}ms) — ` +
+            `the protective pass did NOT run to completion (lease busy / skipped); the ` +
+            `earlier expiry was a lateness signal, not a failed remediation.  The next ` +
+            `tick retries it.`
+        );
+        return;
+      }
       console.warn(
         wraps === "pass"
           ? `[maintenance] ${lane} COMPLETED LATE after ${late}ms (deadline was ${ms}ms) — ` +

@@ -190,4 +190,18 @@ describe("late-completion wording matches what was wrapped (Codex P2)", () => {
     expect(lines.some((l) => l.includes("ALREADY SKIPPED"))).toBe(true);
     expect(lines.some((l) => l.includes("COMPLETED LATE"))).toBe(false);
   });
+
+  it("a skipped lane outcome must not be announced as a completed pass", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const skipped = new Promise<{ status: "skipped"; summary: string }>((resolve) =>
+      setTimeout(() => resolve({ status: "skipped", summary: "account mutation lease busy" }), 60)
+    );
+    await withLaneDeadline(skipped, 20, "stale-limit-scan broker timeout", "stale-limit-scan").catch(() => undefined);
+    await skipped;
+    await new Promise((r) => setTimeout(r, 10));
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("SKIPPED LATE"))).toBe(true);
+    expect(lines.some((l) => l.includes("COMPLETED LATE"))).toBe(false);
+    expect(lines.some((l) => l.includes("FAILED LATE"))).toBe(false);
+  });
 });
