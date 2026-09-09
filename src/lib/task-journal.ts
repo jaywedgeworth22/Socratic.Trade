@@ -44,6 +44,12 @@ export async function journalLane<T>(
     const result = await fn();
     if (isLaneOutcome<T>(result)) {
       recordTaskEnd(id, { status: result.status ?? "ok", summary: result.summary });
+      // A skipped envelope with no `value` used to unwrap to `undefined`, which
+      // `withLaneDeadline` then logged as a completed protective pass.  Return
+      // the skipped envelope so late-deadline wording can tell skip from success.
+      if (result.status === "skipped" && result.value === undefined) {
+        return result as T;
+      }
       return result.value as T;
     }
     recordTaskEnd(id, { status: "ok" });

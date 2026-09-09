@@ -50,6 +50,20 @@ describe("task brain / cron journal", () => {
     expect(row.summary).toBe("nothing due");
   });
 
+  it("journalLane preserves a skipped envelope that has no value", async () => {
+    const { journalLane } = await import("../src/lib/task-journal");
+    const { listTaskJournal } = await import("../src/lib/db");
+    const taskName = `lane_${randomUUID()}`;
+    const value = await journalLane(taskName, {}, () => ({
+      status: "skipped" as const,
+      summary: "account mutation lease busy"
+    }));
+    expect(value).toEqual({ status: "skipped", summary: "account mutation lease busy" });
+    const row = listTaskJournal({ taskName })[0];
+    expect(row.status).toBe("skipped");
+    expect(row.summary).toBe("account mutation lease busy");
+  });
+
   it("journalLane does NOT mistake a lane's own { status: 'success' } result for an outcome envelope", async () => {
     const { journalLane } = await import("../src/lib/task-journal");
     const { listTaskJournal } = await import("../src/lib/db");
