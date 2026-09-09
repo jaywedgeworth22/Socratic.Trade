@@ -1628,12 +1628,18 @@ async function alertRagConnectionFailure(
     // later error-level / hard capture on the same lane (parity with alertConnectionFailure).
     const transportBlipForCooldown = isTransientNetworkErrorText(message);
     let transientWarningCooldown = false;
+    // Hoisted out of the `if` so the cooldown write below can anchor the suppression at the streak
+    // deadline rather than at `now` (Codex P2 on #3195): when the first warning fires mid-streak —
+    // e.g. right after deploy over retained failures, or on a low-volume lane — a now-anchored
+    // cooldown would keep suppressing until `now + window` and delay the error-level escalation
+    // past the ten-minute threshold.
+    let blipStreakStartedMs = NaN;
     if (transportBlipForCooldown) {
       const laneForCooldown = getLaneHealth(service, source, source === "user" ? targetUserId : null);
-      const streakStartedMs = laneForCooldown.streakStartedTs ? Date.parse(laneForCooldown.streakStartedTs) : NaN;
+      blipStreakStartedMs = laneForCooldown.streakStartedTs ? Date.parse(laneForCooldown.streakStartedTs) : NaN;
       transientWarningCooldown =
-        !Number.isFinite(streakStartedMs) ||
-        Date.now() - streakStartedMs < transientEscalationWindowMs();
+        !Number.isFinite(blipStreakStartedMs) ||
+        Date.now() - blipStreakStartedMs < transientEscalationWindowMs();
     }
     const baseKey = `${RAG_CONNECTION_ALERT_PREFIX}:${service}:${source}:${targetUserId}`;
     const key = transientWarningCooldown ? `${baseKey}:transient` : baseKey;
@@ -1641,7 +1647,17 @@ async function alertRagConnectionFailure(
     const last = getInternalSetting<string>(key);
     if (last && Date.now() - Date.parse(last) < cooldownMs) return;
     assertVectorStoreLease(leaseGuard);
-    setInternalSetting(key, new Date().toISOString());
+    // The cooldown check reads the stored value as "last alerted" and suppresses for `cooldownMs`
+    // after it, so a transient-blip warning stores the STREAK START: `streakStart + window` is
+    // exactly the escalation deadline, and the first failure after the window escalates on
+    // schedule (parity with db-health's `streakStartedTs + transientEscalationWindowMs` deadline).
+    // When the run start is unknown, fall back to now (a full window from this alert).
+    setInternalSetting(
+      key,
+      transientWarningCooldown && Number.isFinite(blipStreakStartedMs)
+        ? new Date(blipStreakStartedMs).toISOString()
+        : new Date().toISOString()
+    );
 
     const title =
       service === "pinecone" ? "Pinecone connection failed"
@@ -1695,22 +1711,30 @@ async function alertRagConnectionFailure(
       // once the lane's consecutive hard-failure run has lasted `transientEscalationWindowMs`,
       // escalate to `error` so a persistent RAG transport outage still reaches PagerDuty.
       const transportBlip = isTransientNetworkErrorText(message);
+      // A transport blip that has outlasted the escalation window is an OUTAGE — level `error`
+      // AND tagged `hard`, matching db-health where an escalated blip streak stops being
+      // "transient-network" (Codex P2 on #3195). One blip-window computation drives both so the
+      // tag can never disagree with the level.
+      const blipLane = transportBlip ? getLaneHealth(service, source, source === "user" ? targetUserId : null) : null;
+      const blipStreakStartedMs = blipLane?.streakStartedTs ? Date.parse(blipLane.streakStartedTs) : NaN;
+      const withinBlipWindow =
+        !transportBlip ||
+        !Number.isFinite(blipStreakStartedMs) ||
+        Date.now() - blipStreakStartedMs < transientEscalationWindowMs();
       let level: "warning" | "error";
       if (limitStatus === undefined && !transportBlip) {
         level = "error";
+      } else if (transportBlip && withinBlipWindow) {
+        level = "warning";
       } else if (transportBlip) {
-        const lane = getLaneHealth(service, source, source === "user" ? targetUserId : null);
-        const streakStartedMs = lane.streakStartedTs ? Date.parse(lane.streakStartedTs) : NaN;
-        const withinBlipWindow =
-          !Number.isFinite(streakStartedMs) ||
-          Date.now() - streakStartedMs < transientEscalationWindowMs();
-        level = withinBlipWindow ? "warning" : "error";
+        level = "error";
       } else {
         level = "warning";
       }
       // Same health.failure_class tag the non-RAG alert path stamps — operators filter the twelve
-      // connection-failed issues by this tag across lanes (Codex P2 on #3195).
-      const failureClass = transportBlip ? "transient-network" : "hard";
+      // connection-failed issues by this tag across lanes (Codex P2 on #3195).  An escalated
+      // transport outage is tagged `hard` so `health.failure_class:hard` routing finds it.
+      const failureClass = transportBlip && withinBlipWindow ? "transient-network" : "hard";
       await captureRagSentryMessage(level, title, {
         provider: activeProvider ?? service,
         lane: service,
