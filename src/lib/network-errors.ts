@@ -55,15 +55,24 @@ export function isAbortOrTimeoutError(error: unknown): boolean {
 const TRANSIENT_NETWORK_TEXT =
   /fetch failed|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT|other side closed|socket hang up|network socket disconnected|\bECONNRESET\b|\bECONNREFUSED\b|\bECONNABORTED\b|\bETIMEDOUT\b|\bENOTFOUND\b|\bEAI_AGAIN\b|\bEPIPE\b|\bEHOSTUNREACH\b|\bENETUNREACH\b/i;
 
-/** Same classification as `isTransientNetworkError`, for a message that is already a string. */
+/**
+ * Same classification as `isTransientNetworkError`, for a message that is already a string.
+ *
+ * Explicit HTTP-status errors are rejected first: health callers include provider response bodies
+ * (`HTTP <status> <body>`), and a 4xx/5xx body that happens to contain `fetch failed` /
+ * `ECONNRESET` still means the request reached the provider — not a client transport blip.
+ */
 export function isTransientNetworkErrorText(text: string | null | undefined): boolean {
-  return Boolean(text) && TRANSIENT_NETWORK_TEXT.test(String(text));
+  if (!text) return false;
+  const s = String(text);
+  if (/\bHTTP\s+[1-5]\d\d\b/i.test(s)) return false;
+  return TRANSIENT_NETWORK_TEXT.test(s);
 }
 
 /** Dead socket / DNS / reset — retry once, then count as a hard transport failure. */
 export function isTransientNetworkError(error: unknown): boolean {
   if (isAbortOrTimeoutError(error)) return false;
-  return TRANSIENT_NETWORK_TEXT.test(errorText(error));
+  return isTransientNetworkErrorText(errorText(error));
 }
 
 export function isCallerSignalAborted(init: { signal?: AbortSignal | null } | undefined): boolean {

@@ -6,7 +6,7 @@ import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiK
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } from "./db-embed-stage";
 import { isProviderDispatchLeaseLostError } from "./db-provider-dispatch";
-import { logApiHealth } from "./db-health";
+import { getLaneHealth, logApiHealth, transientEscalationWindowMs } from "./db-health";
 import { isLocalDbFaultError, localDbFaultReason, noteLocalDbFault } from "./local-db-fault";
 import { isTransientNetworkError, isTransientNetworkErrorText } from "./network-errors";
 import {
@@ -1624,9 +1624,22 @@ async function alertRagConnectionFailure(
   try {
     const assertActive = leaseGuard ? () => assertVectorStoreLease(leaseGuard) : undefined;
     assertVectorStoreLease(leaseGuard);
-    const key = `${RAG_CONNECTION_ALERT_PREFIX}:${service}:${source}:${targetUserId}`;
+    // Transport-blip warnings arm a short cooldown on a `:transient` key so they cannot suppress a
+    // later error-level / hard capture on the same lane (parity with alertConnectionFailure).
+    const transportBlipForCooldown = isTransientNetworkErrorText(message);
+    let transientWarningCooldown = false;
+    if (transportBlipForCooldown) {
+      const laneForCooldown = getLaneHealth(service, source, source === "user" ? targetUserId : null);
+      const streakStartedMs = laneForCooldown.streakStartedTs ? Date.parse(laneForCooldown.streakStartedTs) : NaN;
+      transientWarningCooldown =
+        !Number.isFinite(streakStartedMs) ||
+        Date.now() - streakStartedMs < transientEscalationWindowMs();
+    }
+    const baseKey = `${RAG_CONNECTION_ALERT_PREFIX}:${service}:${source}:${targetUserId}`;
+    const key = transientWarningCooldown ? `${baseKey}:transient` : baseKey;
+    const cooldownMs = transientWarningCooldown ? transientEscalationWindowMs() : RAG_CONNECTION_ALERT_COOLDOWN_MS;
     const last = getInternalSetting<string>(key);
-    if (last && Date.now() - Date.parse(last) < RAG_CONNECTION_ALERT_COOLDOWN_MS) return;
+    if (last && Date.now() - Date.parse(last) < cooldownMs) return;
     assertVectorStoreLease(leaseGuard);
     setInternalSetting(key, new Date().toISOString());
 
@@ -1676,13 +1689,25 @@ async function alertRagConnectionFailure(
       // socket/DNS failure (`ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN`, `socket hang up`) is NOT a
       // "genuine broken request" — it is the transport dying, and this lane's own retries own it.
       // Those shapes fell through to `error` only because `ragLimitStatus`'s transient arm lists
-      // `fetch failed` / `UND_ERR_SOCKET` and nothing else, which is why the byte-identical failure
-      // paged under one code and was silent under another (SOCRATIC-TRADE-1X, -22).  Level only:
-      // the health row, the consecutive-failure streak, and the provider_degraded notification all
-      // still fire, so a sustained RAG outage is still reported — it just is not `error` on the
-      // first dead socket.
-      const level: "warning" | "error" =
-        limitStatus === undefined && !isTransientNetworkErrorText(message) ? "error" : "warning";
+      // `fetch failed` / `UND_ERR_SOCKET` and nothing else (SOCRATIC-TRADE-1X, -22).  Level only
+      // via `isTransientNetworkErrorText` (widening `ragLimitStatus` was rejected — that would
+      // soft-stamp the health row and silence a sustained outage).  Short blips stay `warning`;
+      // once the lane's consecutive hard-failure run has lasted `transientEscalationWindowMs`,
+      // escalate to `error` so a persistent RAG transport outage still reaches PagerDuty.
+      const transportBlip = isTransientNetworkErrorText(message);
+      let level: "warning" | "error";
+      if (limitStatus === undefined && !transportBlip) {
+        level = "error";
+      } else if (transportBlip) {
+        const lane = getLaneHealth(service, source, source === "user" ? targetUserId : null);
+        const streakStartedMs = lane.streakStartedTs ? Date.parse(lane.streakStartedTs) : NaN;
+        const withinBlipWindow =
+          !Number.isFinite(streakStartedMs) ||
+          Date.now() - streakStartedMs < transientEscalationWindowMs();
+        level = withinBlipWindow ? "warning" : "error";
+      } else {
+        level = "warning";
+      }
       await captureRagSentryMessage(level, title, {
         provider: activeProvider ?? service,
         lane: service,

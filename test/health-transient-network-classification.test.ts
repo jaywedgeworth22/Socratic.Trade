@@ -83,6 +83,17 @@ async function insertAgedFailure(service: string, errorText: string, minutesAgo:
     .run(randomUUID(), service, new Date(Date.now() - minutesAgo * 60_000).toISOString(), errorText);
 }
 
+/** Insert an aged success so a later failure run has a real "first failure after success" boundary. */
+async function insertAgedSuccess(service: string, minutesAgo: number): Promise<void> {
+  const { getDb } = await db();
+  getDb()
+    .prepare(
+      `INSERT INTO api_health_log (id, service, ts, ok, latency_ms, error_text, key_source, user_id)
+       VALUES (?, ?, ?, 1, 10, NULL, 'env', NULL)`
+    )
+    .run(randomUUID(), service, new Date(Date.now() - minutesAgo * 60_000).toISOString());
+}
+
 /**
  * The alert is a detached promise whose first step is a dynamic `import`.  Give it real time so a
  * NEGATIVE assertion ("never captured at error") means something rather than merely being early.
@@ -175,7 +186,16 @@ describe("transport-blip classification", () => {
     ]) {
       expect(isTransientNetworkErrorText(text), text).toBe(true);
     }
-    for (const text of ["embed documents: HTTP 400 invalid input", "embed documents: HTTP 401 Unauthorized", "", null, undefined]) {
+    for (const text of [
+      "embed documents: HTTP 400 invalid input",
+      "embed documents: HTTP 401 Unauthorized",
+      "HTTP 500 fetch failed while upstream said ECONNRESET",
+      "HTTP 502 Bad Gateway: socket hang up in body",
+      "congress-share: HTTP 401 Unauthorized fetch failed",
+      "",
+      null,
+      undefined
+    ]) {
       expect(isTransientNetworkErrorText(text), String(text)).toBe(false);
     }
     // The error-object classifier must agree with the text one, `cause` included.
@@ -315,4 +335,69 @@ describe("blip vs outage at the alert gate", () => {
     await settleAlerts();
     expect(sentry.captureMessage).not.toHaveBeenCalled();
   });
+}
+  it("rejects explicit HTTP-status errors even when the body contains transport phrases", async () => {
+    const { isTransientNetworkErrorText, isTransientNetworkError } = await import("../src/lib/network-errors");
+    expect(isTransientNetworkErrorText("HTTP 500 internal: fetch failed")).toBe(false);
+    expect(isTransientNetworkErrorText("HTTP 401 Unauthorized — ECONNRESET in body")).toBe(false);
+    expect(isTransientNetworkError(new Error("HTTP 502 Bad Gateway socket hang up"))).toBe(false);
+  });
+
+  it("anchors streakStartedTs to the full consecutive failure run, not only last-5", async () => {
+    const { logApiHealth, getLaneHealth, HEALTH_REASON_CONSECUTIVE_FAILURES, HEALTH_TRANSIENT_FAILURE_PREFIX } =
+      await import("../src/lib/db-health");
+    const service = `busy-lane-${randomUUID().slice(0, 8)}`;
+    // Success first (50m ago), then a long unbroken hard-failure run from ~45m ago through now.
+    // On a busy lane the last-5 sample is always recent; the escalation clock must still start at
+    // the first failure after that success.
+    await insertAgedSuccess(service, 50);
+    await insertAgedFailure(service, `${HEALTH_TRANSIENT_FAILURE_PREFIX}TypeError: fetch failed`, 45);
+    for (let i = 0; i < 8; i++) {
+      await insertAgedFailure(service, `${HEALTH_TRANSIENT_FAILURE_PREFIX}TypeError: fetch failed`, 40 - i);
+    }
+    // Five more "recent" failures so last-5 is the newest sample only.
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service, ok: false, errorText: "TypeError: fetch failed", keySource: "env" });
+    }
+    const lane = getLaneHealth(service, "env");
+    expect(lane.reason).toBe(HEALTH_REASON_CONSECUTIVE_FAILURES);
+    expect(lane.streakStartedTs).toBeTruthy();
+    const ageMs = Date.now() - Date.parse(lane.streakStartedTs!);
+    // Must reflect the ~45-minute-old start of the run, not the oldest of the last five (~seconds).
+    expect(ageMs).toBeGreaterThan(30 * 60_000);
+  });
+
+  it("lets a hard failure page after a transient-blip warning (separate cooldown keys)", async () => {
+    const { logApiHealth } = await import("../src/lib/db-health");
+    const service = `blip-then-hard-${randomUUID().slice(0, 8)}`;
+    // Five transport blips → warning on the :transient cooldown key.
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service, ok: false, errorText: "TypeError: fetch failed", keySource: "env" });
+    }
+    await vi.waitFor(() => expect(sentry.captureMessage).toHaveBeenCalled(), { timeout: 5000 });
+    await settleAlerts();
+    expect(capturedLevels()).toContain("warning");
+    expect(capturedLevels()).not.toContain("error");
+
+    vi.clearAllMocks();
+    sentry.withScope.mockImplementation((cb: (scope: unknown) => void) =>
+      cb({
+        setLevel: sentry.setLevel,
+        setTag: sentry.setTag,
+        setContext: sentry.setContext,
+        setFingerprint: sentry.setFingerprint
+      })
+    );
+
+    // Immediately shift to a definitive hard outage.  Shared cooldown would suppress this; the
+    // hard key must still fire at error.
+    for (let i = 0; i < 5; i++) {
+      logApiHealth({ service, ok: false, errorText: "HTTP 500 upstream exploded", keySource: "env" });
+    }
+    await vi.waitFor(() => expect(sentry.captureMessage).toHaveBeenCalled(), { timeout: 5000 });
+    await settleAlerts();
+    expect(capturedLevels()).toContain("error");
+    expect(capturedTag("health.failure_class")).toBe("hard");
+  });
+
 });

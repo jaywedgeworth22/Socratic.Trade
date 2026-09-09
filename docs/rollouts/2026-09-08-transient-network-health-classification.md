@@ -29,24 +29,29 @@ fetch boundary that already owns provider retries.
   - `logApiHealth` stamps the prefix on a transport failure.  It stamps, it does not soften — the
     row still counts toward the hard consecutive-failure streak.
   - `getLaneHealth` now also returns `transientStreak` (every row of the hard streak is a blip)
-    and `streakStartedTs` (the oldest row of the streak, i.e. how long the lane has been failing).
+    and `streakStartedTs` (start of the entire consecutive hard-failure run — walk past last-5
+    until a success/soft break — so a busy lane can still escalate past warning).
   - `HEALTH_TRANSIENT_ESCALATION_MS` (10 min, override
     `HEALTH_TRANSIENT_ESCALATION_MINUTES`).  A hard streak made entirely of blips that has not yet
     lasted that long captures at Sentry `warning`, skips the operator push, and arms a cooldown of
-    only the escalation window instead of the standard 6 h.
+    only the escalation window instead of the standard 6 h — on a separate `:transient` cooldown
+    key so a later hard failure is never suppressed.
   - `alertConnectionFailure` gained `transientBlip`, and every capture now carries a
     `health.failure_class` tag (`transient-network` | `hard`).
 - `src/lib/network-errors.ts` — the transport text shapes now live here as one exported classifier
-  (`isTransientNetworkErrorText`), which `isTransientNetworkError` also uses, plus
-  `isIdempotentRequest()` (GET/HEAD/OPTIONS; `fetch()` defaults to GET so a method-less `init` is
-  replayable) and `jitteredBackoffMs()` (`TRANSIENT_RETRY_JITTER_RATIO` = 0.3).
+  (`isTransientNetworkErrorText`), which `isTransientNetworkError` also uses.  Explicit `HTTP ###`
+  status errors are rejected before the transport substring patterns so a provider body containing
+  `fetch failed` stays hard.  Also `isIdempotentRequest()` (GET/HEAD/OPTIONS; `fetch()` defaults to
+  GET so a method-less `init` is replayable) and `jitteredBackoffMs()`
+  (`TRANSIENT_RETRY_JITTER_RATIO` = 0.3).
 - `src/lib/vector-db.ts` — the RAG lanes have their own alerter and are excluded from the generic
   path above.  `ragLimitStatus`'s transient arm lists only `fetch failed` / `UND_ERR_SOCKET`, so the
   byte-identical failure arriving as `ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN` or `socket hang up` fell
   through to `undefined` and was captured at Sentry `error` as an unclassified broken request —
   `SOCRATIC-TRADE-1X` (56 events) and `-22`.  `alertRagConnectionFailure` now captures those shapes
-  at `warning`.  **Level only**: the health row, the consecutive-failure streak, and the
-  `provider_degraded` notification are all unchanged.
+  at `warning` for a short blip and escalates to `error` after the shared escalation window
+  (same knob as db-health).  **Level only**: the health row, the consecutive-failure streak, and the
+  `provider_degraded` notification are all unchanged; `ragLimitStatus` itself was not widened.
 - `src/lib/data-providers.ts` — `fetchWithRetry` replays a transport error only for a replayable
   method or an explicit `retryNonIdempotent`, and both its transport and 429 backoffs are now
   jittered.  The one existing POST caller (the news `/search` query) opts in, so its behavior is
@@ -65,9 +70,11 @@ fetch boundary that already owns provider retries.
   low-frequency hourly probe spreads five consecutive failures over hours and so clears a 10-minute
   window on its very first alert — a real outage there still pages exactly as it does today.  A
   larger count threshold would have silenced the low-frequency lanes instead.
-- **Shorten the cooldown for a non-escalated blip.**  Arming the standard 6 h cooldown on a
-  warning-level blip would silence a real outage that started two minutes later.  The blip arms
-  only the escalation window, so the next failure in an unbroken streak escalates on schedule.
+- **Shorten the cooldown for a non-escalated blip, on a separate key.**  Arming the standard 6 h
+  cooldown on a warning-level blip would silence a real outage that started two minutes later.
+  The blip arms only the escalation window on a `:transient` cooldown key, so a later hard failure
+  (HTTP 401/500) is never suppressed, and the next failure in an unbroken streak escalates on
+  schedule.
 - **The idempotency gate is a behavior change, deliberately narrow.**  `fetchWithRetry` previously
   replayed a transport error for any method.  Only one caller sends a POST through it (a read-only
   news search), and it is opted back in explicitly, so nothing regresses — but the default is now
@@ -84,16 +91,21 @@ fetch boundary that already owns provider retries.
 
 ## 4. Verification State
 
-Commands run in `~/apps/trading-claude-sentry-getjson-soft-failures`:
+Worktree tip (fixer, 2026-09-09): `/workspace/st-rebase/3195` on
+`claude/sentry-getjson-soft-failures`.  Local `node_modules` is not present in this checkout, so
+the ordered AGENTS.md `lint` → `tsc` → `test` → `build` sequence cannot be run here.  Hosted
+`verify-hosted` on the tip SHA is therefore the gate before merge — do not treat this tip as
+locally green.
+
+Targeted classification coverage intended once deps exist (or on hosted):
 
 ```
-npx tsc --noEmit
-npm run lint
-npm test
-npm run build
+npx vitest run test/health-transient-network-classification.test.ts
 ```
 
-Results are recorded in the PR body.
+That suite now also covers: HTTP-status bodies are not transport-transient; `streakStartedTs`
+anchors to the full consecutive hard-failure run (not last-5 only); a hard failure after a
+transient-blip warning is not suppressed by the transient cooldown key.
 
 ## 5. Next Steps & Blockers
 

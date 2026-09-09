@@ -167,7 +167,7 @@ export function getLaneHealth(
   lastFailureTs: string | null;
   /** True only when the HARD streak holds AND every row in it is a transport blip. */
   transientStreak: boolean;
-  /** ts of the OLDEST row in the hard streak — how long the lane has been failing. Null unless the streak holds. */
+  /** ts of the first failure in the ENTIRE consecutive hard-failure run (not merely the oldest of the last-5 sample). Null unless the streak holds. */
   streakStartedTs: string | null;
 } {
   try {
@@ -198,9 +198,11 @@ export function getLaneHealth(
 
     let stoppedWorking = false;
     let reason: string | null = null;
-    // Only meaningful when the HARD streak below holds. `streakStartedTs` is the OLDEST of the five
-    // rows, so `now - streakStartedTs` is how long the lane has been failing without a success —
-    // the quantity that separates a burst of blips from an outage.
+    // Only meaningful when the HARD streak below holds. `streakStartedTs` is the start of the
+    // ENTIRE consecutive hard-failure run (walk newest→oldest past the last-5 sample until a
+    // success or soft row), so `now - streakStartedTs` is how long the lane has been failing —
+    // the quantity that separates a burst of blips from an outage. Anchoring only to last-5 would
+    // keep a busy lane forever inside the escalation window.
     let transientStreak = false;
     let streakStartedTs: string | null = null;
     // HARD consecutive-failures: every one of the last 5 rows is a non-soft failure. Soft/expected
@@ -213,8 +215,23 @@ export function getLaneHealth(
     ) {
       stoppedWorking = true;
       reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
-      // `last5` is newest-first, so the last element is the oldest row of the streak.
-      streakStartedTs = last5[last5.length - 1]?.ts ?? null;
+      // Walk the capped lane history newest-first; the last hard row before a success/soft break
+      // is the start of this consecutive run (may be far older than last5 on a busy lane).
+      const history = db
+        .prepare(
+          `SELECT ok, error_text, ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT ?`
+        )
+        .all(...withUser([service, keySource]), HEALTH_LOG_LANE_CAP) as Array<{
+          ok: number;
+          error_text: string | null;
+          ts: string;
+        }>;
+      let runStart: string | null = null;
+      for (const row of history) {
+        if (row.ok === 1 || isSoftHealthFailure(row.error_text)) break;
+        runStart = row.ts;
+      }
+      streakStartedTs = runStart ?? last5[last5.length - 1]?.ts ?? null;
       transientStreak = last5.every((r) => isTransientHealthFailure(r.error_text));
     } else if (callsLastHour > 0 && !lastSuccess) {
       stoppedWorking = true;
@@ -438,9 +455,10 @@ export function logApiHealth(opts: {
           // global lane normally gets, and hold the operator push until it escalates.
           //
           // The cooldown is shortened to the same window rather than the standard six hours,
-          // because arming the full cooldown on a blip would then SILENCE a real outage that
-          // started two minutes later. After the window the next failure in an unbroken streak
-          // has, by definition, been failing long enough to be an outage, and pages as usual.
+          // and `alertConnectionFailure` stores it on a SEPARATE `:transient` key so a later hard
+          // failure (HTTP 401/500) is never suppressed by the blip warning. After the window the
+          // next failure in an unbroken streak has, by definition, been failing long enough to be
+          // an outage, and pages as usual on the hard key.
           const escalationWindowMs = transientEscalationWindowMs();
           const streakStartedMs = lane.streakStartedTs ? Date.parse(lane.streakStartedTs) : NaN;
           const transientBlip =
@@ -882,10 +900,15 @@ export async function alertConnectionFailure(
     // each tenant's failure hits the SAME global dependency, so a userId-scoped cooldown key would let
     // every tenant mint its own cooldown row and re-alert the admin every 6h for the one shared outage.
     // Only per-USER credential lanes ("user") key the cooldown by userId (each user's own key/alert).
-    const key =
+    //
+    // Transient-blip warnings use a SEPARATE `:transient` suffix so their short escalation-window
+    // cooldown cannot suppress a later hard failure (HTTP 401/500) on the same lane. Hard / escalated
+    // captures keep the unsuffixed key and ignore any active transient cooldown.
+    const baseKey =
       actualKeySource === "user"
         ? `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}:${targetUserId}`
         : `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}`;
+    const key = opts?.transientBlip ? `${baseKey}:transient` : baseKey;
 
     // Cooldown check. The stored setting value is the "suppressed until" instant (not "last sent
     // at"): this lets a quota-exhaustion caller stretch the window arbitrarily far (to the

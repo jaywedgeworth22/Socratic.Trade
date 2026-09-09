@@ -231,7 +231,7 @@ capture is tagged `health.failure_class` (`transient-network` | `hard`).  `fetch
 replays a transport error only for a read-only method (one existing query-shaped POST opts back in)
 and jitters both its transport and 429 backoffs.
 
-Also widened `ragLimitStatus`'s transient arm in `vector-db.ts` to the same shared classifier — the RAG lanes have their own alerter and that arm listed only `fetch failed` / `UND_ERR_SOCKET`, so an `ECONNRESET`/`ENOTFOUND`/`EAI_AGAIN`/`socket hang up` fell through to Sentry `error` as an unclassified broken request (`SOCRATIC-TRADE-1X`, 56 events, and `-22`).
+RAG lanes keep their own alerter: `alertRagConnectionFailure` now applies `isTransientNetworkErrorText` as a level-only check (warning for a short blip, error after `HEALTH_TRANSIENT_ESCALATION_MS`), because `ragLimitStatus`'s transient arm still lists only `fetch failed` / `UND_ERR_SOCKET` and widening it was rejected — that verdict soft-stamps the health row and would silence a sustained outage.  An `ECONNRESET`/`ENOTFOUND`/`EAI_AGAIN`/`socket hang up` therefore no longer pages as an unclassified broken request on first sight (`SOCRATIC-TRADE-1X`, 56 events, and `-22`), but a persistent RAG transport outage still reaches `error` / PagerDuty after the escalation window.
 
 API-health path only.  No order-placement, brokerage, or money-path code touched; `tradier.ts`,
 `congress-share`'s POST import, and the deliberate `retries: 0` call sites are all unchanged.
