@@ -195,10 +195,45 @@ retried to success, that retries are bounded, and that a hung **upload** now fai
 
 ### Restore actually proven
 
-A real round trip was run against production R2 on 2026-09-09 using the new script:
-`cold-snapshots/app-2026-08-30.db`, 9,679,310,848 bytes, downloaded to a scratch path in
-127 seconds, then opened and interrogated.  Result recorded in `STATUS.md`.  The scratch copy was
-removed.
+A real round trip was run against production R2 on 2026-09-09 using the new script.
+**PASS.**
+
+```json
+{
+  "ok": true,
+  "key": "cold-snapshots/app-2026-08-30.db",
+  "objectBytes": 9679310848,
+  "restoredBytes": 9679310848,
+  "integrity": "ok",
+  "tables": {
+    "audit_events": 262290,
+    "trade_proposals": 803,
+    "portfolio_snapshots": 1755,
+    "connected_accounts": 7,
+    "settings": 664,
+    "llm_usage": 2491
+  },
+  "failures": [],
+  "archiveDepth": 1,
+  "startedAt": "2026-09-09T15:14:28.746Z",
+  "completedAt": "2026-09-09T15:24:44.095Z",
+  "durationMs": 615349
+}
+```
+
+Download 127 s, whole drill 615 s.  Every count trails the live database
+(`audit_events` 360,059, `trade_proposals` 831, `portfolio_snapshots` 1,877,
+`connected_accounts` 7, `settings` 937, `llm_usage` 2,989) exactly as a 2026-08-30 snapshot
+should.  The scratch copy was removed.
+
+**So the cold archive tier is stale, not broken:** the object that has been sitting there for
+ten days is a genuinely restorable database.  That is a materially different risk position from
+the one the health field alone implied.
+
+The drill also earned its keep immediately by finding a bug in the brand-new script: opening the
+restored file read-only still leaves `-shm` and `-wal` sidecars behind, which the cleanup missed.
+A stray sidecar next to a future scratch file is a corruption hazard, not litter.  Fixed in the
+same lane.
 
 ## Follow-ups (owner)
 

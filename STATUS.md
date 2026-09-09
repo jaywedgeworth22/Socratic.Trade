@@ -107,7 +107,16 @@ assertions on `audit_events`, `trade_proposals`, `portfolio_snapshots`, `connect
 assertions, receipt, discard; no DELETE path).  `scripts/litestream-restore-drill.sh` repointed
 at production and B2 with a free-space precheck and a real non-zero exit on failure.
 
-**RESTORE_PROOF_PLACEHOLDER**
+**RESTORE IS NOW PROVEN — a real round trip, not an inference.**  Ran
+`scripts/ops/verify-cold-snapshot-restore.mjs` against production R2 on 2026-09-09:
+`cold-snapshots/app-2026-08-30.db`, 9,679,310,848 bytes, downloaded in **127 s**, opened with
+better-sqlite3, `PRAGMA integrity_check` = **`ok`**, and every key table populated —
+`audit_events` 262,290, `trade_proposals` 803, `portfolio_snapshots` 1,755,
+`connected_accounts` 7, `settings` 664, `llm_usage` 2,491.  Each trails the live counts
+(360,059 / 831 / 1,877 / 7 / 937 / 2,989) exactly as a 2026-08-30 snapshot should.  Total
+615 s.  Scratch copy discarded.  **The cold archive tier is restorable; it is stale, not
+broken.**  The drill also surfaced a real bug in the new script — opening the restored file
+read-only leaves `-shm`/`-wal` sidecars behind — now fixed in the same lane.
 
 Verification: `npx tsc --noEmit` clean, `npx vitest run test/r2-cold-snapshot.test.ts` 59 passed
 (19 new), `npx eslint` clean on both touched files.  Production stayed read-only: no restart, no

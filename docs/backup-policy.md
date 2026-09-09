@@ -272,6 +272,12 @@ was already pruned.  Expect depth 2 after the first successful Sunday run, 4 aft
 Nothing in this policy deletes that 9.68 GB legacy object.  With `retain = 4` it is simply
 kept, which is the desired outcome and needs no approval.
 
+**It is also known-good.**  A full restore drill on 2026-09-09 downloaded that exact object
+(9,679,310,848 bytes, 127 s), opened it, and got `PRAGMA integrity_check` = `ok` with every key
+table populated: `audit_events` 262,290, `trade_proposals` 803, `portfolio_snapshots` 1,755,
+`connected_accounts` 7, `settings` 664, `llm_usage` 2,491 — each trailing the live counts as a
+2026-08-30 snapshot should.  The archive tier is **stale, not broken**.
+
 ### 8.4  Weekly job `week-2026-09-06` is terminally `unresolvable`.
 
 It reached `attempts = 31` — 30 of those were the pre-#3192 hang re-claiming an expired
@@ -325,7 +331,7 @@ improvise it during an incident from this page.
 
 | Date | Change |
 |---|---|
-| 2026-09-09 | This policy written.  Cold retention 1 → 4; `R2_COLD_SNAPSHOT_RETAIN` can now raise retention rather than only lower it; whole-attempt deadline with S3 request abort; bounded per-request retries; `fetch failed` cause unwrapping; pre-upload artifact verification; `scripts/ops/verify-cold-snapshot-restore.mjs`; `scripts/litestream-restore-drill.sh` repointed at B2 and the real production paths. |
+| 2026-09-09 | **Cold-archive restore PROVEN** — `cold-snapshots/app-2026-08-30.db` restored from R2, `integrity_check` ok, key tables populated (receipt in `docs/rollouts/2026-09-09-backup-methodology.md`).  This policy written.  Cold retention 1 → 4; `R2_COLD_SNAPSHOT_RETAIN` can now raise retention rather than only lower it; whole-attempt deadline with S3 request abort; bounded per-request retries; `fetch failed` cause unwrapping; pre-upload artifact verification; `scripts/ops/verify-cold-snapshot-restore.mjs`; `scripts/litestream-restore-drill.sh` repointed at B2 and the real production paths. |
 | 2026-09-08 | #3192 — cold snapshot moved from better-sqlite3 `backup()` to `VACUUM INTO` in a child process; snapshot-step deadline; Sentry freshness watchdog. |
 | 2026-08-31 | #3135 — cold snapshot gzip-streamed.  `B2_KEEP_SETS` prune added to the host tier. |
 | 2026-08-18 | First proven restore: B2 → scratch, integrity ok, row counts compared (`docs/rollouts/2026-08-17-litestream-restore-drill.md`). |

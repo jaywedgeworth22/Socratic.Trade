@@ -290,7 +290,12 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     return 0;
   } finally {
     // The scratch copy always goes, pass or fail.  It is a full copy of live trading state.
-    try { if (existsSync(scratch)) rmSync(scratch, { force: true }); } catch { /* best effort */ }
+    // Sidecars too: opening the file read-only still leaves `-shm`/`-wal` behind (observed on
+    // the 2026-09-09 drill), and a stray sidecar next to a future scratch file is a real
+    // corruption hazard, not just litter.
+    for (const path of [scratch, `${scratch}-shm`, `${scratch}-wal`, `${scratch}-journal`]) {
+      try { if (existsSync(path)) rmSync(path, { force: true }); } catch { /* best effort */ }
+    }
     if (receiptPath && receipt) {
       try { writeFileSync(receiptPath, JSON.stringify(receipt) + "\n"); } catch { /* best effort */ }
     }
