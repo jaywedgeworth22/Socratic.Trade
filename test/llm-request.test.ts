@@ -12,6 +12,7 @@ import {
   greenFailoverExhaustedSuffix,
   isFailoverLlmStatus,
   isRetryableLlmStatus,
+  llmFetch,
   llmFetchCapturing,
   ALL_LLM_REASONING_EFFORTS,
   LLM_MODEL_ROTATION_SENTINEL,
@@ -436,12 +437,14 @@ describe("llm-request — llmFetchCapturing (latency capture, never sever a slow
 });
 
 describe("isFailoverLlmStatus", () => {
-  it("fails over 404/403/400 to the next model without treating them as transient retries", () => {
+  it("fails over 404/403/402/400 to the next model without treating them as transient retries", () => {
     expect(isRetryableLlmStatus(404)).toBe(false);
     expect(isRetryableLlmStatus(403)).toBe(false);
+    expect(isRetryableLlmStatus(402)).toBe(false);
     expect(isRetryableLlmStatus(400)).toBe(false);
     expect(isFailoverLlmStatus(404)).toBe(true);
     expect(isFailoverLlmStatus(403)).toBe(true);
+    expect(isFailoverLlmStatus(402)).toBe(true);
     expect(isFailoverLlmStatus(400)).toBe(true);
     expect(isFailoverLlmStatus(429)).toBe(true);
     expect(isFailoverLlmStatus(401)).toBe(false);
@@ -453,5 +456,50 @@ describe("greenFailoverExhaustedSuffix", () => {
     expect(greenFailoverExhaustedSuffix(0)).toBe("");
     expect(greenFailoverExhaustedSuffix(1)).toBe("");
     expect(greenFailoverExhaustedSuffix(3)).toBe("  Failover chain exhausted (3 Green Team endpoints).");
+  });
+});
+
+
+describe("MiniMax provider error envelopes", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it.each([[1002, 429], [1004, 401], [1008, 402], [2013, 400], [1001, 504], [9999, 502]])(
+    "normalizes provider code %i to HTTP %i before callers consume the body",
+    async (code, status) => {
+      const payload = { base_resp: { status_code: code, status_msg: "provider error" } };
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json(payload, { headers: { "x-request-id": "minimax-request" } })));
+      const response = await llmFetch("https://api.minimax.io/v1/chat/completions");
+      expect(response.ok).toBe(false);
+      expect(response.status).toBe(status);
+      expect(response.headers.get("x-request-id")).toBe("minimax-request");
+      expect(await response.json()).toEqual(payload);
+    }
+  );
+
+  it("captures envelope failures as failed outcomes for the strategy path", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ base_resp: { status_code: 1002, status_msg: "rate limit" } })));
+    const outcomes: LlmCallOutcome[] = [];
+    await llmFetchCapturing("https://api.minimax.io/v1/chat/completions", {}, { softTimeoutMs: 1000, onOutcome: (outcome) => outcomes.push(outcome) });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ ok: false, status: 429 });
+  });
+
+  it("preserves successful MiniMax replies and unrelated provider responses", async () => {
+    const success = Response.json({ base_resp: { status_code: 0 }, choices: [{ message: { content: "ok" } }] });
+    vi.stubGlobal("fetch", vi.fn(async () => success));
+    expect(await llmFetch("https://api.minimax.io/v1/chat/completions")).toBe(success);
+    expect((await success.json()).choices[0].message.content).toBe("ok");
+    const unrelated = Response.json({ base_resp: { status_code: 1002 } });
+    vi.stubGlobal("fetch", vi.fn(async () => unrelated));
+    expect(await llmFetch("https://api.openai.com/v1/chat/completions")).toBe(unrelated);
+    expect(unrelated.bodyUsed).toBe(false);
+  });
+
+  it("preserves HTTP failures and streaming responses without reading their bodies", async () => {
+    for (const response of [Response.json({ error: "bad key" }, { status: 401 }), new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } })]) {
+      vi.stubGlobal("fetch", vi.fn(async () => response));
+      expect(await llmFetch("https://api.minimax.io/v1/chat/completions")).toBe(response);
+      expect(response.bodyUsed).toBe(false);
+    }
   });
 });

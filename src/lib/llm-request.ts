@@ -397,6 +397,30 @@ class RateLimiter {
 
 const geminiRateLimiter = new RateLimiter();
 
+/** Normalize MiniMax's documented HTTP-200 error envelope before tracing, retries, or usage. */
+async function fetchLlmProviderResponse(url: string, init: RequestInit): Promise<Response> {
+  const response = await fetch(url, init);
+  let nativeMiniMax = url === process.env.MINIMAX_API_URL?.trim();
+  try { nativeMiniMax ||= new URL(url).hostname.toLowerCase() === "api.minimax.io"; } catch { /* fetch handles invalid URLs */ }
+  if (!nativeMiniMax || !response.ok || response.headers.get("content-type")?.includes("text/event-stream")) return response;
+
+  // Read a clone so successful replies and original provider error details remain consumable.
+  const payload = await response.clone().json().catch(() => null);
+  const code: unknown = payload?.base_resp?.status_code;
+  if (typeof code !== "number" || !Number.isInteger(code) || code === 0) return response;
+  const statusByCode: Record<number, number> = {
+    1001: 504,
+    1002: 429, 1039: 429, 1041: 429, 2045: 429, 2056: 429,
+    1004: 401, 2049: 401,
+    1008: 402,
+    1026: 400, 1027: 400, 1042: 400, 2013: 400, 20132: 400
+  };
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  return new Response(response.body, { status: statusByCode[code] ?? 502, statusText: "MiniMax API error", headers });
+}
+
 /**
  * fetch() for LLM endpoints with a bounded timeout. On expiry the request is aborted and the
  * promise rejects (AbortError), which every call site already treats as an LLM failure (falls
@@ -408,7 +432,7 @@ export async function llmFetch(url: string, init: RequestInit = {}): Promise<Res
   }
   return withDatadogLlmObs(url, init, () =>
     withGenAiSpan(url, init, () =>
-      fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) })
+      fetchLlmProviderResponse(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) })
     )
   );
 }
@@ -469,7 +493,7 @@ export async function llmFetchCapturing(
   const hardCap = Math.max(softMs, opts.hardCapMs ?? Math.max(softMs * 2, 300_000));
   const fetchPromise = withDatadogLlmObs(url, init, () =>
     withGenAiSpan(url, init, () =>
-      fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) })
+      fetchLlmProviderResponse(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) })
     )
   );
 
@@ -505,7 +529,7 @@ export function isRetryableLlmStatus(status: number): boolean {
 
 /**
  * Statuses that should try the NEXT model in a Green/Red failover chain.
- * 404/403/400 are not transient (`llmFetch` must not retry the same model) but
+ * 404/403/402/400 are not transient (`llmFetch` must not retry the same model) but
  * they are worth leaving this model for another in the chain — otherwise
  * implicit rotation fallbacks never run and the run dies on the first miss.
  * Live 2026-08-18 after #2829: openai/gpt-5.6-terra HTTP 400 "Provider returned
@@ -514,7 +538,7 @@ export function isRetryableLlmStatus(status: number): boolean {
  * retry-the-same-body class and not an account-allowlist miss.
  */
 export function isFailoverLlmStatus(status: number): boolean {
-  return isRetryableLlmStatus(status) || status === 404 || status === 403 || status === 400;
+  return isRetryableLlmStatus(status) || status === 404 || status === 403 || status === 402 || status === 400;
 }
 
 /**

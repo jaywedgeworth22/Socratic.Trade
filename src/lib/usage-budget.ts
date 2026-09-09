@@ -31,6 +31,7 @@ import { createDurableMap } from "./durable-state";
 import type { TradingPolicy } from "./types";
 import { resolveOpenAiModel } from "./llm-request";
 import { modelCredentialService } from "./llm-provider";
+import { catalogEntryFor } from "./llm-model-catalog";
 import { usageMonitorBaseUrl, usageMonitorToken, usageMonitorEnabled } from "./usage-monitor-push";
 import { alertUsageLimitHit } from "./usage-limit-alerts";
 import {
@@ -388,8 +389,11 @@ const CHEAPER_MODEL: Record<string, string> = {
   "claude-sonnet-4-6": "claude-haiku-latest",
   // xAI
   "grok-latest": "grok-build-0.1",
+  "grok-4.6": "grok-build-0.1",
   "grok-4.5": "grok-build-0.1",
   "grok-4.3": "grok-build-0.1",
+  // Meta / Muse (OpenRouter)
+  "muse-spark-1.3": "muse-glimmer-30b",
   // Gemini
   "gemini-pro-latest": "gemini-flash-latest",
   "gemini-flash-latest": "gemini-flash-lite-latest",
@@ -416,9 +420,13 @@ const CHEAPER_MODEL: Record<string, string> = {
 /** A cheaper model in the same family, or undefined if none is known. */
 export function cheaperModel(model: string | null | undefined): string | undefined {
   if (!model) return undefined;
-  const parts = model.toLowerCase().replace(/^~/, "").split("/");
+  const raw = model.trim();
+  const parts = raw.toLowerCase().replace(/^~/, "").split("/");
   const prefix = parts.length > 1 ? parts.slice(0, -1).join("/") + "/" : "";
-  const key = parts[parts.length - 1];
+  const rawKey = parts[parts.length - 1];
+  const entry = catalogEntryFor(raw);
+  // Keep explicitly configured historical tiers; resolve new catalog aliases before prefix fallback.
+  const key = CHEAPER_MODEL[rawKey] ? rawKey : (entry?.displaySlug ?? rawKey).toLowerCase();
 
   let cheaper: string | undefined;
   if (CHEAPER_MODEL[key]) {

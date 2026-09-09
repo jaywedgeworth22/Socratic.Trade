@@ -46,6 +46,12 @@ describe("humanizeLlmError", () => {
     expect(msg).toContain("OpenAI");
   });
 
+  it("explains MiniMax insufficient balance after envelope normalization", () => {
+    const msg = humanizeLlmError('minimax 402: {"base_resp":{"status_code":1008,"status_msg":"insufficient balance"}}');
+    expect(msg).toContain("MiniMax");
+    expect(msg.toLowerCase()).toMatch(/billing|credits/);
+  });
+
   it("maps 5xx to a temporary server-error message", () => {
     expect(humanizeLlmError("", { provider: "xai", status: 503 }).toLowerCase()).toContain("temporarily unavailable");
   });

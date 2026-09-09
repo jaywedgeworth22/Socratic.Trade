@@ -87,6 +87,20 @@ describe("resolveLlmEndpoint", () => {
     expect(resolveLlmEndpoint({ llmModel: "minimax-m3" }, "minimax-eligibility").provider).toBe("openrouter");
   });
 
+  it("keeps an explicit OpenRouter model on OpenRouter even when its native key exists", async () => {
+    const { modelCredentialService, modelRequiresOpenRouter } = await import("../src/lib/llm-provider");
+    setApiKey("explicit-openrouter-minimax", "minimax", "minimax-placeholder");
+    const model = "openrouter/minimax/minimax-m3";
+
+    expect(modelRequiresOpenRouter(model)).toBe(true);
+    expect(modelRequiresOpenRouter(" OpenRouter/~anthropic/claude-sonnet-latest ")).toBe(true);
+    expect(modelCredentialService(model, "explicit-openrouter-minimax")).toBe("openrouter");
+    const endpoint = resolveLlmEndpoint({ llmModel: model }, "explicit-openrouter-minimax");
+    expect(endpoint.provider).toBe("openrouter");
+    expect(endpoint.key).toBeUndefined();
+    expect(endpoint.model).toBe("minimax/minimax-m3");
+  });
+
   it("requires OpenRouter for Astra Pro even with a native OpenAI key", () => {
     setApiKey("astra-pro-native", "openai", "openai-placeholder");
     const endpoint = resolveLlmEndpoint({ llmModel: "gpt-6-astra-pro" }, "astra-pro-native");

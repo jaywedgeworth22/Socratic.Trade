@@ -2,7 +2,7 @@
 
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 
-In progress on `codex/model-catalog-account-labels` (board `0d775009`, PR #3196).  Provider catalog, MiniMax support, concise account labels, and review fixes are pushed.  Hosted lint/types passed on 5f0d07ba6; 7,902 tests passed and four existing strategy-budget fixtures failed because they used OpenRouter credentials with OpenAI budget rows.  Corrected the fixtures to match the actual route; rerunning the full gate.  Browser fixture QA passed.  Local dependencies remain incomplete after registry ETIMEDOUT; no merge/deploy claim.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
+In progress on `codex/model-catalog-account-labels` (board `0d775009`, PR #3196).  Full hosted gate passed on 84e77c064: lint, typecheck, 7,906 tests passed / 51 skipped, and build.  Further review identified explicit OpenRouter credentials, env-default model normalization, Grok/Muse budget fallbacks, and native MiniMax Datadog tracing gaps.  These fixes are implemented, including native MiniMax operator configuration and provider-envelope errors; 23 actual-source focused checks passed.  Fresh full gate pending.  Browser fixture QA passed.  Local dependencies remain incomplete after registry ETIMEDOUT.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
 
 ## 2026-09-08 CLAUDE — R2 weekly cold snapshot stalled 9 days, silently
 

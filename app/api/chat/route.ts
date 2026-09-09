@@ -36,7 +36,7 @@ function isOfflineMockRequest(modelHint: string | undefined, providerHint: strin
 function resolveChatCredentialService(modelHint: string | undefined, providerHint: string | undefined, userId: string): ChatProvider {
   if (modelHint) return modelCredentialService(modelHint, userId);
   if (providerHint === "openai" || providerHint === "anthropic") return providerHint;
-  return process.env.CHAT_LLM === "anthropic" || process.env.CHAT_LLM === "openrouter"
+  return process.env.CHAT_LLM === "anthropic" || process.env.CHAT_LLM === "minimax" || process.env.CHAT_LLM === "openrouter"
     ? process.env.CHAT_LLM
     : "openai";
 }

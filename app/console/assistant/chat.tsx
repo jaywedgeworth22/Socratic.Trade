@@ -89,7 +89,9 @@ type ChatProviderStatus = Partial<Record<string, boolean>>;
  *  require OpenRouter, matching modelCredentialService / llmForModel on the server. */
 export function chatCredentialServiceForModel(model: string, providerStatus: ChatProviderStatus): string {
   const nativeProvider = providerForModel(model);
-  if (nativeProvider === "meta" || catalogEntryFor(model)?.openRouterOnly === true) return "openrouter";
+  if (/^openrouter\//i.test(model.trim()) || nativeProvider === "meta" || catalogEntryFor(model)?.openRouterOnly === true) {
+    return "openrouter";
+  }
   return providerStatus.openrouter === true ? "openrouter" : nativeProvider;
 }
 

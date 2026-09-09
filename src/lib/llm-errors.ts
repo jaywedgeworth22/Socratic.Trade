@@ -139,7 +139,7 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
   if (status === 404)
     return `Couldn't complete this model request.  Try again, or choose a different model.`;
 
-  if (status === 429 || has("rate limit", "rate_limit", "too many requests", "quota", "insufficient_quota", "billing", "credit balance", "out of credit", "payment required"))
+  if (status === 402 || status === 429 || has("rate limit", "rate_limit", "too many requests", "quota", "insufficient_quota", "billing", "credit balance", "out of credit", "payment required"))
     return `Your ${provider} account hit a rate limit or is out of quota/credits. Wait and retry, or check ${provider} billing.`;
 
   // Anthropic's org/workspace-level "specified API usage limit" (distinct from a 429 rate limit —

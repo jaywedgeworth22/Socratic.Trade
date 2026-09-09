@@ -23,6 +23,15 @@ describe("Coach model credential availability", () => {
     expect(chatModelHasCredential("minimax-m3", { minimax: false, openrouter: false })).toBe(false);
   });
 
+  it("does not native-fallback an explicitly OpenRouter-routed MiniMax id", () => {
+    const status = { minimax: true, openrouter: false };
+    const model = "openrouter/minimax/minimax-m3";
+
+    expect(chatCredentialServiceForModel(model, status)).toBe("openrouter");
+    expect(chatModelHasCredential(model, status)).toBe(false);
+    expect(chatCredentialServiceForModel(" OpenRouter/minimax/minimax-m3 ", status)).toBe("openrouter");
+  });
+
   it("fails open while provider status is unavailable", () => {
     expect(chatModelHasCredential("gpt-6-astra-pro", {})).toBe(true);
     expect(chatModelHasCredential("minimax-m3", {})).toBe(true);

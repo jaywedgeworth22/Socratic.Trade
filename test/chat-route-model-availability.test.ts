@@ -96,6 +96,15 @@ describe("POST /api/chat model credential gate", () => {
     expect(mocks.resolveLlmCredential).toHaveBeenLastCalledWith("minimax", "tenant-chat");
   });
 
+  it("requires OpenRouter for an explicitly OpenRouter-routed MiniMax id", async () => {
+    credentials({ minimax: true, openrouter: false });
+
+    const response = await POST(request("openrouter/minimax/minimax-m3"));
+
+    expect(response.status).toBe(412);
+    expect(mocks.resolveLlmCredential).toHaveBeenLastCalledWith("openrouter", "tenant-chat");
+  });
+
   it("preserves the fail-loud response when neither route has a key", async () => {
     credentials({ minimax: false, openrouter: false });
 
@@ -116,6 +125,27 @@ describe("POST /api/chat model credential gate", () => {
 
       expect(response.status).toBe(429);
       expect(mocks.resolveLlmCredential).toHaveBeenLastCalledWith("openrouter", "tenant-chat");
+    } finally {
+      if (savedProvider === undefined) delete process.env.CHAT_LLM;
+      else process.env.CHAT_LLM = savedProvider;
+      if (savedModel === undefined) delete process.env.CHAT_LLM_MODEL;
+      else process.env.CHAT_LLM_MODEL = savedModel;
+    }
+  });
+
+  it("checks the tenant MiniMax key for the native MiniMax operator path", async () => {
+    const savedProvider = process.env.CHAT_LLM;
+    const savedModel = process.env.CHAT_LLM_MODEL;
+    process.env.CHAT_LLM = "minimax";
+    process.env.CHAT_LLM_MODEL = "minimax-m3";
+    credentials({ minimax: true, openrouter: false });
+    try {
+      const response = await POST(request());
+
+      expect(response.status).toBe(429);
+      expect(await response.json()).toMatchObject({ error: "llm_budget_exceeded" });
+      expect(mocks.resolveLlmCredential).toHaveBeenLastCalledWith("minimax", "tenant-chat");
+      expect(mocks.resolveLlmCredential).not.toHaveBeenCalledWith("openai", "tenant-chat");
     } finally {
       if (savedProvider === undefined) delete process.env.CHAT_LLM;
       else process.env.CHAT_LLM = savedProvider;

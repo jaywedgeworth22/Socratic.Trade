@@ -35,9 +35,11 @@ export function llmModelFamily(model: string | undefined): LlmModelFamily {
   return "openai";
 }
 
-/** Meta and explicitly restricted catalog entries use the verified OpenRouter transport. */
+/** Explicit OpenRouter ids, Meta, and restricted catalog entries require OpenRouter transport. */
 export function modelRequiresOpenRouter(model: string | undefined): boolean {
-  return llmModelFamily(model) === "meta" || catalogEntryFor(model)?.openRouterOnly === true;
+  return /^openrouter\//i.test((model ?? "").trim())
+    || llmModelFamily(model) === "meta"
+    || catalogEntryFor(model)?.openRouterOnly === true;
 }
 
 /** Credential gate follows the same OpenRouter-first, native-fallback routing as execution. */

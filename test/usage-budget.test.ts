@@ -65,6 +65,12 @@ describe("usage-budget: cheaperModel", () => {
     expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-latest");
     expect(budget.cheaperModel("claude-haiku-4-5-20251001")).toBeUndefined(); // already cheapest (prefix)
     expect(budget.cheaperModel("openai/gpt-5.4-nano")).toBeUndefined();
+    expect(budget.cheaperModel("gpt-5.5")).toBe("gpt-mini-latest");
+    expect(budget.cheaperModel("grok-4.6")).toBe("grok-build-0.1");
+    expect(budget.cheaperModel("x-ai/grok-4.6")).toBe("x-ai/grok-build-0.1");
+    expect(budget.cheaperModel("muse-spark-1.3")).toBe("muse-glimmer-30b");
+    expect(budget.cheaperModel("meta/muse-spark-1.3")).toBe("meta/muse-glimmer-30b");
+    expect(budget.cheaperModel("minimax-m3")).toBeUndefined(); // same catalog price as M2.7
     expect(budget.cheaperModel(undefined)).toBeUndefined();
   });
 });
@@ -207,6 +213,20 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
     expect(decision.llmModel).toBe("openai/gpt-mini-latest");
+  });
+
+  it("downgrades OpenRouter Muse Spark to Muse Glimmer when over budget", async () => {
+    upsertUserApiKey("local", "openrouter", "openrouter-placeholder");
+    const decision = await budget.evaluateBudgetForRun(
+      "local",
+      { llmModel: "muse-spark-1.3" },
+      { status: status([{ name: "openrouter", status: "exceeded" }]) }
+    );
+    expect(decision).toMatchObject({
+      skip: false,
+      downgraded: true,
+      llmModel: "muse-glimmer-30b"
+    });
   });
 });
 

@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { deleteUserApiKey, getDb, upsertUserApiKey } from "../src/lib/db";
-import { AnthropicLLM, chatProviderForModel, llmForModel, MockLLM, OpenAILLM } from "../src/lib/chat/llm";
+import { AnthropicLLM, chatProviderForModel, getLLM, llmForModel, MockLLM, OpenAILLM } from "../src/lib/chat/llm";
 import { getLlmUsageSummary } from "../src/lib/llm-usage";
 import { normalizeOpenRouterModelId, OPENROUTER_GEMINI_FLASH } from "../src/lib/llm-provider";
 import type { LlmRunArgs } from "../src/lib/chat/types";
@@ -169,6 +169,65 @@ describe("llmForModel — OpenRouter-first routing (review finding llm-12)", () 
       expect(result.text).toBe("Visible answer");
     } finally {
       deleteUserApiKey(userId, "minimax");
+    }
+  });
+
+  it("does not native-fallback an explicit OpenRouter MiniMax id", () => {
+    const userId = `u_explicit_or_minimax_${randomUUID()}`;
+    upsertUserApiKey(userId, "minimax", "minimax-test-placeholder");
+    try {
+      expect(llmForModel("openrouter/minimax/minimax-m3", userId)).toBeInstanceOf(MockLLM);
+    } finally {
+      deleteUserApiKey(userId, "minimax");
+    }
+  });
+
+  it("normalizes the env-default OpenRouter model in the emitted request", async () => {
+    const userId = `u_env_or_minimax_${randomUUID()}`;
+    const savedProvider = process.env.CHAT_LLM;
+    const savedModel = process.env.CHAT_LLM_MODEL;
+    process.env.CHAT_LLM = "openrouter";
+    process.env.CHAT_LLM_MODEL = "minimax-m3";
+    upsertUserApiKey(userId, "openrouter", "openrouter-test-placeholder");
+    const transport = vi.fn().mockResolvedValue(fakeChatResponse());
+    try {
+      const llm = getLLM(userId, { openAITransport: transport });
+      expect(llm).toBeInstanceOf(OpenAILLM);
+      await llm.run(baseArgs);
+      expect(transport.mock.calls[0][0].model).toBe("minimax/minimax-m3");
+    } finally {
+      deleteUserApiKey(userId, "openrouter");
+      if (savedProvider === undefined) delete process.env.CHAT_LLM;
+      else process.env.CHAT_LLM = savedProvider;
+      if (savedModel === undefined) delete process.env.CHAT_LLM_MODEL;
+      else process.env.CHAT_LLM_MODEL = savedModel;
+    }
+  });
+
+  it("uses the native MiniMax env-default transport with tenant usage and reasoning", async () => {
+    const userId = `u_env_native_minimax_${randomUUID()}`;
+    const savedProvider = process.env.CHAT_LLM;
+    const savedModel = process.env.CHAT_LLM_MODEL;
+    process.env.CHAT_LLM = "minimax";
+    process.env.CHAT_LLM_MODEL = "minimax-m3";
+    upsertUserApiKey(userId, "minimax", "minimax-test-placeholder");
+    const transport = vi.fn().mockResolvedValue(fakeChatResponse());
+    try {
+      const llm = getLLM(userId, { openAITransport: transport, reasoningEffort: "high" });
+      expect(llm).toBeInstanceOf(OpenAILLM);
+      await llm.run(baseArgs);
+      const body = transport.mock.calls[0][0];
+      expect(body.model).toBe("MiniMax-M3");
+      expect(body.reasoning_split).toBe(true);
+      expect(body.max_completion_tokens).toBeGreaterThan(1024);
+      expect(body.max_tokens).toBeUndefined();
+      expect(getLlmUsageSummary({ userId }).some((row) => row.provider === "minimax")).toBe(true);
+    } finally {
+      deleteUserApiKey(userId, "minimax");
+      if (savedProvider === undefined) delete process.env.CHAT_LLM;
+      else process.env.CHAT_LLM = savedProvider;
+      if (savedModel === undefined) delete process.env.CHAT_LLM_MODEL;
+      else process.env.CHAT_LLM_MODEL = savedModel;
     }
   });
 
