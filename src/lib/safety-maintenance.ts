@@ -16,15 +16,24 @@ const BROKER_TIMEOUT_MS = 15_000;
 export const SCHEDULER_BROKER_TIMEOUT_MS = BROKER_TIMEOUT_MS;
 
 /**
- * Fraction of a blown lane deadline that must be measured event-loop stall before we stop
- * calling the expiry a broker timeout.
+ * Fraction of a blown lane deadline that must be measured event-loop stall before the expiry is
+ * categorised as a stall rather than a broker timeout.
  *
- * 0.25 is deliberately conservative: a lane is only re-attributed when at least a QUARTER of
- * its whole 15s window was the process being unable to run any callback at all.  Below that we
- * keep the existing "timeout" classification, so a real broker outage is never explained away
- * as a stall.
+ * 0.75, raised from an initial 0.25 (Codex P2, 2026-09-09).  A stall ratio does NOT prove the
+ * broker was healthy — a request left pending for the whole 15s window while an unrelated 4s
+ * stall happens would clear a 25% bar and be labelled a stall exclusively, hiding a real broker
+ * outage.  Requiring the stall to occupy three quarters of the window leaves the broker under a
+ * quarter of it, which is far too little to be the explanation on its own.
+ *
+ * The category is only ever a summary.  `elapsedMs` / `stalledMs` / `stallRatio` ride on every
+ * expiry and on the `lane_degraded` Sentry event regardless of which way this lands, so both
+ * facts stay visible and neither cause can be hidden by the other.
  */
-export const LANE_STALL_ATTRIBUTION_RATIO = 0.25;
+export const LANE_STALL_ATTRIBUTION_RATIO = 0.75;
+
+/** What the wrapped promise represents: the whole protective pass, or a single broker call whose
+ *  dependent work is skipped when the wrapper rejects. */
+export type LaneDeadlineWraps = "pass" | "call";
 
 /** A lane deadline that expired, carrying the evidence for WHY it expired. */
 export interface LaneDeadlineExpiry extends Error {
@@ -60,20 +69,38 @@ export function isLaneDeadlineExpiry(err: unknown): err is LaneDeadlineExpiry {
  * complete `ok evaluated=6` 196s later, leaving an operator with no way to tell whether stops
  * had in fact been monitored.
  */
-export async function withLaneDeadline<T>(work: Promise<T>, ms: number, message: string, lane: string): Promise<T> {
+export async function withLaneDeadline<T>(
+  work: Promise<T>,
+  ms: number,
+  message: string,
+  lane: string,
+  options?: { wraps?: LaneDeadlineWraps }
+): Promise<T> {
   startEventLoopLagSampler();
+  const wraps: LaneDeadlineWraps = options?.wraps ?? "pass";
   const startedAt = Date.now();
   let expired = false;
 
   // Late-completion visibility.  Attached unconditionally so the promise is always handled and
   // an abandoned rejection can never surface as an unhandled rejection.
+  //
+  // The wording MUST match what was actually wrapped (Codex P2, 2026-09-09).  Only a "pass"
+  // wraps the entire protective sequence, so only a "pass" may claim the protection ran.  For a
+  // "call" the wrapped promise is a single broker read whose dependent remediation hangs off the
+  // rejected wrapper — that remediation was already skipped for the tick, so announcing a
+  // completed pass there would be actively misleading on a safety path.
   void work.then(
     () => {
       if (!expired) return;
+      const late = Date.now() - startedAt;
       console.warn(
-        `[maintenance] ${lane} COMPLETED LATE after ${Date.now() - startedAt}ms ` +
-          `(deadline was ${ms}ms) — the protective pass did run to completion; ` +
-          `the earlier expiry was a lateness signal, not a skipped pass.`
+        wraps === "pass"
+          ? `[maintenance] ${lane} COMPLETED LATE after ${late}ms (deadline was ${ms}ms) — ` +
+            `the protective pass did run to completion; the earlier expiry was a lateness ` +
+            `signal, not a skipped pass.`
+          : `[maintenance] ${lane} broker read completed late after ${late}ms (deadline was ` +
+            `${ms}ms) — the dependent remediation was ALREADY SKIPPED for this tick and did ` +
+            `NOT run; the next tick retries it.`
       );
     },
     (err) => {
@@ -95,8 +122,10 @@ export async function withLaneDeadline<T>(work: Promise<T>, ms: number, message:
       new Error(
         stallRatio >= LANE_STALL_ATTRIBUTION_RATIO
           ? `${message} — event-loop stall ${stalledMs}ms of ${elapsedMs}ms ` +
-            `(${Math.round(stallRatio * 100)}%); the broker was not the bottleneck`
-          : `${message} (elapsed=${elapsedMs}ms, event-loop stall=${stalledMs}ms)`
+            `(${Math.round(stallRatio * 100)}%) dominated the window; the process could not run ` +
+            `callbacks for most of it`
+          : `${message} (elapsed=${elapsedMs}ms, event-loop stall=${stalledMs}ms, ` +
+            `${Math.round(stallRatio * 100)}%)`
       ),
       { __laneDeadlineExpiry: true as const, elapsedMs, stalledMs, stallRatio }
     );
@@ -136,7 +165,8 @@ export async function runSafetyMaintenance(
     gateway.getEquityOrders(policy.accountNumber),
     BROKER_TIMEOUT_MS,
     "getEquityOrders timeout for stale-exit handling",
-    "stale-limit-order handling"
+    "stale-limit-order handling",
+    { wraps: "call" }
   )
     .then(async (orders) => {
       await notifyStaleLimitOrders({ userId, policy, orders });

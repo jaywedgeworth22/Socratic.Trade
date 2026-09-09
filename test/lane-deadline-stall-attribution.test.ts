@@ -19,7 +19,11 @@ import {
   _resetEventLoopLagForTest,
   _recordEventLoopLagForTest
 } from "../src/lib/event-loop-lag";
-import { classifyLaneFailure } from "../src/lib/scheduler";
+import {
+  classifyLaneFailure,
+  recordLaneFailure,
+  _resetSchedulerObservabilityStateForTest
+} from "../src/lib/scheduler";
 
 const never = () => new Promise<void>(() => {});
 
@@ -96,16 +100,21 @@ describe("withLaneDeadline", () => {
     expect(classifyLaneFailure(brokerBound)).toBe("timeout");
   });
 
-  it("holds the attribution threshold at a conservative quarter of the window", () => {
-    expect(LANE_STALL_ATTRIBUTION_RATIO).toBe(0.25);
-    const justUnder = Object.assign(new Error("runSyntheticStopMonitor timeout"), {
+  it("holds the attribution threshold high enough that the broker cannot be the explanation", () => {
+    expect(LANE_STALL_ATTRIBUTION_RATIO).toBe(0.75);
+  });
+
+  // Codex P2: a stall ratio does not prove the broker was healthy.  A request pending for the
+  // WHOLE 15s window alongside an unrelated 4s stall clears a 25% bar; it must not be labelled a
+  // stall exclusively, or a real broker outage disappears.
+  it("does NOT re-attribute when a broker request could still explain the window", () => {
+    const brokerPendingWholeWindowPlusSmallStall = Object.assign(new Error("stale-limit-scan broker timeout"), {
       __laneDeadlineExpiry: true as const,
       elapsedMs: 15_000,
-      stalledMs: 3_000,
-      stallRatio: 0.2
+      stalledMs: 4_000,
+      stallRatio: 4_000 / 15_000 // 26.7% — over the old 0.25 bar, under the new one
     });
-    // Below the bar we keep blaming the broker — a real outage is never explained away.
-    expect(classifyLaneFailure(justUnder)).toBe("timeout");
+    expect(classifyLaneFailure(brokerPendingWholeWindowPlusSmallStall)).toBe("timeout");
   });
 
   it("SAFETY: the deadline never cancels the protective pass — late work still completes", async () => {
@@ -128,5 +137,57 @@ describe("withLaneDeadline", () => {
     await work;
     await new Promise((r) => setTimeout(r, 10));
     expect(warn.mock.calls.some((c) => String(c[0]).includes("COMPLETED LATE"))).toBe(true);
+  });
+});
+
+describe("streak continuity across deadline categories (Codex P1)", () => {
+  beforeEach(() => _resetSchedulerObservabilityStateForTest());
+  afterEach(() => {
+    _resetSchedulerObservabilityStateForTest();
+    vi.restoreAllMocks();
+  });
+
+  const expiry = (stallRatio: number) =>
+    Object.assign(new Error("runSyntheticStopMonitor timeout"), {
+      __laneDeadlineExpiry: true as const,
+      elapsedMs: 15_000,
+      stalledMs: Math.round(15_000 * stallRatio),
+      stallRatio
+    });
+
+  it("still escalates lane_degraded when the stall ratio oscillates across the threshold", () => {
+    const errs = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Alternating categories: stall, timeout, stall.  Before the family fix each flip reset the
+    // streak to 1, so an indefinitely failing safety lane never reached the threshold of 3.
+    recordLaneFailure("synthetic-stop monitor", "acct", expiry(0.9));
+    recordLaneFailure("synthetic-stop monitor", "acct", expiry(0.1));
+    recordLaneFailure("synthetic-stop monitor", "acct", expiry(0.9));
+    const streaks = errs.mock.calls.map((c) => String(c[0]));
+    expect(streaks.some((l) => l.includes("streak=3"))).toBe(true);
+  });
+
+  it("does NOT merge a deadline expiry with an unrelated failure category", () => {
+    const errs = vi.spyOn(console, "error").mockImplementation(() => {});
+    recordLaneFailure("synthetic-stop monitor", "acct2", expiry(0.9));
+    recordLaneFailure("synthetic-stop monitor", "acct2", new Error("something else entirely"));
+    const last = String(errs.mock.calls[errs.mock.calls.length - 1][0]);
+    expect(last).toContain("streak=1");
+  });
+});
+
+describe("late-completion wording matches what was wrapped (Codex P2)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a wrapped CALL must not claim the protective pass completed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const read = new Promise<string>((resolve) => setTimeout(() => resolve("orders"), 60));
+    await withLaneDeadline(read, 20, "getEquityOrders timeout for stale-exit handling", "stale-limit-order handling", {
+      wraps: "call"
+    }).catch(() => undefined);
+    await read;
+    await new Promise((r) => setTimeout(r, 10));
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("ALREADY SKIPPED"))).toBe(true);
+    expect(lines.some((l) => l.includes("COMPLETED LATE"))).toBe(false);
   });
 });

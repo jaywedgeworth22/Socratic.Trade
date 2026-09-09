@@ -99,8 +99,10 @@ stale-limit occurrences landed **after** #3189 merged, with the daily rate risin
 - No `AbortController` is passed, so the protective work is still never cancelled — exactly as before.
 - The expiry still rejects, so a lane failure is still recorded and still escalates to `lane_degraded` on a
   streak.  Nothing is silenced.
-- Re-attribution requires at least 25 % of the window to be measured stall, so a real broker outage is never
-  explained away as a stall.  Below that bar the classification stays `timeout`.
+- Re-attribution requires at least **75 %** of the window to be measured stall, so a real broker outage is
+  never explained away as a stall.  Below that bar the classification stays `timeout`.
+- Streak accounting keys on the deadline FAMILY, so a lane whose stall ratio oscillates across the threshold
+  still escalates `lane_degraded` — it cannot flip categories forever and silently stop alerting.
 
 The change is strictly additive to what an operator learns.  It also closes a safety-relevant blind spot:
 previously a `runSyntheticStopMonitor timeout` gave no way to tell whether stops had in fact been monitored,
@@ -118,9 +120,33 @@ when in the measured cases they had been.
 
 - **Attribution, not remediation.**  The blocking work lives in the RAG ingest path owned by PR #3202.
   Fixing it here would race that lane and duplicate it.
-- **Threshold 25 %, not 50 %.**  Chosen so a partially-stalled window is still surfaced, while keeping a
-  wide margin against mislabelling a genuine broker outage.
+- **Threshold 75 %, raised from an initial 25 % after review (Codex P2).**  A stall ratio does not prove the
+  broker was healthy: a request pending the whole 15 s window alongside an unrelated 4 s stall clears a 25 %
+  bar and would have been labelled a stall exclusively, hiding a real broker outage.  At 75 % the broker is
+  left under a quarter of the window, far too little to be the explanation by itself.  The category is only
+  ever a summary — `elapsedMs` / `stalledMs` / `stallRatio` ride on every expiry and on the `lane_degraded`
+  Sentry event either way, so neither cause can hide the other.
 - **Rejected: raising the deadline.**  It would have hidden the signal without monitoring anything sooner,
   and the measurement shows 15 s is generous for the real work (p95 ≈ 1.4 s).
 - **Rejected: removing the in-flight guard** so a stuck pass cannot block the next one.  That would allow
   concurrent monitor passes on the money path — a real safety regression to buy a log improvement.
+
+## Review round 1 (chatgpt-codex-connector, 2026-09-09)
+
+Three findings, all real, all fixed in one batch:
+
+- **P1 — degraded streak lost across categories.**  `recordLaneFailure` reset `streak` to 1 whenever the
+  category changed, so a lane whose stall ratio hovered around the threshold alternated `event_loop_stall` /
+  `timeout` and could fail indefinitely without ever reaching `LANE_DEGRADED_STREAK_THRESHOLD` — strictly
+  worse than before the category existed.  Streak continuity now keys on a `laneStreakFamily`, which treats
+  both deadline expiries as one condition while keeping unrelated categories separate.
+- **P2 — the stale-exit late log claimed too much.**  In `runSafetyMaintenance` the wrapped promise is only
+  `getEquityOrders`; `notifyStaleLimitOrders` and `autoRemediateStaleExitOrders` hang off the rejected
+  wrapper and are skipped for that tick.  Announcing a completed protective pass there was misleading on a
+  safety path.  `withLaneDeadline` now takes `wraps: "pass" | "call"`, and the `"call"` wording states
+  explicitly that the dependent remediation was already skipped and the next tick retries it.
+- **P2 — broker and stall were not distinguishable.**  Threshold raised 0.25 → 0.75 and the stall metrics
+  now ride on the `lane_degraded` Sentry event, so both causes stay visible regardless of the category.
+
+Verification after the batch: `tsc --noEmit` clean; 68/68 across the six related test files (including the
+peer lane's `fts-mirror-convergence`), with new regressions for each finding.

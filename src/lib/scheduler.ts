@@ -431,7 +431,13 @@ export function recordLaneFailure(lane: string, key: string, err: unknown): void
   const mapKey = `${lane}:${key}`;
   const category = classifyLaneFailure(err);
   const prev = laneFailureStreaks.get(mapKey);
-  const streak = prev && prev.category === category ? prev.streak + 1 : 1;
+  // Streak continuity is keyed on the FAMILY, not the exact category (Codex P1, 2026-09-09).
+  // `event_loop_stall` and `timeout` are both "the lane did not finish inside its deadline", and
+  // a lane whose stall ratio hovers around LANE_STALL_ATTRIBUTION_RATIO alternates between them.
+  // Comparing exact categories reset the streak to 1 on every flip, so an indefinitely failing
+  // safety lane could oscillate forever without ever reaching LANE_DEGRADED_STREAK_THRESHOLD and
+  // never escalate `lane_degraded` at all — strictly worse than before this category existed.
+  const streak = prev && laneStreakFamily(prev.category) === laneStreakFamily(category) ? prev.streak + 1 : 1;
   // Once degraded, STAY degraded across a failure-category change (2026-09-07 fix) — a lane
   // failing 3x on "timeout" then switching to "transient_network" is still the same ongoing
   // outage, not a resolved one. Gating on `prev.category === category` here reset `degraded` to
@@ -443,8 +449,19 @@ export function recordLaneFailure(lane: string, key: string, err: unknown): void
   laneFailureStreaks.set(mapKey, { category, streak, degraded: nowDegraded });
   console.error(`[scheduler] ${lane} error (${category}, streak=${streak}):`, err);
   if (nowDegraded && !alreadyDegraded) {
-    logError("scheduler.lane", { event: "lane_degraded", lane, key, category, streak });
+    // Carry the raw stall measurement alongside the category (Codex P2, 2026-09-09) so a
+    // responder can always see BOTH facts. A single category can never express "the broker was
+    // slow AND the loop was pinned", and collapsing to one of them would hide the other.
+    const stall = isLaneDeadlineExpiry(err)
+      ? { elapsedMs: err.elapsedMs, stalledMs: err.stalledMs, stallRatio: Number(err.stallRatio.toFixed(3)) }
+      : {};
+    logError("scheduler.lane", { event: "lane_degraded", lane, key, category, streak, ...stall });
   }
+}
+
+/** Failure categories that represent the same underlying condition for streak accounting. */
+function laneStreakFamily(category: LaneFailureCategory): string {
+  return category === "event_loop_stall" || category === "timeout" ? "deadline" : category;
 }
 
 /** Clear a lane's failure streak on success; announces recovery only if it had gone degraded. */
