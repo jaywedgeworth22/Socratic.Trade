@@ -1,5 +1,51 @@
 # Current Status
 
+## 2026-09-09 CLAUDE — FTS mirror never converged, pinning the event loop into a public 503
+
+`/api/live` measured from inside the Docker network at **8.60s, then 0.09s, then 0.03s** —
+all HTTP 200 — while `/api/health` took **8.41s** against 0.43s on 09-07.  The container
+healthcheck (5s timeout, 3 retries) timed out repeatedly, Docker marked the container
+`unhealthy` (`FailingStreak: 5`) and Traefik pulled a healthy container out of rotation.
+App internals were fine throughout (`db: ok`, scheduler age 60s, streams authenticated,
+Litestream replicating).  Container CPU 107% with host disk `%util 0.10`, so the process was
+CPU-bound in-process, not IO-bound.
+
+Root cause: `mirrorFtsChunksBounded` resumed from `countDocumentChunkFts()` — a `COUNT(*)`
+of `document_chunks_fts_index` — and used that count as a POSITIONAL offset into the chunk
+array.  The index PK leads with `content_hash`, so byte-identical chunks inside one filing
+collapse to one row; from the first duplicate the count trails the position permanently and
+the same slice is re-mirrored on every ingest tick forever.  `better-sqlite3` is
+synchronous, so every pass held the serving loop.  Production proof across six days:
+`hsy-20260329.htm` restarted at offset **400/508 on all 29 logged slices** (one pinned
+**36,511 ms**), `hsy-20251231.htm` at 732/1291, `abnb-20260630.htm` at 355/448,
+`dash-20250630.htm` at 358 across 58 slices — and reading production `app.db` read-only,
+`countDocumentChunkFts` returns exactly 400, 732 and 355 for those occurrences.  Because
+`mirror.complete` never became true, `insertIngestedAccession` never ran and the worker
+re-queued the same filings forever.  09-08 alone: **198 slices, 1,317,546 ms — 22 minutes —
+of pinned event loop**, against 239,114 ms on 09-07.  This is a regression by accumulation,
+not by commit: every document that hits a duplicate joins a set retried forever.
+
+Second defect on the same path: `countDocumentChunkFts` filters on
+`(symbol, source, accession)` but the only index leads with `content_hash`, so it ran
+`SCAN document_chunks_fts_index USING COVERING INDEX` — **78–105 ms** per call, measured on
+production's 689,047 rows, once per document per tick.
+
+Fix: `ftsMirrorResumeOffset()` resumes on CONTENT (first row whose hash is not yet indexed),
+which makes progress provably monotonic and the loop terminating; plus migration 88 adding
+`idx_document_chunks_fts_index_occurrence`.  A side-index key alone is not accepted as proof
+of mirroring — each key is JOINed to its live FTS row and kept only when `fts_rowid` still
+owns all four identity columns, so a stale key (an explicitly supported state, since FTS5
+reuses the max rowid after a DELETE) cannot mask absent content and silently ledger a filing
+with text that was never indexed.  That was a P2 from `chatgpt-codex-connector` on PR #3202,
+evaluated as real and fixed rather than waved through; the regression test fails without it.
+Measured at production scale: **105.26 ms → 3.04 ms median, 34.6x**, plan `SCAN` → `SEARCH`.  Ruled out with evidence:
+the `storeContexts` 870/870 dedup (indexed, 2–4 ms), PR #3192 (lane averages 13 ms), a heavy
+`/api/health` (re-measured at 45 ms), and SQLite lock contention (zero `database is locked`
+events during the measured stall burst; 09-07 had *more* lock events than 09-08 yet 5.5x
+less pinning; and a busy-wait sleeps rather than burning the 107% CPU observed).  No timeout
+widened — that shipped separately in PR #3201.  Rollout:
+`docs/rollouts/2026-09-09-fts-mirror-nonconvergence.md`.
+
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 
 Merged as PR #3196 (`3aa643cacd25688eb6c948f686e4410b834617ff`).  Final hosted run `34338996582` on `9968619e4` passed `npm run lint`, `npx tsc --noEmit`, `npm test` (719 suites / 7,928 tests passed; 1 suite / 51 tests skipped), and `npm run build`; security checks passed and all 14 review threads were resolved.  Desktop/mobile header fixture QA passed.  Production verified at `3aa643cac`: containment check passed with `ok=true`, `db=ok`, and scheduler age 19 seconds.  Local dependencies remain incomplete after registry ETIMEDOUT, so no local full-gate claim.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.

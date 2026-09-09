@@ -18,7 +18,7 @@ import { parseFilingHtml } from "../web-sources/sec-parser";
 import { ingestCompanyFacts, parseAndSaveForm4 } from "../web-sources/sec-facts";
 import { storeDocument, classifyEmbedFailure } from "../vector-db";
 import { readLocalArtifact, writeLocalArtifact } from "../web-sources/sec-filings";
-import { insertDocumentChunkFtsBatch, countDocumentChunkFts, getDb } from "../db";
+import { insertDocumentChunkFtsBatch, countDocumentChunkFts, ftsMirrorResumeOffset, getDb } from "../db";
 import { hasInFlightStrategyWork } from "../db-execution";
 import { serverKnobBool } from "../server-knobs";
 import { chunkDocument } from "./chunk";
@@ -477,7 +477,11 @@ export class SecIngestWorker {
         }));
 
         const tickStartedAt = Date.now();
-        const startOffset = countDocumentChunkFts({
+        // Resume on CONTENT, never on a row COUNT.  `document_chunks_fts_index` is keyed on
+        // `content_hash`, so duplicate chunk text inside one filing collapses to a single row and
+        // a count-derived offset stalls there permanently — the 2026-09-09 event-loop stall, where
+        // hsy-20260329 restarted at 400/508 on all 29 logged slices across six days.
+        const startOffset = ftsMirrorResumeOffset(ftsRows, {
           symbol: task.symbol,
           source: "sec-edgar",
           accession: vectorDocId

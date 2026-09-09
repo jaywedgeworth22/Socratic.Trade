@@ -55,6 +55,39 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
      Senate). Best-effort + configurable (`WEB_SOURCE_CAPITOLTRADES_URL`, or set
      it to `off` to disable); their CDN/security layer has returned 503/429 from
      server-side fetches, so it's a tertiary fallback now that Apify covers the House.
+### Durable FTS completion invariant (corrected 2026-09-09, PR #3202)
+
+SEC filing ingest mirrors chunk text into the `document_chunks_fts` FTS5 table, resuming
+across ticks so a large filing never pins the single Node event loop.  **The resume offset is
+derived from CONTENT, never from a row count.**
+
+`document_chunks_fts_index` is keyed `(content_hash, symbol, source, accession)`, so
+byte-identical chunks inside one filing — repeated table headers, boilerplate, empty sections
+— collapse onto ONE row.  A `COUNT(*)` of that table is therefore NOT the number of chunks
+mirrored, and using it as a positional offset into the chunk array stalls permanently at the
+first duplicate: the count can never reach the position, the same slice is re-mirrored on
+every tick forever, `mirror.complete` never becomes true, and `insertIngestedAccession` never
+runs.  That is exactly what caused the 2026-09-09 event-loop stall and the public 503
+(`docs/rollouts/2026-09-09-fts-mirror-nonconvergence.md`).
+
+The invariant now is:
+
+- **Resume** = the first chunk whose `content_hash` is not yet mirrored for that occurrence
+  (`ftsMirrorResumeOffset()`, `src/lib/db-learning.ts`).  Mirroring a chunk indexes its hash,
+  so the next resume is strictly greater — progress is monotonic and the loop always terminates.
+- **Mirrored** = the side-index key exists AND its `fts_rowid` still owns a live FTS row on
+  all four identity columns.  A key alone is not proof: FTS5 reuses the max rowid after a
+  DELETE, so an unpaired wipe of `document_chunks_fts` can leave keys pointing at nothing or at
+  a later filing's chunk (`ftsRowidStillOwnsOccurrence`).  A stale key must never mask absent
+  content, or the accession gets ledgered with text that was never indexed.
+- **Complete** = every distinct content hash of the filing satisfies the above.  Do not test
+  completeness with `COUNT(*) = chunk_count`; it under-reports every filing that repeats any
+  chunk text.  `docs/designs/2026-08-16-proposer-corpus-storage.md` item 11 is corrected to match.
+
+Occurrence lookups are served by `idx_document_chunks_fts_index_occurrence (symbol, source,
+accession)` (migration 88); without it the lookup cannot seek, because the table's only other
+index is a PK leading with `content_hash`.
+
 - **`sec.ts`** — SEC EDGAR insider (Form 4) ingestion. Reads the market-wide
   "current Form 4" atom feed, resolves each filing's `index.json` → ownership XML,
   and counts **only open-market discretionary** transactions: `P` (purchase) and
