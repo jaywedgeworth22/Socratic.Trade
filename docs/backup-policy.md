@@ -328,13 +328,17 @@ Litestream process and are **not** inherited by a fresh shell: export them into 
 shell from a trusted source, never into a file that outlives the drill.
 
 The R2 cold-archive drill is the opposite — `verify-cold-snapshot-restore.mjs` uses the
-bundled `better-sqlite3`, needs no `sqlite3` CLI, and does run inside the container.
+bundled `better-sqlite3`, needs no `sqlite3` CLI, and does run inside the container —
+**but only when `AWS_R2_HISTORIC_*` are present**.  A bare `docker exec` shell does not
+inherit Infisical secrets from PID 1; wrap the drill in `scripts/infisical-run.mjs`
+(or re-exec through the same Infisical path the app uses) so those credentials load.
 
 ### From tier 3 (R2, weekly cold archive)
 
 ```bash
-node scripts/ops/verify-cold-snapshot-restore.mjs --list          # pick a key
-node scripts/ops/verify-cold-snapshot-restore.mjs --key cold-snapshots/app-<date>.db.gz
+# Inside the app container, through Infisical (so AWS_R2_HISTORIC_* are set):
+node scripts/infisical-run.mjs -- node scripts/ops/verify-cold-snapshot-restore.mjs --list
+node scripts/infisical-run.mjs -- node scripts/ops/verify-cold-snapshot-restore.mjs --key cold-snapshots/app-<date>.db.gz
 ```
 
 Objects since 2026-08-31 are gzipped and need `gunzip` first; the script does this for you.

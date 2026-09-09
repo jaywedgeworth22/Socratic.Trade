@@ -17,29 +17,19 @@
 // `.db.gz`, `gunzip` it, then treat the result exactly like the old raw `.db` snapshot
 // (see docs/litestream.md).
 //
-// Skip-prune freshen (2026-09-04): a successful Sunday run with retain=1 would upload
-// the new `.db.gz` THEN DeleteObject the legacy raw snapshot.  Read-only inventory
-// 2026-09-04 (SocraticTrade.com account, bucket `socratic-trade-bucket`):
-// object_count=1, bucket_size ~9.68 GB; sole key `cold-snapshots/app-2026-08-30.db`
-// size=9679310848 (~9.02 GiB); `trading-live/` empty (0 objects, historic litestream
-// prune moot); `weekly/` empty (0 objects, leftover `R2_ARCHIVE_KEEP_GENERATIONS`
-// unused).  Jay has NOT approved deleting that 9 GiB object.  Set
-// `R2_COLD_SNAPSHOT_SKIP_PRUNE=1` (1/true/on/yes) so the first gzip land uploads
-// WITHOUT pruning.  Default remains current retain=1 prune for normal Sunday jobs
-// AFTER Jay approves the delete.  Agents must never DeleteObject against this bucket
-// without that approval.
+// Skip-prune (opt-in only): `R2_COLD_SNAPSHOT_SKIP_PRUNE=1` bypasses the entire
+// retention pass — leave it UNSET for normal Sunday jobs.  Default retain is 4
+// (`R2_COLD_SNAPSHOT_DEFAULT_RETAIN`); the prune pass then keeps the newest N
+// across `.db` + `.db.gz`.  Agents must never DeleteObject against this bucket
+// outside the automated retention pass without Jay approval.
 //
 // Budget stance: stays reliably far under the R2 free tier. One weekly run costs roughly
 // 30-45 Class A ops (create + ~25-40 compressed parts at 100 MB + complete + list + up to
 // a couple deletes) ≈ 200/month vs the 1M free-tier allowance; storage is
-// retain×compressed-size.  Retain is pinned at 1.  The retention pass counts + prunes
-// both `.db` and `.db.gz` objects, so the first successful `.gz` upload WITHOUT
-// skip-prune would delete the last legacy raw `.db` object.  Host-verified 2026-08-18
-// (pre-gzip): `R2_COLD_SNAPSHOT_DEFAULT_RETAIN=1`, `R2_COLD_SNAPSHOT_RETAIN`
-// unset, and `cold-snapshots/` holds exactly one object
-// (`app-2026-08-16.db`).  `R2_ARCHIVE_KEEP_GENERATIONS` is unused leftover
-// (empty `weekly/` prefix) and must not drive this lane.  `R2_COLD_SNAPSHOT_RETAIN`
-// values above 1 are ignored so a leftover env cannot leave the free tier.
+// retain×compressed-size.  Default retain is 4 (ceiling `R2_COLD_SNAPSHOT_MAX_RETAIN`).
+// The retention pass counts + prunes both `.db` and `.db.gz`.  Host-verified notes
+// from 2026-08-18 (pre-gzip, retain=1) are historical.  `R2_ARCHIVE_KEEP_GENERATIONS`
+// is unused leftover (empty `weekly/` prefix) and must not drive this lane.
 // Do not delete live R2 objects from agents.  A budget guard refuses
 // to run at all when the r2-usage monitor's latest ST snapshot shows month-to-date Class A
 // ops above 50% of the free tier. The R2 free-tier kill-switch in r2-usage.ts is untouched
@@ -299,10 +289,9 @@ export interface R2ColdSnapshotConfig {
   retain: number;
   partSizeBytes: number;
   /**
-   * Opt-in: upload the new `.db.gz` but do not DeleteObject older snapshots.
-   * Default false (retain=1 prune).  First gzip land must set
-   * `R2_COLD_SNAPSHOT_SKIP_PRUNE=1` until Jay approves deleting
-   * `cold-snapshots/app-2026-08-30.db`.
+   * Opt-in: upload the new `.db.gz` but skip the entire retention pass.
+   * Default false — leave unset so retain=N prune applies.  Do not set
+   * `R2_COLD_SNAPSHOT_SKIP_PRUNE=1` for normal Sunday jobs.
    */
   skipPrune: boolean;
   /** Hard bound on the snapshot step, from `R2_COLD_SNAPSHOT_DEADLINE_MIN`. */
@@ -317,7 +306,7 @@ export interface R2ColdSnapshotConfig {
  * active replica moved to B2 live as AWS_R2_HISTORIC_* (Infisical + .env.example).
  * Default ON only when the full credential set exists; R2_COLD_SNAPSHOT_ENABLED is the
  * explicit kill switch (off/false/0/no).
- * Weekly retain reads only `R2_COLD_SNAPSHOT_RETAIN` (unset in prod → default 1).
+ * Weekly retain reads only `R2_COLD_SNAPSHOT_RETAIN` (unset → default 4).
  * `R2_ARCHIVE_KEEP_GENERATIONS` is unused leftover and is not consulted.
  * `R2_COLD_SNAPSHOT_SKIP_PRUNE` is opt-in (1/true/on/yes); default is prune.
  */
@@ -640,6 +629,21 @@ async function uploadPart(
   return etag;
 }
 
+async function coldSnapshotObjectExists(
+  cfg: R2ColdSnapshotConfig,
+  key: string,
+  deps: R2ColdSnapshotDeps,
+): Promise<boolean> {
+  // HEAD the destination: after an ambiguous CompleteMultipartUpload transport
+  // failure the object may already exist even though the client saw an error.
+  try {
+    const res = await s3Request(cfg, "HEAD", key, {}, null, deps, CONTROL_TIMEOUT_MS);
+    return res.ok || res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 async function completeMultipartUpload(
   cfg: R2ColdSnapshotConfig,
   key: string,
@@ -651,18 +655,35 @@ async function completeMultipartUpload(
     `<CompleteMultipartUpload>` +
     parts.map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join("") +
     `</CompleteMultipartUpload>`;
-  const res = await withS3Retry("CompleteMultipartUpload", deps, async () => {
-    const r = await s3Request(cfg, "POST", key, { uploadId }, Buffer.from(xml, "utf8"), deps, CONTROL_TIMEOUT_MS);
-    // S3 can return 200 OK with an <Error> body on complete.  Classify that
-    // INSIDE the retry callback so a transient embedded error is retried
-    // instead of discarding the whole multi-gigabyte attempt.
-    if (r.body.includes("<Error>")) {
-      throw new Error(`CompleteMultipartUpload embedded error HTTP ${r.status}: ${r.body.slice(0, 200)}`);
+  try {
+    const res = await withS3Retry("CompleteMultipartUpload", deps, async () => {
+      const r = await s3Request(cfg, "POST", key, { uploadId }, Buffer.from(xml, "utf8"), deps, CONTROL_TIMEOUT_MS);
+      // S3 can return 200 OK with an <Error> body on complete.  Classify that
+      // INSIDE the retry callback so a transient embedded error is retried
+      // instead of discarding the whole multi-gigabyte attempt.
+      if (r.body.includes("<Error>")) {
+        // NoSuchUpload after a lost successful complete means the upload id is
+        // already consumed — succeed if the object is already at `key`.
+        if (/NoSuchUpload/i.test(r.body)) {
+          if (await coldSnapshotObjectExists(cfg, key, deps)) {
+            return { status: 200, ok: true, etag: null, body: "" };
+          }
+          throw new Error(`CompleteMultipartUpload NoSuchUpload HTTP ${r.status}`);
+        }
+        throw new Error(`CompleteMultipartUpload embedded error HTTP ${r.status}: ${r.body.slice(0, 200)}`);
+      }
+      return r;
+    });
+    if (!res.ok) {
+      throw new Error(`CompleteMultipartUpload HTTP ${res.status}: ${res.body.slice(0, 200)}`);
     }
-    return r;
-  });
-  if (!res.ok) {
-    throw new Error(`CompleteMultipartUpload HTTP ${res.status}: ${res.body.slice(0, 200)}`);
+  } catch (err) {
+    // Ambiguous transport / NoSuchUpload: if the object is already at the key,
+    // the complete succeeded server-side and a blind retry would redo multi-GB work.
+    if (await coldSnapshotObjectExists(cfg, key, deps)) {
+      return;
+    }
+    throw err;
   }
 }
 
@@ -708,6 +729,21 @@ async function uploadGzippedParts(
   source.on("error", (err) => gzip.destroy(err));
   source.pipe(gzip);
 
+  // Whole-attempt abort must reach the gzip pipeline, not only in-flight S3
+  // fetches — otherwise a deadline leaves createReadStream/createGzip chewing
+  // CPU/disk while the due-job retries.
+  const destroyPipeline = (reason: Error): void => {
+    source.destroy(reason);
+    gzip.destroy(reason);
+  };
+  const onAttemptAbort = (): void => {
+    destroyPipeline(new Error("attempt_deadline_exceeded"));
+  };
+  if (deps.abortSignal) {
+    if (deps.abortSignal.aborted) onAttemptAbort();
+    else deps.abortSignal.addEventListener("abort", onAttemptAbort, { once: true });
+  }
+
   try {
     for await (const chunk of gzip as AsyncIterable<Buffer>) {
       pending.push(chunk);
@@ -731,6 +767,7 @@ async function uploadGzippedParts(
   } finally {
     // A thrown flush() exits the for-await early — destroy both streams so the
     // backup file's fd cannot leak while the failed run is being cleaned up.
+    if (deps.abortSignal) deps.abortSignal.removeEventListener("abort", onAttemptAbort);
     source.destroy();
     gzip.destroy();
   }
@@ -1267,6 +1304,9 @@ export async function performR2ColdSnapshot(
         for (const k of pruned) await deleteObject(cfg, k, runDeps);
       }
     } catch (err) {
+      // Attempt-deadline aborts during list/delete are terminal — do not paint
+      // the run as a successful upload with a soft prune_error.
+      if (runDeps.abortSignal?.aborted) throw err;
       audit("r2_cold_snapshot.prune_error", { key, error: err instanceof Error ? err.message : String(err) });
       pruned = [];
       wouldPrune = [];
