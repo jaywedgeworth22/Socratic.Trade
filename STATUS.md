@@ -53,6 +53,65 @@ events during the measured stall burst; 09-07 had *more* lock events than 09-08 
 less pinning; and a busy-wait sleeps rather than burning the 107% CPU observed).  No timeout
 widened — that shipped separately in PR #3201.  Rollout:
 `docs/rollouts/2026-09-09-fts-mirror-nonconvergence.md`.
+## 2026-09-09 CLAUDE — Backup methodology: policy, archive depth, whole-attempt bounds, proven restore
+
+Branch `claude/backup-methodology`, worktree `~/apps/trading-claude-backup`.  Rollout:
+`docs/rollouts/2026-09-09-backup-methodology.md`.  Policy: **`docs/backup-policy.md`** (new,
+canonical).
+
+**Verified live 2026-09-09, not carried forward.**
+
+- **Tier 1, Litestream to Backblaze B2 — HEALTHY.**  `litestreamStatus: replicating`,
+  `litestreamDegradedReasons: []`, tier 0 `ageSeconds: 1`.  `rclone size`:
+  `trading-live/` 5,910 objects / 56.343 GiB; bucket total 5,918 / 90.579 GiB.  **Correction:
+  the PITR window is 7 days, not 30** — `retention: 720h` is in `litestream.yml`, a local-dev
+  file pointing at a Mac path that exists on no current machine; production is
+  `litestream.coolify.yml`, `retention: 168h`.
+- **Tier 3, weekly cold archive to R2 — STILL NOT ADVANCING.**  `objectCount = 1`,
+  `payloadSize = 9,679,310,848`, sole key `cold-snapshots/app-2026-08-30.db`, `r2Weekly.ok
+  = false`, `ageSeconds = 902823`.  #3192 fixed the snapshot step and thereby exposed the next
+  fault: the first run under it (2026-09-08T15:36Z) finished the snapshot and died in the
+  **upload** after 670 s with a bare `fetch failed`; `week-2026-09-06` then hit `attempts = 31`
+  and went terminally `unresolvable`.  Three defects: the deadline covered only the snapshot
+  step, a single transient failure discarded the whole attempt, and `err.message` recorded
+  nothing classifiable because Node's `fetch` hides the reason in `error.cause`.
+- **Tier 2, host-side 6-hourly dumps — BROKEN, and not in this repo.**  Not in the brief; it
+  exists and it is down.  `/data/backups/socratic/` holds one dump
+  (`socratic-app-20260906T121501Z.db`, 10,607,546,368 bytes, finished 2026-09-07T11:59Z, ~23.7 h
+  to write); every tick since logged `SKIP already running (lock held)`.  It uses
+  `sqlite3 .backup` — **the same page-1 restart loop #3192 diagnosed one layer up** — and the
+  hardened script installed 2026-09-08T03:24Z now bounds it at 30 minutes, so a ~24 h copy will
+  be killed and deleted on every tick forever, silently.  `fleet-backup-verify-weekly.sh`
+  already caught it on 2026-09-06 (`file is not a database (26)`) into a log nobody reads.
+  Fix handed to the owner in `docs/backup-policy.md` §8.1.
+- **Backblaze growth: the ~535 GB board figure is STALE.**  Re-measured: all three `hetzner/`
+  prefixes together are **41.280 GiB** across 18 objects.  **No prune needed, none proposed.**
+- **A restore had been tested once** — 2026-08-18, B2 to scratch, 4.9 GB
+  (`docs/rollouts/2026-08-17-litestream-restore-drill.md`).  Manual, never repeated, and the DB
+  has since more than doubled to 10.98 GB.  `scripts/litestream-restore-drill.sh` was unrunnable
+  (Mac path, R2 instead of B2).
+
+**Shipped.**  `docs/backup-policy.md`: four tiers with cadence/retention/RPO/RTO, why the
+two-provider split exists, what is **not** covered (~17.1 GB of non-DB volume data, Infisical
+`ENCRYPTION_KEY`, the buckets themselves, PITR beyond tier 1), verification cadences, alerting,
+restore runbooks, owner decisions.  Cold archive: retain **1 → 4** and
+`R2_COLD_SNAPSHOT_RETAIN` can now RAISE retention (it was clamped to `min(env, 1)`, write-only
+downward) — which also means the legacy 9.68 GB object is simply kept, so no deletion approval
+is needed; **pre-upload artifact verification** (`PRAGMA integrity_check` plus non-empty
+assertions on `audit_events`, `trade_proposals`, `portfolio_snapshots`, `connected_accounts`,
+`settings`, `llm_usage`, in both live and copy) that refuses to upload an unverified file;
+**whole-attempt deadline** (`R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN`, 90 min) threaded as an
+`AbortSignal` so an over-deadline upload is aborted, not abandoned; bounded per-request retries;
+`describeRequestError` cause-chain unwrapping.  New
+`scripts/ops/verify-cold-snapshot-restore.mjs` (download, gunzip, integrity_check, row-count
+assertions, receipt, discard; no DELETE path).  `scripts/litestream-restore-drill.sh` repointed
+at production and B2 with a free-space precheck and a real non-zero exit on failure.
+
+**RESTORE_PROOF_PLACEHOLDER**
+
+Verification: `npx tsc --noEmit` clean, `npx vitest run test/r2-cold-snapshot.test.ts` 59 passed
+(19 new), `npx eslint` clean on both touched files.  Production stayed read-only: no restart, no
+deploy, no env change, no host script edit, no object deleted anywhere.
 
 ## 2026-09-09 CODEX — Model catalog refresh and concise account labels
 

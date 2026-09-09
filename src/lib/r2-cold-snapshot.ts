@@ -116,8 +116,29 @@ export const R2_COLD_SNAPSHOT_PREFIX = "cold-snapshots/";
 export const R2_COLD_SNAPSHOT_UTC_DAY = 0; // Sunday
 export const R2_COLD_SNAPSHOT_UTC_HOUR = 3;
 export const R2_COLD_SNAPSHOT_UTC_MINUTE = 17;
-/** Host-verified weekly retain (2026-08-18): default 1, env unset, one object. */
-export const R2_COLD_SNAPSHOT_DEFAULT_RETAIN = 1;
+/**
+ * Weekly retain — how many cold-archive objects the prune pass keeps.
+ *
+ * Was 1 until 2026-09-09.  Depth ONE means the archive tier has no history at all:
+ * a single object IS the entire second-provider archive, so any fault that reaches it
+ * (a bad prune, a torn upload, an operator mistake, a corruption that only surfaces on
+ * restore) takes cold coverage straight to zero with nothing behind it.  Verified live
+ * 2026-09-09 via the Cloudflare R2 analytics API: `socratic-trade-bucket`
+ * `objectCount=1`, `payloadSize=9679310848`, sole key `cold-snapshots/app-2026-08-30.db`.
+ *
+ * The 1 was a FREE-TIER cap and that constraint no longer applies: paid R2 is enabled on
+ * the SocraticTrade.com account (`r2_paid`, state `Paid`).  Four gzipped weeklies at
+ * ~3 GB each is ~12 GB — about a month of archive history.
+ */
+export const R2_COLD_SNAPSHOT_DEFAULT_RETAIN = 4;
+/**
+ * Ceiling on `R2_COLD_SNAPSHOT_RETAIN`.  Before 2026-09-09 the clamp was
+ * `min(env, DEFAULT_RETAIN)` — the env var could only ever LOWER retention and any
+ * attempt to raise it was silently ignored, which is part of why depth stayed at 1 after
+ * paid R2 landed.  A ceiling still guards a fat-fingered env from pinning hundreds of
+ * multi-GB objects, but it no longer contradicts the knob it clamps.
+ */
+export const R2_COLD_SNAPSHOT_MAX_RETAIN = 12;
 export const R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES = 100 * 1024 * 1024; // 100 MB parts
 /** S3 floor for every part except the last. */
 export const R2_COLD_SNAPSHOT_MIN_PART_BYTES = 5 * 1024 * 1024;
@@ -125,9 +146,52 @@ export const R2_COLD_SNAPSHOT_MIN_PART_BYTES = 5 * 1024 * 1024;
  *  of the free tier (read from the r2-usage monitor's persisted snapshot). */
 export const R2_COLD_SNAPSHOT_BUDGET_GUARD_PCT = 50;
 
-/** Hard bound on ONE snapshot attempt (the step that hung for 9 days).  Must stay well
+/** Hard bound on the SNAPSHOT STEP (the step that hung for 9 days).  Must stay well
  *  under the 2h due-job lease so an attempt can never outlive its own claim. */
 export const R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS = 45 * 60_000;
+/**
+ * Hard bound on the WHOLE attempt — snapshot + gzip + multipart upload + prune.
+ *
+ * #3192 bounded only the snapshot step, on the evidence available at the time.  The very
+ * first run under that fix (2026-09-08T15:36Z) proved the gap: the snapshot completed and
+ * the run then died in the UPLOAD after 670 s with a bare `fetch failed`.  A hung upload
+ * had (and, without this, still has) no bound at all short of the 2 h lease expiring —
+ * which is the exact silent-restart shape #3192 set out to end.  Every phase is now
+ * inside a deadline, and the deadline aborts in-flight S3 requests rather than merely
+ * abandoning them.  Still under the 2 h lease.
+ */
+export const R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS = 90 * 60_000;
+/** Bounded retries for a single S3 request before the attempt gives up.  One transient
+ *  `fetch failed` on one 100 MB part used to discard the entire ~11-minute run. */
+export const R2_COLD_SNAPSHOT_REQUEST_ATTEMPTS = 3;
+
+/**
+ * Tables the snapshot self-check asserts are non-empty before the artifact is uploaded.
+ * Deliberately the money-and-state ones, not everything: audit history, proposed trades,
+ * portfolio history, broker links, and configuration.  Row counts verified present in
+ * production 2026-09-09 (audit_events 360059, trade_proposals 831, portfolio_snapshots
+ * 1877, connected_accounts 7, settings 937, llm_usage 2989).
+ */
+export const R2_COLD_SNAPSHOT_VERIFY_TABLES = [
+  "audit_events",
+  "trade_proposals",
+  "portfolio_snapshots",
+  "connected_accounts",
+  "settings",
+  "llm_usage",
+] as const;
+
+/** What the snapshot child reports back about the copy it just made. */
+export interface R2ColdSnapshotVerification {
+  /** `PRAGMA integrity_check` said `ok` on the copy. */
+  ok: boolean;
+  /** Raw `PRAGMA integrity_check` first row, for the audit trail. */
+  integrity: string | null;
+  /** Row counts read from the COPY. */
+  tables: Record<string, number | null>;
+  /** Row counts read from the LIVE database moments before the copy was taken. */
+  live: Record<string, number | null>;
+}
 
 const DISABLED_AUDIT_KEY = "r2coldsnap:disabledAuditedReason";
 /** Last `checks.storage.r2Weekly` state reported to Sentry — transitions only, not ticks. */
@@ -152,6 +216,12 @@ export interface R2ColdSnapshotLastSuccess {
   bytes: number;
   /** Uncompressed backup size (absent on receipts written before gzip landed). */
   rawBytes?: number;
+  /** `PRAGMA integrity_check` result on the artifact before upload (2026-09-09 onward).
+   *  Absent on receipts written before pre-upload verification landed. */
+  verifiedIntegrity?: string | null;
+  /** Key-table row counts in the uploaded copy, so "what was in that backup" is answerable
+   *  without downloading 3 GB. */
+  verifiedTables?: Record<string, number | null>;
 }
 
 export interface R2ColdSnapshotLastFailure {
@@ -221,6 +291,9 @@ export interface R2ColdSnapshotConfig {
   skipPrune: boolean;
   /** Hard bound on the snapshot step, from `R2_COLD_SNAPSHOT_DEADLINE_MIN`. */
   snapshotDeadlineMs: number;
+  /** Hard bound on the WHOLE attempt (snapshot + upload + prune), from
+   *  `R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN`. */
+  attemptDeadlineMs: number;
 }
 
 /**
@@ -248,8 +321,9 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
   const retainRaw = Number(process.env.R2_COLD_SNAPSHOT_RETAIN ?? "");
   const requestedRetain =
     Number.isFinite(retainRaw) && retainRaw >= 1 ? Math.floor(retainRaw) : R2_COLD_SNAPSHOT_DEFAULT_RETAIN;
-  // Free-tier cap: one weekly snapshot.  Env may request more; we never keep more than 1.
-  const retain = Math.min(requestedRetain, R2_COLD_SNAPSHOT_DEFAULT_RETAIN);
+  // Ceiling, not a cap-to-default: the env may raise retention up to MAX_RETAIN as well as
+  // lower it.  Clamping to DEFAULT_RETAIN made the env var write-only in the up direction.
+  const retain = Math.min(requestedRetain, R2_COLD_SNAPSHOT_MAX_RETAIN);
   const partMbRaw = Number(process.env.R2_COLD_SNAPSHOT_PART_MB ?? "");
   const partSizeBytes =
     Number.isFinite(partMbRaw) && partMbRaw * 1024 * 1024 >= R2_COLD_SNAPSHOT_MIN_PART_BYTES
@@ -261,6 +335,12 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
     Number.isFinite(deadlineMinRaw) && deadlineMinRaw > 0
       ? Math.floor(deadlineMinRaw * 60_000)
       : R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS;
+
+  const attemptMinRaw = Number(process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN ?? "");
+  const attemptDeadlineMs =
+    Number.isFinite(attemptMinRaw) && attemptMinRaw > 0
+      ? Math.floor(attemptMinRaw * 60_000)
+      : R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS;
 
   const killRaw = process.env.R2_COLD_SNAPSHOT_ENABLED?.trim().toLowerCase();
   const killed = killRaw === "0" || killRaw === "off" || killRaw === "false" || killRaw === "no";
@@ -279,6 +359,7 @@ export function loadR2ColdSnapshotConfig(): R2ColdSnapshotConfig {
     partSizeBytes,
     skipPrune,
     snapshotDeadlineMs,
+    attemptDeadlineMs,
   };
 }
 
@@ -344,12 +425,92 @@ export interface R2ColdSnapshotDeps {
    * cannot converge against a concurrently written DB.
    */
   backupImpl?: (destPath: string) => Promise<unknown>;
+  /**
+   * Test seam for the pre-upload artifact check.  In production this is unset: the default
+   * VACUUM child reports its own verification, and anything that does NOT (a `backupImpl`
+   * seam, or a future alternative copy mechanism) falls back to a real verification child.
+   * "Reached the upload unverified" is deliberately not a reachable state.
+   */
+  verifyImpl?: (destPath: string) => Promise<R2ColdSnapshotVerification | null>;
   /** Test seam for the per-attempt snapshot deadline (production uses config). */
   snapshotDeadlineMs?: number;
+  /** Test seam for the whole-attempt deadline (production uses config). */
+  attemptDeadlineMs?: number;
   /** Test seam for the storage_warning advisory (db-health.alertStorageWarning). */
   alertImpl?: (warningType: string, message: string) => Promise<void>;
   /** Test seam for small multipart parts (production uses config partSizeBytes). */
   partSizeBytes?: number;
+  /**
+   * Set by `performR2ColdSnapshot` from the whole-attempt deadline and threaded into every
+   * S3 request.  Once it fires, in-flight uploads ABORT rather than being abandoned to run
+   * on past the deadline against a job whose lease has moved on.
+   */
+  abortSignal?: AbortSignal;
+  /** Test seam: number of tries per S3 request (production uses the constant). */
+  requestAttempts?: number;
+  /** Test seam: delay between S3 request retries (production backs off; tests pass 0). */
+  retryDelayMs?: number;
+}
+
+/**
+ * Node's `fetch` collapses every transport failure — DNS, TLS, RST, socket timeout — into
+ * the single opaque message `fetch failed`, and puts the real reason in `error.cause`.
+ * Production 2026-09-08T15:47:24Z recorded exactly `"fetch failed"` and nothing else, so
+ * the upload failure that killed the first post-#3192 run could not be classified at all.
+ * Unwrap the cause chain so the audit row, the Sentry event, and `lastFailure` all carry
+ * something an operator can act on.
+ */
+export function describeRequestError(err: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = err;
+  for (let depth = 0; depth < 4 && current; depth++) {
+    const e = current as { message?: unknown; code?: unknown; name?: unknown; cause?: unknown };
+    const label = typeof e.message === "string" && e.message ? e.message : String(e.name ?? "");
+    const code = typeof e.code === "string" && e.code ? ` (${e.code})` : "";
+    if (label) parts.push(`${label}${code}`);
+    current = e.cause;
+  }
+  return parts.length > 0 ? parts.join(" <- ") : String(err);
+}
+
+/** Non-2xx HTTP that S3/R2 will never answer differently on a retry. */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * Retry one S3 request a bounded number of times.  Before this, a single transient
+ * `fetch failed` on any one of ~30 parts discarded the whole attempt — including the
+ * ~11 minutes of `VACUUM INTO` that produced the artifact — and burned a due-job attempt.
+ * Aborts immediately (no retry) once the whole-attempt deadline has fired.
+ */
+async function withS3Retry(
+  label: string,
+  deps: R2ColdSnapshotDeps,
+  run: () => Promise<S3Response>,
+): Promise<S3Response> {
+  const tries = Math.max(1, deps.requestAttempts ?? R2_COLD_SNAPSHOT_REQUEST_ATTEMPTS);
+  const baseDelay = deps.retryDelayMs ?? 2_000;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    if (deps.abortSignal?.aborted) {
+      throw new Error(`${label}: attempt deadline exceeded before request`);
+    }
+    try {
+      const res = await run();
+      if (res.ok || !isRetryableStatus(res.status)) return res;
+      lastError = new Error(`${label} HTTP ${res.status}`);
+      if (attempt === tries) return res;
+    } catch (err) {
+      lastError = err;
+      // A deadline abort is terminal: retrying cannot help and would outlive the lease.
+      if (deps.abortSignal?.aborted || attempt === tries) {
+        throw new Error(`${label} failed after ${attempt} attempt(s): ${describeRequestError(err)}`);
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, baseDelay * attempt));
+  }
+  throw new Error(`${label} failed: ${describeRequestError(lastError)}`);
 }
 
 interface S3Response {
@@ -390,11 +551,17 @@ async function s3Request(
   const url = `https://${cfg.host}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  // Per-request timeout OR the whole-attempt deadline, whichever fires first.  Without the
+  // second one an upload that outlived the attempt deadline kept running against a job whose
+  // lease had already been handed to the next drain.
+  const signal = deps.abortSignal
+    ? AbortSignal.any([controller.signal, deps.abortSignal])
+    : controller.signal;
   try {
     const res = await fetchImpl(url, {
       method,
       cache: "no-store",
-      signal: controller.signal,
+      signal,
       headers: {
         Authorization: authorization,
         "x-amz-content-sha256": payloadHash,
@@ -414,7 +581,9 @@ const CONTROL_TIMEOUT_MS = 60_000;
 const PART_TIMEOUT_MS = 15 * 60_000; // 100 MB per part on a modest uplink
 
 async function createMultipartUpload(cfg: R2ColdSnapshotConfig, key: string, deps: R2ColdSnapshotDeps): Promise<string> {
-  const res = await s3Request(cfg, "POST", key, { uploads: "" }, null, deps, CONTROL_TIMEOUT_MS);
+  const res = await withS3Retry("CreateMultipartUpload", deps, () =>
+    s3Request(cfg, "POST", key, { uploads: "" }, null, deps, CONTROL_TIMEOUT_MS),
+  );
   if (!res.ok) throw new Error(`CreateMultipartUpload HTTP ${res.status}: ${res.body.slice(0, 200)}`);
   const uploadId = /<UploadId>([^<]+)<\/UploadId>/.exec(res.body)?.[1];
   if (!uploadId) throw new Error("CreateMultipartUpload: no UploadId in response");
@@ -429,14 +598,19 @@ async function uploadPart(
   body: Buffer,
   deps: R2ColdSnapshotDeps,
 ): Promise<string> {
-  const res = await s3Request(
-    cfg,
-    "PUT",
-    key,
-    { partNumber: String(partNumber), uploadId },
-    body,
-    deps,
-    PART_TIMEOUT_MS,
+  // The part body is buffered in memory for the duration of the attempt, so a retry
+  // re-sends the SAME bytes — the gzip stream is never rewound and part numbering never
+  // shifts.  That is what makes retrying a part safe here.
+  const res = await withS3Retry(`UploadPart ${partNumber}`, deps, () =>
+    s3Request(
+      cfg,
+      "PUT",
+      key,
+      { partNumber: String(partNumber), uploadId },
+      body,
+      deps,
+      PART_TIMEOUT_MS,
+    ),
   );
   if (!res.ok) throw new Error(`UploadPart ${partNumber} HTTP ${res.status}: ${res.body.slice(0, 200)}`);
   const etag = res.etag;
@@ -455,7 +629,9 @@ async function completeMultipartUpload(
     `<CompleteMultipartUpload>` +
     parts.map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join("") +
     `</CompleteMultipartUpload>`;
-  const res = await s3Request(cfg, "POST", key, { uploadId }, Buffer.from(xml, "utf8"), deps, CONTROL_TIMEOUT_MS);
+  const res = await withS3Retry("CompleteMultipartUpload", deps, () =>
+    s3Request(cfg, "POST", key, { uploadId }, Buffer.from(xml, "utf8"), deps, CONTROL_TIMEOUT_MS),
+  );
   // S3 can return 200 with an <Error> body on complete — treat that as failure too.
   if (!res.ok || res.body.includes("<Error>")) {
     throw new Error(`CompleteMultipartUpload HTTP ${res.status}: ${res.body.slice(0, 200)}`);
@@ -538,7 +714,9 @@ async function listColdSnapshotKeys(cfg: R2ColdSnapshotConfig, deps: R2ColdSnaps
   for (let page = 0; page < 8; page++) {
     const query: Record<string, string> = { "list-type": "2", prefix: R2_COLD_SNAPSHOT_PREFIX };
     if (continuation) query["continuation-token"] = continuation;
-    const res = await s3Request(cfg, "GET", null, query, null, deps, CONTROL_TIMEOUT_MS);
+    const res = await withS3Retry("ListObjectsV2", deps, () =>
+      s3Request(cfg, "GET", null, query, null, deps, CONTROL_TIMEOUT_MS),
+    );
     if (!res.ok) throw new Error(`ListObjectsV2 HTTP ${res.status}: ${res.body.slice(0, 200)}`);
     for (const m of res.body.matchAll(/<Key>([^<]+)<\/Key>/g)) keys.push(m[1]);
     if (!/<IsTruncated>true<\/IsTruncated>/.test(res.body)) break;
@@ -573,19 +751,92 @@ const { createRequire } = require("module");
 const src = process.env.R2SNAP_SRC;
 const dest = process.env.R2SNAP_DEST;
 const base = process.env.R2SNAP_REQUIRE_BASE;
+const tables = (process.env.R2SNAP_VERIFY_TABLES || "").split(",").map((t) => t.trim()).filter(Boolean);
 if (!src || !dest) { console.error("R2SNAP_SRC/R2SNAP_DEST required"); process.exit(2); }
 let Database;
 try { Database = createRequire(base)("better-sqlite3"); }
 catch { Database = require("better-sqlite3"); }
 const db = new Database(src, { readonly: true, fileMustExist: true });
+const live = {};
 try {
   db.pragma("busy_timeout = 60000");
+  for (const t of tables) {
+    try { live[t] = db.prepare("SELECT COUNT(*) AS c FROM \\"" + t.replace(/"/g, '""') + "\\"").get().c; }
+    catch { live[t] = null; }
+  }
   // VACUUM INTO runs inside ONE read transaction: concurrent writers cannot restart it
   // (unlike sqlite3_backup_step), and the output is a compacted, consistent copy.
   db.prepare("VACUUM INTO ?").run(dest);
 } finally {
   try { db.close(); } catch {}
 }
+
+// ── Verify the artifact we just produced, in the same child, before anyone uploads it ──
+// An unverified snapshot is a hypothesis.  Opening the copy and asking SQLite itself
+// whether it is a coherent database — and whether the tables that hold trading state are
+// still populated — is the cheapest honest answer available, and it happens while the file
+// is still local and still cheap to throw away.
+const copy = new Database(dest, { readonly: true, fileMustExist: true });
+const verification = { integrity: null, tables: {}, live: live, ok: false };
+try {
+  const rows = copy.pragma("integrity_check");
+  verification.integrity = Array.isArray(rows) && rows.length > 0
+    ? String(rows[0].integrity_check ?? rows[0])
+    : "unknown";
+  for (const t of tables) {
+    try { verification.tables[t] = copy.prepare("SELECT COUNT(*) AS c FROM \\"" + t.replace(/"/g, '""') + "\\"").get().c; }
+    catch (e) { verification.tables[t] = null; }
+  }
+} finally {
+  try { copy.close(); } catch {}
+}
+verification.ok = verification.integrity === "ok";
+process.stdout.write(JSON.stringify(verification));
+`;
+
+/**
+ * Standalone verification child: same checks as the tail of {@link VACUUM_INTO_CHILD_SOURCE},
+ * against a snapshot file that already exists.  Kept as its own source (rather than a mode flag)
+ * so neither path can accidentally VACUUM when it meant to verify.
+ */
+const VERIFY_SNAPSHOT_CHILD_SOURCE = `
+const { createRequire } = require("module");
+const src = process.env.R2SNAP_SRC;
+const dest = process.env.R2SNAP_DEST;
+const base = process.env.R2SNAP_REQUIRE_BASE;
+const tables = (process.env.R2SNAP_VERIFY_TABLES || "").split(",").map((t) => t.trim()).filter(Boolean);
+if (!dest) { console.error("R2SNAP_DEST required"); process.exit(2); }
+let Database;
+try { Database = createRequire(base)("better-sqlite3"); }
+catch { Database = require("better-sqlite3"); }
+const quote = (t) => '"' + String(t).replace(/"/g, '""') + '"';
+const counts = (db) => {
+  const out = {};
+  for (const t of tables) {
+    try { out[t] = db.prepare("SELECT COUNT(*) AS c FROM " + quote(t)).get().c; }
+    catch { out[t] = null; }
+  }
+  return out;
+};
+const verification = { integrity: null, tables: {}, live: {}, ok: false };
+if (src) {
+  try {
+    const liveDb = new Database(src, { readonly: true, fileMustExist: true });
+    try { verification.live = counts(liveDb); } finally { try { liveDb.close(); } catch {} }
+  } catch { verification.live = {}; }
+}
+const copy = new Database(dest, { readonly: true, fileMustExist: true });
+try {
+  const rows = copy.pragma("integrity_check");
+  verification.integrity = Array.isArray(rows) && rows.length > 0
+    ? String(rows[0].integrity_check ?? rows[0])
+    : "unknown";
+  verification.tables = counts(copy);
+} finally {
+  try { copy.close(); } catch {}
+}
+verification.ok = verification.integrity === "ok";
+process.stdout.write(JSON.stringify(verification));
 `;
 
 /**
@@ -597,22 +848,78 @@ export async function runVacuumIntoSnapshot(
   srcPath: string,
   destPath: string,
   deadlineMs: number = R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS,
-): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  verifyTables: readonly string[] = R2_COLD_SNAPSHOT_VERIFY_TABLES,
+): Promise<R2ColdSnapshotVerification | null> {
+  const stdout = await runSnapshotChild(
+    VACUUM_INTO_CHILD_SOURCE,
+    {
+      R2SNAP_SRC: srcPath,
+      R2SNAP_DEST: destPath,
+      R2SNAP_VERIFY_TABLES: verifyTables.join(","),
+    },
+    deadlineMs,
+    "VACUUM INTO",
+    "snapshot_deadline_exceeded",
+  );
+  return parseSnapshotVerification(stdout);
+}
+
+/**
+ * Verify an already-written snapshot file: `PRAGMA integrity_check` on the copy plus key-table
+ * row counts on BOTH the copy and the live source.  Used when the snapshot step did not report
+ * its own verification (a `deps.backupImpl` seam, or any future alternative copy mechanism), so
+ * that "an artifact reached the upload unverified" is not a reachable state.
+ */
+export async function runSnapshotVerification(
+  destPath: string,
+  srcPath: string,
+  deadlineMs: number = R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS,
+  verifyTables: readonly string[] = R2_COLD_SNAPSHOT_VERIFY_TABLES,
+): Promise<R2ColdSnapshotVerification | null> {
+  const stdout = await runSnapshotChild(
+    VERIFY_SNAPSHOT_CHILD_SOURCE,
+    {
+      R2SNAP_SRC: srcPath,
+      R2SNAP_DEST: destPath,
+      R2SNAP_VERIFY_TABLES: verifyTables.join(","),
+    },
+    deadlineMs,
+    "snapshot verification",
+    "verification_deadline_exceeded",
+  );
+  return parseSnapshotVerification(stdout);
+}
+
+/**
+ * Run one short-lived child with a MINIMAL env (no application secrets), a real SIGKILL at
+ * `deadlineMs`, and its stdout captured.  Shared by the VACUUM and verification children so both
+ * get the same cancellation guarantee — an in-process hang cannot be cancelled, which is exactly
+ * how this lane stayed stuck for 9 days.
+ */
+async function runSnapshotChild(
+  source: string,
+  env: Record<string, string>,
+  deadlineMs: number,
+  label: string,
+  deadlineReason: string,
+): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
     let settled = false;
     let timedOut = false;
-    const child = spawn(process.execPath, ["-e", VACUUM_INTO_CHILD_SOURCE], {
-      // Minimal env on purpose — the snapshot child needs no application secrets.
+    const child = spawn(process.execPath, ["-e", source], {
       env: {
         NODE_ENV: process.env.NODE_ENV,
         PATH: process.env.PATH ?? "",
-        R2SNAP_SRC: srcPath,
-        R2SNAP_DEST: destPath,
         R2SNAP_REQUIRE_BASE: `${process.cwd()}/`,
+        ...env,
       },
-      stdio: ["ignore", "ignore", "pipe"] as const,
+      stdio: ["ignore", "pipe", "pipe"] as const,
     });
     let stderr = "";
+    let stdout = "";
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      if (stdout.length < 20_000) stdout += String(chunk);
+    });
     child.stderr?.on("data", (chunk: Buffer | string) => {
       if (stderr.length < 2000) stderr += String(chunk);
     });
@@ -620,22 +927,81 @@ export async function runVacuumIntoSnapshot(
       timedOut = true;
       try { child.kill("SIGKILL"); } catch { /* already gone */ }
     }, deadlineMs);
-    const finish = (err?: Error): void => {
+    const finish = (err?: Error, value?: string): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (err) reject(err); else resolve();
+      if (err) reject(err); else resolve(value ?? "");
     };
     child.on("error", (err: unknown) => finish(err instanceof Error ? err : new Error(String(err))));
     child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
       if (timedOut) {
-        finish(new Error(`snapshot_deadline_exceeded after ${Math.round(deadlineMs / 1000)}s (VACUUM INTO killed)`));
+        finish(new Error(`${deadlineReason} after ${Math.round(deadlineMs / 1000)}s (${label} killed)`));
         return;
       }
-      if (code === 0) { finish(); return; }
-      finish(new Error(`VACUUM INTO child exited code=${code} signal=${signal ?? "none"}: ${stderr.trim().slice(0, 300)}`));
+      if (code === 0) { finish(undefined, stdout); return; }
+      finish(new Error(`${label} child exited code=${code} signal=${signal ?? "none"}: ${stderr.trim().slice(0, 300)}`));
     });
   });
+}
+
+/** Narrow an arbitrary snapshot-step return value to a verification report. */
+export function isSnapshotVerification(value: unknown): value is R2ColdSnapshotVerification {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Partial<R2ColdSnapshotVerification>;
+  return typeof v.ok === "boolean" && ("integrity" in v) && typeof v.tables === "object";
+}
+
+/** Parse the child's verification JSON.  A child that produced no parseable report is
+ *  treated as UNVERIFIED (null) rather than as a pass — silence is never a green check. */
+export function parseSnapshotVerification(raw: string): R2ColdSnapshotVerification | null {
+  const text = raw.trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text.slice(text.indexOf("{"))) as Partial<R2ColdSnapshotVerification>;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return {
+      ok: parsed.ok === true,
+      integrity: typeof parsed.integrity === "string" ? parsed.integrity : null,
+      tables: (parsed.tables ?? {}) as Record<string, number | null>,
+      live: (parsed.live ?? {}) as Record<string, number | null>,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decide whether a verification report is good enough to upload.
+ *
+ * Two independent assertions, both required:
+ *  1. SQLite's own `PRAGMA integrity_check` on the copy says `ok`.
+ *  2. Every key table that had rows in the LIVE database still has rows in the copy.
+ *
+ * (2) matters because integrity_check answers "is this a well-formed SQLite file", not
+ * "does it still contain the trading state".  A structurally perfect empty database
+ * passes (1) and is worthless as a backup.  Comparing against the live counts read in the
+ * same child, moments earlier, is what turns the copy from plausible into checked.
+ * Exact equality is deliberately NOT required: the live DB is written continuously, so
+ * the copy is expected to trail it.
+ */
+export function assessSnapshotVerification(
+  verification: R2ColdSnapshotVerification | null,
+): { ok: boolean; reason?: string } {
+  if (!verification) return { ok: false, reason: "snapshot_verification_missing" };
+  if (verification.integrity !== "ok") {
+    return { ok: false, reason: `snapshot_integrity_check=${verification.integrity ?? "unknown"}` };
+  }
+  const empty: string[] = [];
+  for (const [table, liveCount] of Object.entries(verification.live ?? {})) {
+    if (typeof liveCount !== "number" || liveCount <= 0) continue; // absent live => nothing to assert
+    const copied = verification.tables?.[table];
+    if (typeof copied !== "number" || copied <= 0) empty.push(table);
+  }
+  if (empty.length > 0) {
+    return { ok: false, reason: `snapshot_key_tables_empty=${empty.join(",")}` };
+  }
+  return { ok: true };
 }
 
 /**
@@ -646,6 +1012,7 @@ export async function runVacuumIntoSnapshot(
 export async function withSnapshotDeadline<T>(
   work: () => Promise<T>,
   deadlineMs: number,
+  label: string = "snapshot_deadline_exceeded",
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -653,7 +1020,7 @@ export async function withSnapshotDeadline<T>(
       work(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(new Error(`snapshot_deadline_exceeded after ${Math.round(deadlineMs / 1000)}s`)),
+          () => reject(new Error(`${label} after ${Math.round(deadlineMs / 1000)}s`)),
           deadlineMs,
         );
       }),
@@ -679,6 +1046,8 @@ export interface R2ColdSnapshotRunResult {
   /** Keys retain=1 would delete.  Recorded even when skipPrune leaves them in place. */
   wouldPrune?: string[];
   skipPrune?: boolean;
+  /** Pre-upload proof: `PRAGMA integrity_check` + key-table row counts on the artifact. */
+  verification?: R2ColdSnapshotVerification | null;
   durationMs?: number;
 }
 
@@ -758,10 +1127,21 @@ export async function performR2ColdSnapshot(
   // edge-flavored instrumentation webpack pass cannot resolve the "os" builtin.
   const tempPath = join(dbDir, `.r2snap-${crypto.randomUUID()}.db.tmp`);
   const partSizeBytes = deps.partSizeBytes ?? cfg.partSizeBytes;
+  // Whole-attempt bound.  The signal is threaded into every S3 request so an over-deadline
+  // upload is genuinely ABORTED, not merely abandoned to keep running against a job whose
+  // lease the next drain has already taken.
+  const attemptDeadlineMs = deps.attemptDeadlineMs ?? cfg.attemptDeadlineMs;
+  const attemptController = new AbortController();
+  const attemptTimer = setTimeout(() => attemptController.abort(), attemptDeadlineMs);
+  const runDeps: R2ColdSnapshotDeps = {
+    ...deps,
+    abortSignal: deps.abortSignal ?? attemptController.signal,
+  };
   let uploadId: string | undefined;
 
   try {
-    audit("r2_cold_snapshot.start", { key, tempPath, partSizeBytes });
+    return await withSnapshotDeadline(async (): Promise<R2ColdSnapshotRunResult> => {
+    audit("r2_cold_snapshot.start", { key, tempPath, partSizeBytes, attemptDeadlineMs });
 
     // Consistent snapshot — NEVER a raw copy of the live WAL-mode file, and NEVER
     // better-sqlite3 `backup()`: the online-backup API restarts from page 1 on every
@@ -772,20 +1152,46 @@ export async function performR2ColdSnapshot(
     const snapshotStartedAt = Date.now();
     const backupImpl =
       deps.backupImpl ?? ((dest: string) => runVacuumIntoSnapshot(databasePath(), dest, snapshotDeadlineMs));
-    await withSnapshotDeadline(() => Promise.resolve(backupImpl(tempPath)), snapshotDeadlineMs);
+    const backupOutput = await withSnapshotDeadline(
+      () => Promise.resolve(backupImpl(tempPath)),
+      snapshotDeadlineMs,
+    );
     const snapshotMs = Date.now() - snapshotStartedAt;
     const rawBytes = statSync(tempPath).size;
 
-    uploadId = await createMultipartUpload(cfg, key, deps);
+    // Prove the artifact before shipping it.  Uploading an unchecked file and calling the
+    // result a backup is how an archive tier ends up green for months and useless once.
+    // The check runs while the file is still local, so a bad snapshot costs one wasted
+    // VACUUM rather than a wasted week of archive coverage.
+    const reported = isSnapshotVerification(backupOutput) ? backupOutput : null;
+    const verification =
+      reported ??
+      (await (deps.verifyImpl ??
+        ((dest: string) =>
+          runSnapshotVerification(dest, databasePath(), snapshotDeadlineMs)))(tempPath));
+    const verdict = assessSnapshotVerification(verification);
+    if (!verdict.ok) {
+      throw new Error(`snapshot_verification_failed: ${verdict.reason ?? "unknown"}`);
+    }
+    audit("r2_cold_snapshot.verified", {
+      key,
+      integrity: verification?.integrity ?? null,
+      tables: verification?.tables ?? {},
+      live: verification?.live ?? {},
+      rawBytes,
+      snapshotMs,
+    });
+
+    uploadId = await createMultipartUpload(cfg, key, runDeps);
     const { completedParts, compressedBytes } = await uploadGzippedParts(
       cfg,
       key,
       uploadId,
       tempPath,
       partSizeBytes,
-      deps,
+      runDeps,
     );
-    await completeMultipartUpload(cfg, key, uploadId, completedParts, deps);
+    await completeMultipartUpload(cfg, key, uploadId, completedParts, runDeps);
     uploadId = undefined; // completed — nothing to abort from here on
 
     // Retention: keep the newest `retain` snapshots, delete the rest — unless
@@ -795,7 +1201,7 @@ export async function performR2ColdSnapshot(
     let pruned: string[] = [];
     let wouldPrune: string[] = [];
     try {
-      const keys = await listColdSnapshotKeys(cfg, deps);
+      const keys = await listColdSnapshotKeys(cfg, runDeps);
       wouldPrune = selectColdSnapshotsToPrune(keys, cfg.retain);
       if (cfg.skipPrune) {
         audit("r2_cold_snapshot.prune_skipped", {
@@ -805,7 +1211,7 @@ export async function performR2ColdSnapshot(
         });
       } else {
         pruned = wouldPrune;
-        for (const k of pruned) await deleteObject(cfg, k, deps);
+        for (const k of pruned) await deleteObject(cfg, k, runDeps);
       }
     } catch (err) {
       audit("r2_cold_snapshot.prune_error", { key, error: err instanceof Error ? err.message : String(err) });
@@ -821,6 +1227,8 @@ export async function performR2ColdSnapshot(
         completedAt,
         bytes: compressedBytes,
         rawBytes,
+        verifiedIntegrity: verification?.integrity ?? null,
+        verifiedTables: verification?.tables ?? undefined,
       } satisfies R2ColdSnapshotLastSuccess);
     } catch {
       /* health may lag until next success; never throw into the scheduler tick */
@@ -835,6 +1243,7 @@ export async function performR2ColdSnapshot(
       wouldPrune,
       skipPrune: cfg.skipPrune,
       retain: cfg.retain,
+      verifiedIntegrity: verification?.integrity ?? null,
       durationMs,
     });
     return {
@@ -846,11 +1255,18 @@ export async function performR2ColdSnapshot(
       pruned,
       wouldPrune,
       skipPrune: cfg.skipPrune,
+      verification,
       durationMs,
     };
+    }, attemptDeadlineMs, "attempt_deadline_exceeded");
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (uploadId) await abortMultipartUpload(cfg, key, uploadId, deps);
+    // describeRequestError, not err.message: Node's fetch reports every transport failure
+    // as the bare string "fetch failed" and hides the real reason in `cause`.  That is
+    // literally all production got for the run that died on 2026-09-08T15:47:24Z.
+    const message = describeRequestError(err);
+    // Cleanup must NOT inherit the attempt's abort signal — if the deadline is what fired,
+    // an aborted signal would cancel the very request that releases the orphaned parts.
+    if (uploadId) await abortMultipartUpload(cfg, key, uploadId, { ...deps, abortSignal: undefined });
     try {
       setInternalSetting(R2_COLD_SNAPSHOT_LAST_FAILURE_KEY, {
         key,
@@ -879,6 +1295,7 @@ export async function performR2ColdSnapshot(
     }
     return { status: "error", reason: message, durationMs: Date.now() - startedAt };
   } finally {
+    clearTimeout(attemptTimer);
     try {
       if (existsSync(tempPath)) unlinkSync(tempPath);
       const journal = `${tempPath}-journal`;
