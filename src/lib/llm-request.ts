@@ -53,14 +53,14 @@ export function isModelRotationSentinel(model?: string | null): boolean {
 }
 
 /**
- * OpenAI "reasoning" models (gpt-5 family, o-series). They REJECT the `temperature` param
+ * OpenAI "reasoning" models (gpt-5/6 families, o-series). They REJECT the `temperature` param
  * (400 "Only the default (1) value is supported") and instead take `reasoning_effort`. They also
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
  */
 export function isReasoningModel(model: string | undefined): boolean {
   const leaf = lowerModel(model);
   const native = nativeSlugFor(model).toLowerCase();
-  return /^(gpt-5|o\d)/i.test(leaf) || /^(gpt-5|o\d)/i.test(native);
+  return /^(gpt-[56]|o\d)/i.test(leaf) || /^(gpt-[56]|o\d)/i.test(native);
 }
 
 /**
@@ -170,7 +170,7 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
       provider: "openai",
       label: "OpenAI Reasoning",
       settingLabel: "Reasoning Effort",
-      description: "OpenAI gpt-5/o-series models use reasoning effort and reject custom temperature.",
+      description: "OpenAI gpt-5/6 and o-series models use reasoning effort and reject custom temperature.",
       options: options(["low", "medium", "high"])
     };
   }
@@ -649,6 +649,9 @@ const ANTHROPIC_MIN_MAX_TOKENS = 4096;
  */
 export function resolveLlmWireOutputCap(transport: LlmTransport, bounds: RequestBounds): number {
   if (transport === "anthropic-messages") return Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS);
+  if (transport === "chat-completions" && /^minimax-/i.test(lowerModel(bounds.model))) {
+    return bounds.maxOutputTokens + REASONING_TOKEN_BUDGET.medium;
+  }
   const capability = reasoningCapabilityForModel(bounds.model);
   const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
   if (capability?.provider === "openai" && normalizedEffort) {
@@ -665,6 +668,15 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
   bounds: RequestBounds
 ): T & Record<string, unknown> {
   const result = ((): any => {
+    // MiniMax thinks by default; reserve room for reasoning as well as the visible answer.
+    // Its effort ladder differs from OpenAI's, so do not send reasoning_effort.
+    if (transport === "chat-completions" && /^minimax-/i.test(lowerModel(bounds.model))) {
+      return {
+        ...body,
+        max_completion_tokens: resolveLlmWireOutputCap(transport, bounds),
+        temperature: bounds.temperature ?? 1
+      };
+    }
     const capability = reasoningCapabilityForModel(bounds.model);
 
     const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);

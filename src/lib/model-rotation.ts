@@ -323,7 +323,7 @@ export async function eligibleRotationPool(userId: string): Promise<EligibleRota
     // Gate on the SAME credential resolveLlmEndpoint uses to serve each model — the OpenRouter key
     // in production (an OpenRouter-only account must get the full curated pool, not an empty one),
     // the native family under NODE_ENV=test (keeps native-key fixtures working). #1703 follow-up.
-    if (resolveLlmCredential(modelCredentialService(model), userId).key) credentialPool.push(model);
+    if (resolveLlmCredential(modelCredentialService(model, userId), userId).key) credentialPool.push(model);
     else skipped.push(model);
   }
   if (credentialPool.length === 0 || isTest) return { pool: credentialPool, skipped, availability: "not_checked" };

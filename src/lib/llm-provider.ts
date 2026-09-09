@@ -3,10 +3,10 @@ import { nativeSlugFor, openRouterSlugFor } from "./llm-model-catalog";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
-export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter";
+export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "minimax" | "openrouter";
 
 export interface LlmEndpoint {
-  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter";
+  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "minimax" | "openrouter";
   url: string;
   key?: string;
   model: string;
@@ -31,19 +31,13 @@ export function llmModelFamily(model: string | undefined): LlmModelFamily {
   if (/deepseek/i.test(normalized)) return "deepseek";
   if (/llama/i.test(normalized)) return "meta";
   if (/(kimi|moonshot)/i.test(normalized)) return "moonshot";
+  if (/minimax/i.test(normalized)) return "minimax";
   return "openai";
 }
 
-/**
- * The credential SERVICE whose key must resolve for a model under universal OpenRouter routing.
- * Production serves EVERY model through the OpenRouter credential (see `resolveLlmEndpoint`), so
- * that's what eligibility/save-gate checks must key on — an OpenRouter-only account must not be
- * rejected for lacking an (unused) native key. Under NODE_ENV=test we key the native family so the
- * existing native-key test fixtures keep resolving. Single source of truth so `resolveLlmEndpoint`,
- * rotation eligibility, and the policy save-gate never drift.
- */
-export function modelCredentialService(model: string | undefined): LlmModelFamily {
-  return process.env.NODE_ENV === "test" ? llmModelFamily(model) : "openrouter";
+/** Credential gate follows the same OpenRouter-first, native-fallback routing as execution. */
+export function modelCredentialService(model: string | undefined, userId: string = "local"): LlmModelFamily {
+  return resolveLlmCredential("openrouter", userId).key ? "openrouter" : llmModelFamily(model);
 }
 
 // Cross-family Red Team DEFAULT removed 2026-07-07 (owner directive: no model is a default for
@@ -69,7 +63,7 @@ function resolveRoleModel(
 /** Current OpenRouter Flash class — catalog column 2. Bare slug 404s. */
 export const OPENROUTER_GEMINI_FLASH = "~google/gemini-flash-latest";
 /** Pinned 3.7 batch/offline slug (the latest alias has no :batch sibling). */
-export const OPENROUTER_GEMINI_FLASH_BATCH = "google/gemini-3.7-flash:batch";
+export const OPENROUTER_GEMINI_FLASH_BATCH = "google/gemini-3.8-flash:batch";
 /** Google AI Studio native Flash class — catalog column 3. */
 export const NATIVE_GEMINI_FLASH = "gemini-flash-latest";
 
@@ -104,6 +98,8 @@ function prefixUnknownOpenRouterId(raw: string): string {
     out = `mistralai/${unprefixed}`;
   } else if (/(kimi|moonshot)/i.test(unprefixed)) {
     out = `moonshotai/${unprefixed}`;
+  } else if (/minimax/i.test(unprefixed)) {
+    out = `minimax/${unprefixed}`;
   } else if (/^deepseek/i.test(unprefixed)) {
     out = `deepseek/${unprefixed}`;
   } else if (/^llama/i.test(unprefixed)) {
@@ -211,6 +207,16 @@ export function resolveLlmEndpoint(
     return {
       provider: "moonshot",
       url: process.env.MOONSHOT_API_URL?.trim() || "https://api.moonshot.cn/v1/chat/completions",
+      key: nativeCred.key,
+      model: nativeModel,
+      keySource: nativeCred.source === "operator" ? "operator" : "user",
+      keyRef: nativeCred.keyRef,
+      transport: "chat-completions"
+    };
+  } else if (family === "minimax") {
+    return {
+      provider: "minimax",
+      url: process.env.MINIMAX_API_URL?.trim() || "https://api.minimax.io/v1/chat/completions",
       key: nativeCred.key,
       model: nativeModel,
       keySource: nativeCred.source === "operator" ? "operator" : "user",

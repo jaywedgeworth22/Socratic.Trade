@@ -47,6 +47,7 @@ const PROVIDER_LABEL: Record<CatalogProviderId, string> = {
   gemini: "Google",
   mistral: "Mistral",
   moonshot: "Moonshot AI (Kimi)",
+  minimax: "MiniMax",
   deepseek: "DeepSeek",
   meta: "Meta"
 };
@@ -58,6 +59,7 @@ const PROVIDER_ORDER: CatalogProviderId[] = [
   "gemini",
   "mistral",
   "moonshot",
+  "minimax",
   "deepseek",
   "meta"
 ];

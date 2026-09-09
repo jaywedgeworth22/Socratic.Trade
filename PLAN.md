@@ -1,3 +1,7 @@
+
+## 2026-09-09 CODEX — Model catalog refresh and concise account labels
+
+In progress on `codex/model-catalog-account-labels` (board `0d775009`).  Latest provider catalog and MiniMax API support; single-line account selector and concise paper banner.  Local verification stalled under shared-Mac load; publishing a draft PR for hosted verification.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
 # Active Implementation Plan
 
 > **2026-09-08 CLAUDE — R2 weekly cold snapshot archive stall (`claude/r2-cold-snapshot-freshness`).**  `checks.storage.r2Weekly` red for 9 days with zero noise.  better-sqlite3 `backup()` restarts on every write from another connection, so it never converges on the ~10.7 GB live DB — 27 attempts, no `.success`, no `.error`.  Replace the snapshot step with `VACUUM INTO` in a child process, bound every attempt with `R2_COLD_SNAPSHOT_DEADLINE_MIN`, and add a Sentry watchdog on the `r2Weekly` health state (one event per transition).  No R2 delete.  Rollout: `docs/rollouts/2026-09-08-r2-cold-snapshot-hang.md`.

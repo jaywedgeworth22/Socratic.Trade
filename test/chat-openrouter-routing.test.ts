@@ -100,14 +100,43 @@ describe("llmForModel — OpenRouter-first routing (review finding llm-12)", () 
       const fakeTransport = vi.fn().mockResolvedValue(fakeChatResponse());
       const llm = llmForModel("gemini-2.5-flash", userId, { openAITransport: fakeTransport });
       expect(llm).toBeInstanceOf(OpenAILLM);
-      // Native path keeps the model id AS GIVEN (no OpenRouter normalization) — behavior unchanged.
-      expect(llm.modelName).toBe("gemini-2.5-flash");
+      // The native catalog column resolves the persisted family alias.
+      expect(llm.modelName).toBe("gemini-flash-latest");
       await llm.run(baseArgs);
       const rows = getLlmUsageSummary({ userId });
       expect(rows.some((r) => r.provider === "gemini")).toBe(true);
       expect(rows.some((r) => r.provider === "openrouter")).toBe(false);
     } finally {
       deleteUserApiKey(userId, "gemini");
+    }
+  });
+
+  it("uses native MiniMax IDs and preserves reasoning across tool turns", async () => {
+    const userId = `u_minimax_${randomUUID()}`;
+    upsertUserApiKey(userId, "minimax", "minimax-test-placeholder");
+    const reasoning = [{ type: "reasoning.text", text: "tool context", index: 0 }];
+    const requests: Array<Record<string, any>> = [];
+    const transport = vi.fn(async (body) => {
+      requests.push(JSON.parse(JSON.stringify(body)));
+      return requests.length === 1
+        ? { choices: [{ finish_reason: "tool_calls", message: {
+            content: null,
+            reasoning_details: reasoning,
+            tool_calls: [{ id: "call_1", type: "function", function: { name: "get_quote", arguments: "{}" } }]
+          } }] }
+        : fakeChatResponse("Visible answer");
+    });
+    try {
+      const llm = llmForModel("minimax-m3", userId, { openAITransport: transport });
+      const result = await llm.run({ ...baseArgs, tools: [{ name: "get_quote", description: "Quote", input_schema: { type: "object" } }] });
+      expect(requests).toHaveLength(2);
+      expect(requests[0].model).toBe("MiniMax-M3");
+      expect(requests[0].reasoning_split).toBe(true);
+      expect(requests[0].max_completion_tokens).toBe(5024);
+      expect(requests[1].messages.find((m: { role: string }) => m.role === "assistant").reasoning_details).toEqual(reasoning);
+      expect(result.text).toBe("Visible answer");
+    } finally {
+      deleteUserApiKey(userId, "minimax");
     }
   });
 

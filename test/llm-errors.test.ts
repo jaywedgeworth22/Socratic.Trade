@@ -11,6 +11,7 @@ describe("providerLabel / providerFromText", () => {
     expect(providerLabel("gemini")).toBe("Google (Gemini)");
     expect(providerLabel("mistral")).toBe("Mistral");
     expect(providerLabel("anthropic")).toBe("Anthropic (Claude)");
+    expect(providerLabel("minimax")).toBe("MiniMax");
     expect(providerLabel("openai")).toBe("OpenAI");
     expect(providerLabel(undefined)).toBe("the LLM");
   });
@@ -21,6 +22,7 @@ describe("providerLabel / providerFromText", () => {
     expect(providerFromText("mistral 401: unauthorized")).toBe("Mistral");
     expect(providerFromText("xai 403: x.ai forbidden")).toBe("xAI (Grok)");
     expect(providerFromText("anthropic 401")).toBe("Anthropic (Claude)");
+    expect(providerFromText("minimax 401: unauthorized")).toBe("MiniMax");
   });
 });
 

@@ -13,6 +13,7 @@ describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
     expect(providerForModel("gemini-3.5-flash")).toBe("gemini");
     expect(providerForModel("mistral-medium-3-5")).toBe("mistral");
     expect(providerForModel("deepseek-v4-pro")).toBe("deepseek");
+    expect(providerForModel("minimax-m2.7")).toBe("minimax");
     expect(providerForModel("gpt-5.6-terra")).toBe("openai");
   });
 
@@ -24,6 +25,7 @@ describe("providerForModel — OpenRouter vendor-routing prefixes", () => {
     expect(providerForModel("google/gemini-3.5-flash")).toBe("gemini");
     expect(providerForModel("mistralai/mistral-medium-3-5")).toBe("mistral");
     expect(providerForModel("deepseek/deepseek-v4-pro")).toBe("deepseek");
+    expect(providerForModel("minimax/minimax-m2.7")).toBe("minimax");
   });
 
   it("handles the legacy explicit openrouter/vendor/model override shape", () => {

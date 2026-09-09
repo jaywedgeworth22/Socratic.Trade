@@ -273,11 +273,8 @@ async function validatePolicy(
   // from credential-resolvable models (src/lib/model-rotation.ts), so the keyed guarantee is upheld
   // at serve time, not save time.
   if ((options.enforceKeyedGreenModelRule ?? true) && typeof policy.llmModel === "string" && policy.llmModel.trim() && !isModelRotationSentinel(policy.llmModel)) {
-    // Universal OpenRouter routing (#1703): every model is served through the OpenRouter credential,
-    // so the save-gate keys on THAT in production — a valid curated/qualified id must not be rejected
-    // for lack of an unused native key when the OpenRouter key is present. modelCredentialService
-    // mirrors resolveLlmEndpoint (native family only under NODE_ENV=test).
-    const provider = modelCredentialService(policy.llmModel);
+    // Match the user's actual OpenRouter-first/native-fallback execution path.
+    const provider = modelCredentialService(policy.llmModel, userId);
     if (!resolveLlmCredential(provider, userId).key) {
       return provider === "openrouter"
         ? `Add an OpenRouter API key before selecting ${policy.llmModel.trim()} as your strategist (green team) model — all models are served through OpenRouter.`
@@ -285,7 +282,7 @@ async function validatePolicy(
     }
   }
   if ((options.enforceKeyedRedModelRule ?? true) && typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim() && !isModelRotationSentinel(policy.redTeamLlmModel)) {
-    const provider = modelCredentialService(policy.redTeamLlmModel);
+    const provider = modelCredentialService(policy.redTeamLlmModel, userId);
     if (!resolveLlmCredential(provider, userId).key) {
       return provider === "openrouter"
         ? `Add an OpenRouter API key before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model — all models are served through OpenRouter.`

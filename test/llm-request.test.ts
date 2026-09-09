@@ -166,6 +166,19 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect("reasoning" in resp).toBe(false);
   });
 
+  it("bounds Astra reasoning for direct and OpenRouter requests without custom temperature", () => {
+    for (const model of ["gpt-6-astra", "openai/gpt-6-astra"]) {
+      const chat = withLlmRequestBounds({ model }, "chat-completions", {
+        maxOutputTokens: 1500,
+        model,
+        reasoningEffort: "medium"
+      });
+      expect(chat).not.toHaveProperty("temperature");
+      expect(chat.reasoning_effort).toBe("medium");
+      expect(chat.max_completion_tokens).toBe(5500);
+    }
+  });
+
   it("reasoning models drop temperature, add reasoning_effort, and raise the token cap", () => {
     const chat = withLlmRequestBounds({ model: "gpt-5.4-mini" }, "chat-completions", {
       maxOutputTokens: 1500,

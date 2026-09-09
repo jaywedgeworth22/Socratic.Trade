@@ -17,7 +17,8 @@ export type CatalogProviderId =
   | "mistral"
   | "deepseek"
   | "meta"
-  | "moonshot";
+  | "moonshot"
+  | "minimax";
 
 export type CatalogTier = "" | "$" | "$$" | "$$$";
 
@@ -35,6 +36,15 @@ export interface LlmCatalogEntry {
 }
 
 export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
+  {
+    displaySlug: "gpt-6-astra",
+    openRouterSlug: "openai/gpt-6-astra",
+    nativeSlug: "gpt-6-astra",
+    provider: "openai",
+    label: "gpt-6-astra — frontier OpenAI reasoning",
+    tier: "$$$",
+    aliases: ["openai/gpt-6-astra"]
+  },
   {
     displaySlug: "gpt-5.4-nano",
     openRouterSlug: "openai/gpt-5.4-nano",
@@ -103,7 +113,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   {
     displaySlug: "claude-haiku-latest",
     openRouterSlug: "~anthropic/claude-haiku-latest",
-    nativeSlug: "claude-haiku-4.5",
+    nativeSlug: "claude-haiku-4-5-20251001",
     provider: "anthropic",
     label: "claude-haiku-latest (4.5) — fast low-cost Claude",
     tier: "$",
@@ -152,11 +162,11 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   {
     displaySlug: "claude-fable-latest",
     openRouterSlug: "~anthropic/claude-fable-latest",
-    nativeSlug: "claude-fable-5",
+    nativeSlug: "claude-fable-5-1",
     provider: "anthropic",
-    label: "claude-fable-latest (5) — most capable Claude",
+    label: "claude-fable-latest (5.1) — most capable Claude",
     tier: "$$$",
-    aliases: ["claude-fable-5", "claude-fable", "anthropic/claude-fable-latest", "anthropic/claude-fable-5"]
+    aliases: ["claude-fable-5-1", "claude-fable-5.1", "anthropic/claude-fable-5.1", "claude-fable-5", "claude-fable", "anthropic/claude-fable-latest", "anthropic/claude-fable-5"]
   },
   {
     displaySlug: "grok-build-0.1",
@@ -170,11 +180,11 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   {
     displaySlug: "grok-latest",
     openRouterSlug: "~x-ai/grok-latest",
-    nativeSlug: "grok-4.5",
+    nativeSlug: "grok-4.6",
     provider: "xai",
-    label: "grok-latest (4.5) — default Grok analysis",
+    label: "grok-latest (4.6) — default Grok analysis",
     tier: "$$",
-    aliases: ["grok-4.5", "grok-4.3", "grok", "x-ai/grok-latest", "x-ai/grok-4.5", "xai/grok-latest"]
+    aliases: ["grok-4.6", "x-ai/grok-4.6", "grok-4.5", "grok-4.3", "grok", "x-ai/grok-latest", "x-ai/grok-4.5", "xai/grok-latest"]
   },
   {
     displaySlug: "gemini-flash-lite-latest",
@@ -196,10 +206,12 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
     openRouterSlug: "~google/gemini-flash-latest",
     nativeSlug: "gemini-flash-latest",
     provider: "gemini",
-    label: "gemini-flash-latest — current flagship Flash",
+    label: "gemini-flash-latest — current flagship Flash (3.8)",
     tier: "$$",
     recommendedGreen: true,
     aliases: [
+      "gemini-3.8-flash",
+      "google/gemini-3.8-flash",
       "gemini-3.7-flash",
       "gemini-3.6-flash",
       "gemini-3.5-flash",
@@ -242,7 +254,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "mistral-medium-latest",
-    openRouterSlug: "mistralai/mistral-medium-3.5",
+    openRouterSlug: "mistralai/mistral-medium-3-5",
     nativeSlug: "mistral-medium-latest",
     provider: "mistral",
     label: "mistral-medium-latest — frontier Mistral Medium",
@@ -257,7 +269,7 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "mistral-large-latest",
-    openRouterSlug: "mistralai/mistral-large",
+    openRouterSlug: "mistralai/mistral-large-2512",
     nativeSlug: "mistral-large-latest",
     provider: "mistral",
     label: "mistral-large-latest — Mistral Large",
@@ -275,21 +287,21 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
   },
   {
     displaySlug: "deepseek-flash-latest",
-    openRouterSlug: "deepseek/deepseek-v4-flash",
+    openRouterSlug: "deepseek/deepseek-v4-flash-0731",
     nativeSlug: "deepseek-v4-flash",
     provider: "deepseek",
     label: "deepseek-flash-latest (v4) — fast DeepSeek Flash",
     tier: "$",
-    aliases: ["deepseek-v4-flash", "deepseek-chat", "deepseek/deepseek-v4-flash", "deepseek/deepseek-flash-latest"]
+    aliases: ["deepseek-v4-flash-0731", "deepseek/deepseek-v4-flash-0731", "deepseek-v4-flash", "deepseek-chat", "deepseek/deepseek-v4-flash", "deepseek/deepseek-flash-latest"]
   },
   {
     displaySlug: "deepseek-pro-latest",
-    openRouterSlug: "deepseek/deepseek-v4-pro",
+    openRouterSlug: "deepseek/deepseek-v4-pro-0813",
     nativeSlug: "deepseek-v4-pro",
     provider: "deepseek",
     label: "deepseek-pro-latest (v4) — stronger DeepSeek Pro",
     tier: "$$",
-    aliases: ["deepseek-v4-pro", "deepseek/deepseek-v4-pro", "deepseek/deepseek-pro-latest"]
+    aliases: ["deepseek-v4-pro-0813", "deepseek/deepseek-v4-pro-0813", "deepseek-v4-pro", "deepseek/deepseek-v4-pro", "deepseek/deepseek-pro-latest"]
   },
   {
     displaySlug: "deepseek-r1",
@@ -301,11 +313,47 @@ export const LLM_MODEL_CATALOG: readonly LlmCatalogEntry[] = [
     aliases: ["deepseek-reasoner", "deepseek-r1-latest", "deepseek/deepseek-r1", "deepseek/deepseek-reasoner"]
   },
   {
+    displaySlug: "minimax-m3",
+    openRouterSlug: "minimax/minimax-m3",
+    nativeSlug: "MiniMax-M3",
+    provider: "minimax",
+    label: "MiniMax M3 — general-purpose reasoning",
+    tier: "$",
+    aliases: ["minimax/minimax-m3"]
+  },
+  {
+    displaySlug: "minimax-m2.7",
+    openRouterSlug: "minimax/minimax-m2.7",
+    nativeSlug: "MiniMax-M2.7",
+    provider: "minimax",
+    label: "MiniMax M2.7 — efficient reasoning",
+    tier: "$",
+    aliases: ["minimax/minimax-m2.7"]
+  },
+  {
+    displaySlug: "llama-4-maverick",
+    openRouterSlug: "meta-llama/llama-4-maverick",
+    nativeSlug: "llama-4-maverick",
+    provider: "meta",
+    label: "Llama 4 Maverick — general-purpose open-weight model",
+    tier: "$",
+    aliases: ["meta-llama/llama-4-maverick"]
+  },
+  {
+    displaySlug: "llama-4-scout",
+    openRouterSlug: "meta-llama/llama-4-scout",
+    nativeSlug: "llama-4-scout",
+    provider: "meta",
+    label: "Llama 4 Scout — efficient open-weight model",
+    tier: "$",
+    aliases: ["meta-llama/llama-4-scout"]
+  },
+  {
     displaySlug: "llama-3.3-70b-instruct",
     openRouterSlug: "meta-llama/llama-3.3-70b-instruct",
     nativeSlug: "llama-3.3-70b-instruct",
     provider: "meta",
-    label: "llama-3.3-70b-instruct — flagship open-weights analysis",
+    label: "llama-3.3-70b-instruct — Llama 3.3 analysis",
     tier: "$$",
     aliases: ["llama-70b-latest", "meta-llama/llama-3.3-70b-instruct"]
   }
@@ -353,9 +401,9 @@ export function openRouterSlugFor(model: string | null | undefined): string {
   const batch = /:batch$/i.test(trimmed);
   const entry = catalogEntryFor(trimmed);
   if (entry) {
-    // The Flash-latest alias has no :batch sibling. Pin offline/eval to 3.7 batch.
+    // The Flash-latest alias has no :batch sibling. Pin offline/eval to 3.8 batch.
     if (batch && entry.displaySlug === "gemini-flash-latest") {
-      return "google/gemini-3.7-flash:batch";
+      return "google/gemini-3.8-flash:batch";
     }
     return batch && !entry.openRouterSlug.endsWith(":batch") ? `${entry.openRouterSlug}:batch` : entry.openRouterSlug;
   }

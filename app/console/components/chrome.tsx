@@ -53,11 +53,11 @@ export function RealityBanner({ snapshot }: { snapshot: DashboardSnapshot }) {
   if (reality.tone === "live") return null;
   return (
     <div className={cx("con-reality", `con-reality-${reality.tone}`)}>
-      <div className="mx-auto flex max-w-[1400px] items-baseline gap-2 px-4 py-1.5">
+      <div className={cx("mx-auto flex max-w-[1400px] items-baseline px-4 py-1.5", reality.tone === "paper" ? "gap-0" : "gap-2")}>
         <span className="con-reality-word text-[length:var(--con-fs-sm)]">{reality.word}</span>
-        <span className="font-semibold text-black">•</span>
+        <span className={cx("font-semibold text-black", reality.tone === "paper" && "whitespace-pre")}>{reality.tone === "paper" ? "  •  " : "•"}</span>
         <span className="font-semibold text-black">{reality.phrase}</span>
-        <span className="hidden truncate text-black sm:inline">— {reality.clarification}</span>
+        {reality.tone !== "paper" && <span className="hidden truncate text-black sm:inline">— {reality.clarification}</span>}
       </div>
     </div>
   );
@@ -87,23 +87,21 @@ function brokerName(broker: string | undefined): string {
   }
 }
 
-export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapshot; compact?: boolean }) {
+export function ScopeSelector({ snapshot }: { snapshot: DashboardSnapshot; compact?: boolean }) {
   const toast = useToast();
   const guardAction = useDirtyActionGuard();
   const allowNextUnload = useNextUnloadBypass();
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const reality = deriveReality(snapshot);
   const active = activeConnectedAccount(snapshot);
   // Active account hoisted first, the rest after — same order the switch list
   // reads top-to-bottom. Mirrors the Broker connections settings card.
   const others = snapshot.connectedAccounts.filter((a) => !a.isActive);
   const ordered = active ? [active, ...others] : others;
 
-  const label = active
-    ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ••${active.accountNumber.slice(-4)}` : ""}`
-    : "No connected account";
+  const label = active ? active.label || brokerName(active.broker) : "No connected account";
+  const activeLast4 = active?.accountNumber ? active.accountNumber.slice(-4) : null;
 
   const close = () => {
     setOpen(false);
@@ -141,10 +139,8 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     }
   };
 
-  // Compact switch row: name + reality/run-state chips on line one, broker ••last4
-  // (bullet mask, same convention as iOS) on a faint second line. The whole row is
-  // the switch affordance; the loaded account is a non-interactive current-state
-  // marker (checkmark, accent tint).
+  // The whole row is the switch affordance; the loaded account is a non-interactive
+  // current-state marker (checkmark, accent tint).
   const renderRow = (account: ConnectedAccount) => {
     const r = realityForAccount(account);
     const policy = snapshot.connectedAccountPolicies?.[account.id];
@@ -169,17 +165,16 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
             <span className="truncate text-[length:var(--con-fs-sm)] font-semibold">
               {account.label || brokerName(account.broker)}
             </span>
-            {r.tone !== "live" && <Chip tone={r.tone}>{r.word}</Chip>}
+            {r.tone !== "live" && <Chip tone={r.tone}>{r.tone === "paper" ? "PAPER" : r.word}</Chip>}
             {st && (
               <Chip tone={st.tone}>
                 {st.label.replace(" · market closed", "")}
               </Chip>
             )}
           </span>
-          <span className="mt-0.5 block truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-            {brokerName(account.broker)}
-            {last4 ? ` · ••${last4}` : ""}
-            {r.tone !== "live" ? ` · ${r.phrase}` : ""}
+          <span className="mt-0.5 flex min-w-0 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            <span className="truncate">{brokerName(account.broker)}</span>
+            {last4 && <span className="shrink-0 whitespace-pre">{` — ${last4}`}</span>}
           </span>
         </span>
         <span
@@ -220,18 +215,14 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         onClick={() => (open ? close() : setOpen(true))}
         aria-haspopup="menu"
         aria-expanded={open}
-        // items-start + a small chevron nudge aligns the chevron with the first
-        // (account-name) line rather than floating between the two label lines.
-        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3 con-bar-ctl con-bar-ctl-scope"
+        className="flex w-full items-center gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3 con-bar-ctl con-bar-ctl-scope"
         title="Switch which account this console shows"
       >
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[length:var(--con-fs-sm)] font-semibold leading-tight">{label}</span>
-          {!compact && (
-            <span className="hidden truncate text-[length:var(--con-fs-xs)] leading-tight text-[color:var(--con-faint)] sm:block">
-              {reality.tone === "live" ? "Brokerage account" : `${reality.word} · ${reality.phrase}`}
-            </span>
-          )}
+          <span className="flex min-w-0 text-[length:var(--con-fs-sm)] font-semibold leading-tight">
+            <span className="truncate">{label}</span>
+            {activeLast4 && <span className="shrink-0 whitespace-pre">{`   — ${activeLast4}`}</span>}
+          </span>
         </span>
         <ChevronDown
           size={14}

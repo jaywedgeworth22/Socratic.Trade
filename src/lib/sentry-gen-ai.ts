@@ -46,6 +46,7 @@ export function inferGenAiSystem(url: string): string {
     if (host.includes("mistral.ai")) return "mistral";
     if (host.includes("deepseek.com")) return "deepseek";
     if (host.includes("moonshot")) return "moonshot";
+    if (host.includes("minimax")) return "minimax";
     if (host.includes("voyageai.com") || host.includes("api.voyage")) return "voyage";
     if (host.includes("pinecone.io")) return "pinecone";
     if (host.includes("earningscalls")) return "earningscalls";

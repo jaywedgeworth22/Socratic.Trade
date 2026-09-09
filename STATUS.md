@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-09-09 CODEX — Model catalog refresh and concise account labels
+
+In progress on `codex/model-catalog-account-labels` (board `0d775009`).  Latest provider catalog and MiniMax API support; single-line account selector and concise paper banner.  Local verification stalled under shared-Mac load; publishing a draft PR for hosted verification.  Rollout: `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
+
 ## 2026-09-08 CLAUDE — R2 weekly cold snapshot stalled 9 days, silently
 
 `checks.storage.r2Weekly` was the only red check on `/api/health`: `archive_stale`,

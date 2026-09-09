@@ -1,5 +1,12 @@
 # Manager / Strategist model options — cross-provider evaluation
 
+## Catalog refresh — 2026-09-09
+
+The web picker now includes GPT-6 Astra, MiniMax M3/M2.7, and Meta Llama 4 Maverick/Scout.  Fable's current native version is 5.1; Grok is 4.6; Gemini Flash is 3.8.  Existing selections and family aliases remain valid.  OpenRouter's live catalog supplies verified routing IDs; the latest stable DeepSeek V4 snapshots and Mistral Medium/Large routes are pinned in `src/lib/llm-model-catalog.ts`.
+
+MiniMax accepts standard server-side pay-as-you-go API credentials through its OpenAI-compatible endpoint.  Its Token Plan supports developer tools but is described as individual interactive development, with pay-as-you-go recommended for production; the app does not promise subscription-funded automated trading.  Sources and verification are recorded in `docs/rollouts/2026-09-09-model-catalog-account-labels.md`.
+
+
 Decision aid for the sovereign-design question **"which model tier + budget runs the
 strategist ('Manager') loop?"** The owner asked for a cross-provider options list (not
 Anthropic-only) and a way to evaluate how each performs — including DeepSeek for cost.

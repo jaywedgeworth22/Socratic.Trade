@@ -357,12 +357,18 @@ export function buildLlmRequestBody(
   }
 
   const messages = [
-    { role: "system", content: systemPrompt },
+    {
+      role: "system",
+      content: endpoint.provider === "minimax" && schema
+        ? `${systemPrompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema.schema)}`
+        : systemPrompt
+    },
     { role: "user", content: userContent }
   ];
 
   if (transport === "chat-completions") {
     const base: Record<string, unknown> = { model: spec.model, messages };
+    if (endpoint.provider === "minimax") base.reasoning_split = true;
     const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject, spec.model);
     if (responseFormat) base.response_format = responseFormat;
     injectCommonFields(base);
@@ -499,6 +505,13 @@ function openAiChatResponseFormat(
 ): Record<string, unknown> | undefined {
   const isGemini = provider === "gemini" || (model && /^google\//i.test(model));
   const isDeepSeek = provider === "deepseek" || (model && /^deepseek\//i.test(model));
+  const isMiniMax = provider === "minimax";
+
+  // MiniMax's documented OpenAI-compatible request fields include messages, tools, sampling,
+  // thinking, and max_completion_tokens, but not response_format/json_schema.  Omit the
+  // undocumented field so native requests are accepted; callers still require and parse JSON
+  // from their schema-bearing prompt.
+  if (isMiniMax) return undefined;
 
   if (schema && !openAiJsonObject && isGemini) {
     const { schema: geminiSchema, unsupported } = toGeminiJsonSchema(schema.schema);

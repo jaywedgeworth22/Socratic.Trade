@@ -30,6 +30,7 @@ describe("sentry gen_ai helpers", () => {
   it("infers provider system from URL host", () => {
     expect(inferGenAiSystem("https://openrouter.ai/api/v1/chat/completions")).toBe("openrouter");
     expect(inferGenAiSystem("https://api.openai.com/v1/chat/completions")).toBe("openai");
+    expect(inferGenAiSystem("https://api.minimax.io/v1/chat/completions")).toBe("minimax");
     expect(inferGenAiSystem("https://api.voyageai.com/v1/embeddings")).toBe("voyage");
     expect(inferGenAiSystem("https://earningscalls.dev/api/v1/transcripts/1")).toBe("earningscalls");
   });

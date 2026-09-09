@@ -89,6 +89,18 @@ const BULL_PROPOSAL_SCHEMA = {
 };
 
 describe("buildLlmRequestBody", () => {
+  it("MiniMax native chat uses documented bounds without unsupported response_format", () => {
+    const body = buildLlmRequestBody(
+      { provider: "minimax", transport: "chat-completions" },
+      { model: "MiniMax-M2.7", systemPrompt: "Return JSON.", userContent: "{}", maxOutputTokens: 1500, schema: SCHEMA }
+    );
+    expect(body.max_completion_tokens).toBe(5500);
+    expect(body.temperature).toBe(1);
+    expect(body.reasoning_split).toBe(true);
+    expect(body.response_format).toBeUndefined();
+    expect((body.messages as Array<{ content: string }>)[0].content).toContain(JSON.stringify(SCHEMA.schema));
+  });
+
   it("OpenAI chat-completions: strict json_schema + max_completion_tokens (reasoning model)", () => {
     const body = buildLlmRequestBody(
       { provider: "openai", transport: "chat-completions" },

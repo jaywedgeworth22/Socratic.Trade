@@ -273,6 +273,7 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
   moonshot: "MOONSHOT_API_KEY",
   kimi: "MOONSHOT_API_KEY",
+  minimax: "MINIMAX_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   finnhub: "FINNHUB_API_KEY",
   fmp: "FMP_API_KEY",
@@ -332,6 +333,8 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   moonshotai_api_key: "moonshot",
   kimi: "moonshot",
   kimi_api_key: "moonshot",
+  minimax: "minimax",
+  minimax_api_key: "minimax",
   openrouter: "openrouter",
   openrouter_api_key: "openrouter",
   marketstack_api_key: "marketstack",
@@ -952,7 +955,7 @@ export function maskApiKeyPreview(key: string | undefined | null): string | unde
  * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
  * when the failover is enabled.
  */
-export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "openrouter", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
+export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "moonshot" | "minimax" | "openrouter", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
@@ -974,7 +977,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 
   if (process.env.NODE_ENV === "test" && !envKey) {
     if (canonical === "openrouter") {
-      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "META_API_KEY", "MOONSHOT_API_KEY"];
+      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "META_API_KEY", "MOONSHOT_API_KEY", "MINIMAX_API_KEY"];
       for (const f of fallbacks) {
         if (process.env[f]) {
           envKey = process.env[f];
@@ -992,7 +995,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 }
 
 /** Every LLM provider `resolveLlmCredential` understands. The single source of truth for "is an LLM connected". */
-export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "meta", "moonshot", "openrouter"] as const;
+export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "meta", "moonshot", "minimax", "openrouter"] as const;
 export type LlmProviderService = (typeof LLM_PROVIDER_SERVICES)[number];
 
 /**
@@ -1016,6 +1019,7 @@ const LOCAL_ENV_MIGRATION_SERVICES = [
   "mistral",
   "deepseek",
   "moonshot",
+  "minimax",
   "openrouter",
   "alpaca_paper_api_key",
   "alpaca_paper_secret_key",
@@ -1039,6 +1043,7 @@ const ALL_SERVICE_ENV_VARS: Record<string, string[]> = {
   mistral: ["MISTRAL_API_KEY"],
   deepseek: ["DEEPSEEK_API_KEY"],
   moonshot: ["MOONSHOT_API_KEY", "KIMI_API_KEY", "MOONSHOTAI_API_KEY"],
+  minimax: ["MINIMAX_API_KEY"],
   openrouter: ["OPENROUTER_API_KEY"],
   alpaca_paper_api_key: ["ALPACA_PAPER_API_KEY"],
   alpaca_paper_secret_key: ["ALPACA_PAPER_SECRET_KEY"],

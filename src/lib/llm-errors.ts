@@ -3,7 +3,7 @@
 // provider error (status code + response body) into a short, user-actionable sentence, and falls back
 // to the trimmed raw text when it does not recognize the shape, so nothing is ever hidden.
 
-export type LlmProviderName = "OpenAI" | "Anthropic (Claude)" | "xAI (Grok)" | "Google (Gemini)" | "Mistral" | "DeepSeek" | "Moonshot AI (Kimi)" | "OpenRouter" | "the LLM";
+export type LlmProviderName = "OpenAI" | "Anthropic (Claude)" | "xAI (Grok)" | "Google (Gemini)" | "Mistral" | "DeepSeek" | "Moonshot AI (Kimi)" | "MiniMax" | "OpenRouter" | "the LLM";
 
 /** Map an internal provider id (openai/xai/gemini/mistral/deepseek/anthropic) to a display name. */
 export function providerLabel(provider?: string | null): LlmProviderName {
@@ -19,6 +19,8 @@ export function providerLabel(provider?: string | null): LlmProviderName {
     case "moonshot":
     case "kimi":
       return "Moonshot AI (Kimi)";
+    case "minimax":
+      return "MiniMax";
     case "openrouter":
       return "OpenRouter";
     case "anthropic":
@@ -38,6 +40,7 @@ export function providerFromText(raw: string): LlmProviderName {
   if (/generativelanguage|gemini/.test(s)) return "Google (Gemini)";
   if (/mistral|mixtral|codestral|ministral/.test(s)) return "Mistral";
   if (/moonshot|kimi/.test(s)) return "Moonshot AI (Kimi)";
+  if (/minimax/.test(s)) return "MiniMax";
   if (/openrouter/.test(s)) return "OpenRouter";
   if (/deepseek/.test(s)) return "DeepSeek";
   if (/openai|platform\.openai|^sk-/.test(s)) return "OpenAI";
@@ -80,7 +83,7 @@ function extractStructuredProviderError(
  *  second pass (e.g. humanizeLlmTransportError re-wrapping an Error whose message was humanized at
  *  the throw site) returns it unchanged instead of stuttering "Gemini error: Gemini error: ...". */
 const ALREADY_HUMANIZED =
-  /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|Moonshot AI \(Kimi\)|OpenRouter|the LLM) error\b|^(?:That model id isn't valid on |That model isn't available on your |Couldn't complete this model request\.|.+ had no compatible endpoint for this request\.)/;
+  /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|Moonshot AI \(Kimi\)|MiniMax|OpenRouter|the LLM) error\b|^(?:That model id isn't valid on |That model isn't available on your |Couldn't complete this model request\.|.+ had no compatible endpoint for this request\.)/;
 
 /**
  * Convert a raw LLM error (and optional HTTP status) into a plain-English, actionable message.
