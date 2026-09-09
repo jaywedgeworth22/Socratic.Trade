@@ -58,6 +58,15 @@ describe("llm-request — model resolution", () => {
     expect(interactiveStrategyReasoningEffort("openai/gpt-4o-mini", "high")).toBeUndefined();
   });
 
+  it("keeps current native model reasoning controls aligned with their aliases", () => {
+    expect(reasoningCapabilityForModel("claude-opus-5")?.provider).toBe("anthropic");
+    for (const model of ["grok-4.6", "grok-latest", "x-ai/grok-4.6"]) {
+      expect(reasoningCapabilityForModel(model)?.options.map((option) => option.value)).toEqual(["low", "medium", "high", "xhigh"]);
+      expect(normalizeReasoningEffortForModel(model, "none")).toBe("low");
+    }
+    expect(reasoningCapabilityForModel("google/gemini-3.8-flash")?.options.map((option) => option.value)).toEqual(["low", "medium", "high"]);
+  });
+
   it("maps provider-specific reasoning controls by model family", () => {
     expect(reasoningCapabilityForModel("gpt-5.6-sol")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("gpt-5.6-terra")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);

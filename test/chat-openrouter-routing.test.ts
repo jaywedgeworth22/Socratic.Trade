@@ -111,6 +111,23 @@ describe("llmForModel — OpenRouter-first routing (review finding llm-12)", () 
     }
   });
 
+  it("preserves adaptive thinking after resolving the native Opus model ID", async () => {
+    const userId = `u_opus_${randomUUID()}`;
+    upsertUserApiKey(userId, "anthropic", "anthropic-placeholder");
+    const transport = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "Answer" }], stop_reason: "end_turn" });
+    try {
+      const llm = llmForModel("claude-opus-latest", userId, { transport, reasoningEffort: "high" });
+      await llm.run(baseArgs);
+      const body = transport.mock.calls[0][0];
+      expect(body.model).toBe("claude-opus-5");
+      expect(body.thinking).toEqual({ type: "adaptive" });
+      expect(body.output_config).toEqual({ effort: "high" });
+      expect(body.max_tokens).toBeGreaterThanOrEqual(4096);
+    } finally {
+      deleteUserApiKey(userId, "anthropic");
+    }
+  });
+
   it("keeps Meta credentials away from the OpenAI fallback", () => {
     const userId = `u_meta_${randomUUID()}`;
     upsertUserApiKey(userId, "meta", "meta-placeholder");

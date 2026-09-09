@@ -431,13 +431,11 @@ export class AnthropicLLM implements ChatLLM {
       }
       args.onStage?.({ stage: "thinking" });
       const baseBody = { model: this.model, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) };
-      const requestBody = reasoningCapabilityForModel(this.model)
-        ? withLlmRequestBounds(baseBody, "anthropic-messages", {
-            model: this.model,
-            maxOutputTokens: 1024,
-            reasoningEffort: this.reasoningEffort
-          })
-        : { ...baseBody, max_tokens: 1024 };
+      const requestBody = withLlmRequestBounds(baseBody, "anthropic-messages", {
+        model: this.model,
+        maxOutputTokens: 1024,
+        reasoningEffort: this.reasoningEffort
+      });
       const resp = await this.transport(requestBody, this.apiKey, args.abortSignal);
       const u = extractLlmUsage(resp);
       if (u.promptTokens !== undefined || u.completionTokens !== undefined) {

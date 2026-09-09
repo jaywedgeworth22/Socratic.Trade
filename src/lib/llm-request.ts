@@ -115,14 +115,14 @@ function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {
   return (
     /^claude-fable-5(?:$|[-.:_])/.test(normalized) ||
     /^claude-mythos-5(?:$|[-.:_])/.test(normalized) ||
-    /^claude-opus-4-(?:6|7|8)(?:$|[-.:_])/.test(normalized) ||
+    /^claude-opus-(?:5|4-(?:6|7|8))(?:$|[-.:_])/.test(normalized) ||
     /^claude-sonnet-(?:5|4-6)(?:$|[-.:_])/.test(normalized) ||
     /^claude-(?:sonnet|haiku|opus|fable)-latest(?:$|[-.:_])/.test(normalized)
   );
 }
 
 function isXaiReasoningModel(model: string | undefined): boolean {
-  return /^(grok-4(?:\.3)?|grok-(?:build-)?latest)(?:$|[-.:_])/i.test(lowerModel(model));
+  return /^(grok-4(?:\.(?:3|5|6))?|grok-(?:build-)?latest)(?:$|[-.:_])/i.test(lowerModel(model));
 }
 
 function isGeminiModel(model: string | undefined): boolean {
@@ -130,15 +130,15 @@ function isGeminiModel(model: string | undefined): boolean {
 }
 
 function geminiAllowsThinkingOff(model: string | undefined): boolean {
-  // 3.7 Flash (current default / flash-latest) has mandatory thinking.  Only the
+  // 3.8 Flash (current default / flash-latest) has mandatory thinking.  Only the
   // 2.5 Flash class still accepts a full off switch.
   return /^(gemini-2\.5-(?:flash|flash-lite))(?:$|[-.:_])/.test(lowerModel(model));
 }
 
 function geminiSupportsMinimalThinking(model: string | undefined): boolean {
   const lower = lowerModel(model);
-  // 3.7 Flash + the catalog alias that now resolves to it: high/medium/low only.
-  if (/gemini-3\.7-flash/.test(lower) || /gemini-flash-latest/.test(lower)) return false;
+  // 3.7/3.8 Flash + the catalog alias that now resolves to it: high/medium/low only.
+  if (/gemini-3\.(?:7|8)-flash/.test(lower) || /gemini-flash-latest/.test(lower)) return false;
   return isGeminiModel(model);
 }
 
@@ -184,12 +184,14 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
     };
   }
   if (isXaiReasoningModel(model)) {
+    const modern = /^(grok-4\.[56]|grok-latest)(?:$|[-.:_])/.test(lowerModel(model));
+    const supportsXhigh = /^(grok-4\.6|grok-latest)(?:$|[-.:_])/.test(lowerModel(model));
     return {
       provider: "xai",
       label: "Grok Reasoning",
       settingLabel: "Reasoning Effort",
-      description: "Grok reasoning models accept none/low/medium/high effort.",
-      options: options(["none", "low", "medium", "high"])
+      description: modern ? "Grok 4.5/4.6 reasoning cannot be disabled; Grok 4.6 adds xhigh effort." : "Grok reasoning models accept none/low/medium/high effort.",
+      options: options(supportsXhigh ? ["low", "medium", "high", "xhigh"] : modern ? ["low", "medium", "high"] : ["none", "low", "medium", "high"])
     };
   }
   if (isGeminiModel(model)) {
@@ -201,7 +203,7 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
         ? "Gemini thinking can be disabled or scaled on selected 2.5 Flash models."
         : geminiSupportsMinimalThinking(model)
           ? "Gemini thinking can be scaled, but this model family does not support turning it fully off."
-          : "Gemini 3.7 Flash thinking is mandatory (low/medium/high).",
+          : "Gemini 3.8 Flash thinking is mandatory (low/medium/high).",
       options: options(
         geminiAllowsThinkingOff(model)
           ? ["none", "minimal", "low", "medium", "high"]

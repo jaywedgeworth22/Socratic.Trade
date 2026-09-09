@@ -97,6 +97,8 @@ Final provider cross-check identified Muse Spark 1.3 (Meta announcement 2026-09-
 
 Exact-lockfile local reinstall also failed with `ETIMEDOUT`.  Hosted verification remains required.
 
+GitHub review correctly identified native `claude-opus-5` missing from the adaptive-thinking matcher.  Added Opus 5 matching and a native chat transport regression; all native Anthropic chat calls now use the shared 4,096-token minimum.  Grok 4.5/4.6 match current reasoning controls (no off switch, xhigh on 4.6); Gemini 3.8 matches mandatory low/medium/high thinking.  Sources: https://docs.x.ai/developers/model-capabilities/text/reasoning and https://ai.google.dev/gemini-api/docs/thinking.
+
 ## Next Steps & Blockers
 
 PR #3196 is draft pending the full gate.  `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh --draft` passed worktree/hook/stale-overlap checks (main already current) and failed local typechecking because the copied dependency tree lacks `@sentry/profiling-node` and has an empty `@types/node/url.d.ts`.  Hosted lint/typechecking passed.  Reinstalling the exact lockfile using `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm ci --ignore-scripts --prefer-offline`; do not alter source to accommodate damaged dependencies.  Hosted run `34327205131` validates commit `2a9519912`.  No merge or deployment claim.
