@@ -14,7 +14,10 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { databasePath } from "../src/lib/db";
+import type { R2ColdSnapshotVerification } from "../src/lib/r2-cold-snapshot";
 import {
+  assessSnapshotVerification,
+  describeRequestError,
   drainR2ColdSnapshotJobs,
   ensureR2ColdSnapshotJobScheduled,
   getR2WeeklyHealthStatus,
@@ -24,10 +27,16 @@ import {
   r2ColdSnapshotSkipPruneFromEnv,
   r2WeeklyHealthState,
   reportR2WeeklyFreshness,
+  parseSnapshotVerification,
+  runSnapshotVerification,
   runVacuumIntoSnapshot,
   selectColdSnapshotsToPrune,
   withSnapshotDeadline,
   R2_ARCHIVE_MAX_AGE_SECONDS,
+  R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS,
+  R2_COLD_SNAPSHOT_LEASE_MS,
+  R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS,
+  R2_COLD_SNAPSHOT_MAX_RETAIN,
   R2_COLD_SNAPSHOT_DEFAULT_DEADLINE_MS,
   R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES,
   R2_COLD_SNAPSHOT_DEFAULT_RETAIN,
@@ -52,6 +61,7 @@ const CRED_ENVS = [
   "AWS_R2_HISTORIC_SECRET_ACCESS_KEY",
   "R2_COLD_SNAPSHOT_ENABLED",
   "R2_COLD_SNAPSHOT_RETAIN",
+  "R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN",
   "R2_ARCHIVE_KEEP_GENERATIONS",
   "R2_COLD_SNAPSHOT_PART_MB",
   "R2_COLD_SNAPSHOT_SKIP_PRUNE",
@@ -128,6 +138,11 @@ function mockS3(options: {
       const keys = (options.listKeys ?? []).map((k) => `<Key>${k}</Key>`).join("");
       return respond(200, `<ListBucketResult>${keys}<IsTruncated>false</IsTruncated></ListBucketResult>`);
     }
+    if (method === "HEAD") {
+      // No object at the weekly key yet (fresh upload).  Ambiguous-complete
+      // tests that need a prior object override fetchImpl.
+      return respond(404, "", {});
+    }
     if (method === "DELETE") {
       return respond(204, "");
     }
@@ -145,6 +160,20 @@ function fakeBackup(size: number, captured: { path?: string; content?: Buffer })
     captured.content = randomBytes(size);
     writeFileSync(destPath, captured.content);
   };
+}
+
+/** verifyImpl test seam: a PASSING pre-upload verification report.
+ *  `fakeBackup` writes random bytes, not a database, so the real verification child would
+ *  (correctly) reject it.  Tests that are exercising the UPLOAD path stub the check; the
+ *  check itself is exercised against a real SQLite file further down. */
+function fakeVerify(overrides: Partial<R2ColdSnapshotVerification> = {}) {
+  return async (): Promise<R2ColdSnapshotVerification> => ({
+    ok: true,
+    integrity: "ok",
+    tables: { audit_events: 10, settings: 3 },
+    live: { audit_events: 12, settings: 3 },
+    ...overrides,
+  });
 }
 
 // ── Config gating ────────────────────────────────────────────────────────────
@@ -176,14 +205,28 @@ describe("loadR2ColdSnapshotConfig", () => {
     expect(cfg.disabledReason).toBe("kill_switch");
   });
 
-  it("clamps part size to the 5 MB S3 floor and caps retain at 1 (free-tier)", () => {
+  it("clamps part size to the 5 MB S3 floor and lets R2_COLD_SNAPSHOT_RETAIN RAISE retain", () => {
     setCreds();
     process.env.R2_COLD_SNAPSHOT_PART_MB = "1"; // below the floor → default
     process.env.R2_COLD_SNAPSHOT_RETAIN = "6";
     const cfg = loadR2ColdSnapshotConfig();
     expect(cfg.partSizeBytes).toBe(R2_COLD_SNAPSHOT_DEFAULT_PART_BYTES);
-    expect(R2_COLD_SNAPSHOT_DEFAULT_RETAIN).toBe(1);
-    expect(cfg.retain).toBe(1);
+    // Regression guard for the free-tier clamp: retain used to be min(env, DEFAULT), so an
+    // env asking for MORE archive depth was silently ignored and the tier stayed at depth 1.
+    expect(R2_COLD_SNAPSHOT_DEFAULT_RETAIN).toBe(4);
+    expect(cfg.retain).toBe(6);
+  });
+
+  it("still refuses a retain above the MAX_RETAIN ceiling", () => {
+    setCreds();
+    process.env.R2_COLD_SNAPSHOT_RETAIN = "500";
+    expect(loadR2ColdSnapshotConfig().retain).toBe(R2_COLD_SNAPSHOT_MAX_RETAIN);
+  });
+
+  it("lets R2_COLD_SNAPSHOT_RETAIN lower retain too", () => {
+    setCreds();
+    process.env.R2_COLD_SNAPSHOT_RETAIN = "2";
+    expect(loadR2ColdSnapshotConfig().retain).toBe(2);
   });
 
   it("does not let unused R2_ARCHIVE_KEEP_GENERATIONS drive weekly retain", () => {
@@ -206,7 +249,7 @@ describe("loadR2ColdSnapshotConfig", () => {
     }
     process.env.R2_COLD_SNAPSHOT_SKIP_PRUNE = "1";
     expect(loadR2ColdSnapshotConfig().skipPrune).toBe(true);
-    expect(loadR2ColdSnapshotConfig().retain).toBe(1);
+    expect(loadR2ColdSnapshotConfig().retain).toBe(R2_COLD_SNAPSHOT_DEFAULT_RETAIN);
   });
 });
 
@@ -330,6 +373,10 @@ describe("drainR2ColdSnapshotJobs", () => {
 
   it("backs up, gzip-streams into multipart parts, prunes legacy .db + older .gz, cleans temp, completes the job", async () => {
     setCreds();
+    // Retention is now 4 by default (2026-09-09: depth ONE was the archive tier's single
+    // point of failure).  These cases are about the prune MECHANICS across both extensions,
+    // so they pin retain=1 explicitly rather than growing the fixture to five snapshots.
+    process.env.R2_COLD_SNAPSHOT_RETAIN = "1";
     const now = Date.UTC(2026, 7, 9, 3, 20, 0);
     enqueueDueNow(now);
     const staleKeys = [
@@ -344,6 +391,7 @@ describe("drainR2ColdSnapshotJobs", () => {
     const result = await drainR2ColdSnapshotJobs(now, {
       fetchImpl: s3.fetchImpl,
       backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
       alertImpl: async () => {},
       partSizeBytes: 1000,
     });
@@ -418,6 +466,7 @@ describe("drainR2ColdSnapshotJobs", () => {
     const result = await drainR2ColdSnapshotJobs(now, {
       fetchImpl: s3.fetchImpl,
       backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
       alertImpl: async (warningType) => {
         alerts.push(warningType);
       },
@@ -483,6 +532,10 @@ describe("drainR2ColdSnapshotJobs", () => {
 
   it("normal prune (retain=1) deletes both legacy .db and older .db.gz candidates", async () => {
     setCreds();
+    // Retention is now 4 by default (2026-09-09: depth ONE was the archive tier's single
+    // point of failure).  These cases are about the prune MECHANICS across both extensions,
+    // so they pin retain=1 explicitly rather than growing the fixture to five snapshots.
+    process.env.R2_COLD_SNAPSHOT_RETAIN = "1";
     const now = Date.UTC(2026, 8, 6, 3, 20, 0); // Sunday 2026-09-06
     enqueueDueNow(now);
     const s3 = mockS3({
@@ -499,6 +552,7 @@ describe("drainR2ColdSnapshotJobs", () => {
     const result = await drainR2ColdSnapshotJobs(now, {
       fetchImpl: s3.fetchImpl,
       backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
       alertImpl: async () => {},
       partSizeBytes: 1000,
     });
@@ -519,6 +573,10 @@ describe("drainR2ColdSnapshotJobs", () => {
 
   it("skip-prune uploads .db.gz and does not DeleteObject legacy .db or older .gz", async () => {
     setCreds();
+    // Retention is now 4 by default (2026-09-09: depth ONE was the archive tier's single
+    // point of failure).  These cases are about the prune MECHANICS across both extensions,
+    // so they pin retain=1 explicitly rather than growing the fixture to five snapshots.
+    process.env.R2_COLD_SNAPSHOT_RETAIN = "1";
     process.env.R2_COLD_SNAPSHOT_SKIP_PRUNE = "1";
     const now = Date.UTC(2026, 8, 6, 3, 20, 0);
     enqueueDueNow(now);
@@ -534,6 +592,7 @@ describe("drainR2ColdSnapshotJobs", () => {
     const result = await drainR2ColdSnapshotJobs(now, {
       fetchImpl: s3.fetchImpl,
       backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
       alertImpl: async () => {},
       partSizeBytes: 1000,
     });
@@ -830,4 +889,368 @@ describe("reportR2WeeklyFreshness", () => {
     expect(report).toEqual({ state: "archive_not_run", previous: null, changed: true });
     expect(alerts).toEqual(["r2_cold_snapshot_stale"]);
   });
+});
+
+// ── Pre-upload verification: an unverified snapshot is a hypothesis, not a backup ────
+
+describe("assessSnapshotVerification", () => {
+  const pass = (over: Partial<R2ColdSnapshotVerification> = {}): R2ColdSnapshotVerification => ({
+    ok: true,
+    integrity: "ok",
+    tables: { audit_events: 10, settings: 3 },
+    live: { audit_events: 12, settings: 3 },
+    ...over,
+  });
+
+  it("passes when integrity_check is ok and every populated key table survived the copy", () => {
+    expect(assessSnapshotVerification(pass())).toEqual({ ok: true });
+  });
+
+  it("treats a MISSING report as unverified, never as a pass", () => {
+    // Silence is the failure mode this whole lane was built around: the 2026-09-06 run
+    // hung instead of failing, so nothing was written and nothing alerted.
+    expect(assessSnapshotVerification(null).ok).toBe(false);
+    expect(assessSnapshotVerification(null).reason).toBe("snapshot_verification_missing");
+  });
+
+  it("fails when PRAGMA integrity_check did not say ok", () => {
+    const verdict = assessSnapshotVerification(pass({ integrity: "*** in database main ***" }));
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain("snapshot_integrity_check");
+  });
+
+  it("fails a structurally perfect but EMPTY copy of a populated table", () => {
+    // integrity_check answers "is this a well-formed SQLite file", not "does it still hold
+    // the trading state".  An empty database passes the first question and is worthless.
+    const verdict = assessSnapshotVerification(pass({ tables: { audit_events: 0, settings: 3 } }));
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toBe("snapshot_key_tables_empty=audit_events");
+  });
+
+  it("does not require exact row equality — the live DB is written continuously", () => {
+    expect(
+      assessSnapshotVerification(pass({ tables: { audit_events: 10, settings: 3 }, live: { audit_events: 99999, settings: 3 } })),
+    ).toEqual({ ok: true });
+  });
+
+  it("fails closed when a live COUNT(*) could not be read", () => {
+    // null is the child's catch-all for lock/schema/"no such table" -- not "absent".
+    expect(
+      assessSnapshotVerification(pass({ tables: { llm_usage: null }, live: { llm_usage: null } })),
+    ).toEqual({ ok: false, reason: "snapshot_live_count_unreadable=llm_usage" });
+  });
+
+  it("asserts nothing about a table that is empty in the LIVE database", () => {
+    expect(
+      assessSnapshotVerification(pass({ tables: { llm_usage: 0 }, live: { llm_usage: 0 } })),
+    ).toEqual({ ok: true });
+  });
+});
+
+describe("parseSnapshotVerification", () => {
+  it("returns null for empty or unparseable child output", () => {
+    expect(parseSnapshotVerification("")).toBeNull();
+    expect(parseSnapshotVerification("   ")).toBeNull();
+    expect(parseSnapshotVerification("not json at all")).toBeNull();
+  });
+
+  it("parses a well-formed report and defaults ok to false unless explicitly true", () => {
+    expect(parseSnapshotVerification('{"integrity":"ok","tables":{},"live":{}}')?.ok).toBe(false);
+    expect(parseSnapshotVerification('{"ok":true,"integrity":"ok","tables":{},"live":{}}')?.ok).toBe(true);
+  });
+});
+
+describe("snapshot verification against a real SQLite file", () => {
+  it("the VACUUM child reports integrity ok plus row counts from the copy AND the live source", async () => {
+    const dest = join(dirname(databasePath()), `verify-${randomUUID()}.db`);
+    getDb().exec("CREATE TABLE IF NOT EXISTS verify_probe (id INTEGER PRIMARY KEY, v TEXT)");
+    getDb().prepare("INSERT INTO verify_probe (v) VALUES (?)").run("row");
+
+    const report = await runVacuumIntoSnapshot(databasePath(), dest, 60_000, ["verify_probe"]);
+
+    expect(report?.integrity).toBe("ok");
+    expect(report?.ok).toBe(true);
+    expect(report?.tables.verify_probe).toBeGreaterThan(0);
+    expect(report?.live.verify_probe).toBeGreaterThan(0);
+    expect(assessSnapshotVerification(report)).toEqual({ ok: true });
+    rmSync(dest, { force: true });
+  }, 60_000);
+
+  it("the standalone verifier rejects a file that is not a database", async () => {
+    const bogus = join(dirname(databasePath()), `bogus-${randomUUID()}.db`);
+    writeFileSync(bogus, randomBytes(4096));
+    await expect(runSnapshotVerification(bogus, databasePath(), 30_000, ["verify_probe"])).rejects.toThrow();
+    rmSync(bogus, { force: true });
+  }, 60_000);
+});
+
+describe("describeRequestError", () => {
+  it("unwraps the cause chain that Node's fetch hides behind 'fetch failed'", () => {
+    // Production 2026-09-08T15:47:24Z recorded exactly "fetch failed" and nothing else,
+    // which is why the upload failure that killed the first post-#3192 run could not be
+    // classified at all.
+    const cause = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const err = Object.assign(new Error("fetch failed"), { cause });
+    const described = describeRequestError(err);
+    expect(described).toContain("fetch failed");
+    expect(described).toContain("read ECONNRESET");
+    expect(described).toContain("ECONNRESET");
+  });
+
+  it("degrades gracefully on a non-Error throw", () => {
+    expect(describeRequestError("plain string")).toBe("plain string");
+  });
+});
+
+// ── Drain path: verification gate, bounded request retry, whole-attempt deadline ─────
+
+describe("drainR2ColdSnapshotJobs — verification gate and upload resilience", () => {
+  it("refuses to upload an artifact that fails verification", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    const s3 = mockS3({});
+    const captured: { path?: string; content?: Buffer } = {};
+
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl: s3.fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: async () => ({
+        ok: false,
+        integrity: "*** in database main *** row 3 missing from index",
+        tables: { audit_events: 10 },
+        live: { audit_events: 10 },
+      }),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+    });
+
+    expect(result.lastRun?.status).toBe("error");
+    expect(result.lastRun?.reason).toContain("snapshot_verification_failed");
+    // The decisive assertion: no bytes reached R2.  A corrupt copy replacing a good
+    // archive object is strictly worse than a stale archive object.
+    expect(s3.requests.some((r) => r.url.includes("partNumber="))).toBe(false);
+    expect(s3.requests.some((r) => r.url.includes("uploads="))).toBe(false);
+    // And the temp artifact is not left behind on the DB volume.
+    expect(existsSync(captured.path!)).toBe(false);
+  });
+
+  it("treats a snapshot step that reports NOTHING as unverified when no verifier is available", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    const s3 = mockS3({});
+    const captured: { path?: string; content?: Buffer } = {};
+
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl: s3.fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: async () => null,
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+    });
+
+    expect(result.lastRun?.status).toBe("error");
+    expect(result.lastRun?.reason).toContain("snapshot_verification_missing");
+    expect(s3.requests.some((r) => r.url.includes("partNumber="))).toBe(false);
+  });
+
+  it("retries a transient part failure instead of discarding the whole attempt", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    // Part 1 fails with a 500 on its FIRST try only — the shape of the single transient
+    // `fetch failed` that discarded ~11 minutes of VACUUM work on 2026-09-08.
+    let part1Calls = 0;
+    const inner = mockS3({});
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("partNumber=1")) {
+        part1Calls += 1;
+        if (part1Calls === 1) return new Response("<Error>transient</Error>", { status: 503 });
+      }
+      return inner.fetchImpl(input as RequestInfo, init);
+    }) as typeof fetch;
+
+    const captured: { path?: string; content?: Buffer } = {};
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+      retryDelayMs: 0,
+    });
+
+    expect(part1Calls).toBeGreaterThan(1);
+    expect(result.lastRun?.status).toBe("ok");
+  });
+
+  it("retries a 200 OK CompleteMultipartUpload that embeds an <Error> body", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    let completeCalls = 0;
+    const inner = mockS3({});
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "POST" && url.includes("uploadId=") && !url.includes("uploads=")) {
+        completeCalls += 1;
+        if (completeCalls === 1) {
+          return new Response("<Error><Code>InternalError</Code></Error>", { status: 200 });
+        }
+      }
+      return inner.fetchImpl(input as RequestInfo, init);
+    }) as typeof fetch;
+
+    const captured: { path?: string; content?: Buffer } = {};
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+      retryDelayMs: 0,
+    });
+
+    expect(completeCalls).toBeGreaterThan(1);
+    expect(result.lastRun?.status).toBe("ok");
+  });
+
+  it("gives up after the bounded number of request attempts rather than retrying forever", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    let part1Calls = 0;
+    const inner = mockS3({});
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("partNumber=1")) {
+        part1Calls += 1;
+        return new Response("<Error>always</Error>", { status: 503 });
+      }
+      return inner.fetchImpl(input as RequestInfo, init);
+    }) as typeof fetch;
+
+    const captured: { path?: string; content?: Buffer } = {};
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+      requestAttempts: 2,
+      retryDelayMs: 0,
+    });
+
+    expect(part1Calls).toBe(2);
+    expect(result.lastRun?.status).toBe("error");
+  });
+
+  it("fails inside its own lease when the UPLOAD hangs, not only when the snapshot does", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    // #3192 bounded only the snapshot step.  This is the gap its first production run
+    // exposed: the snapshot finished and the run then died in the upload after 670 s.
+    const fetchImpl = (async (input: unknown) => {
+      if (String(input).includes("uploads=")) return await new Promise<Response>(() => {});
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+
+    const captured: { path?: string; content?: Buffer } = {};
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+      attemptDeadlineMs: 150,
+    });
+
+    expect(result.lastRun?.status).toBe("error");
+    expect(result.lastRun?.reason).toContain("attempt_deadline_exceeded");
+    expect(existsSync(captured.path!)).toBe(false);
+  }, 20_000);
+});
+
+// ── Deadline clamps: an attempt must never be allowed to outlive its own lease ───────
+
+describe("attempt deadline clamping", () => {
+  it("clamps R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN below the 2h job lease", () => {
+    setCreds();
+    // The lease `drainR2ColdSnapshotJobs` claims with is 120 min.  An attempt allowed to run
+    // to or past it is the exact overlap the deadline exists to prevent: the next drain
+    // reclaims the job, starts a second multi-GB snapshot, sweeps the first attempt's temp
+    // file out from under its open fd, and races an upload to the same weekly key.
+    process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN = "180";
+    expect(loadR2ColdSnapshotConfig().attemptDeadlineMs).toBe(R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS);
+    expect(R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS).toBeLessThan(R2_COLD_SNAPSHOT_LEASE_MS);
+  });
+
+  it("honours an attempt deadline that is already under the ceiling", () => {
+    setCreds();
+    process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN = "30";
+    expect(loadR2ColdSnapshotConfig().attemptDeadlineMs).toBe(30 * 60_000);
+  });
+
+  it("never lets the snapshot-step deadline exceed the whole-attempt deadline", () => {
+    setCreds();
+    // A child handed a longer budget than its parent keeps running after the parent has
+    // already reported failure.
+    process.env.R2_COLD_SNAPSHOT_ATTEMPT_DEADLINE_MIN = "20";
+    process.env.R2_COLD_SNAPSHOT_DEADLINE_MIN = "45";
+    const cfg = loadR2ColdSnapshotConfig();
+    expect(cfg.attemptDeadlineMs).toBe(20 * 60_000);
+    expect(cfg.snapshotDeadlineMs).toBe(20 * 60_000);
+  });
+
+  it("defaults stay inside the ceiling", () => {
+    setCreds();
+    const cfg = loadR2ColdSnapshotConfig();
+    expect(cfg.attemptDeadlineMs).toBe(R2_COLD_SNAPSHOT_DEFAULT_ATTEMPT_DEADLINE_MS);
+    expect(cfg.attemptDeadlineMs).toBeLessThanOrEqual(R2_COLD_SNAPSHOT_MAX_ATTEMPT_DEADLINE_MS);
+    expect(cfg.snapshotDeadlineMs).toBeLessThanOrEqual(cfg.attemptDeadlineMs);
+  });
+});
+
+describe("multipart cleanup race", () => {
+  it("aborts an upload whose id was minted but not yet assigned when the deadline fired", async () => {
+    setCreds();
+    const now = Date.UTC(2026, 8, 6, 3, 20, 0);
+    enqueueDueNow(now);
+    // CreateMultipartUpload resolves AFTER the attempt deadline has already fired, so the
+    // catch block sees `uploadId === undefined` — the exact shape that used to orphan a
+    // multipart upload in R2 forever.
+    const aborted: string[] = [];
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("uploads=")) {
+        await new Promise((r) => setTimeout(r, 400));
+        return new Response(
+          "<InitiateMultipartUploadResult><UploadId>LATE123</UploadId></InitiateMultipartUploadResult>",
+          { status: 200 },
+        );
+      }
+      if ((init?.method ?? "GET") === "DELETE" && url.includes("uploadId=")) {
+        aborted.push(/uploadId=([^&]+)/.exec(url)?.[1] ?? "");
+        return new Response(null, { status: 204 });
+      }
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+
+    const captured: { path?: string; content?: Buffer } = {};
+    const result = await drainR2ColdSnapshotJobs(now, {
+      fetchImpl,
+      backupImpl: fakeBackup(2500, captured),
+      verifyImpl: fakeVerify(),
+      alertImpl: async () => {},
+      partSizeBytes: 1000,
+      attemptDeadlineMs: 150,
+    });
+
+    expect(result.lastRun?.status).toBe("error");
+    expect(aborted).toEqual(["LATE123"]);
+  }, 20_000);
 });

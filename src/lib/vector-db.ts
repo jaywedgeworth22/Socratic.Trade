@@ -6,9 +6,9 @@ import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiK
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { deleteStagedEmbeddings, getStagedEmbeddings, stageEmbeddedVectors } from "./db-embed-stage";
 import { isProviderDispatchLeaseLostError } from "./db-provider-dispatch";
-import { logApiHealth } from "./db-health";
+import { getLaneHealth, logApiHealth, transientEscalationWindowMs } from "./db-health";
 import { isLocalDbFaultError, localDbFaultReason, noteLocalDbFault } from "./local-db-fault";
-import { isTransientNetworkError } from "./network-errors";
+import { describeNetworkError, isTransientNetworkError, isTransientNetworkErrorText } from "./network-errors";
 import {
   auditPineconeWuGateSkip,
   isPineconeWuExhaustedError,
@@ -1507,6 +1507,10 @@ function ragHealthUserId(source: ApiKeySource, userId: string): string {
 }
 
 function ragErrorMessage(error: unknown): string {
+  // Walk nested causes so PineconeConnectionError("Request failed to reach Pinecone…")
+  // still classifies when the inner TypeError is `fetch failed` (Codex P1 on #3195).
+  const walked = describeNetworkError(error).trim();
+  if (walked) return walked;
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -1515,9 +1519,14 @@ export type RagLimitStatus = "rate_limited" | "billing" | "quota" | "transient";
 /**
  * Classify a provider error for alerting.
  * Engine-overloaded 429s are transient capacity, not our usage cap — check that before generic 429.
+ *
+ * Deliberately does NOT classify `fetch failed` / `UND_ERR_SOCKET` as "transient" here: those are
+ * transport blips owned by `isTransientNetworkErrorText` + alertRagConnectionFailure's escalation
+ * window. Mapping them here soft-stamped the health row and returned before escalation (Codex P1
+ * on #3195), so a persistent outage in the primary Node/undici shapes never reached error.
  */
 export function ragLimitStatus(message: string): RagLimitStatus | undefined {
-  if (/overloaded|engine is currently|terminated|fetch failed|UND_ERR_SOCKET/i.test(message)) return "transient";
+  if (/overloaded|engine is currently|terminated/i.test(message)) return "transient";
   if (/\b429\b|rate limit|too many requests|RPM|TPM/i.test(message)) return "rate_limited";
   if (/billing|payment|invoice|past due|upgrade|plan/i.test(message)) return "billing";
   if (/quota|write units?|read units?|usage limit|capacity|exceeded|paused/i.test(message)) return "quota";
@@ -1619,16 +1628,50 @@ async function alertRagConnectionFailure(
   operation: string,
   message: string,
   leaseGuard?: VectorStoreLeaseGuard,
-  activeProvider?: "voyage" | "openrouter" | "siliconflow"
+  activeProvider?: "voyage" | "openrouter" | "siliconflow",
+  /** Raw thrown value — used to classify Pinecone HTTP errors by class before message text. */
+  rawError?: unknown
 ): Promise<void> {
   try {
     const assertActive = leaseGuard ? () => assertVectorStoreLease(leaseGuard) : undefined;
     assertVectorStoreLease(leaseGuard);
-    const key = `${RAG_CONNECTION_ALERT_PREFIX}:${service}:${source}:${targetUserId}`;
+    // Transport-blip warnings arm a short cooldown on a `:transient` key so they cannot suppress a
+    // later error-level / hard capture on the same lane (parity with alertConnectionFailure).
+    const transportBlipForCooldown =
+      rawError !== undefined
+        ? isTransientNetworkError(rawError)
+        : isTransientNetworkErrorText(message);
+    let transientWarningCooldown = false;
+    // Hoisted out of the `if` so the cooldown write below can anchor the suppression at the streak
+    // deadline rather than at `now` (Codex P2 on #3195): when the first warning fires mid-streak —
+    // e.g. right after deploy over retained failures, or on a low-volume lane — a now-anchored
+    // cooldown would keep suppressing until `now + window` and delay the error-level escalation
+    // past the ten-minute threshold.
+    let blipStreakStartedMs = NaN;
+    if (transportBlipForCooldown) {
+      const laneForCooldown = getLaneHealth(service, source, source === "user" ? targetUserId : null);
+      blipStreakStartedMs = laneForCooldown.streakStartedTs ? Date.parse(laneForCooldown.streakStartedTs) : NaN;
+      transientWarningCooldown =
+        !Number.isFinite(blipStreakStartedMs) ||
+        Date.now() - blipStreakStartedMs < transientEscalationWindowMs();
+    }
+    const baseKey = `${RAG_CONNECTION_ALERT_PREFIX}:${service}:${source}:${targetUserId}`;
+    const key = transientWarningCooldown ? `${baseKey}:transient` : baseKey;
+    const cooldownMs = transientWarningCooldown ? transientEscalationWindowMs() : RAG_CONNECTION_ALERT_COOLDOWN_MS;
     const last = getInternalSetting<string>(key);
-    if (last && Date.now() - Date.parse(last) < RAG_CONNECTION_ALERT_COOLDOWN_MS) return;
+    if (last && Date.now() - Date.parse(last) < cooldownMs) return;
     assertVectorStoreLease(leaseGuard);
-    setInternalSetting(key, new Date().toISOString());
+    // The cooldown check reads the stored value as "last alerted" and suppresses for `cooldownMs`
+    // after it, so a transient-blip warning stores the STREAK START: `streakStart + window` is
+    // exactly the escalation deadline, and the first failure after the window escalates on
+    // schedule (parity with db-health's `streakStartedTs + transientEscalationWindowMs` deadline).
+    // When the run start is unknown, fall back to now (a full window from this alert).
+    setInternalSetting(
+      key,
+      transientWarningCooldown && Number.isFinite(blipStreakStartedMs)
+        ? new Date(blipStreakStartedMs).toISOString()
+        : new Date().toISOString()
+    );
 
     const title =
       service === "pinecone" ? "Pinecone connection failed"
@@ -1672,14 +1715,51 @@ async function alertRagConnectionFailure(
       // (`reason` below) instead of warning, so it cannot hide behind a benign-looking log line.
       // 2026-09 Sentry evidence (SOCRATIC-TRADE-27/-1X): real embed failures were logged at the
       // same warning level as expected quota/budget conditions and were easy to miss.
-      const level: "warning" | "error" = limitStatus === undefined ? "error" : "warning";
+      // ...with one exception, the same one db-health.ts's transport-blip class draws: a bare
+      // socket/DNS failure (`ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN`, `socket hang up`) is NOT a
+      // "genuine broken request" — it is the transport dying, and this lane's own retries own it.
+      // Those shapes fell through to `error` only because `ragLimitStatus`'s transient arm lists
+      // `fetch failed` / `UND_ERR_SOCKET` and nothing else (SOCRATIC-TRADE-1X, -22).  Level only
+      // via `isTransientNetworkErrorText` (widening `ragLimitStatus` was rejected — that would
+      // soft-stamp the health row and silence a sustained outage).  Short blips stay `warning`;
+      // once the lane's consecutive hard-failure run has lasted `transientEscalationWindowMs`,
+      // escalate to `error` so a persistent RAG transport outage still reaches PagerDuty.
+      const transportBlip =
+        rawError !== undefined
+          ? isTransientNetworkError(rawError)
+          : isTransientNetworkErrorText(message);
+      // A transport blip that has outlasted the escalation window is an OUTAGE — level `error`
+      // AND tagged `hard`, matching db-health where an escalated blip streak stops being
+      // "transient-network" (Codex P2 on #3195). One blip-window computation drives both so the
+      // tag can never disagree with the level.
+      const blipLane = transportBlip ? getLaneHealth(service, source, source === "user" ? targetUserId : null) : null;
+      const blipStreakStartedMs = blipLane?.streakStartedTs ? Date.parse(blipLane.streakStartedTs) : NaN;
+      const withinBlipWindow =
+        !transportBlip ||
+        !Number.isFinite(blipStreakStartedMs) ||
+        Date.now() - blipStreakStartedMs < transientEscalationWindowMs();
+      let level: "warning" | "error";
+      if (limitStatus === undefined && !transportBlip) {
+        level = "error";
+      } else if (transportBlip && withinBlipWindow) {
+        level = "warning";
+      } else if (transportBlip) {
+        level = "error";
+      } else {
+        level = "warning";
+      }
+      // Same health.failure_class tag the non-RAG alert path stamps — operators filter the twelve
+      // connection-failed issues by this tag across lanes (Codex P2 on #3195).  An escalated
+      // transport outage is tagged `hard` so `health.failure_class:hard` routing finds it.
+      const failureClass = transportBlip && withinBlipWindow ? "transient-network" : "hard";
       await captureRagSentryMessage(level, title, {
         provider: activeProvider ?? service,
         lane: service,
         source,
         operation,
         userSpecific: source === "user",
-        reason: message
+        reason: message,
+        failureClass
       }, leaseGuard);
     }
     assertVectorStoreLease(leaseGuard);
@@ -1750,6 +1830,7 @@ async function captureRagSentryMessage(
       if (context.provider) scope.setTag("rag.provider", String(context.provider));
       if (context.operation) scope.setTag("rag.operation", String(context.operation));
       if (context.source) scope.setTag("rag.key_source", String(context.source));
+      if (context.failureClass) scope.setTag("health.failure_class", String(context.failureClass));
       // Group by the STABLE lane identifier, not by the rendered title. Sentry fingerprints
       // captureMessage by message text, and these titles are built from DISPLAY names that drift
       // ("Voyage" vs "voyage", "OpenRouter" vs "OpenRouter embed" vs "OpenRouter rerank") — the
@@ -1972,7 +2053,7 @@ async function withRagApiHealth<T>(
     markRagSentryCaptured(error);
     const alert = wuExhausted
       ? tripPineconeWuBreaker({ message: rawMessage, operation, userId: targetUserId }).then(() => undefined)
-      : alertRagConnectionFailure(loggedService, source, targetUserId, operation, rawMessage, leaseGuard, healthLane?.provider);
+      : alertRagConnectionFailure(loggedService, source, targetUserId, operation, rawMessage, leaseGuard, healthLane?.provider, error);
     if (leaseGuard) {
       await alert;
       assertVectorStoreLease(leaseGuard);

@@ -38,7 +38,7 @@ import {
   type ApiKeySource
 } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
-import { isAbortOrTimeoutError, isCallerSignalAborted, isTransientNetworkError } from "./network-errors";
+import { isAbortOrTimeoutError, isCallerSignalAborted, isIdempotentRequest, isTransientNetworkError, jitteredBackoffMs } from "./network-errors";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
 import { expiresAtRespectingMarketClose } from "./market-hours";
 import { recordProviderCall } from "./usage-monitor-push";
@@ -696,6 +696,13 @@ export async function fetchWithRetry(
     // This provider's own API key (if any) — scrubbed out of any errorText logged below so
     // a leaked query-param or echoed-back value never reaches api_health_log verbatim.
     apiKey?: string;
+    /**
+     * Replay a TRANSPORT failure even though the method is not read-only. Opt-in, and only for a
+     * request whose body is a pure query (a search POST): a transport error is indistinguishable
+     * from "the far side processed it and the reply was lost", so replaying a real write could
+     * duplicate it. Never set this on anything that mutates state.
+     */
+    retryNonIdempotent?: boolean;
   } = {}
 ): Promise<Response> {
   const retries = options.retries ?? 1;
@@ -726,10 +733,13 @@ export async function fetchWithRetry(
         if (
           attempt < retries &&
           isTransientNetworkError(error) &&
+          (isIdempotentRequest(init) || options.retryNonIdempotent === true) &&
           !isCallerSignalAborted(init) &&
           !isAbortOrTimeoutError(error)
         ) {
-          await guardedFetchBackoff(backoffMs * (attempt + 1), options.guard);
+          // Jittered, so one upstream blip does not put every lane's retry on the same
+          // millisecond and turn the recovery into a second burst.
+          await guardedFetchBackoff(jitteredBackoffMs(backoffMs, attempt), options.guard);
           continue;
         }
         throw error;
@@ -742,7 +752,7 @@ export async function fetchWithRetry(
         // Do NOT write a health row for intermediate 429 retries — each retry would otherwise
         // look like a hard failure and five rapid 429s painted the lane red STOPPED even when
         // the eventual attempt (or the next symbol) succeeded. Final 429 is logged below as soft.
-        await guardedFetchBackoff(backoffMs * (attempt + 1), options.guard);
+        await guardedFetchBackoff(jitteredBackoffMs(backoffMs, attempt), options.guard);
         continue;
       }
       // When deferSuccessLog is set, skip the auto-success row so the caller can log
@@ -5608,7 +5618,14 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
                 }),
                 cache: "no-store",
                 signal: controller.signal,
-              }, { service: this.name, keySource: this.keySource, userId: this.userId });
+              }, {
+                service: this.name,
+                keySource: this.keySource,
+                userId: this.userId,
+                // Read-only search expressed as a POST body — replaying it cannot duplicate a
+                // write, so it keeps the transport retry it had before the idempotency gate.
+                retryNonIdempotent: true
+              });
 
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
