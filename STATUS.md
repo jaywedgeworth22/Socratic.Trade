@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-09-10 GROK — PR #3208 fixer tip (tini PID1 / HEALTHCHECK curl self-timeout)
+
+Codex P1 on `fixer/healthcheck-no-zombies` (board `e7b49943`).  STATUS/PLAN now record
+the production-image approach: runtime `tini` as PID1 (`ENTRYPOINT ["tini", "--"]`) so
+Docker HEALTHCHECK children are reaped; keep main's `--timeout=15s --retries=5` (PR #3201)
+and add `curl --max-time 14 --connect-timeout 2` so curl exits itself before Docker's
+15s SIGKILL.  Probe stays `GET /api/live` (never `/api/health`).  `infisical-run` (Node)
+does not `wait()` hung curls, which piled up as zombies (CPU 105%, Traefik 503).  Rollout
+completed with mandated Next Steps & Blockers plus exact CI receipts (`verify` /
+`verify-hosted` pass on PR head `b4259ec57`, run `34508795886`).  Dockerfile-only; no
+weekday image build.  Deployer squash AM after cash close / non-RTH; this lane does not
+merge.  Extra-ship no.  FTS hang is separate #3202.
+Rollout: `docs/rollouts/2026-09-09-healthcheck-tini-reap.md`.
+
 ## 2026-09-09 GROK — PR #3194 fixer tip (deploy-freshness monitor margin handoff)
 
 Codex P1 on `claude/fix-deploy-freshness-monitor-margin`.  STATUS/PLAN/rollout
