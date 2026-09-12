@@ -1,5 +1,10 @@
 # Current Status
 
+## 2026-09-12 ANTIGRAVITY — Comprehensive Full-Stack Audit & System Diagnostics
+
+Executed an exhaustive, multi-subagent audit across the entire codebase covering Trading Execution & Persistence, Security & API Routes, AI Strategy & Vector Retrieval, and Web Console & iOS Client.  Identified 3 Critical trading bugs (Tradier bracket entry dropping in `equityRowsFromTradierOrder`, missing `ordersListIncludesTerminal` on Tradier, and HTTP 200 rejection envelope misclassification), 2 Critical console bugs (duplicate strategy runs from mounted desktop/mobile `RunOnceButton` listeners and an un-backed-off deadline retry spin loop), 2 Critical AI engine bugs (`withDatadogLlmObs` duplicate execution on failure, and Red Team unhandled JSON parse failure aborting fallback models), plus over 15 High/Medium vulnerabilities, storage bloat drivers, and event-loop stall sources.  Logged and triaged all findings into 8 dedicated GitHub issues (#3220–#3227) with detailed reproduction mechanics and remediation steps.  Effort logs updated on both branch-neutral live board (`/Users/jay/apps/TRADING-EFFORT-LOG.md`) and repo mirror (`docs/EFFORT-LOG.md`).
+Rollout: `docs/rollouts/2026-09-12-codebase-full-audit.md`.
+
 ## 2026-09-10 GROK — PR #3208 fixer tip (tini PID1 / HEALTHCHECK curl self-timeout)
 
 Codex P1 on `fixer/healthcheck-no-zombies` (board `e7b49943`).  STATUS/PLAN now record
